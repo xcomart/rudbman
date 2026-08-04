@@ -28,10 +28,17 @@ tab:
 empty:
   title: Keine Verbindungen
   hint: Legen Sie eine Verbindung an, um eine Datenbank zu durchsuchen und SQL auszuführen.
+  connected_title: Nichts geöffnet
+  connected_hint: Die Verbindung steht. Sie zu durchsuchen und SQL darauf auszuführen kommt mit dem Explorer und dem Editor.
 
 statusbar:
   no_connection: keine Verbindung
   idle: bereit
+  connecting: verbinde …
+  connected: verbunden
+  disconnected: getrennt
+  failed: "fehlgeschlagen: %{error}"
+  tunnel_lost: "Der SSH-Tunnel wurde geschlossen: %{reason}"
 
 about:
   title: Über rudbman
@@ -147,3 +154,120 @@ settings:
       bracket_match: Passende Klammer
       error: Fehler
       warning: Warnungen
+
+# Der Verbindungsdialog.
+connect:
+  title: Verbindungen
+  new: Neu
+  new_name: Neue Verbindung
+  duplicate: Duplizieren
+  delete: Löschen
+  delete_confirm: "Die Verbindung „%{name}“ und ihr gespeichertes Passwort löschen?"
+  unnamed: "(ohne Namen)"
+  copy_name: "%{name} (Kopie)"
+
+  name: Name
+  folder: Ordner
+  color: Markierung
+  driver: Treiber
+  pick_driver: Treiber wählen
+  manage_drivers: Treiber…
+  driver_has_no_jar: Dieser Treiber hat noch kein JAR. Unter „Treiber“ eines hinzufügen oder herunterladen.
+
+  host: Host
+  port: Port
+  database: Datenbank
+  url: URL
+  url_hint: Wird aus den Feldern darüber zusammengesetzt. Wer sie direkt bearbeitet, behält das Getippte.
+  url_overridden: Von Hand eingetragen; die Felder darüber ändern sie nicht mehr.
+  url_reset: Neu aufbauen
+
+  username: Benutzer
+  password: Passwort
+  props: Treibereigenschaften
+  prop_key: Eigenschaft
+  prop_value: Wert
+  add_prop: Eigenschaft hinzufügen
+
+  section:
+    behaviour: Verhalten
+    tunnel: SSH-Tunnel
+
+  read_only: Verbindung schreibgeschützt öffnen
+  auto_commit: Jede Anweisung sofort bestätigen
+  confirm_writes: Vor schreibenden Anweisungen nachfragen
+  keep_alive: Verbindung mit einer regelmäßigen Abfrage offen halten
+
+  tunnel_enabled: Über einen SSH-Bastion-Host verbinden
+  tunnel_host: Bastion
+  tunnel_user: Bastion-Benutzer
+  tunnel_auth: Authentifizierung
+  tunnel_auth_agent: SSH-Agent
+  tunnel_auth_key: Privater Schlüssel
+  tunnel_auth_password: Passwort
+  tunnel_key: Schlüsseldatei
+  tunnel_password: Bastion-Passwort
+  tunnel_passphrase: Passphrase des Schlüssels
+  tunnel_remote: Datenbank
+  tunnel_hint: Die Datenbank wird so benannt, wie der Bastion-Host sie sieht. rudbman bindet einen freien lokalen Port und verbindet den Treiber damit.
+
+  test: Testen
+  testing: Verbinde …
+  test_ok: "Mit %{product} verbunden."
+  test_ok_unnamed: Die Verbindung funktioniert.
+  test_failed: "Verbindung nicht möglich: %{error}"
+  test_failed_hint: "Verbindung nicht möglich: %{error} — %{hint}"
+  connect: Verbinden
+  saved: Gespeichert.
+
+  name_required: Der Verbindung einen Namen geben.
+  url_required: Die Verbindung hat keine URL.
+  no_driver: "Keine Treiberdefinition namens „%{driver}“."
+  load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden: %{error}"
+  save_failed: "Die Verbindungen konnten nicht gespeichert werden: %{error}"
+  keychain_failed: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden: %{error}"
+
+  hint_auth: Benutzername und Passwort prüfen
+  hint_driver: Treiber-JAR und Treiberklasse prüfen
+  hint_jvm: rudbman braucht eine Java-Laufzeitumgebung; RUDBMAN_JAVA_HOME oder JAVA_HOME setzen
+  hint_network: Host, Port und Erreichbarkeit der Datenbank prüfen
+  hint_host_key: Dem Hostschlüssel des Bastion-Hosts wird noch nicht vertraut
+
+  host_key_question: "%{host} hat einen unbekannten %{algorithm}-Schlüssel vorgelegt: %{fingerprint}"
+  trust_host_key: Diesem Schlüssel vertrauen
+  host_key_trusted: Der Hostschlüssel wurde als vertrauenswürdig eingetragen. Bitte erneut verbinden.
+
+# Die Treiberverwaltung.
+driver:
+  title: Treiber
+  name: Name
+  class: Treiberklasse
+  class_hint: Der voll qualifizierte Klassenname, wie ihn die Dokumentation des Treibers angibt — zum Beispiel org.postgresql.Driver.
+  url_template: URL-Vorlage
+  default_port: Standardport
+  dialect: Dialekt
+  maven: Maven-Koordinate
+  jars: JAR-Dateien
+  add_jar: JAR hinzufügen…
+  add_jar_select: Hinzufügen
+  remove_jar: Entfernen
+  jar_missing: fehlt
+  no_jar: kein JAR
+  no_jar_hint: Ein Treiber braucht mindestens ein JAR, bevor eine Verbindung ihn nutzen kann.
+  jar_count: "%{count} JAR(s)"
+  download: Herunterladen
+  downloading: "%{file} wird geladen …"
+  downloading_percent: "%{file} wird geladen — %{percent} %"
+  downloaded: "%{file} wurde geladen und hinzugefügt."
+  download_cancelled: Der Download wurde abgebrochen.
+  bad_coordinate: "„%{coordinate}“ ist keine Koordinate der Form group:artifact:version."
+  not_found: "Maven Central hat nichts unter %{url}."
+  network_failed: "Der Download ist fehlgeschlagen: %{error}"
+  checksum_failed: "Der Download ist beschädigt: erwartet wurde SHA-1 %{expected}, angekommen ist %{actual}."
+  load_failed: "Die Treiberdefinitionen konnten nicht gelesen werden: %{error}"
+  save_failed: "Die Treiberdefinitionen konnten nicht gespeichert werden: %{error}"
+  new: Neu
+  new_name: Neuer Treiber
+  delete: Löschen
+  delete_confirm: "Die Treiberdefinition „%{name}“ löschen?"
+  none_selected: Einen Treiber auswählen oder einen neuen anlegen.

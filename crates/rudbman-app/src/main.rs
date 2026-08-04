@@ -19,8 +19,12 @@
 mod about_dialog;
 mod app_settings;
 mod caption;
+mod connection;
+mod connection_dialog;
+mod driver_manager;
 mod i18n;
 mod icons;
+mod maven;
 // The pane tree is written as a self-contained data structure with its own
 // tests rather than for the call sites the shell currently has, so it offers
 // operations nothing reaches yet — merging a subtree, editing a payload — which
@@ -40,20 +44,23 @@ rust_i18n::i18n!("locales", fallback = "en");
 use gpui::{
     AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
     KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, ScrollHandle,
-    SharedString, Stateful, Subscription, TitlebarOptions, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowOptions, actions, div, prelude::*, px, relative, size,
+    SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div,
+    prelude::*, px, relative, size,
 };
-use rudbman_core::{AppSettings, TitlebarStyle, WindowState};
+use rudbman_core::{AppSettings, ConnectionProfile, DriverStore, TitlebarStyle, WindowState};
 use rudbman_ui::{
     DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton, MenuEntry, Scrollbar,
-    ScrollbarAxis, ScrollbarState, TabBar, Theme, ThemeRegistry, WindowControlIcons,
-    WindowControls, hide_later, scroll_to, scrolled, set_editor_theme, set_theme, theme,
-    theme_store,
+    ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme, ThemeRegistry,
+    WindowControlIcons, WindowControls, hide_later, scroll_to, scrolled, set_editor_theme,
+    set_theme, theme, theme_store,
 };
 
 use about_dialog::{AboutDialog, AboutDialogEvent};
 use app_settings::WindowGeometry;
 use caption::apply_caption_theme;
+use connection::{ConnectError, Connected};
+use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
 use i18n::ts;
 use icons::Icons;
 use pane_tree::{Axis, PaneContent, PaneId, PaneNode, PaneTree, SplitId};
@@ -188,6 +195,50 @@ struct DraggedSplit {
     split: SplitId,
 }
 
+/// One connection tab: the profile it was opened from, and where it has got to.
+struct Connection {
+    /// The profile, as it was when the connection was asked for. A later edit
+    /// in the dialog does not reach a session that is already open — reopening
+    /// is what applies it.
+    profile: ConnectionProfile,
+    /// What the session is doing.
+    state: ConnectionState,
+}
+
+/// The life of one connection tab.
+///
+/// [`ConnectionState::Dead`] is deliberately distinct from
+/// [`ConnectionState::Failed`]: the first is a session that *was* open and is
+/// not any more — a tunnel that closed underneath it, usually — and the second
+/// is one that never opened. Both are terminal, and neither is repaired
+/// silently (architecture document, §9.3).
+enum ConnectionState {
+    /// The connect task is in flight.
+    ///
+    /// The task is held rather than detached so that closing the tab abandons
+    /// the attempt: a `Task` that is dropped is cancelled at its next await
+    /// point, and the half-opened session that may be in flight behind it is
+    /// closed by `Connected`'s own `Drop`.
+    Connecting { _task: Task<()> },
+    /// The session is live.
+    Open(Box<Connected>),
+    /// The connection never opened.
+    Failed(SharedString),
+    /// The session was open and has ended.
+    Dead(SharedString),
+}
+
+impl ConnectionState {
+    /// The dot the tab strip draws in front of the title.
+    fn tab_status(&self) -> TabStatus {
+        match self {
+            ConnectionState::Connecting { .. } => TabStatus::Connecting,
+            ConnectionState::Open(_) => TabStatus::Connected,
+            ConnectionState::Failed(_) | ConnectionState::Dead(_) => TabStatus::Error,
+        }
+    }
+}
+
 /// The root view: title bar, work area, status bar and dialogs.
 struct Workspace {
     /// Focus target for the window, so the shortcuts stay live.
@@ -202,12 +253,18 @@ struct Workspace {
     panes: PaneTree<PaneContent>,
     /// The pane the status bar and the pane commands act on.
     active_pane: PaneId,
+    /// The open connections, one per tab, in the order they were opened.
+    connections: Vec<Connection>,
+    /// Index into [`Workspace::connections`] of the tab on screen.
+    active_connection: usize,
     /// Horizontal scroll of the tab strip, used to reveal the active tab.
     tab_scroll: ScrollHandle,
     /// Whether the tab strip's overlay scroll indicator is on screen.
     tab_scrollbar: ScrollbarState,
     /// The about dialog, rendered only while it reports itself open.
     about: Entity<AboutDialog>,
+    /// The connection dialog, rendered only while it reports itself open.
+    connect: Entity<ConnectionDialog>,
     /// The settings dialog, rendered only while it reports itself open.
     settings: Entity<SettingsDialog>,
     /// Whether the application dropdown menu is showing.
@@ -221,6 +278,8 @@ struct Workspace {
     titlebar: TitlebarStyle,
     /// Keeps the about dialog subscription alive.
     _about_events: Subscription,
+    /// Keeps the connection dialog subscription alive.
+    _connect_events: Subscription,
     /// Keeps the settings dialog subscription alive.
     _settings_events: Subscription,
     /// Records the window's placement as it is moved and resized.
@@ -245,6 +304,24 @@ impl Workspace {
                     }
                 },
             );
+
+        let connect = cx.new(ConnectionDialog::new);
+        let connect_events = cx.subscribe_in(
+            &connect,
+            window,
+            |this, dialog, event, window, cx| match event {
+                // The dialog has already saved the profile and closed itself;
+                // opening the session is the shell's half of the workflow,
+                // because the tab it produces belongs here.
+                ConnectionDialogEvent::Connect(profile) => {
+                    this.open_connection((**profile).clone(), window, cx);
+                }
+                ConnectionDialogEvent::Dismissed => {
+                    dialog.update(cx, |dialog, cx| dialog.close(cx));
+                    this.focus_shell(window, cx);
+                }
+            },
+        );
 
         let settings = cx.new(SettingsDialog::new);
         let settings_events = cx.subscribe_in(
@@ -289,15 +366,173 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             panes,
             active_pane,
+            connections: Vec::new(),
+            active_connection: 0,
             tab_scroll: ScrollHandle::new(),
             tab_scrollbar: ScrollbarState::new(),
             about,
+            connect,
             settings,
             menu_open: false,
             titlebar,
             _about_events: about_events,
+            _connect_events: connect_events,
             _settings_events: settings_events,
             _bounds: bounds,
+        }
+    }
+
+    /// The connection the tab strip and the status bar are showing.
+    fn active_connection(&self) -> Option<&Connection> {
+        self.connections.get(self.active_connection)
+    }
+
+    /// Opens a session for `profile` in a tab of its own.
+    ///
+    /// The tab appears immediately, in [`ConnectionState::Connecting`]: the
+    /// attempt can take as long as the network does, and a window that showed
+    /// nothing until it finished would look frozen. Everything that blocks
+    /// happens on a background task, because [`connection::connect`] opens an
+    /// SSH channel and a JDBC connection and both of those wait on a socket.
+    fn open_connection(
+        &mut self,
+        profile: ConnectionProfile,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let drivers = match DriverStore::load() {
+            Ok(drivers) => drivers,
+            Err(error) => {
+                log::error!("could not read drivers.json: {error:#}");
+                DriverStore::default()
+            }
+        };
+        let Some(driver) = drivers.get(&profile.driver_id).cloned() else {
+            self.connections.push(Connection {
+                state: ConnectionState::Failed(ts!(
+                    "connect.no_driver",
+                    driver = profile.driver_id.clone()
+                )),
+                profile,
+            });
+            self.active_connection = self.connections.len() - 1;
+            cx.notify();
+            return;
+        };
+
+        let index = self.connections.len();
+        let settings = app_settings::current(cx);
+        let attempt = profile.clone();
+        // Read here, on the UI thread, and moved straight into the task: the
+        // secret exists as a value for the length of one connection attempt and
+        // is written to nothing.
+        let credentials = connection::Credentials::read(&profile);
+        let opening = cx.background_spawn(async move {
+            connection::connect(&attempt, &driver, &credentials, &settings)
+        });
+
+        let task = cx.spawn(async move |workspace, cx| {
+            let outcome = opening.await;
+            workspace
+                .update(cx, |workspace, cx| workspace.connected(index, outcome, cx))
+                .ok();
+        });
+
+        self.connections.push(Connection {
+            profile,
+            state: ConnectionState::Connecting { _task: task },
+        });
+        self.active_connection = index;
+        cx.notify();
+    }
+
+    /// Records what a connection attempt produced.
+    fn connected(
+        &mut self,
+        index: usize,
+        outcome: Result<Connected, ConnectError>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(connection) = self.connections.get_mut(index) else {
+            // The tab was closed while the attempt was in flight; the session,
+            // if one opened, is closed by `Connected`'s own drop.
+            return;
+        };
+
+        match outcome {
+            Ok(connected) => {
+                // A tunnel that dies takes the session above it with it, and the
+                // tab has to say so rather than going quiet: the transaction the
+                // user was in the middle of is gone (§9.3).
+                if let Some(lease) = connected.lease.as_ref() {
+                    let died = lease.watch();
+                    cx.spawn(async move |workspace, cx| {
+                        let Ok(reason) = died.await else {
+                            return;
+                        };
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.tunnel_died(index, reason, cx);
+                            })
+                            .ok();
+                    })
+                    .detach();
+                }
+                connection.state = ConnectionState::Open(Box::new(connected));
+            }
+            Err(error) => {
+                log::warn!("connecting {} failed: {error}", connection.profile.name);
+                connection.state = ConnectionState::Failed(error.message().into());
+            }
+        }
+        cx.notify();
+    }
+
+    /// Marks a connection dead because the tunnel under it closed.
+    fn tunnel_died(&mut self, index: usize, reason: String, cx: &mut Context<Self>) {
+        let Some(connection) = self.connections.get_mut(index) else {
+            return;
+        };
+        if !matches!(connection.state, ConnectionState::Open(_)) {
+            return;
+        }
+        log::warn!(
+            "the tunnel under {} closed: {reason}",
+            connection.profile.name
+        );
+        // Replacing the state drops the `Connected`, which closes the session
+        // and releases the lease in that order.
+        connection.state = ConnectionState::Dead(ts!("statusbar.tunnel_lost", reason = reason));
+        cx.notify();
+    }
+
+    /// Closes one connection tab, ending its session.
+    fn close_connection(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.connections.len() {
+            return;
+        }
+        let connection = self.connections.remove(index);
+        if let ConnectionState::Open(connected) = connection.state {
+            // CLOSE_SESSION and then the tunnel, in that order, and off the UI
+            // thread because both of them talk to a socket.
+            cx.background_spawn(async move {
+                if let Err(error) = connected.close() {
+                    log::warn!("closing the session failed: {error}");
+                }
+            })
+            .detach();
+        }
+        self.active_connection = self
+            .active_connection
+            .min(self.connections.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    /// Brings one connection tab to the front.
+    fn select_connection(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.connections.len() && self.active_connection != index {
+            self.active_connection = index;
+            cx.notify();
         }
     }
 
@@ -374,6 +609,9 @@ impl Workspace {
         self.menu_open = false;
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
+        }
+        if self.connect.read(cx).is_open() {
+            self.connect.update(cx, |dialog, cx| dialog.close(cx));
         }
         if self.settings.read(cx).is_open() {
             self.settings.update(cx, |dialog, cx| dialog.close(cx));
@@ -476,18 +714,22 @@ impl Workspace {
         apply_caption_theme(window, &theme(cx));
     }
 
+    /// Opens the connection dialog, closing whatever else was showing.
+    fn open_connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_overlays(window, cx);
+        self.connect.update(cx, |dialog, cx| dialog.open(cx));
+        cx.notify();
+    }
+
     /// Opens the connection dialog.
     fn new_connection_action(
         &mut self,
         _: &NewConnection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        // TODO(M1): open the connection dialog. The row and the shortcut are
-        // wired up now so that the command has one place to arrive at, and so
-        // that the menu the user sees is the menu the shell will keep.
-        log::info!("a new connection was asked for; the connection dialog is not written yet");
+        self.open_connect(window, cx);
     }
 
     /// Opens the settings dialog.
@@ -557,6 +799,14 @@ impl Workspace {
             self.focus_shell(window, cx);
             return;
         }
+        if self.connect.read(cx).is_open() {
+            // Routed through the dialog for the same reason the settings one is:
+            // it stacks a driver manager, a dropdown and a delete confirmation,
+            // and each of those has to be able to take `Escape` for itself
+            // before the whole form is thrown away.
+            self.connect.update(cx, |dialog, cx| dialog.escape(cx));
+            return;
+        }
         if self.settings.read(cx).is_open() {
             // Routed through the dialog rather than closed from here: it stacks
             // a colour editor, two dropdowns and a delete confirmation of its
@@ -586,6 +836,9 @@ impl Workspace {
         let theme = theme(cx);
         let custom = draws_own_titlebar(self.titlebar, window);
         let menu = (!cfg!(target_os = "macos")).then(|| self.render_app_menu(cx));
+        // Built before the row is assembled: both of these borrow the context to
+        // register listeners, and the builders below borrow it to read the theme.
+        let tab_bar = self.render_tab_bar(cx);
 
         // One cell for the leading controls, so the menu button shares the
         // toolbar's fill and bottom hairline with the strip.
@@ -688,7 +941,7 @@ impl Workspace {
             .children(traffic_lights)
             .children(title)
             .children(leading)
-            .child(div().flex_1().min_w_0().child(self.render_tab_bar()))
+            .child(div().flex_1().min_w_0().child(tab_bar))
             .children(controls)
             .into_any_element()
     }
@@ -729,16 +982,42 @@ impl Workspace {
             })
     }
 
-    /// Renders the tab strip.
+    /// Renders the tab strip: one tab per open connection.
     ///
-    /// Empty in M0, and knowingly so: a tab stands for an open connection, and
-    /// there is nothing yet that opens one. The strip is here rather than
-    /// deferred because it *is* the title bar — leaving it out would mean
-    /// building the caption twice, once without tabs and once with.
-    fn render_tab_bar(&self) -> TabBar {
+    /// The title is the profile's name and the dot is where the session has got
+    /// to, so a tab that is still connecting, one that is live and one whose
+    /// tunnel died are told apart without opening any of them.
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> TabBar {
+        let this = cx.entity();
+        let tabs: Vec<TabItem> = self
+            .connections
+            .iter()
+            .enumerate()
+            .map(|(index, connection)| {
+                let title = if connection.profile.name.trim().is_empty() {
+                    ts!("connect.unnamed")
+                } else {
+                    SharedString::from(connection.profile.name.clone())
+                };
+                TabItem::new(("connection", index), title).status(connection.state.tab_status())
+            })
+            .collect();
+
         TabBar::new("connection-tabs")
-            .tabs(Vec::new())
-            .active(0)
+            .tabs(tabs)
+            .active(self.active_connection)
+            .on_select({
+                let this = this.clone();
+                move |index, _window, cx| {
+                    this.update(cx, |workspace, cx| workspace.select_connection(index, cx));
+                }
+            })
+            .on_close({
+                let this = this.clone();
+                move |index, _window, cx| {
+                    this.update(cx, |workspace, cx| workspace.close_connection(index, cx));
+                }
+            })
             .scroll_handle(&self.tab_scroll)
             .scrollbar(self.tab_scrollbar())
             .menu_icon(icons::TAB_LIST)
@@ -761,6 +1040,10 @@ impl Workspace {
         let frame = self.panes.leaf_count() > 1;
         let active = self.active_pane();
         let root = self.panes.root();
+        // With a session open the pane is empty because nothing that would fill
+        // it exists yet, not because there is nothing to connect to; telling the
+        // user "no connections" over a live tab would be a plain lie.
+        let connected = !self.connections.is_empty();
 
         div()
             .flex()
@@ -778,7 +1061,7 @@ impl Workspace {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .child(render_pane(root, active, frame, &theme, cx)),
+                    .child(render_pane(root, active, frame, connected, &theme, cx)),
             )
             .into_any_element()
     }
@@ -876,12 +1159,49 @@ impl Workspace {
     /// Renders the bottom status bar.
     ///
     /// The layout is the one the architecture document asks for — connection,
-    /// transaction state, rows, elapsed time — with every cell but the first
-    /// standing empty until there is a session behind it. Building the row now
-    /// is what keeps the body's height honest: a status bar bolted on later
-    /// would move every pane up by its own height on the day it arrives.
+    /// transaction state, rows, elapsed time. The first cell names the database
+    /// product and version the active session reported, and the second says
+    /// what the session is doing; the last two stand empty until there is a
+    /// statement behind them, which is M3.
+    ///
+    /// The second cell is where a failure is written out, which is why it is the
+    /// one that shrinks: a driver's refusal is the longest text this row ever
+    /// carries.
+    ///
+    /// The two texts come from [`Workspace::status_cells`], which is separate so
+    /// that "the bar says H2 2.3.232" can be asserted without laying out a
+    /// window.
+    fn status_cells(&self) -> (SharedString, SharedString) {
+        let Some(connection) = self.active_connection() else {
+            return (ts!("statusbar.no_connection"), ts!("statusbar.idle"));
+        };
+        // The product and its version once the session has answered
+        // SESSION_INFO, and the profile's own name until then — a cell that went
+        // blank while connecting would read as no connection at all.
+        let label = match &connection.state {
+            ConnectionState::Open(connected) => connected
+                .product()
+                .map(SharedString::from)
+                .unwrap_or_else(|| SharedString::from(connection.profile.name.clone())),
+            _ => SharedString::from(connection.profile.name.clone()),
+        };
+        let state = match &connection.state {
+            ConnectionState::Connecting { .. } => ts!("statusbar.connecting"),
+            ConnectionState::Open(_) => ts!("statusbar.connected"),
+            ConnectionState::Failed(error) => ts!("statusbar.failed", error = error.to_string()),
+            ConnectionState::Dead(reason) => reason.clone(),
+        };
+        (label, state)
+    }
+
     fn render_status_bar(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
+        let (connection, state) = self.status_cells();
+        let state_color = match self.active_connection().map(|open| &open.state) {
+            Some(ConnectionState::Open(_)) => Some(theme.success),
+            Some(ConnectionState::Failed(_) | ConnectionState::Dead(_)) => Some(theme.danger),
+            _ => None,
+        };
 
         div()
             .flex()
@@ -900,20 +1220,14 @@ impl Workspace {
             .border_color(theme.border)
             .text_size(px(11.))
             .text_color(theme.text_muted)
-            .child(
-                div()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .child(ts!("statusbar.no_connection")),
-            )
-            // The transaction state carries the widest text of the four — a
-            // failure reason ends up here — so it is the cell that shrinks.
+            .child(div().flex_none().whitespace_nowrap().child(connection))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(ts!("statusbar.idle")),
+                    .when_some(state_color, |cell, color| cell.text_color(color))
+                    .child(state),
             )
             .child(div().flex_none().whitespace_nowrap().child(NOTHING))
             .child(div().flex_none().whitespace_nowrap().child(NOTHING))
@@ -945,6 +1259,7 @@ fn render_pane(
     node: &PaneNode<PaneContent>,
     active: PaneId,
     frame: bool,
+    connected: bool,
     theme: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
@@ -963,7 +1278,7 @@ fn render_pane(
                 .min_h_0()
                 .when(frame, |pane| pane.border_1().border_color(border))
                 .child(match payload {
-                    PaneContent::Placeholder => render_placeholder(theme),
+                    PaneContent::Placeholder => render_placeholder(connected, theme),
                 })
                 .into_any_element()
         }
@@ -980,8 +1295,8 @@ fn render_pane(
             // Both children are rendered up front because each one needs `cx`
             // for the handles further down the tree, and a closure holding it
             // could not then be called twice.
-            let first = render_pane(first, active, frame, theme, cx);
-            let second = render_pane(second, active, frame, theme, cx);
+            let first = render_pane(first, active, frame, connected, theme, cx);
+            let second = render_pane(second, active, frame, connected, theme, cx);
             let half = |share: f32, child: AnyElement| {
                 div()
                     .flex()
@@ -1048,15 +1363,25 @@ fn render_pane(
 
 /// Renders the empty state of a pane that holds nothing.
 ///
-/// Text only, and deliberately no button: everything that would fill a pane
-/// arrives with the connection dialog, and a button that opens nothing is worse
-/// than no button at all. The wording says what is missing and what to do about
-/// it; the menu row and its shortcut are how to do it.
+/// Two wordings, and the difference matters. With nothing open the pane says
+/// there is no connection and points at the way to make one — the menu row and
+/// its shortcut. With a session open it says the opposite: the connection is
+/// live, and the pane is empty because the explorer tree and the SQL editor
+/// that would fill it are not written yet. One wording for both states would
+/// have a live tab sitting above the words "no connections".
+///
+/// Text only, and deliberately no button: a button that opens nothing is worse
+/// than no button at all.
 ///
 /// It paints no fill of its own. The body behind it already carries the one
 /// tinted fill the window permits, and a second one here would compose back to
 /// opaque; see [`app_settings::window_tint`].
-fn render_placeholder(theme: &Theme) -> AnyElement {
+fn render_placeholder(connected: bool, theme: &Theme) -> AnyElement {
+    let (title, hint) = if connected {
+        (ts!("empty.connected_title"), ts!("empty.connected_hint"))
+    } else {
+        (ts!("empty.title"), ts!("empty.hint"))
+    };
     div()
         .flex()
         .flex_col()
@@ -1066,17 +1391,12 @@ fn render_placeholder(theme: &Theme) -> AnyElement {
         .items_center()
         .justify_center()
         .gap(px(8.))
-        .child(
-            div()
-                .text_size(px(18.))
-                .text_color(theme.text)
-                .child(ts!("empty.title")),
-        )
+        .child(div().text_size(px(18.)).text_color(theme.text).child(title))
         .child(
             div()
                 .text_size(px(13.))
                 .text_color(theme.text_muted)
-                .child(ts!("empty.hint")),
+                .child(hint),
         )
         .into_any_element()
 }
@@ -1097,6 +1417,11 @@ impl Render for Workspace {
             .read(cx)
             .is_open()
             .then(|| div().absolute().inset_0().child(self.about.clone()));
+        let connect = self
+            .connect
+            .read(cx)
+            .is_open()
+            .then(|| div().absolute().inset_0().child(self.connect.clone()));
         let settings = self
             .settings
             .read(cx)
@@ -1168,6 +1493,7 @@ impl Render for Workspace {
             .child(body)
             .child(status_bar)
             .children(about)
+            .children(connect)
             .children(settings);
 
         let Some(tiling) = tiling else {
@@ -1822,6 +2148,155 @@ mod tests {
             editor_theme_for("One-Dark", true, "irrelevant", true, &entries()),
             "one-dark"
         );
+    }
+
+    #[test]
+    fn both_empty_states_of_a_pane_are_translated() {
+        // `t!` answers with the key path when a key is missing, so a typo
+        // reaches the screen as "empty.connected_ttle". The two pairs have to
+        // differ, or the connected state would still read "no connections".
+        for label in [
+            ts!("empty.title"),
+            ts!("empty.hint"),
+            ts!("empty.connected_title"),
+            ts!("empty.connected_hint"),
+            ts!("statusbar.no_connection"),
+            ts!("statusbar.idle"),
+            ts!("statusbar.connecting"),
+            ts!("statusbar.connected"),
+            ts!("statusbar.disconnected"),
+            ts!("statusbar.failed", error = "e"),
+            ts!("statusbar.tunnel_lost", reason = "r"),
+        ] {
+            assert!(!label.is_empty(), "empty label");
+            assert!(!label.contains("empty."), "untranslated label {label:?}");
+            assert!(
+                !label.contains("statusbar."),
+                "untranslated label {label:?}"
+            );
+        }
+        assert_ne!(ts!("empty.title"), ts!("empty.connected_title"));
+        assert_ne!(ts!("empty.hint"), ts!("empty.connected_hint"));
+    }
+
+    /// The end of the M1 thread, in one test: a real H2 session opens, a tab
+    /// appears carrying the profile's name and a "connected" dot, the status bar
+    /// names the product and version the driver reported, and closing the tab
+    /// takes the session with it.
+    ///
+    /// The session is opened before the window is built so that the blocking
+    /// call is nowhere near a gpui update — which is also the rule the shell
+    /// itself follows, by way of `background_spawn`.
+    #[gpui::test]
+    fn a_real_connection_reaches_the_tab_strip_and_the_status_bar(cx: &mut gpui::TestAppContext) {
+        let profile = connection::h2::profile("workspace");
+        let connected = connection::connect(
+            &profile,
+            &connection::h2::driver(),
+            &connection::Credentials::typed(Some(String::new()), None),
+            &AppSettings::default(),
+        )
+        .expect("H2 opens an in-memory database without a server");
+        let product = connected.product().expect("H2 names itself");
+
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+
+        window
+            .update(cx, |workspace, _window, cx| {
+                // Nothing open yet: both cells say so.
+                let (name, state) = workspace.status_cells();
+                assert_eq!(name, ts!("statusbar.no_connection"));
+                assert_eq!(state, ts!("statusbar.idle"));
+
+                workspace.connections.push(Connection {
+                    profile: profile.clone(),
+                    state: ConnectionState::Open(Box::new(connected)),
+                });
+                workspace.active_connection = 0;
+
+                let connection = workspace.active_connection().expect("one tab");
+                assert_eq!(connection.profile.name, "workspace");
+                assert_eq!(connection.state.tab_status(), TabStatus::Connected);
+
+                let (name, state) = workspace.status_cells();
+                assert_eq!(name, SharedString::from(product.clone()));
+                assert!(name.starts_with("H2 "), "{name}");
+                assert_eq!(state, ts!("statusbar.connected"));
+
+                // Closing the tab hands the session to a background task that
+                // closes it; the tab is gone either way.
+                workspace.close_connection(0, cx);
+                assert!(workspace.connections.is_empty());
+                let (name, state) = workspace.status_cells();
+                assert_eq!(name, ts!("statusbar.no_connection"));
+                assert_eq!(state, ts!("statusbar.idle"));
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// A failed attempt lands in the tab rather than in a log nobody reads.
+    #[gpui::test]
+    fn a_refused_connection_shows_the_drivers_own_message(cx: &mut gpui::TestAppContext) {
+        let mut profile = connection::h2::profile("refused");
+        profile.url = format!("{};DB_CLOSE_DELAY=-1", profile.url);
+        let created = connection::connect(
+            &profile,
+            &connection::h2::driver(),
+            &connection::Credentials::typed(Some("hunter2".into()), None),
+            &AppSettings::default(),
+        )
+        .expect("the first connection creates the database");
+
+        let error = connection::connect(
+            &profile,
+            &connection::h2::driver(),
+            &connection::Credentials::typed(Some("s3cr3t-pa55w0rd".into()), None),
+            &AppSettings::default(),
+        )
+        .expect_err("a wrong password must be refused");
+        assert!(error.is_authentication(), "{error}");
+
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+
+        window
+            .update(cx, |workspace, _window, _cx| {
+                workspace.connections.push(Connection {
+                    profile,
+                    state: ConnectionState::Failed(error.message().into()),
+                });
+                workspace.active_connection = 0;
+
+                assert_eq!(
+                    workspace
+                        .active_connection()
+                        .expect("one tab")
+                        .state
+                        .tab_status(),
+                    TabStatus::Error
+                );
+                let (name, state) = workspace.status_cells();
+                // The profile's name, since there is no product to report.
+                assert_eq!(name, "refused");
+                // The driver's own words, and no password in them.
+                assert!(state.len() > ts!("statusbar.connected").len(), "{state}");
+                assert!(
+                    !state.contains("s3cr3t-pa55w0rd") && !state.contains("hunter2"),
+                    "the refused password reached the status bar: {state}"
+                );
+            })
+            .expect("the window is open");
+
+        created.close().expect("close");
+        cx.run_until_parked();
     }
 
     #[test]

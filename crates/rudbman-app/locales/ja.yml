@@ -28,10 +28,17 @@ tab:
 empty:
   title: 接続がありません
   hint: 接続を追加すると、データベースの参照と SQL の実行ができます。
+  connected_title: 開いているものはありません
+  connected_hint: 接続は有効です。閲覧と SQL の実行はエクスプローラーとエディターが揃ってから使えます。
 
 statusbar:
   no_connection: 接続なし
   idle: 待機中
+  connecting: 接続中…
+  connected: 接続済み
+  disconnected: 切断
+  failed: "失敗: %{error}"
+  tunnel_lost: "SSH トンネルが閉じました: %{reason}"
 
 about:
   title: rudbman について
@@ -147,3 +154,120 @@ settings:
       bracket_match: 対応する括弧
       error: エラー
       warning: 警告
+
+# 接続ダイアログ。
+connect:
+  title: 接続
+  new: 新規
+  new_name: 新しい接続
+  duplicate: 複製
+  delete: 削除
+  delete_confirm: "接続「%{name}」と保存されたパスワードを削除しますか？"
+  unnamed: "(名前なし)"
+  copy_name: "%{name}（コピー）"
+
+  name: 名前
+  folder: フォルダー
+  color: タグ
+  driver: ドライバー
+  pick_driver: ドライバーを選ぶ
+  manage_drivers: ドライバー…
+  driver_has_no_jar: このドライバーにはまだ JAR がありません。ドライバー画面で追加するかダウンロードしてください。
+
+  host: ホスト
+  port: ポート
+  database: データベース
+  url: URL
+  url_hint: 上の項目から組み立てられます。直接書き換えるとその内容が使われます。
+  url_overridden: 手入力された URL です。上の項目を変えても反映されません。
+  url_reset: 組み立て直す
+
+  username: ユーザー
+  password: パスワード
+  props: ドライバープロパティ
+  prop_key: プロパティ
+  prop_value: 値
+  add_prop: プロパティを追加
+
+  section:
+    behaviour: 動作
+    tunnel: SSH トンネル
+
+  read_only: 読み取り専用で接続する
+  auto_commit: 文を実行するたびにコミットする
+  confirm_writes: 書き込み文を実行する前に確認する
+  keep_alive: 定期的なクエリで接続を維持する
+
+  tunnel_enabled: SSH 踏み台を経由して接続する
+  tunnel_host: 踏み台
+  tunnel_user: 踏み台のユーザー
+  tunnel_auth: 認証
+  tunnel_auth_agent: SSH エージェント
+  tunnel_auth_key: 秘密鍵
+  tunnel_auth_password: パスワード
+  tunnel_key: 鍵ファイル
+  tunnel_password: 踏み台のパスワード
+  tunnel_passphrase: 鍵のパスフレーズ
+  tunnel_remote: データベース
+  tunnel_hint: データベースは踏み台から見える名前で指定します。rudbman が空いているローカルポートを確保し、ドライバーをそこへ接続します。
+
+  test: 接続テスト
+  testing: 接続しています…
+  test_ok: "%{product} に接続しました。"
+  test_ok_unnamed: 接続は正常です。
+  test_failed: "接続できませんでした: %{error}"
+  test_failed_hint: "接続できませんでした: %{error} — %{hint}"
+  connect: 接続
+  saved: 保存しました。
+
+  name_required: 接続の名前を入力してください。
+  url_required: 接続の URL が空です。
+  no_driver: "「%{driver}」というドライバー定義がありません。"
+  load_failed: "保存された接続を読み込めませんでした: %{error}"
+  save_failed: "接続を保存できませんでした: %{error}"
+  keychain_failed: "パスワードをキーチェーンに保存できませんでした: %{error}"
+
+  hint_auth: ユーザー名とパスワードを確認してください
+  hint_driver: ドライバー JAR とドライバークラスを確認してください
+  hint_jvm: Java ランタイムが必要です。RUDBMAN_JAVA_HOME か JAVA_HOME を設定してください
+  hint_network: ホストとポート、データベースに到達できるかを確認してください
+  hint_host_key: 踏み台のホスト鍵はまだ信頼されていません
+
+  host_key_question: "%{host} が未知の %{algorithm} 鍵を提示しました: %{fingerprint}"
+  trust_host_key: この鍵を信頼する
+  host_key_trusted: ホスト鍵を信頼済みに追加しました。もう一度接続してみてください。
+
+# ドライバーマネージャー。
+driver:
+  title: ドライバー
+  name: 名前
+  class: ドライバークラス
+  class_hint: ドライバーの資料に載っている完全修飾クラス名です。たとえば org.postgresql.Driver。
+  url_template: URL テンプレート
+  default_port: 既定のポート
+  dialect: 方言
+  maven: Maven 座標
+  jars: JAR ファイル
+  add_jar: JAR を追加…
+  add_jar_select: 追加
+  remove_jar: 削除
+  jar_missing: 見つかりません
+  no_jar: JAR なし
+  no_jar_hint: 接続に使うには、ドライバーに JAR が少なくとも一つ必要です。
+  jar_count: "JAR %{count} 個"
+  download: ダウンロード
+  downloading: "%{file} をダウンロードしています…"
+  downloading_percent: "%{file} をダウンロード中 — %{percent}%"
+  downloaded: "%{file} をダウンロードして追加しました。"
+  download_cancelled: ダウンロードを中止しました。
+  bad_coordinate: "「%{coordinate}」は group:artifact:version 形式の座標ではありません。"
+  not_found: "Maven Central の %{url} には何もありません。"
+  network_failed: "ダウンロードに失敗しました: %{error}"
+  checksum_failed: "ダウンロードしたファイルが壊れています。SHA-1 は %{expected} のはずが %{actual} でした。"
+  load_failed: "ドライバー定義を読み込めませんでした: %{error}"
+  save_failed: "ドライバー定義を保存できませんでした: %{error}"
+  new: 新規
+  new_name: 新しいドライバー
+  delete: 削除
+  delete_confirm: "ドライバー定義「%{name}」を削除しますか？"
+  none_selected: ドライバーを選ぶか、新しく追加してください。

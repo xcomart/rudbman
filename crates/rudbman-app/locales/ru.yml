@@ -28,10 +28,17 @@ tab:
 empty:
   title: Нет подключений
   hint: Добавьте подключение, чтобы просматривать базу данных и выполнять SQL.
+  connected_title: Ничего не открыто
+  connected_hint: Подключение работает. Просмотр базы и выполнение SQL появятся вместе с обозревателем и редактором.
 
 statusbar:
   no_connection: нет подключения
   idle: ожидание
+  connecting: подключение…
+  connected: подключено
+  disconnected: отключено
+  failed: "сбой: %{error}"
+  tunnel_lost: "SSH-туннель закрыт: %{reason}"
 
 about:
   title: О программе rudbman
@@ -147,3 +154,120 @@ settings:
       bracket_match: Парная скобка
       error: Ошибки
       warning: Предупреждения
+
+# Диалог подключений.
+connect:
+  title: Подключения
+  new: Создать
+  new_name: Новое подключение
+  duplicate: Дублировать
+  delete: Удалить
+  delete_confirm: "Удалить подключение «%{name}» и сохранённый пароль?"
+  unnamed: "(без имени)"
+  copy_name: "%{name} (копия)"
+
+  name: Имя
+  folder: Папка
+  color: Метка
+  driver: Драйвер
+  pick_driver: Выберите драйвер
+  manage_drivers: Драйверы…
+  driver_has_no_jar: У этого драйвера ещё нет JAR. Добавьте или скачайте его в разделе «Драйверы».
+
+  host: Хост
+  port: Порт
+  database: База данных
+  url: URL
+  url_hint: Собирается из полей выше. Если изменить её вручную, останется то, что вы ввели.
+  url_overridden: Введена вручную; поля выше её больше не меняют.
+  url_reset: Собрать заново
+
+  username: Пользователь
+  password: Пароль
+  props: Свойства драйвера
+  prop_key: свойство
+  prop_value: значение
+  add_prop: Добавить свойство
+
+  section:
+    behaviour: Поведение
+    tunnel: SSH-туннель
+
+  read_only: Открывать подключение только для чтения
+  auto_commit: Фиксировать каждый оператор сразу после выполнения
+  confirm_writes: Спрашивать перед выполнением изменяющего оператора
+  keep_alive: Поддерживать подключение периодическим запросом
+
+  tunnel_enabled: Подключаться через SSH-бастион
+  tunnel_host: Бастион
+  tunnel_user: Пользователь бастиона
+  tunnel_auth: Аутентификация
+  tunnel_auth_agent: SSH-агент
+  tunnel_auth_key: Закрытый ключ
+  tunnel_auth_password: Пароль
+  tunnel_key: Файл ключа
+  tunnel_password: Пароль бастиона
+  tunnel_passphrase: Парольная фраза ключа
+  tunnel_remote: База данных
+  tunnel_hint: База данных указывается так, как её видит бастион. rudbman занимает свободный локальный порт и подключает драйвер к нему.
+
+  test: Проверить
+  testing: Подключение…
+  test_ok: "Подключено к %{product}."
+  test_ok_unnamed: Подключение работает.
+  test_failed: "Не удалось подключиться: %{error}"
+  test_failed_hint: "Не удалось подключиться: %{error} — %{hint}"
+  connect: Подключиться
+  saved: Сохранено.
+
+  name_required: Дайте подключению имя.
+  url_required: У подключения нет URL.
+  no_driver: "Нет определения драйвера с именем «%{driver}»."
+  load_failed: "Не удалось прочитать сохранённые подключения: %{error}"
+  save_failed: "Не удалось сохранить подключения: %{error}"
+  keychain_failed: "Не удалось сохранить пароль в хранилище ключей: %{error}"
+
+  hint_auth: проверьте имя пользователя и пароль
+  hint_driver: проверьте JAR драйвера и имя класса драйвера
+  hint_jvm: rudbman нужна среда выполнения Java; задайте RUDBMAN_JAVA_HOME или JAVA_HOME
+  hint_network: проверьте хост, порт и доступность базы данных
+  hint_host_key: ключ хоста бастиона ещё не является доверенным
+
+  host_key_question: "%{host} предъявил неизвестный ключ %{algorithm}: %{fingerprint}"
+  trust_host_key: Доверять этому ключу
+  host_key_trusted: Ключ хоста добавлен в список доверенных. Попробуйте подключиться снова.
+
+# Менеджер драйверов.
+driver:
+  title: Драйверы
+  name: Имя
+  class: Класс драйвера
+  class_hint: Полное имя класса, как его приводит документация драйвера, — например org.postgresql.Driver.
+  url_template: Шаблон URL
+  default_port: Порт по умолчанию
+  dialect: Диалект
+  maven: Координата Maven
+  jars: Файлы JAR
+  add_jar: Добавить JAR…
+  add_jar_select: Добавить
+  remove_jar: Убрать
+  jar_missing: отсутствует
+  no_jar: нет JAR
+  no_jar_hint: Чтобы подключение могло использовать драйвер, у него должен быть хотя бы один JAR.
+  jar_count: "JAR: %{count}"
+  download: Скачать
+  downloading: "Скачивается %{file}…"
+  downloading_percent: "Скачивается %{file} — %{percent} %"
+  downloaded: "Файл %{file} скачан и добавлен."
+  download_cancelled: Скачивание отменено.
+  bad_coordinate: "«%{coordinate}» — это не координата вида group:artifact:version."
+  not_found: "На Maven Central по адресу %{url} ничего нет."
+  network_failed: "Скачивание не удалось: %{error}"
+  checksum_failed: "Скачанный файл повреждён: ожидался SHA-1 %{expected}, получен %{actual}."
+  load_failed: "Не удалось прочитать определения драйверов: %{error}"
+  save_failed: "Не удалось сохранить определения драйверов: %{error}"
+  new: Создать
+  new_name: Новый драйвер
+  delete: Удалить
+  delete_confirm: "Удалить определение драйвера «%{name}»?"
+  none_selected: Выберите драйвер или добавьте новый.

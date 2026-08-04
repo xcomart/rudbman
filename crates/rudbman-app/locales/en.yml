@@ -60,6 +60,11 @@ tab:
 empty:
   title: No connections
   hint: Add a connection to browse a database and run SQL against it.
+  # Shown in a pane once a connection is open. The tab is live; the pane is
+  # empty because the explorer tree and the SQL editor that would fill it are
+  # not written yet.
+  connected_title: Nothing open
+  connected_hint: The connection is live. Browsing it and running SQL against it arrive with the explorer and the editor.
 
 # The bar along the bottom of the window. It reports the connection, the
 # transaction state, the row count and the elapsed time of the last statement;
@@ -67,6 +72,16 @@ empty:
 statusbar:
   no_connection: no connection
   idle: idle
+  # What the first two cells say once a connection has been opened. The product
+  # name and its version are values and are never translated.
+  connecting: connecting…
+  connected: connected
+  disconnected: disconnected
+  # The session is gone and will not come back on its own: the tunnel under it
+  # died, or the connection failed. The reason comes from the driver or the
+  # transport and is not translated.
+  failed: "failed: %{error}"
+  tunnel_lost: "the SSH tunnel closed: %{reason}"
 
 # The about box. The version, the licence name and the names of the libraries
 # are values, not words, and are never translated.
@@ -210,3 +225,147 @@ settings:
       bracket_match: Matching bracket
       error: Errors
       warning: Warnings
+
+# The connection dialog: saved profiles on the left, one profile's form on the
+# right.
+#
+# Never translated: JDBC URLs and the `{host}` / `{port}` / `{database}` holes
+# in a driver's URL template, driver class names, Maven coordinates, and the
+# names of the products themselves.
+connect:
+  title: Connections
+  # The list, and the profile being edited.
+  new: New
+  # Name a profile is created under. Replaced as soon as the user types.
+  new_name: New connection
+  duplicate: Duplicate
+  delete: Delete
+  delete_confirm: "Delete the connection “%{name}” and its saved password?"
+  # Shown in the list for a profile the user has not named yet.
+  unnamed: "(unnamed)"
+  copy_name: "%{name} (copy)"
+
+  name: Name
+  folder: Folder
+  color: Tag
+  driver: Driver
+  pick_driver: Choose a driver
+  manage_drivers: Drivers…
+  driver_has_no_jar: This driver has no JAR yet. Add or download one under Drivers.
+
+  # The fields a driver's URL template is broken into. `database` heads whatever
+  # the template calls it — a database, a service, a SID or a file — because the
+  # question is the same one whatever the product names it.
+  host: Host
+  port: Port
+  database: Database
+  url: URL
+  url_hint: Assembled from the fields above. Editing it directly keeps what you type.
+  url_overridden: Typed by hand; the fields above no longer change it.
+  url_reset: Rebuild
+
+  username: User
+  password: Password
+  props: Driver properties
+  prop_key: property
+  prop_value: value
+  add_prop: Add a property
+
+  section:
+    behaviour: Behaviour
+    tunnel: SSH tunnel
+
+  read_only: Open the connection read-only
+  auto_commit: Commit each statement as it runs
+  confirm_writes: Ask before running a write statement
+  keep_alive: Keep the connection alive with a periodic query
+
+  # The tunnel block. A production database usually sits behind a bastion host;
+  # rudbman forwards a local port through it and points JDBC at that port.
+  tunnel_enabled: Connect through an SSH bastion
+  tunnel_host: Bastion
+  tunnel_user: Bastion user
+  tunnel_auth: Authentication
+  tunnel_auth_agent: SSH agent
+  tunnel_auth_key: Private key
+  tunnel_auth_password: Password
+  tunnel_key: Key file
+  tunnel_password: Bastion password
+  tunnel_passphrase: Key passphrase
+  tunnel_remote: Database
+  tunnel_hint: The database is named as the bastion sees it. rudbman binds a free local port and connects the driver to that.
+
+  # The buttons along the bottom, and what they report.
+  test: Test
+  testing: Connecting…
+  test_ok: "Connected to %{product}."
+  # The driver answered nothing useful about the product, but the session opened
+  # and answered a PING.
+  test_ok_unnamed: The connection works.
+  test_failed: "Could not connect: %{error}"
+  test_failed_hint: "Could not connect: %{error} — %{hint}"
+  connect: Connect
+  saved: Saved.
+
+  name_required: Give the connection a name.
+  url_required: The connection has no URL.
+  no_driver: "No driver definition named “%{driver}”."
+  load_failed: "The saved connections could not be read: %{error}"
+  save_failed: "The connections could not be saved: %{error}"
+  keychain_failed: "The password could not be saved to the keychain: %{error}"
+
+  # One-line suggestions attached to a failure whose SQLSTATE class says what
+  # kind it is.
+  hint_auth: check the user name and password
+  hint_driver: check the driver JAR and the driver class
+  hint_jvm: rudbman needs a Java runtime; set RUDBMAN_JAVA_HOME or JAVA_HOME
+  hint_network: check the host, the port and whether the database is reachable
+  hint_host_key: the bastion's host key is not trusted yet
+
+  # Trust on first use. The fingerprint is shown in full because comparing it
+  # against what the machine's administrator published is the whole point;
+  # neither it nor the algorithm name is translated.
+  host_key_question: "%{host} presented an unknown %{algorithm} key: %{fingerprint}"
+  trust_host_key: Trust this key
+  host_key_trusted: The host key was added to the trusted list. Try connecting again.
+
+# The driver manager, opened from the connection dialog.
+#
+# Never translated: driver class names, URL templates, Maven coordinates, file
+# paths and dialect ids.
+driver:
+  title: Drivers
+  name: Name
+  class: Driver class
+  class_hint: The fully qualified class name, as the driver's own documentation gives it — for example org.postgresql.Driver.
+  url_template: URL template
+  default_port: Default port
+  dialect: Dialect
+  maven: Maven coordinate
+  jars: JAR files
+  add_jar: Add a JAR…
+  # Confirmation button of the file dialog the button above opens.
+  add_jar_select: Add
+  remove_jar: Remove
+  jar_missing: missing
+  no_jar: no JAR
+  no_jar_hint: A driver needs at least one JAR before a connection can use it.
+  jar_count: "%{count} JAR(s)"
+  download: Download
+  downloading: "Downloading %{file}…"
+  downloading_percent: "Downloading %{file} — %{percent}%"
+  downloaded: "%{file} was downloaded and added."
+  download_cancelled: The download was cancelled.
+  bad_coordinate: "“%{coordinate}” is not a group:artifact:version coordinate."
+  not_found: "Maven Central has nothing at %{url}."
+  network_failed: "The download failed: %{error}"
+  # The bytes that arrived do not hash to what Maven Central published beside
+  # them, which means the transfer was corrupted.
+  checksum_failed: "The download is corrupted: expected SHA-1 %{expected}, got %{actual}."
+  load_failed: "The driver definitions could not be read: %{error}"
+  save_failed: "The driver definitions could not be saved: %{error}"
+  new: New
+  new_name: New driver
+  delete: Delete
+  delete_confirm: "Delete the driver definition “%{name}”?"
+  none_selected: Select a driver, or add one.

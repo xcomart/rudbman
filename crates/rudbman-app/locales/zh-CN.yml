@@ -28,10 +28,17 @@ tab:
 empty:
   title: 暂无连接
   hint: 添加一个连接，即可浏览数据库并执行 SQL。
+  connected_title: 没有打开的内容
+  connected_hint: 连接是活动的。浏览数据库和执行 SQL 将随资源管理器和编辑器一起提供。
 
 statusbar:
   no_connection: 无连接
   idle: 空闲
+  connecting: 正在连接…
+  connected: 已连接
+  disconnected: 已断开
+  failed: "失败：%{error}"
+  tunnel_lost: "SSH 隧道已关闭：%{reason}"
 
 about:
   title: 关于 rudbman
@@ -147,3 +154,120 @@ settings:
       bracket_match: 匹配括号
       error: 错误
       warning: 警告
+
+# 连接对话框。
+connect:
+  title: 连接
+  new: 新建
+  new_name: 新建连接
+  duplicate: 复制
+  delete: 删除
+  delete_confirm: "删除连接“%{name}”及其保存的密码？"
+  unnamed: "(未命名)"
+  copy_name: "%{name}（副本）"
+
+  name: 名称
+  folder: 文件夹
+  color: 标记
+  driver: 驱动
+  pick_driver: 选择驱动
+  manage_drivers: 驱动…
+  driver_has_no_jar: 该驱动还没有 JAR。请在驱动界面添加或下载一个。
+
+  host: 主机
+  port: 端口
+  database: 数据库
+  url: URL
+  url_hint: 由上面的字段拼装而成。直接编辑将保留你输入的内容。
+  url_overridden: 手动输入的 URL；上面的字段不再改动它。
+  url_reset: 重新拼装
+
+  username: 用户
+  password: 密码
+  props: 驱动属性
+  prop_key: 属性
+  prop_value: 值
+  add_prop: 添加属性
+
+  section:
+    behaviour: 行为
+    tunnel: SSH 隧道
+
+  read_only: 以只读方式打开连接
+  auto_commit: 每条语句执行后立即提交
+  confirm_writes: 执行写入语句前先确认
+  keep_alive: 用定期查询保持连接
+
+  tunnel_enabled: 通过 SSH 堡垒机连接
+  tunnel_host: 堡垒机
+  tunnel_user: 堡垒机用户
+  tunnel_auth: 认证
+  tunnel_auth_agent: SSH 代理
+  tunnel_auth_key: 私钥
+  tunnel_auth_password: 密码
+  tunnel_key: 密钥文件
+  tunnel_password: 堡垒机密码
+  tunnel_passphrase: 密钥口令
+  tunnel_remote: 数据库
+  tunnel_hint: 数据库地址填堡垒机所看到的名字。rudbman 会绑定一个空闲的本地端口，并把驱动接到该端口。
+
+  test: 测试
+  testing: 正在连接…
+  test_ok: "已连接到 %{product}。"
+  test_ok_unnamed: 连接可用。
+  test_failed: "无法连接：%{error}"
+  test_failed_hint: "无法连接：%{error} — %{hint}"
+  connect: 连接
+  saved: 已保存。
+
+  name_required: 请为该连接取个名字。
+  url_required: 该连接没有 URL。
+  no_driver: "没有名为“%{driver}”的驱动定义。"
+  load_failed: "无法读取已保存的连接：%{error}"
+  save_failed: "无法保存连接：%{error}"
+  keychain_failed: "无法把密码保存到密钥链：%{error}"
+
+  hint_auth: 请检查用户名和密码
+  hint_driver: 请检查驱动 JAR 和驱动类
+  hint_jvm: rudbman 需要一个 Java 运行时；请设置 RUDBMAN_JAVA_HOME 或 JAVA_HOME
+  hint_network: 请检查主机、端口以及数据库是否可达
+  hint_host_key: 堡垒机的主机密钥尚未受信任
+
+  host_key_question: "%{host} 出示了未知的 %{algorithm} 密钥：%{fingerprint}"
+  trust_host_key: 信任该密钥
+  host_key_trusted: 主机密钥已加入信任列表。请再试一次。
+
+# 驱动管理器。
+driver:
+  title: 驱动
+  name: 名称
+  class: 驱动类
+  class_hint: 驱动文档中给出的完全限定类名，例如 org.postgresql.Driver。
+  url_template: URL 模板
+  default_port: 默认端口
+  dialect: 方言
+  maven: Maven 坐标
+  jars: JAR 文件
+  add_jar: 添加 JAR…
+  add_jar_select: 添加
+  remove_jar: 移除
+  jar_missing: 缺失
+  no_jar: 无 JAR
+  no_jar_hint: 驱动至少要有一个 JAR，连接才能使用它。
+  jar_count: "%{count} 个 JAR"
+  download: 下载
+  downloading: "正在下载 %{file}…"
+  downloading_percent: "正在下载 %{file} — %{percent}%"
+  downloaded: "已下载并添加 %{file}。"
+  download_cancelled: 下载已取消。
+  bad_coordinate: "“%{coordinate}”不是 group:artifact:version 形式的坐标。"
+  not_found: "Maven Central 的 %{url} 上没有这个文件。"
+  network_failed: "下载失败：%{error}"
+  checksum_failed: "下载的文件已损坏：SHA-1 应为 %{expected}，实际为 %{actual}。"
+  load_failed: "无法读取驱动定义：%{error}"
+  save_failed: "无法保存驱动定义：%{error}"
+  new: 新建
+  new_name: 新建驱动
+  delete: 删除
+  delete_confirm: "删除驱动定义“%{name}”？"
+  none_selected: 请选择一个驱动，或新建一个。

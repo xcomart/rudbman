@@ -28,10 +28,17 @@ tab:
 empty:
   title: No hay conexiones
   hint: Añade una conexión para explorar una base de datos y ejecutar SQL en ella.
+  connected_title: No hay nada abierto
+  connected_hint: La conexión está activa. Explorarla y ejecutar SQL sobre ella llegan con el explorador y el editor.
 
 statusbar:
   no_connection: sin conexión
   idle: inactivo
+  connecting: conectando…
+  connected: conectado
+  disconnected: desconectado
+  failed: "error: %{error}"
+  tunnel_lost: "El túnel SSH se cerró: %{reason}"
 
 about:
   title: Acerca de rudbman
@@ -147,3 +154,120 @@ settings:
       bracket_match: Paréntesis emparejado
       error: Errores
       warning: Avisos
+
+# El diálogo de conexiones.
+connect:
+  title: Conexiones
+  new: Nueva
+  new_name: Conexión nueva
+  duplicate: Duplicar
+  delete: Eliminar
+  delete_confirm: "¿Eliminar la conexión «%{name}» y la contraseña guardada?"
+  unnamed: "(sin nombre)"
+  copy_name: "%{name} (copia)"
+
+  name: Nombre
+  folder: Carpeta
+  color: Etiqueta
+  driver: Controlador
+  pick_driver: Elegir un controlador
+  manage_drivers: Controladores…
+  driver_has_no_jar: Este controlador todavía no tiene JAR. Añade o descarga uno en Controladores.
+
+  host: Servidor
+  port: Puerto
+  database: Base de datos
+  url: URL
+  url_hint: Se compone con los campos de arriba. Si la editas directamente, se conserva lo que escribas.
+  url_overridden: Escrita a mano; los campos de arriba ya no la modifican.
+  url_reset: Recomponer
+
+  username: Usuario
+  password: Contraseña
+  props: Propiedades del controlador
+  prop_key: propiedad
+  prop_value: valor
+  add_prop: Añadir una propiedad
+
+  section:
+    behaviour: Comportamiento
+    tunnel: Túnel SSH
+
+  read_only: Abrir la conexión en solo lectura
+  auto_commit: Confirmar cada sentencia al ejecutarla
+  confirm_writes: Preguntar antes de ejecutar una sentencia de escritura
+  keep_alive: Mantener la conexión viva con una consulta periódica
+
+  tunnel_enabled: Conectar a través de un bastión SSH
+  tunnel_host: Bastión
+  tunnel_user: Usuario del bastión
+  tunnel_auth: Autenticación
+  tunnel_auth_agent: Agente SSH
+  tunnel_auth_key: Clave privada
+  tunnel_auth_password: Contraseña
+  tunnel_key: Archivo de clave
+  tunnel_password: Contraseña del bastión
+  tunnel_passphrase: Frase de la clave
+  tunnel_remote: Base de datos
+  tunnel_hint: La base de datos se nombra tal como la ve el bastión. rudbman abre un puerto local libre y conecta el controlador a ese puerto.
+
+  test: Probar
+  testing: Conectando…
+  test_ok: "Conectado a %{product}."
+  test_ok_unnamed: La conexión funciona.
+  test_failed: "No se pudo conectar: %{error}"
+  test_failed_hint: "No se pudo conectar: %{error} — %{hint}"
+  connect: Conectar
+  saved: Guardado.
+
+  name_required: Dale un nombre a la conexión.
+  url_required: La conexión no tiene URL.
+  no_driver: "No hay ninguna definición de controlador llamada «%{driver}»."
+  load_failed: "No se pudieron leer las conexiones guardadas: %{error}"
+  save_failed: "No se pudieron guardar las conexiones: %{error}"
+  keychain_failed: "No se pudo guardar la contraseña en el llavero: %{error}"
+
+  hint_auth: revisa el usuario y la contraseña
+  hint_driver: revisa el JAR y la clase del controlador
+  hint_jvm: rudbman necesita un entorno Java; define RUDBMAN_JAVA_HOME o JAVA_HOME
+  hint_network: revisa el servidor, el puerto y si la base de datos es alcanzable
+  hint_host_key: la clave de host del bastión aún no es de confianza
+
+  host_key_question: "%{host} presentó una clave %{algorithm} desconocida: %{fingerprint}"
+  trust_host_key: Confiar en esta clave
+  host_key_trusted: La clave de host se añadió a la lista de confianza. Vuelve a conectar.
+
+# El gestor de controladores.
+driver:
+  title: Controladores
+  name: Nombre
+  class: Clase del controlador
+  class_hint: El nombre de clase completo, tal como lo da la documentación del controlador — por ejemplo org.postgresql.Driver.
+  url_template: Plantilla de URL
+  default_port: Puerto por omisión
+  dialect: Dialecto
+  maven: Coordenada Maven
+  jars: Archivos JAR
+  add_jar: Añadir un JAR…
+  add_jar_select: Añadir
+  remove_jar: Quitar
+  jar_missing: no está
+  no_jar: sin JAR
+  no_jar_hint: Un controlador necesita al menos un JAR antes de que una conexión pueda usarlo.
+  jar_count: "%{count} JAR"
+  download: Descargar
+  downloading: "Descargando %{file}…"
+  downloading_percent: "Descargando %{file} — %{percent} %"
+  downloaded: "Se descargó y añadió %{file}."
+  download_cancelled: Se canceló la descarga.
+  bad_coordinate: "«%{coordinate}» no es una coordenada group:artifact:version."
+  not_found: "Maven Central no tiene nada en %{url}."
+  network_failed: "La descarga falló: %{error}"
+  checksum_failed: "La descarga está corrupta: se esperaba SHA-1 %{expected} y llegó %{actual}."
+  load_failed: "No se pudieron leer las definiciones de controlador: %{error}"
+  save_failed: "No se pudieron guardar las definiciones de controlador: %{error}"
+  new: Nuevo
+  new_name: Controlador nuevo
+  delete: Eliminar
+  delete_confirm: "¿Eliminar la definición de controlador «%{name}»?"
+  none_selected: Elige un controlador o añade uno.

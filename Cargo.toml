@@ -65,6 +65,18 @@ bitflags = "2"
 tempfile = "3"
 libc = "0.2"
 
+# --- HTTP: the driver downloader, and nothing else ---
+# Maven Central is the only host rudbman ever fetches from, and it is fetched
+# from a background thread that is already blocking on a file write — so a
+# synchronous client is the right shape and an async runtime would be a second
+# one beside the tunnel's. `ureq` is the smallest such client that still speaks
+# TLS. `rustls` is pinned to the `ring` provider for the same reason `russh` is:
+# `aws-lc-rs` needs NASM to build on Windows.
+ureq = { version = "3", default-features = false, features = [
+    "rustls",
+    "_ring",
+] }
+
 # --- localization ---
 # `rust-i18n` compiles `crates/rudbman-app/locales/*.yml` into the binary, so
 # there is no runtime asset to ship; `sys-locale` is only consulted when the

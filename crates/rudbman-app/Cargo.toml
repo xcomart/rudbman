@@ -30,7 +30,26 @@ raw-window-handle.workspace = true
 
 [dependencies]
 rudbman-core.workspace = true
+rudbman-jdbc.workspace = true
+rudbman-ssh.workspace = true
 rudbman-ui.workspace = true
+
+# The connection orchestrator runs on a background thread and reports back to
+# the window through a one-shot channel, which is what lets a tunnel that dies
+# under a live session reach the tab that has to be marked dead.
+futures.workspace = true
+# The host key verifier the tunnel calls back into is an async trait object.
+async-trait.workspace = true
+# Guards the tunnel pool, which is reached from every connect thread at once.
+parking_lot.workspace = true
+# Only for `russh::keys::PublicKey`, which `rudbman-ssh`'s `HostKeyVerifier`
+# takes and does not re-export. Pinned to the same features as `rudbman-ssh`
+# declares, so the union stays on the `ring` backend.
+russh.workspace = true
+# Profile and driver identifiers.
+uuid.workspace = true
+# The driver downloader; see the note beside it in the workspace manifest.
+ureq.workspace = true
 
 # The theme editor's catalogue hands file writes and deletions straight back
 # from `rudbman-ui::theme_store`, which reports them as `anyhow::Result`.
@@ -52,3 +71,6 @@ gpui = { workspace = true, features = ["test-support"] }
 # The window-geometry round trip writes a real `settings.json` and reads it
 # back, rather than mocking the configuration directory out.
 tempfile.workspace = true
+# The connection tests build bridge error envelopes from the JSON the bridge
+# actually sends, rather than from a constructor `rudbman-jdbc` does not offer.
+serde_json.workspace = true
