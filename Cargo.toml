@@ -1,0 +1,110 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# `vendor/gpui` is a patched dependency, not a member: it keeps its own
+# manifest and must not inherit workspace settings.
+exclude = ["vendor/gpui"]
+
+# The vendored gpui carries logman's patches, byte for byte. They are marked
+# `LOGMAN PATCH` and must keep that marker: the two vendored trees are meant to
+# stay identical so a fix found in either project can be moved across with a
+# plain `diff`. Six sites, and every one of them is a crash or a hang:
+#
+#   * `platform/windows/platform.rs` + `platform/windows/events.rs` — gpui's
+#     Windows message loop never calls `TranslateMessage`; it fabricates a
+#     `MSG` and translates it re-entrantly from inside the window procedure.
+#     TSF depends on the documented loop order, and the violation leaves CTF
+#     regenerating `WM_IME_COMPOSITION` forever from inside a `GetMessageW`
+#     callback — the process pins a core at 100% and never recovers. Korean IME
+#     reaches it by ending a composition mid-word (the Han/Yeong key) and
+#     typing on.
+#   * `platform/linux/x11/client.rs` — the WM_DELETE_WINDOW close callback ran
+#     while the client `RefCell` was held, so an app that quits from its
+#     window-closed observer re-entered the borrow and panicked on every close
+#     of the last window.
+#   * `platform/linux/x11/window.rs` — `request_decorations` invoked the
+#     appearance-changed callback synchronously while `handle_input` held the
+#     window callbacks `RefCell`; `is_transparent` ignored client-side
+#     decorations, so the shadow band composited as solid black; and the X11
+#     backend had no counterpart to Wayland's `org_kde_kwin_blur`, so
+#     `update_blur_region` now keeps KWin's `_KDE_NET_WM_BLUR_BEHIND_REGION` in
+#     step with the window.
+#   * `taffy.rs` — explicit `f32` suffixes where bare literals relied on
+#     inference that a newer rustc no longer performs.
+#
+# crates.io has no newer gpui (0.2.2 is current), so vendoring is the only
+# route. Delete these patches and `vendor/gpui` once a release carries them.
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["rudbman contributors"]
+repository = "https://github.com/xcomart/rudbman"
+
+[workspace.dependencies]
+# --- shared utilities ---
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+directories = "6"
+keyring = "4"
+parking_lot = "0.12"
+smallvec = "1"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+futures = "0.3"
+async-trait = "0.1"
+bitflags = "2"
+tempfile = "3"
+libc = "0.2"
+
+# --- localization ---
+# `rust-i18n` compiles `crates/rudbman-app/locales/*.yml` into the binary, so
+# there is no runtime asset to ship; `sys-locale` is only consulted when the
+# user has not pinned a language in `settings.json`.
+rust-i18n = "4"
+sys-locale = "0.3"
+
+# --- GUI: Zed's GPU-accelerated UI framework ---
+gpui = "0.2.2"
+
+# --- platform window chrome ---
+# All four are used by `rudbman-app` alone, and every one of them only under a
+# `[target.'cfg(...)']` section, so a build for another platform never sees
+# them.
+#
+# `winresource` embeds `assets/icon.ico` into the Windows executable at
+# resource ID 1, which is the id gpui's Windows backend loads for the window
+# class icon. `windows` and `objc` are what `src/caption.rs` pins the native
+# caption to the app theme with; both are pinned to the version gpui already
+# links (0.61 and 0.2 respectively) so the bindings and the Objective-C runtime
+# shim are shared rather than duplicated in the tree. `raw-window-handle` is how
+# gpui hands out the `HWND` and the `NSView` those two need.
+winresource = "0.1"
+windows = { version = "0.61", features = ["Win32_Graphics_Dwm"] }
+raw-window-handle = "0.6"
+objc = "0.2"
+
+# --- internal crates ---
+rudbman-core = { path = "crates/rudbman-core" }
+rudbman-ui = { path = "crates/rudbman-ui" }
+rudbman-app = { path = "crates/rudbman-app" }
+
+[profile.dev]
+# gpui + its dependency tree is large; keep debug builds usable.
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
