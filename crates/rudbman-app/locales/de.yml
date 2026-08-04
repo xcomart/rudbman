@@ -1,0 +1,41 @@
+# Deutsche Übersetzung. Die Schlüsselstruktur entspricht der von en.yml.
+_version: 1
+
+language:
+  name: Deutsch
+
+common:
+  cancel: Abbrechen
+  save: Speichern
+  close: Schließen
+
+menu:
+  new_connection: Neue Verbindung…
+  settings: Einstellungen…
+  about: Über rudbman
+  quit: Beenden
+  connection: Verbindung
+  tip_menu: Menü
+  mac:
+    new_connection: Neue Verbindung…
+    quit: rudbman beenden
+
+tab:
+  close: Verbindung schließen
+  tip_list: Alle Verbindungen
+  tip_new: "Neue Verbindung (%{shortcut})"
+
+empty:
+  title: Keine Verbindungen
+  hint: Legen Sie eine Verbindung an, um eine Datenbank zu durchsuchen und SQL auszuführen.
+
+statusbar:
+  no_connection: keine Verbindung
+  idle: bereit
+
+about:
+  title: Über rudbman
+  version: "Version %{version}"
+  tagline: Ein Datenbankwerkzeug, das JDBC-Treiber über JNI einbindet und seine Oberfläche mit gpui zeichnet.
+  license: "Lizenziert unter %{license}."
+  credits: Erstellt mit gpui 0.2.2 (eingebunden und gepatcht).

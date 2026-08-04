@@ -1,0 +1,47 @@
+[package]
+name = "rudbman-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "rudbman"
+path = "src/main.rs"
+
+# Embeds assets/icon.ico into the Windows executable. gpui loads icon
+# resource ID 1 for the window class, so one embedded icon covers Explorer,
+# the taskbar and the window itself. The icon is still logman's, on loan; see
+# `assets/README.md`.
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
+
+# Used only by `src/caption.rs`, to colour the DWM title bar from the app theme.
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+raw-window-handle.workspace = true
+
+# Used only by `src/caption.rs`, to pin the AppKit title bar to the app theme.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc.workspace = true
+raw-window-handle.workspace = true
+
+[dependencies]
+rudbman-core.workspace = true
+rudbman-ui.workspace = true
+
+gpui.workspace = true
+log.workspace = true
+env_logger.workspace = true
+rust-i18n.workspace = true
+sys-locale.workspace = true
+
+[dev-dependencies]
+# gpui's headless test platform, for the behaviour that only exists once an
+# element tree has been laid out. Test-only: the binary links gpui without it.
+gpui = { workspace = true, features = ["test-support"] }
+# The window-geometry round trip writes a real `settings.json` and reads it
+# back, rather than mocking the configuration directory out.
+tempfile.workspace = true

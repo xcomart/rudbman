@@ -1,0 +1,41 @@
+# Traduction française. La structure des clés est identique à celle de en.yml.
+_version: 1
+
+language:
+  name: Français
+
+common:
+  cancel: Annuler
+  save: Enregistrer
+  close: Fermer
+
+menu:
+  new_connection: Nouvelle connexion…
+  settings: Préférences…
+  about: À propos de rudbman
+  quit: Quitter
+  connection: Connexion
+  tip_menu: Menu
+  mac:
+    new_connection: Nouvelle connexion…
+    quit: Quitter rudbman
+
+tab:
+  close: Fermer la connexion
+  tip_list: Toutes les connexions
+  tip_new: "Nouvelle connexion (%{shortcut})"
+
+empty:
+  title: Aucune connexion
+  hint: Ajoutez une connexion pour explorer une base de données et y exécuter du SQL.
+
+statusbar:
+  no_connection: aucune connexion
+  idle: inactif
+
+about:
+  title: À propos de rudbman
+  version: "Version %{version}"
+  tagline: Un outil de bases de données qui enveloppe les pilotes JDBC via JNI et dessine son interface avec gpui.
+  license: "Distribué sous licence %{license}."
+  credits: Construit avec gpui 0.2.2 (intégré et corrigé).

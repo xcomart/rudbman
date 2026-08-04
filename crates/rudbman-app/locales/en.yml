@@ -1,0 +1,78 @@
+# Interface strings, compiled into the binary by `rust_i18n::i18n!` in
+# `src/main.rs`. This file is the source of truth: every other locale mirrors
+# its keys, and a key missing from a translation falls back to the value here.
+#
+# Not translated anywhere, on purpose: the "rudbman" wordmark itself, element
+# ids, gpui key names, theme ids, the licence identifier, and the `Cmd`/`Ctrl`
+# modifier names.
+#
+# This is the M0 set: the application shell and nothing that is not on screen
+# yet. The connection dialog, the settings dialog, the explorer tree and the
+# result grid bring their own namespaces as they arrive.
+_version: 1
+
+# What this language calls itself, for the settings dialog's language list.
+# Written in the language of this file and never translated into another one:
+# a user who has landed in a language they cannot read has to be able to find
+# their own in the list. Every locale file must define it — the list of shipped
+# languages is derived from these files, and this key is what names each entry.
+language:
+  name: English
+
+# Shared by more than one dialog.
+common:
+  cancel: Cancel
+  save: Save
+  close: Close
+
+# The in-app dropdown menu, and the macOS menu bar below it. The two differ
+# only in capitalisation in English, but a translation may need to distinguish
+# them, so they are separate keys.
+#
+# An ellipsis marks a row that asks something before it acts, which is every
+# row here except "About" and "Quit".
+menu:
+  new_connection: New connection…
+  settings: Settings…
+  about: About rudbman
+  quit: Quit
+  # Name of the macOS menu bar's second menu, the one holding the commands that
+  # act on connections.
+  connection: Connection
+  # Hover label of the button that opens this menu. Named after the menu it
+  # opens rather than described, the way the tab strip's own buttons are.
+  tip_menu: Menu
+  mac:
+    new_connection: New Connection…
+    quit: Quit rudbman
+
+# The tab strip in the title bar. One tab per open connection.
+tab:
+  close: Close connection
+  # Hover labels for the two buttons at the end of the strip. The close button
+  # on each tab reuses `close` above: same command, same wording.
+  tip_list: All connections
+  tip_new: "New connection (%{shortcut})"
+
+# The placeholder shown in a pane that has nothing in it yet, which in M0 is
+# every pane: the shell opens with one empty pane and no way to fill it until
+# the connection dialog exists.
+empty:
+  title: No connections
+  hint: Add a connection to browse a database and run SQL against it.
+
+# The bar along the bottom of the window. It reports the connection, the
+# transaction state, the row count and the elapsed time of the last statement;
+# in M0 there is a connection cell and nothing to put in the others.
+statusbar:
+  no_connection: no connection
+  idle: idle
+
+# The about box. The version, the licence name and the names of the libraries
+# are values, not words, and are never translated.
+about:
+  title: About rudbman
+  version: "Version %{version}"
+  tagline: A database workbench that wraps JDBC drivers in JNI and draws its interface with gpui.
+  license: "Licensed under %{license}."
+  credits: Built with gpui 0.2.2 (vendored and patched).

@@ -1,0 +1,41 @@
+# 한국어 번역. 키 구조는 en.yml을 그대로 따른다.
+_version: 1
+
+language:
+  name: 한국어
+
+common:
+  cancel: 취소
+  save: 저장
+  close: 닫기
+
+menu:
+  new_connection: 새 연결…
+  settings: 설정…
+  about: rudbman 정보
+  quit: 종료
+  connection: 연결
+  tip_menu: 메뉴
+  mac:
+    new_connection: 새 연결…
+    quit: rudbman 종료
+
+tab:
+  close: 연결 닫기
+  tip_list: 모든 연결
+  tip_new: "새 연결 (%{shortcut})"
+
+empty:
+  title: 연결이 없습니다
+  hint: 연결을 추가하면 데이터베이스를 탐색하고 SQL을 실행할 수 있습니다.
+
+statusbar:
+  no_connection: 연결 없음
+  idle: 대기 중
+
+about:
+  title: rudbman 정보
+  version: "버전 %{version}"
+  tagline: JDBC 드라이버를 JNI로 감싸고 gpui로 화면을 그리는 데이터베이스 작업 도구입니다.
+  license: "%{license} 라이선스로 배포됩니다."
+  credits: gpui 0.2.2(벤더링 및 패치)로 만들었습니다.

@@ -1,0 +1,41 @@
+# 日本語訳。キー構成は en.yml と同じ。
+_version: 1
+
+language:
+  name: 日本語
+
+common:
+  cancel: キャンセル
+  save: 保存
+  close: 閉じる
+
+menu:
+  new_connection: 新規接続…
+  settings: 設定…
+  about: rudbman について
+  quit: 終了
+  connection: 接続
+  tip_menu: メニュー
+  mac:
+    new_connection: 新規接続…
+    quit: rudbman を終了
+
+tab:
+  close: 接続を閉じる
+  tip_list: すべての接続
+  tip_new: "新規接続 (%{shortcut})"
+
+empty:
+  title: 接続がありません
+  hint: 接続を追加すると、データベースの参照と SQL の実行ができます。
+
+statusbar:
+  no_connection: 接続なし
+  idle: 待機中
+
+about:
+  title: rudbman について
+  version: "バージョン %{version}"
+  tagline: JDBC ドライバーを JNI で包み、gpui で画面を描くデータベース作業ツールです。
+  license: "%{license} ライセンスで配布されています。"
+  credits: gpui 0.2.2（ベンダリングとパッチ適用）で構築されています。

@@ -1,0 +1,41 @@
+# 简体中文翻译。键结构与 en.yml 完全一致。
+_version: 1
+
+language:
+  name: 简体中文
+
+common:
+  cancel: 取消
+  save: 保存
+  close: 关闭
+
+menu:
+  new_connection: 新建连接…
+  settings: 设置…
+  about: 关于 rudbman
+  quit: 退出
+  connection: 连接
+  tip_menu: 菜单
+  mac:
+    new_connection: 新建连接…
+    quit: 退出 rudbman
+
+tab:
+  close: 关闭连接
+  tip_list: 所有连接
+  tip_new: "新建连接 (%{shortcut})"
+
+empty:
+  title: 暂无连接
+  hint: 添加一个连接，即可浏览数据库并执行 SQL。
+
+statusbar:
+  no_connection: 无连接
+  idle: 空闲
+
+about:
+  title: 关于 rudbman
+  version: "版本 %{version}"
+  tagline: 一款用 JNI 封装 JDBC 驱动、并以 gpui 绘制界面的数据库工具。
+  license: "以 %{license} 许可证发布。"
+  credits: 基于 gpui 0.2.2（已内置并打补丁）构建。

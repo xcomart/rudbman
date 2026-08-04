@@ -1,0 +1,41 @@
+# Русский перевод. Структура ключей повторяет en.yml.
+_version: 1
+
+language:
+  name: Русский
+
+common:
+  cancel: Отмена
+  save: Сохранить
+  close: Закрыть
+
+menu:
+  new_connection: Новое подключение…
+  settings: Настройки…
+  about: О программе rudbman
+  quit: Выход
+  connection: Подключение
+  tip_menu: Меню
+  mac:
+    new_connection: Новое подключение…
+    quit: Завершить rudbman
+
+tab:
+  close: Закрыть подключение
+  tip_list: Все подключения
+  tip_new: "Новое подключение (%{shortcut})"
+
+empty:
+  title: Нет подключений
+  hint: Добавьте подключение, чтобы просматривать базу данных и выполнять SQL.
+
+statusbar:
+  no_connection: нет подключения
+  idle: ожидание
+
+about:
+  title: О программе rudbman
+  version: "Версия %{version}"
+  tagline: "Инструмент для работы с базами данных: драйверы JDBC подключаются через JNI, интерфейс нарисован на gpui."
+  license: "Распространяется по лицензии %{license}."
+  credits: Собран на основе gpui 0.2.2 (встроенного и пропатченного).
