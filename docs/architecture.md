@@ -214,11 +214,11 @@ Rust는 `jmethodID` 하나만 캐시한다. Java 쪽은 모든 본문을 try/cat
 | `0x03` | `PING` | session | — | — | JSON `{ok, elapsed_ms}` |
 | `0x04` | `SESSION_INFO` | session | — | — | JSON DB 제품·버전·기능 플래그 |
 | `0x10` | `DESCRIBE` | session | — | JSON `{kind, …}` | JSON |
-| `0x20` | `EXECUTE` | session | — | JSON `{sql, params, fetch_size, max_rows, timeout_s}` | JSON `{cursor, columns[], update_count, may_have_more}` |
+| `0x20` | `EXECUTE` | session | — | JSON `{sql, params, fetch_size, max_rows, timeout_s}` | JSON `{cursor, columns[], update_count, has_result_set, has_more}` |
 | `0x21` | `FETCH` | cursor | 최대 행 수 | — | **바이너리 배치** (§4.6) |
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, `EXECUTE`와 동형 |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
-| `0x24` | `CANCEL` | session | — | — | — |
+| `0x24` | `CANCEL` | session | — | — | JSON `{cancelled}` |
 | `0x25` | `LOB_READ` | cursor | — | JSON `{lob_id, offset, len}` | 바이너리 |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
@@ -240,14 +240,16 @@ Rust는 `jmethodID` 하나만 캐시한다. Java 쪽은 모든 본문을 try/cat
 답한다. **"unknown"과 구별되어야 한다** — 전자는 기다리면 되는 것이고 후자는 양쪽
 표가 어긋났다는 뜻이다.
 
-#### `may_have_more`는 힌트다
+#### `has_more`는 힌트다
 
 JDBC에는 비파괴적 예견(lookahead)이 없다. 현재 결과를 소비하지 않고 다음 결과가
-있는지 알 방법이 **없다.** 그래서 이 필드는 "`MORE_RESULTS`가 무언가를 돌려줄 수도
-있다"는 보수적 힌트일 뿐이다.
+있는지 알 방법이 **없다.** 그래서 와이어의 `has_more`는 이름과 달리
+"`MORE_RESULTS`가 무언가를 돌려줄 수도 있다"는 보수적 힌트일 뿐이다. Rust 쪽은
+그래서 이 필드를 `may_have_more`로 이름 붙여 읽는다 — 이름이 보장을 약속하면
+호출자가 믿게 된다.
 
-**Rust는 단일 값을 믿지 말고 `false`가 나올 때까지 반복하라.** 소진은 다음 세 가지가
-동시에 성립하는 응답이다: `may_have_more: false`, `update_count: -1`, `columns` 없음.
+**단일 값을 믿지 말고 `false`가 나올 때까지 반복하라.** 소진은 다음 세 가지가
+동시에 성립하는 응답이다: `has_more: false`, `update_count: -1`, `columns` 없음.
 
 #### `EXECUTE`의 `params`
 
