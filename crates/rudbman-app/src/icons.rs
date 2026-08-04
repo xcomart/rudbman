@@ -82,10 +82,9 @@ pub const WINDOW_CLOSE: &str = "icons/window-close.svg";
 /// other icon in the row, so it holds its contrast in a light and a dark theme
 /// both.
 ///
-/// **Placeholder.** The mark it draws is logman's prompt chevron, on loan until
-/// rudbman has artwork of its own; it has to be redrawn in the same pass as
-/// `assets/icon.svg`, or the title bar and the desktop icon will stop agreeing.
-/// See `assets/README.md`.
+/// It draws the shipped icon's database cylinder as a monochrome outline. The
+/// two marks have to be redrawn together — this one and `assets/icon.svg` — or
+/// the title bar and the desktop icon stop agreeing. See `assets/README.md`.
 pub const LOGO: &str = "icons/logo.svg";
 
 /// Every icon, paired with the bytes [`Icons`] hands back for it.

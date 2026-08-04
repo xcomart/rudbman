@@ -1,16 +1,52 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <!--
-    logman app icon.
+    rudbman app icon.
 
-    A terminal prompt on a One Dark tile, in the application's own palette:
-    the chevron in accent blue (#61afef), the cursor in green (#98c379), and
-    the small dot echoing the "connected" status dot in the tab strip.
-    Master file; assets/icon.ico is rasterized from this.
+    A database cylinder with a gold cap, on a One Dark tile.
+
+    One subject, filling the tile. 16 px is where this is judged — a taskbar
+    and a window list are what an app icon is mostly seen in — and at that
+    size an icon has room for exactly one shape. The stacked-disc cylinder is
+    the drawing every developer already reads as "database" without a legend,
+    so it gets the whole tile and nothing is set beside it.
+
+    The colours are the application's own, from `crates/rudbman-ui/src/
+    theme.rs`. The body is `accent` (#61afef), shaded toward #4189c8 so the
+    solid reads as lit from above. The cap is `grid_pk` (#e5c07b), the gold
+    the grid marks primary keys with: a primary key is what identifies a row
+    and what every relation in a schema hangs off, so a cylinder wearing that
+    gold says *keyed store* in this program's own vocabulary. It is also what
+    sets the icon apart from the rest of its category, which is a shelf of
+    blue cylinders.
+
+    Not green, though green is in the palette and the sibling app uses it:
+    `theme.rs` binds green to `success`. It already means "that worked"
+    everywhere in the UI, and a colour cannot be both a transient state and
+    the application's name. Gold carries no status meaning here.
+
+    The second colour is inside the silhouette rather than beside it. A
+    second *shape* would have to be given its own room and would break the
+    mark into two masses at 16 px; the cap is the end of the solid, so there
+    is no seam and the mark stays one object. Gold over blue also keeps a
+    brightness step between the two, which is what a hue change alone cannot
+    do — the cap stays the lit end and does not read as a separate chip.
+
+    The tile, its gradient and its border are shared with logman, deliberately:
+    the two are the same author's tools and wear the same plate.
+
+    Master file. `assets/icon-128.png`, `icon-256.png`, `icon.ico` and
+    `icon.icns` are all rasterised from this one by `assets/render.py`, each
+    size drawn from the vector rather than scaled down from a larger bitmap.
+    Edit this, then re-run that script; do not edit the raster files.
   -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#262b33"/>
       <stop offset="1" stop-color="#1b1f24"/>
+    </linearGradient>
+    <linearGradient id="barrel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#61afef"/>
+      <stop offset="1" stop-color="#4189c8"/>
     </linearGradient>
   </defs>
 
@@ -19,15 +55,20 @@
   <rect x="11" y="11" width="234" height="234" rx="53" fill="none"
         stroke="#4b5263" stroke-opacity="0.55" stroke-width="4"/>
 
-  <!-- prompt chevron -->
-  <path d="M 74 88 L 124 128 L 74 168" fill="none" stroke="#61afef"
-        stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- cylinder body: straight sides closed by the bottom half-ellipse -->
+  <path d="M 64 72 L 64 184 A 64 24 0 0 0 192 184 L 192 72 Z"
+        fill="url(#barrel)"/>
 
-  <!-- block cursor -->
-  <rect x="140" y="150" width="58" height="22" rx="10" fill="#98c379"/>
+  <!-- the cap, in the grid's primary-key gold -->
+  <ellipse cx="128" cy="72" rx="64" ry="24" fill="#e5c07b"/>
 
-  <!-- connected-session dot, same green as the tab status dot -->
-  <circle cx="194" cy="64" r="13" fill="#98c379"/>
-  <circle cx="194" cy="64" r="13" fill="none" stroke="#1b1f24"
-          stroke-opacity="0.35" stroke-width="3"/>
+  <!--
+    Two grooves. Drawn in the tile's own dark and translucent, so they read as
+    shadow rather than as a third colour; below about 24 px they dissolve into
+    the barrel instead of breaking it into stripes.
+  -->
+  <path d="M 64 114 A 64 24 0 0 0 192 114" fill="none"
+        stroke="#1b1f24" stroke-opacity="0.34" stroke-width="9"/>
+  <path d="M 64 152 A 64 24 0 0 0 192 152" fill="none"
+        stroke="#1b1f24" stroke-opacity="0.34" stroke-width="9"/>
 </svg>
