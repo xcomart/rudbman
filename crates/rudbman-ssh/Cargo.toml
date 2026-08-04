@@ -1,0 +1,28 @@
+[package]
+name = "rudbman-ssh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The only rudbman crate this one knows. In particular it does *not* know
+# `rudbman-jdbc`: a tunnel hands out a local port, and what connects to that
+# port is none of its business (architecture document, §3.1).
+rudbman-core.workspace = true
+
+async-trait.workspace = true
+futures.workspace = true
+log.workspace = true
+russh.workspace = true
+tokio.workspace = true
+
+# No dev-dependencies on purpose.
+#
+# The integration tests stand up a real russh server in-process, but `russh` is
+# *not* repeated below: it is already a normal dependency with the `ring`
+# backend pinned, and re-declaring it in `[dev-dependencies]` would union its
+# features back to the `aws-lc-rs` default, which needs NASM on Windows. For the
+# same reason the test server's host key is a checked-in throwaway PEM rather
+# than a freshly generated one — generating would pull `rand` into the tree.

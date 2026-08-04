@@ -92,9 +92,36 @@ windows = { version = "0.61", features = ["Win32_Graphics_Dwm"] }
 raw-window-handle = "0.6"
 objc = "0.2"
 
+# --- async runtime (SSH tunnel only) ---
+# The tunnel is the only thing here that speaks a network protocol of its own.
+# `net` and `io-util` carry the forwarded sockets, `sync` the shutdown signal;
+# there is no `fs`, because nothing this transport does touches a file.
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+] }
+
+# --- SSH.  NOTE: default features pull in `aws-lc-rs`, whose build requires
+# NASM on Windows.  The `ring` backend builds everywhere with no extra tooling. ---
+russh = { version = "0.62", default-features = false, features = [
+    "ring",
+    "flate2",
+    "rsa",
+] }
+
+# --- JNI: the JDBC bridge.  `invocation` is what lets the process create its
+# own JVM rather than be loaded into one. ---
+jni = { version = "0.22", features = ["invocation"] }
+
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }
 rudbman-ui = { path = "crates/rudbman-ui" }
+rudbman-ssh = { path = "crates/rudbman-ssh" }
+rudbman-jdbc = { path = "crates/rudbman-jdbc" }
 rudbman-app = { path = "crates/rudbman-app" }
 
 [profile.dev]
