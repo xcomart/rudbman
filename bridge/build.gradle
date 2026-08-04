@@ -1,0 +1,70 @@
+plugins {
+    id 'java'
+}
+
+group = 'comart.rudbman'
+version = '0.1.0'
+description = 'rudbman JDBC bridge'
+
+repositories {
+    mavenCentral()
+}
+
+// No toolchain block on purpose: toolchain resolution can try to provision a JDK
+// over the network. The build simply requires an ambient JDK 17+ and pins the
+// bytecode level with --release.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
+
+tasks.withType(Javadoc).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+dependencies {
+    // Gson is the only runtime dependency. Metadata values are arbitrary strings
+    // handed to us by drivers (table comments, vendor error messages, control
+    // characters) and a hand-rolled serializer gets the escaping wrong exactly
+    // there. Version pinned to the one jdbgen already uses.
+    implementation 'com.google.code.gson:gson:2.11.0'
+
+    testImplementation 'com.h2database:h2:2.3.232'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+// The JVM is booted with -Djava.class.path=<bridge.jar> and nothing else
+// (architecture.md 4.1), so Gson has to live inside the jar. A plain merge is
+// enough here; no shading plugin is pulled in for one 230KB dependency.
+jar {
+    archiveFileName = 'rudbman-bridge.jar'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    // The merged jar is an unnamed-module artifact; a stray module descriptor
+    // from a dependency would only confuse the module system.
+    exclude 'module-info.class'
+    exclude 'META-INF/versions/**/module-info.class'
+    manifest {
+        attributes(
+            'Implementation-Title': 'rudbman-bridge',
+            'Implementation-Version': project.version
+        )
+    }
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}

@@ -214,12 +214,12 @@ Rust는 `jmethodID` 하나만 캐시한다. Java 쪽은 모든 본문을 try/cat
 | `0x03` | `PING` | session | — | — | JSON `{ok, elapsed_ms}` |
 | `0x04` | `SESSION_INFO` | session | — | — | JSON DB 제품·버전·기능 플래그 |
 | `0x10` | `DESCRIBE` | session | — | JSON `{kind, …}` | JSON |
-| `0x20` | `EXECUTE` | session | — | JSON `{sql, params, fetch_size, max_rows, timeout_s}` | JSON `{cursor, columns[], update_count, has_more}` |
+| `0x20` | `EXECUTE` | session | — | JSON `{sql, params, fetch_size, max_rows, timeout_s}` | JSON `{cursor, columns[], update_count, may_have_more}` |
 | `0x21` | `FETCH` | cursor | 최대 행 수 | — | **바이너리 배치** (§4.6) |
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, `EXECUTE`와 동형 |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
 | `0x24` | `CANCEL` | session | — | — | — |
-| `0x25` | `LOB_READ` | cursor | — | JSON `{row, col, offset, len}` | 바이너리 |
+| `0x25` | `LOB_READ` | cursor | — | JSON `{lob_id, offset, len}` | 바이너리 |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
@@ -235,6 +235,35 @@ Rust는 `jmethodID` 하나만 캐시한다. Java 쪽은 모든 본문을 try/cat
 `DESCRIBE`가 요청 JSON으로 분기하는 이유: 메타데이터 종류는 앞으로 계속 늘어나고,
 그때마다 연산 코드를 늘리면 Rust와 Java의 표가 어긋난다. 메타데이터는 호출 빈도가
 낮으니 JSON 파싱 비용은 무시할 수 있다.
+
+아직 구현되지 않은 연산과 `kind`는 `kind: "protocol"` 오류로 **"not implemented"**를
+답한다. **"unknown"과 구별되어야 한다** — 전자는 기다리면 되는 것이고 후자는 양쪽
+표가 어긋났다는 뜻이다.
+
+#### `may_have_more`는 힌트다
+
+JDBC에는 비파괴적 예견(lookahead)이 없다. 현재 결과를 소비하지 않고 다음 결과가
+있는지 알 방법이 **없다.** 그래서 이 필드는 "`MORE_RESULTS`가 무언가를 돌려줄 수도
+있다"는 보수적 힌트일 뿐이다.
+
+**Rust는 단일 값을 믿지 말고 `false`가 나올 때까지 반복하라.** 소진은 다음 세 가지가
+동시에 성립하는 응답이다: `may_have_more: false`, `update_count: -1`, `columns` 없음.
+
+#### `EXECUTE`의 `params`
+
+바인딩 파라미터는 둘 중 한 형태다:
+
+```json
+"params": [42, "text", true, null,
+           {"type": "decimal",   "value": "123456789012.12345678"},
+           {"type": "timestamp", "value": "2026-08-04T09:30:00"},
+           {"type": "bytes",     "value": "<base64>"}]
+```
+
+맨 JSON 스칼라는 정수·문자열·불리언·null까지만 쓴다. `decimal`, `date`, `time`,
+`timestamp`, `bytes`는 **반드시 타입 형태로 보내라.** 이유는 §4.6이 반대 방향에
+대해 금지하는 것과 같다 — `DECIMAL(20,8)`을 JSON 숫자로 보내면 반올림되어 도착하고,
+그것은 되돌릴 수 없다.
 
 ### 4.5 응답 봉투
 
@@ -258,6 +287,10 @@ u8  tag       0 = OK, 1 = ERROR
 
 `sql_state`와 `vendor_code`가 있어야 UI가 "테이블 없음"과 "권한 없음"을 구별해
 다르게 안내할 수 있다. `stack`은 디버그 로그에만 쓰고 사용자에게 보이지 않는다.
+
+**`sql_state`는 전체 코드가 아니라 앞 두 자리(class)로 분기하라.** 표준을 지키는
+드라이버끼리도 하위 두 자리가 갈린다 — 테이블 없음은 H2가 `42S04`, 다른 드라이버는
+`42S02`다. 클래스 `42`(구문 오류 또는 접근 규칙 위반)까지가 믿을 수 있는 범위다.
 
 ### 4.6 결과 배치 바이너리 코덱 (`RDB1`)
 
@@ -296,7 +329,42 @@ Column := u8 kind | u32 payload_len | payload
 우측 정렬·NULL 표시·복사 포맷 같은 표현 결정은 논리 타입이 한다.
 
 LOB은 배치에 인라인하지 않는다. 100MB BLOB이 든 행을 스크롤했다고 100MB를
-JNI로 넘길 수는 없다. 셀을 열 때 `LOB_READ`로 청크 단위로 가져온다.
+JNI로 넘길 수는 없다. 셀을 열 때 `LOB_READ`로 청크 단위로 가져온다. **주소는
+`lob_id` 하나뿐이다** — 커서 위치와 무관한 불투명 식별자여야 한다. `{row, col}`로
+지정하면 결과 집합이 이미 지나간 행을 가리키게 된다.
+
+#### 코덱 규범 — 인코더와 디코더가 반드시 일치해야 하는 것
+
+명세가 열어 둔 지점들이다. 어긋나면 조용히 잘못된 데이터를 그린다.
+
+- **비트맵 비트 순서는 LSB 우선.** 행 `i` → 바이트 `i >> 3`, 비트 `i & 7`. 팩된
+  `BOOL` 값도 같다.
+- **유효성 비트맵은 언제나 존재한다.** `NULLS`(kind 0)도 전부 0인 비트맵을 싣고,
+  생략하는 것은 값 영역뿐이다.
+- **같은 열의 kind가 배치마다 달라질 수 있다.** 어떤 열이든 그 배치에서 전부 NULL
+  이면 `NULLS`로 축약된다. **디커더는 커서당 한 번이 아니라 배치마다 kind를 다시
+  읽어야 한다.** `EXECUTE` 응답의 `columns[].kind`는 힌트일 뿐이다.
+- **NULL 행도 고정 폭 값 영역에서 자리를 차지한다**(0으로 채움). 앞선 non-null
+  개수를 세는 rank 계산이 필요 없다.
+- **`STR`/`BIN`에서 NULL과 빈 문자열은 둘 다 길이 0 슬라이스다.** 구별하는 것은
+  비트맵뿐이다.
+- **`row_count == 0`이면 모든 열이 `NULLS`다.** `STR`이 `offsets[1]`을 요구하는
+  경계가 이렇게 사라진다.
+- **마지막 배치 플래그(bit0)는 드라이버가 행을 다 소진했을 때만 선다.** 배치가
+  요청한 최대 행 수를 정확히 채우면 `flags = 0`이고, 다음 `FETCH`가 0행 + bit0을
+  돌려준다.
+- **`payload_len`은 비트맵과 값 영역을 합한 길이다.**
+- **LOB `size`의 단위**는 이진 LOB이면 옥텟, 문자 LOB이면 문자다.
+  `0xFFFFFFFFFFFFFFFF`는 드라이버가 크기를 답하지 않았다는 뜻이다.
+
+#### 타입 매핑에서 판단이 들어간 곳
+
+- **`BIT`는 정밀도로 갈린다.** `≤1`이면 `BOOL`, 그보다 크면 `BIN` — MySQL의
+  `BIT(n)`은 바이트 문자열을 돌려준다.
+- **`LONGVARCHAR`/`LONGVARBINARY`는 `LOB`이 아니라 `STR`/`BIN`으로 인라인된다.**
+  MySQL의 `LONGTEXT`가 여기 걸리는 알려진 날카로운 모서리다.
+- **`REAL`은 `F64`로 실린다.** 32비트 float가 64비트로 넓혀지므로 Rust가 f32
+  정밀도로 표시하지 않으면 `0.1`이 `0.10000000149011612`로 보인다.
 
 ### 4.7 드라이버 격리
 
@@ -705,6 +773,14 @@ M3이 전체 작업량의 40% 안팎이다. M0~M3이 "쓸 만한 도구"의 최�
 5. **PNG 내보내기** — gpui 오프스크린 렌더 경로 확인 필요. SVG만으로 시작.
 6. **SSH 에이전트 전달과 점프 호스트 다단** — 배스천이 둘 이상 겹치는 환경이
    있다. M1은 단일 홉만 지원하고, 필요가 확인되면 확장한다.
+7. **LOB 재읽기 전략** — `lob_id`로 주소는 정해졌지만(§4.6), 대부분의 드라이버는
+   **행이 바뀌는 순간 `Blob`/`Clob` 핸들을 무효화한다.** 그리드가 500행을 가져온
+   뒤 사용자가 세 번째 행의 BLOB을 열면 그 핸들은 이미 죽어 있다. 후보:
+   (a) fetch 시점에 임시 파일로 흘려보내기 — 정확하지만 열지도 않을 LOB에 디스크를
+   쓴다, (b) 인라인 상한(4KB 정도)까지만 즉시 읽고 그 이상은 기본 키로 단일 행을
+   재질의 — 키 없는 결과 집합에서는 거부해야 한다, (c) 현재 배치에 한해서만 허용.
+   `LOB_READ`를 구현하는 M3에서 결정한다. 브리지는 이미 `lob_id → (행, 열, 크기,
+   이진 여부)`를 기록하고 있어 어느 쪽도 뒤에 붙일 수 있다.
 
 ---
 
