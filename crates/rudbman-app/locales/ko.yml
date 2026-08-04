@@ -86,6 +86,14 @@ settings:
     duplicate: 복제…
     edit: 편집…
     delete: 삭제
+    import: 가져오기…
+    export: 내보내기…
+    import_select: 가져오기
+    import_unreadable: "“%{file}”을(를) 읽지 못했습니다: %{error}"
+    import_not_a_theme: "“%{file}”은(는) 에디터 테마입니다. 에디터 테마에서 가져오세요."
+    import_not_an_editor_theme: "“%{file}”은(는) 인터페이스 테마입니다. 인터페이스 테마에서 가져오세요."
+    import_bad_color: "“%{file}”의 %{slot} 색을 쓸 수 없습니다."
+    import_skipped: "%{count}개 파일을 건너뛰었습니다."
     copy_name: "%{name} (복사본)"
     delete_theme_confirm: "테마 “%{name}”을(를) 삭제할까요?"
     delete_editor_theme_confirm: "에디터 테마 “%{name}”을(를) 삭제할까요?"

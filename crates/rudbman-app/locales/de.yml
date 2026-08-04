@@ -86,6 +86,14 @@ settings:
     duplicate: Duplizieren…
     edit: Bearbeiten…
     delete: Löschen
+    import: Importieren…
+    export: Exportieren…
+    import_select: Importieren
+    import_unreadable: "„%{file}“ konnte nicht gelesen werden: %{error}"
+    import_not_a_theme: "„%{file}“ ist ein Editor-Thema. Importieren Sie es unter „Editor-Thema“."
+    import_not_an_editor_theme: "„%{file}“ ist ein Oberflächen-Thema. Importieren Sie es unter „Oberflächen-Thema“."
+    import_bad_color: "„%{file}“ hat keine brauchbare Farbe für %{slot}."
+    import_skipped: "%{count} Dateien wurden übersprungen."
     copy_name: "%{name} (Kopie)"
     delete_theme_confirm: "Thema „%{name}“ löschen?"
     delete_editor_theme_confirm: "Editor-Thema „%{name}“ löschen?"

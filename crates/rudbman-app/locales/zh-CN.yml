@@ -86,6 +86,14 @@ settings:
     duplicate: 复制…
     edit: 编辑…
     delete: 删除
+    import: 导入…
+    export: 导出…
+    import_select: 导入
+    import_unreadable: "无法读取“%{file}”：%{error}"
+    import_not_a_theme: "“%{file}”是编辑器主题。请在“编辑器主题”中导入。"
+    import_not_an_editor_theme: "“%{file}”是界面主题。请在“界面主题”中导入。"
+    import_bad_color: "“%{file}”中%{slot}的颜色无法使用。"
+    import_skipped: "已跳过 %{count} 个文件。"
     copy_name: "%{name}（副本）"
     delete_theme_confirm: "要删除主题“%{name}”吗？"
     delete_editor_theme_confirm: "要删除编辑器主题“%{name}”吗？"

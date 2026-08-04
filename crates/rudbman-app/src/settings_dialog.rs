@@ -25,12 +25,13 @@
 //! re-entrantly in the first place; they are applied once, on save, from the
 //! shell's event handler.
 
+use std::path::{Path, PathBuf};
 use std::sync::Once;
 
 use gpui::{
     App, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement,
-    KeyBinding, KeyDownEvent, MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString,
-    Subscription, Window, actions, div, prelude::*, px,
+    KeyBinding, KeyDownEvent, MouseButton, MouseUpEvent, PathPromptOptions, Render, ScrollHandle,
+    SharedString, Subscription, Window, actions, div, prelude::*, px,
 };
 use rudbman_core::{AppSettings, TitlebarStyle};
 use rudbman_ui::{
@@ -196,10 +197,20 @@ enum Action {
     Edit,
     /// Remove the selected custom entry's file, once confirmed.
     Delete,
+    /// Read files the user picks into the catalogue's own directory.
+    Import,
+    /// Write the selected entry out to a file the user picks.
+    Export,
 }
 
-/// The three actions in the order they are drawn.
-const ACTIONS: [Action; 3] = [Action::Duplicate, Action::Edit, Action::Delete];
+/// The five actions in the order they are drawn.
+const ACTIONS: [Action; 5] = [
+    Action::Duplicate,
+    Action::Edit,
+    Action::Delete,
+    Action::Import,
+    Action::Export,
+];
 
 /// Element id fragment and tab offset of the confirmation's "cancel".
 const SLOT_CONFIRM_CANCEL: usize = 5;
@@ -215,6 +226,8 @@ impl Action {
             Self::Duplicate => 0,
             Self::Edit => 1,
             Self::Delete => 2,
+            Self::Import => 3,
+            Self::Export => 4,
         }
     }
 
@@ -224,6 +237,8 @@ impl Action {
             Self::Duplicate => ts!("settings.manage.duplicate"),
             Self::Edit => ts!("settings.manage.edit"),
             Self::Delete => ts!("settings.manage.delete"),
+            Self::Import => ts!("settings.manage.import"),
+            Self::Export => ts!("settings.manage.export"),
         }
     }
 
@@ -235,8 +250,12 @@ impl Action {
     /// or remove.
     fn enabled(self, known: bool, custom: bool) -> bool {
         match self {
-            Self::Duplicate => known,
+            // Exporting resolves the entry through the registry rather than off
+            // the disk, so a built-in one exports as readily as a custom one.
+            Self::Duplicate | Self::Export => known,
             Self::Edit | Self::Delete => custom,
+            // Importing does not look at the selection at all.
+            Self::Import => true,
         }
     }
 }
@@ -644,6 +663,8 @@ impl SettingsDialog {
                 self.actions_mut(catalog).confirming = true;
                 cx.notify();
             }
+            Action::Import => self.import(catalog, cx),
+            Action::Export => self.export(catalog, cx),
         }
     }
 
@@ -756,6 +777,158 @@ impl SettingsDialog {
         theme_store::reload(cx);
         self.select(catalog, catalog.default_id(), cx);
         cx.notify();
+    }
+
+    /// Asks the platform for theme files and installs what it hands back.
+    ///
+    /// The dialog is a platform call, and on X11 that is the call gpui was
+    /// patched over in the first place, so nothing here waits on it: the prompt
+    /// hands back a channel straight away, the click that started it returns,
+    /// and the answer is picked up on a task of its own. By the time
+    /// [`SettingsDialog::install`] runs, this update — and the borrow it holds
+    /// — is long over.
+    fn import(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some(ts!("settings.manage.import_select")),
+        });
+
+        cx.spawn(async move |dialog, cx| {
+            let chosen = match paths.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    log::warn!("the file picker could not be opened: {error:#}");
+                    return;
+                }
+            };
+            dialog
+                .update(cx, |dialog, cx| dialog.install(catalog, chosen, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Copies `paths` into the catalogue's directory, one file at a time.
+    ///
+    /// A file that is not a theme file of this kind is counted and skipped
+    /// rather than failing the batch: a user who picks a folder full of
+    /// palettes should get the ones that parse. Nothing is ever written over —
+    /// the id each file lands under comes from its own `name`, then from its
+    /// file name, and is suffixed until it is free, which is why `taken` grows
+    /// as the batch goes: two files that would both like to be `one-dark`
+    /// become `one-dark` and `one-dark-2`, and neither touches the `one-dark`
+    /// the user already had.
+    ///
+    /// When nothing at all could be installed the first refusal is what gets
+    /// reported, which is what makes picking a single file of the wrong kind
+    /// say so in as many words instead of counting to one.
+    fn install(&mut self, catalog: Catalog, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let mut taken = catalog.taken_ids(cx);
+        let mut installed = None;
+        let mut refused: Option<SharedString> = None;
+        let mut skipped = 0usize;
+
+        // Only the first refusal is kept; the rest are in the log. The count is
+        // what the user gets for the others, since a management row cannot hold
+        // one sentence per file without pushing the pickers off the dialog.
+        let refuse = |path: &Path, message: SharedString, first: &mut Option<SharedString>| {
+            log::warn!("skipping {}: {message}", path.display());
+            if first.is_none() {
+                *first = Some(message);
+            }
+        };
+
+        for path in &paths {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let file = match catalog.read(path) {
+                Ok(file) => file,
+                Err(err) => {
+                    refuse(path, err.message(name), &mut refused);
+                    skipped += 1;
+                    continue;
+                }
+            };
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default();
+            let id =
+                theme_store::unique_id(&[file.name(), stem], catalog.generated_id_prefix(), &taken);
+            if let Err(err) = file.save(&id) {
+                let message = ts!("settings.manage.write_failed", error = format!("{err:#}"));
+                refuse(path, message, &mut refused);
+                skipped += 1;
+                continue;
+            }
+            taken.push(id.clone());
+            installed = Some(id);
+        }
+
+        let Some(id) = installed else {
+            if let Some(message) = refused {
+                self.report(catalog, message, cx);
+            }
+            return;
+        };
+
+        theme_store::reload(cx);
+        if skipped > 0 {
+            self.actions_mut(catalog).status =
+                Some(ts!("settings.manage.import_skipped", count = skipped));
+        }
+        // The last one installed, so that picking a single file selects it —
+        // and so that a file which had to be renamed around a collision shows
+        // the user which entry it became.
+        self.select(catalog, id, cx);
+        cx.notify();
+    }
+
+    /// Writes the selected entry out to a file the user picks.
+    ///
+    /// Built-in entries included: the palette is resolved from the registry
+    /// rather than read off the disk, so exporting one is how a user gets a
+    /// starting point they can edit outside rudbman or hand to somebody else.
+    /// Whether an existing file may be replaced is the platform save dialog's
+    /// question, not ours.
+    ///
+    /// Asynchronous for the same reason [`SettingsDialog::import`] is, and the
+    /// file is collected *before* the prompt so the task owns everything it
+    /// needs and never has to reach back into the dialog except to complain.
+    fn export(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
+        let selection = self.selection(catalog);
+        let Some(file) = catalog.file_for(&selection, cx) else {
+            return;
+        };
+        let suggested = format!("{selection}.{}", theme_store::FILE_EXTENSION);
+        let prompt = cx.prompt_for_new_path(&export_directory(catalog), Some(&suggested));
+
+        cx.spawn(async move |dialog, cx| {
+            let path = match prompt.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    log::warn!("the save dialog could not be opened: {error:#}");
+                    return;
+                }
+            };
+            let Err(err) = file.write(&path) else {
+                return;
+            };
+            log::error!("could not write {}: {err:#}", path.display());
+            dialog
+                .update(cx, |dialog, cx| {
+                    let message = ts!("settings.manage.write_failed", error = format!("{err:#}"));
+                    dialog.report(catalog, message, cx);
+                })
+                .ok();
+        })
+        .detach();
     }
 
     /// Copy `settings` into every control.
@@ -1688,6 +1861,22 @@ fn section_of(tab_index: isize) -> usize {
     }
 }
 
+/// Where the export save dialog should open.
+///
+/// The catalogue's own directory, since that is where a file the user then
+/// wants rudbman to *load* has to end up — but only once it exists: a save
+/// dialog pointed at a directory that has never been created opens somewhere
+/// arbitrary on some platforms, so a user who has added no theme of their own
+/// yet gets their home directory instead.
+fn export_directory(catalog: Catalog) -> PathBuf {
+    catalog
+        .directory()
+        .ok()
+        .filter(|directory| directory.is_dir())
+        .or_else(|| directories::UserDirs::new().map(|dirs| dirs.home_dir().to_owned()))
+        .unwrap_or_default()
+}
+
 /// Wraps `body` in a titled card.
 fn section<E: IntoElement>(title: SharedString, cx: &App, body: E) -> impl IntoElement + use<E> {
     let chrome = theme(cx);
@@ -1971,6 +2160,8 @@ mod tests {
             ts!("settings.manage.delete_editor_theme_confirm", name = "X"),
             ts!("settings.manage.write_failed", error = "e"),
             ts!("settings.manage.delete_failed", error = "e"),
+            ts!("settings.manage.import_select"),
+            ts!("settings.manage.import_skipped", count = 2),
             ts!("settings.save_failed", error = "e"),
         ] {
             translated(label);
@@ -2006,11 +2197,18 @@ mod tests {
     fn only_a_custom_entry_may_be_edited_or_removed() {
         for action in ACTIONS {
             // Nothing at all is selected — a settings file naming a theme whose
-            // file has since gone — so nothing may be done to it.
-            assert!(!action.enabled(false, false), "{action:?}");
+            // file has since gone — so nothing may be done to it. Importing is
+            // the exception: it reads no selection, and it is the one way back
+            // out of exactly that state.
+            assert_eq!(
+                action.enabled(false, false),
+                action == Action::Import,
+                "{action:?}"
+            );
         }
-        // A built-in entry can be copied, but not rewritten.
+        // A built-in entry can be copied and exported, but not rewritten.
         assert!(Action::Duplicate.enabled(true, false));
+        assert!(Action::Export.enabled(true, false));
         assert!(!Action::Edit.enabled(true, false));
         assert!(!Action::Delete.enabled(true, false));
         assert!(Action::Edit.enabled(true, true));

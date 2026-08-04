@@ -86,6 +86,14 @@ settings:
     duplicate: Дублировать…
     edit: Изменить…
     delete: Удалить
+    import: Импорт…
+    export: Экспорт…
+    import_select: Импортировать
+    import_unreadable: "Не удалось прочитать «%{file}»: %{error}"
+    import_not_a_theme: "«%{file}» — это тема редактора. Импортируйте её в разделе «Тема редактора»."
+    import_not_an_editor_theme: "«%{file}» — это тема интерфейса. Импортируйте её в разделе «Тема интерфейса»."
+    import_bad_color: "В «%{file}» нет пригодного цвета для %{slot}."
+    import_skipped: "Пропущено файлов: %{count}."
     copy_name: "%{name} (копия)"
     delete_theme_confirm: "Удалить тему «%{name}»?"
     delete_editor_theme_confirm: "Удалить тему редактора «%{name}»?"

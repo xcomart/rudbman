@@ -31,8 +31,23 @@
 //! field means "derive it": the swatch then shows the derived colour, the
 //! placeholder spells its hex out, and a button beside the field puts a slot
 //! that has been given a colour back to automatic. A required slot has neither.
+//!
+//! # Files in and out
+//!
+//! [`Catalog`] also owns the two ends of the exchange the settings dialog's
+//! management row drives: [`Catalog::read`] turns a file the user picked
+//! anywhere on the disk into a [`CatalogFile`], and [`CatalogFile::write`] puts
+//! one back out anywhere. Reading is where this module is *stricter* than
+//! `rudbman-ui`'s loader: the loader is forgiving because a broken file in the
+//! configuration directory must not take the others down with it, whereas an
+//! import is a single deliberate act with a person waiting on the answer, and
+//! silently installing a theme with half its slots quietly substituted would be
+//! the worse outcome. Every refusal is an [`ImportError`], which carries a
+//! sentence the user can act on — above all "that is a file of the other kind",
+//! since the two formats look alike enough that picking the wrong row is the
+//! mistake most likely to be made.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use gpui::{
@@ -168,6 +183,92 @@ impl CatalogFile {
             Self::EditorTheme(file) => theme_store::save_editor_theme(id, file),
         }
     }
+
+    /// Writes the file to `path`, wherever on the disk that is.
+    ///
+    /// The counterpart of [`CatalogFile::save`], which decides the path itself
+    /// from an id: an export goes where the user pointed the save dialog, which
+    /// is usually somewhere rudbman will never read from again.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be serialized or cannot be written — a
+    /// directory that is gone, or one that is not writable.
+    pub fn write(&self, path: &Path) -> Result<()> {
+        match self {
+            Self::UiTheme(file) => theme_store::write_file(path, file.as_ref()),
+            Self::EditorTheme(file) => theme_store::write_file(path, file.as_ref()),
+        }
+    }
+
+    /// Refuses a file that parses but holds something which is not a colour.
+    ///
+    /// Checked against the very table the editor's fields are built from, so a
+    /// value the import accepts is one the editor would also let be saved
+    /// again. Only the first offending slot is reported: a hand-written file
+    /// with one typo is the common case, and listing nineteen slots would bury
+    /// it.
+    fn validate(&self) -> Result<(), ImportError> {
+        let (slots, values) = match self {
+            Self::UiTheme(file) => (ui_slots(), ui_values(&file.colors)),
+            Self::EditorTheme(file) => (editor_slots(), editor_values(&file.colors)),
+        };
+        for (slot, value) in slots.iter().zip(&values) {
+            if !valid_hex(value, slot.alpha, slot.optional) {
+                return Err(ImportError::BadColor(slot.label.clone()));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Why a file the user picked could not be imported.
+///
+/// A type rather than a bare [`anyhow::Error`] because the three cases read
+/// differently to the person who picked the file: one is "this is not a theme
+/// file", one is "this is a theme file, but of the other kind", and one is
+/// "this is a theme file of the right kind with a bad colour in it". Only the
+/// first has anything to gain from the underlying error text.
+#[derive(Debug)]
+pub enum ImportError {
+    /// The file could not be read, or does not parse as either format.
+    Unreadable(anyhow::Error),
+    /// It parses — as the catalogue named here, which is not the one it was
+    /// offered to.
+    WrongCatalog(Catalog),
+    /// A slot holds something that is not an `#RRGGBB` colour; the slot's own
+    /// label, already translated.
+    BadColor(SharedString),
+}
+
+impl ImportError {
+    /// The sentence shown under the management row, naming `file`.
+    ///
+    /// `file` is the file's name rather than its whole path: the path is
+    /// already in the log, and a management row is not wide enough to print one
+    /// without pushing everything else off the edge.
+    pub fn message(&self, file: &str) -> SharedString {
+        match self {
+            Self::Unreadable(error) => ts!(
+                "settings.manage.import_unreadable",
+                file = file,
+                error = format!("{error:#}")
+            ),
+            // Named by what the file *is*, not by where it was dropped: the
+            // user is being told which row to try instead.
+            Self::WrongCatalog(Catalog::EditorTheme) => {
+                ts!("settings.manage.import_not_a_theme", file = file)
+            }
+            Self::WrongCatalog(Catalog::UiTheme) => {
+                ts!("settings.manage.import_not_an_editor_theme", file = file)
+            }
+            Self::BadColor(slot) => ts!(
+                "settings.manage.import_bad_color",
+                file = file,
+                slot = slot.clone()
+            ),
+        }
+    }
 }
 
 impl Catalog {
@@ -203,6 +304,77 @@ impl Catalog {
     /// Every id already spoken for, which is what a new one has to dodge.
     pub fn taken_ids(self, cx: &App) -> Vec<String> {
         self.entries(cx).into_iter().map(|entry| entry.id).collect()
+    }
+
+    /// The other of the two catalogues.
+    ///
+    /// Used by the import to work out whether a file that would not parse is a
+    /// theme file after all, only of the other kind.
+    pub fn other(self) -> Self {
+        match self {
+            Self::UiTheme => Self::EditorTheme,
+            Self::EditorTheme => Self::UiTheme,
+        }
+    }
+
+    /// Directory this catalogue's user files live in.
+    ///
+    /// Not created by this call: a user who has added no theme of their own has
+    /// no such directory, and both callers cope with that.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no home directory can be determined for the current user.
+    pub fn directory(self) -> Result<PathBuf> {
+        match self {
+            Self::UiTheme => rudbman_core::ui_themes_dir(),
+            Self::EditorTheme => rudbman_core::editor_themes_dir(),
+        }
+    }
+
+    /// Parses `path` as one of this catalogue's files.
+    ///
+    /// The refusal is what this is for; see the module documentation. A file
+    /// that does not parse is tried once more against the *other* catalogue,
+    /// which costs one more read of a file already in the page cache and is the
+    /// difference between "this file is broken" and "this file belongs under the
+    /// other picker". The two formats can always be told apart because neither
+    /// one's required keys are a subset of the other's: a chrome palette has to
+    /// carry `surface`, an editor palette `foreground`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read, does not parse as either format,
+    /// parses as the other one, or holds a value that is not a colour.
+    pub fn read(self, path: &Path) -> Result<CatalogFile, ImportError> {
+        let parsed = match self {
+            Self::UiTheme => theme_store::read_file::<ThemeFile>(path)
+                .map(|file| CatalogFile::UiTheme(Box::new(file))),
+            Self::EditorTheme => theme_store::read_file::<EditorThemeFile>(path)
+                .map(|file| CatalogFile::EditorTheme(Box::new(file))),
+        };
+
+        let file = match parsed {
+            Ok(file) => file,
+            Err(_) if self.other().parses(path) => {
+                return Err(ImportError::WrongCatalog(self.other()));
+            }
+            Err(error) => return Err(ImportError::Unreadable(error)),
+        };
+        file.validate()?;
+        Ok(file)
+    }
+
+    /// Whether `path` parses as one of this catalogue's files.
+    ///
+    /// Only the shape is asked about; a file whose colours are nonsense still
+    /// answers `true`, because the question this exists to settle is which of
+    /// the two formats the user handed over.
+    fn parses(self, path: &Path) -> bool {
+        match self {
+            Self::UiTheme => theme_store::read_file::<ThemeFile>(path).is_ok(),
+            Self::EditorTheme => theme_store::read_file::<EditorThemeFile>(path).is_ok(),
+        }
     }
 
     /// Prefix of the ids made up for an entry whose name yields no slug.
@@ -1244,9 +1416,24 @@ impl Render for ThemeEditor {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use rudbman_ui::{EditorTheme, Theme};
 
     use super::*;
+
+    /// A chrome file worth round-tripping.
+    fn chrome_file() -> CatalogFile {
+        CatalogFile::UiTheme(Box::new(ThemeFile::from_theme("Mine", &Theme::dracula())))
+    }
+
+    /// An editor file worth round-tripping.
+    fn editor_file() -> CatalogFile {
+        CatalogFile::EditorTheme(Box::new(EditorThemeFile::from_theme(
+            "Mine",
+            &EditorTheme::one_dark(),
+        )))
+    }
 
     #[test]
     fn every_label_the_editor_draws_has_a_translation() {
@@ -1452,6 +1639,191 @@ mod tests {
     }
 
     #[test]
+    fn an_exported_file_reads_back_as_the_entry_it_came_from() {
+        // The whole point of the pair: what `Export` writes is what `Import`
+        // takes, for both catalogues and without a trip through the settings
+        // directory. A built-in is used on purpose — exporting one is how a
+        // user gets a starting point, so it has to survive the round trip.
+        let directory = tempfile::tempdir().expect("a temporary directory");
+
+        for original in [chrome_file(), editor_file()] {
+            let catalog = original.catalog();
+            let path = directory.path().join(format!("{catalog:?}.json"));
+            original.write(&path).expect("the export");
+
+            let read = catalog.read(&path).expect("the import");
+            assert_eq!(read.catalog(), catalog);
+            assert_eq!(read.name(), original.name());
+            match (&read, &original) {
+                (CatalogFile::UiTheme(read), CatalogFile::UiTheme(original)) => {
+                    assert_eq!(read, original);
+                }
+                (CatalogFile::EditorTheme(read), CatalogFile::EditorTheme(original)) => {
+                    assert_eq!(read, original);
+                }
+                _ => panic!("the round trip changed catalogue"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_of_the_other_catalogue_is_refused_by_name() {
+        // The refusal this module exists for: the two formats are close enough
+        // to look interchangeable, and installing half a theme because the
+        // absent keys defaulted would be the worst outcome of the two.
+        let directory = tempfile::tempdir().expect("a temporary directory");
+
+        for file in [chrome_file(), editor_file()] {
+            let wrong = file.catalog().other();
+            let path = directory.path().join("theme.json");
+            file.write(&path).expect("the export");
+
+            match wrong.read(&path) {
+                Err(ImportError::WrongCatalog(actual)) => assert_eq!(actual, file.catalog()),
+                other => panic!("{wrong:?} accepted a {:?} file: {other:?}", file.catalog()),
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_theme_at_all_is_refused_rather_than_panicking() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join("broken.json");
+
+        // Not JSON, valid JSON of the wrong shape, JSON that stops halfway, an
+        // empty file, and a path with nothing behind it at all.
+        for contents in [
+            "not json at all",
+            "[]",
+            "{\"name\": \"Mine\", \"colors\":",
+            "{}",
+            "",
+        ] {
+            fs::write(&path, contents).expect("the fixture");
+            for catalog in [Catalog::UiTheme, Catalog::EditorTheme] {
+                assert!(
+                    matches!(catalog.read(&path), Err(ImportError::Unreadable(_))),
+                    "{catalog:?} accepted {contents:?}"
+                );
+            }
+        }
+
+        let missing = directory.path().join("no-such-file.json");
+        assert!(matches!(
+            Catalog::UiTheme.read(&missing),
+            Err(ImportError::Unreadable(_))
+        ));
+    }
+
+    #[test]
+    fn a_slot_that_is_not_a_colour_is_refused_by_the_slot_it_belongs_to() {
+        // `ThemeFile::to_theme` would happily substitute its fallback here,
+        // which is right for a directory scan and wrong for one deliberate
+        // import: the user has to be told the file is not what it claims.
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join("theme.json");
+
+        let CatalogFile::UiTheme(mut chrome) = chrome_file() else {
+            unreachable!("a chrome file");
+        };
+        chrome.colors.accent = "rebeccapurple".to_string();
+        CatalogFile::UiTheme(chrome).write(&path).expect("write");
+        match Catalog::UiTheme.read(&path) {
+            Err(ImportError::BadColor(slot)) => {
+                assert_eq!(slot, ts!("settings.editor.slot.accent"));
+            }
+            other => panic!("accepted a colour that is not one: {other:?}"),
+        }
+
+        // An eighth digit on a slot that is never drawn translucent is refused
+        // by the same table the editor's fields are built from.
+        let CatalogFile::EditorTheme(mut editor) = editor_file() else {
+            unreachable!("an editor file");
+        };
+        editor.colors.keyword = "#11223344".to_string();
+        CatalogFile::EditorTheme(editor)
+            .write(&path)
+            .expect("write");
+        assert!(matches!(
+            Catalog::EditorTheme.read(&path),
+            Err(ImportError::BadColor(_))
+        ));
+
+        // But a grid slot the file simply leaves out is not a bad colour; it is
+        // the one thing an empty slot is allowed to mean.
+        let CatalogFile::UiTheme(mut chrome) = chrome_file() else {
+            unreachable!("a chrome file");
+        };
+        chrome.colors.grid_header = None;
+        chrome.colors.grid_selection = None;
+        CatalogFile::UiTheme(chrome).write(&path).expect("write");
+        assert!(Catalog::UiTheme.read(&path).is_ok());
+    }
+
+    #[test]
+    fn an_imported_id_that_is_taken_is_renamed_rather_than_written_over() {
+        // The id the install picks, asserted through the very call it makes:
+        // the file's own name first, its stem second, and a suffix until the id
+        // is free — of built-ins and of the files installed earlier in the same
+        // batch alike.
+        let taken = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        let prefix = Catalog::EditorTheme.generated_id_prefix();
+
+        assert_eq!(
+            theme_store::unique_id(&["One Dark", "downloaded"], prefix, &taken(&[])),
+            "one-dark"
+        );
+        // A built-in of the same name is never written over.
+        assert_eq!(
+            theme_store::unique_id(&["One Dark", "downloaded"], prefix, &taken(&["one-dark"])),
+            "one-dark-2"
+        );
+        // Nor is the file installed a moment ago in the same batch.
+        assert_eq!(
+            theme_store::unique_id(
+                &["One Dark", "downloaded"],
+                prefix,
+                &taken(&["one-dark", "one-dark-2"])
+            ),
+            "one-dark-3"
+        );
+        // A name with nothing to slug falls back to the file's own stem, and
+        // then to a made-up id — never to an empty one.
+        assert_eq!(
+            theme_store::unique_id(&["테마", "downloaded"], prefix, &taken(&[])),
+            "downloaded"
+        );
+        assert_eq!(
+            theme_store::unique_id(&["테마", "테마"], prefix, &taken(&[])),
+            format!("{prefix}-1")
+        );
+    }
+
+    #[test]
+    fn every_refusal_has_a_sentence_of_its_own() {
+        let messages = [
+            ImportError::Unreadable(anyhow::anyhow!("no such file")).message("mine.json"),
+            ImportError::WrongCatalog(Catalog::EditorTheme).message("mine.json"),
+            ImportError::WrongCatalog(Catalog::UiTheme).message("mine.json"),
+            ImportError::BadColor(ts!("settings.editor.slot.accent")).message("mine.json"),
+        ];
+
+        for message in &messages {
+            assert!(!message.contains("settings."), "untranslated {message:?}");
+            // Every one of them names the file that was refused, which is what
+            // makes a batch of them readable at all.
+            assert!(message.contains("mine.json"), "unnamed file in {message:?}");
+        }
+        // And the two catalogues do not share a sentence, or the message would
+        // be pointing at the row the user is already standing in.
+        assert_ne!(messages[1], messages[2]);
+
+        assert!(messages[0].contains("no such file"), "{:?}", messages[0]);
+        let accent = ts!("settings.editor.slot.accent");
+        assert!(messages[3].contains(accent.as_ref()), "{:?}", messages[3]);
+    }
+
+    #[test]
     fn the_two_catalogues_never_share_an_element_prefix() {
         assert_ne!(
             Catalog::UiTheme.element_prefix(),
@@ -1466,6 +1838,18 @@ mod tests {
         assert!(EditorThemeRegistry::is_builtin(
             &Catalog::EditorTheme.default_id()
         ));
+
+        assert_eq!(Catalog::UiTheme.other(), Catalog::EditorTheme);
+        assert_eq!(Catalog::EditorTheme.other(), Catalog::UiTheme);
+        // An import lands in the catalogue's own directory, so the two sharing
+        // one would put every chrome theme in the editor theme picker. Only
+        // asserted where a home directory could be found at all.
+        if let (Ok(chrome), Ok(editor)) = (
+            Catalog::UiTheme.directory(),
+            Catalog::EditorTheme.directory(),
+        ) {
+            assert_ne!(chrome, editor);
+        }
     }
 
     #[test]

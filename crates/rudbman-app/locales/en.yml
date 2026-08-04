@@ -131,6 +131,24 @@ settings:
     duplicate: Duplicate…
     edit: Edit…
     delete: Delete
+    # Both open a platform file dialog, hence the ellipsis.
+    import: Import…
+    export: Export…
+    # Confirmation button of the file dialog the import opens.
+    import_select: Import
+    # Nothing could be read: the file is missing, unreadable, or not JSON at
+    # all. The error comes from the reader and is not translated.
+    import_unreadable: "“%{file}” could not be read: %{error}"
+    # It is a theme file — of the other kind. The two formats look alike enough
+    # that picking the wrong row is the mistake most easily made, so the message
+    # says which row would have taken it.
+    import_not_a_theme: "“%{file}” is an editor theme. Import it under Editor theme."
+    import_not_an_editor_theme: "“%{file}” is an interface theme. Import it under Interface theme."
+    # The right kind of file, with a colour in it that is not #RRGGBB.
+    import_bad_color: "“%{file}” has no usable colour for %{slot}."
+    # Some of the chosen files were installed and some were not. Only the ones
+    # that failed are counted; the ones that worked are already in the picker.
+    import_skipped: "%{count} files were skipped."
     # Name given to the copy. Has to carry the original's name, or duplicating
     # twice would produce two entries that read identically.
     copy_name: "%{name} (copy)"

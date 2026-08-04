@@ -86,6 +86,14 @@ settings:
     duplicate: 複製…
     edit: 編集…
     delete: 削除
+    import: インポート…
+    export: エクスポート…
+    import_select: インポート
+    import_unreadable: "「%{file}」を読み込めませんでした: %{error}"
+    import_not_a_theme: "「%{file}」はエディターテーマです。エディターテーマからインポートしてください。"
+    import_not_an_editor_theme: "「%{file}」はインターフェイステーマです。インターフェイステーマからインポートしてください。"
+    import_bad_color: "「%{file}」の%{slot}に使える色がありません。"
+    import_skipped: "%{count}個のファイルをスキップしました。"
     copy_name: "%{name}（コピー）"
     delete_theme_confirm: "テーマ「%{name}」を削除しますか？"
     delete_editor_theme_confirm: "エディターテーマ「%{name}」を削除しますか？"

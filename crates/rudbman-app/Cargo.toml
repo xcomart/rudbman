@@ -35,6 +35,10 @@ rudbman-ui.workspace = true
 # The theme editor's catalogue hands file writes and deletions straight back
 # from `rudbman-ui::theme_store`, which reports them as `anyhow::Result`.
 anyhow.workspace = true
+# The export save dialog falls back to the user's home directory when the
+# catalogue's own directory does not exist yet; `rudbman-core` resolves the
+# configuration directory but has no reason to expose the home one.
+directories.workspace = true
 gpui.workspace = true
 log.workspace = true
 env_logger.workspace = true
