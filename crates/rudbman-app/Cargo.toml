@@ -32,6 +32,9 @@ raw-window-handle.workspace = true
 rudbman-core.workspace = true
 rudbman-ui.workspace = true
 
+# The theme editor's catalogue hands file writes and deletions straight back
+# from `rudbman-ui::theme_store`, which reports them as `anyhow::Result`.
+anyhow.workspace = true
 gpui.workspace = true
 log.workspace = true
 env_logger.workspace = true

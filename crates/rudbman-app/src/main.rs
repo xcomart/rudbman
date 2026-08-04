@@ -12,21 +12,13 @@
 //! showing one thing — an editor, a result grid, an ERD canvas — and in M0
 //! showing the empty state, because nothing can open a connection yet.
 //!
-//! What is deliberately *not* here: the connection dialog (M1), the explorer
-//! tree (M2) and the settings dialog and theme editor, which are the next thing
-//! to be written. The menu already carries the rows that will open the last two;
-//! their handlers are marked `TODO` and do nothing so far.
+//! What is deliberately *not* here: the connection dialog (M1) and the explorer
+//! tree (M2). The menu already carries the row that will open the first of them;
+//! its handler is marked `TODO` and does nothing so far.
 
 mod about_dialog;
-// The settings global offers the replace-and-re-apply half of its API for the
-// settings dialog that is about to be written; inside a binary crate an
-// unreached path reads as dead code until then.
-#[allow(dead_code)]
 mod app_settings;
 mod caption;
-// Same: the language list and the endonym lookup exist for the settings
-// dialog's language picker, which does not exist yet.
-#[allow(dead_code)]
 mod i18n;
 mod icons;
 // The pane tree is written as a self-contained data structure with its own
@@ -35,6 +27,9 @@ mod icons;
 // inside a binary crate read as dead code.
 #[allow(dead_code)]
 mod pane_tree;
+mod settings_dialog;
+mod theme_editor;
+mod theme_picker;
 
 // Compiles `locales/*.yml` into the binary and defines the machinery `t!`
 // expands to, which is why it has to sit in the crate root. `fallback = "en"`
@@ -62,6 +57,7 @@ use caption::apply_caption_theme;
 use i18n::ts;
 use icons::Icons;
 use pane_tree::{Axis, PaneContent, PaneId, PaneNode, PaneTree, SplitId};
+use settings_dialog::{SettingsDialog, SettingsDialogEvent};
 
 actions!(
     rudbman,
@@ -212,6 +208,8 @@ struct Workspace {
     tab_scrollbar: ScrollbarState,
     /// The about dialog, rendered only while it reports itself open.
     about: Entity<AboutDialog>,
+    /// The settings dialog, rendered only while it reports itself open.
+    settings: Entity<SettingsDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
     /// Title bar style currently *on the window*.
@@ -223,6 +221,8 @@ struct Workspace {
     titlebar: TitlebarStyle,
     /// Keeps the about dialog subscription alive.
     _about_events: Subscription,
+    /// Keeps the settings dialog subscription alive.
+    _settings_events: Subscription,
     /// Records the window's placement as it is moved and resized.
     _bounds: Subscription,
 }
@@ -246,6 +246,36 @@ impl Workspace {
                 },
             );
 
+        let settings = cx.new(SettingsDialog::new);
+        let settings_events = cx.subscribe_in(
+            &settings,
+            window,
+            |this, dialog, event, window, cx| match event {
+                // The dialog has already replaced and persisted the settings
+                // global by the time it emits this; the shell re-applies the
+                // parts that touch the live window.
+                SettingsDialogEvent::Applied => {
+                    this.apply_settings(window, cx);
+                    // The dialog closes itself after applying; without a refocus
+                    // the window focus dangles on its unrendered controls and
+                    // macOS disables every menu item validated through it.
+                    this.focus_shell(window, cx);
+                }
+                // The user is still in the dialog and nothing has been saved, so
+                // only the palettes and the fonts follow — and the focus stays
+                // where it is, since taking it back now would pull it out from
+                // under whoever is typing.
+                SettingsDialogEvent::Previewed => this.apply_preview(window, cx),
+                // Closing dropped the preview, so re-applying now resolves back
+                // to the settings on disk. That is the whole of the undo.
+                SettingsDialogEvent::Dismissed => {
+                    dialog.update(cx, |dialog, cx| dialog.close(cx));
+                    this.apply_preview(window, cx);
+                    this.focus_shell(window, cx);
+                }
+            },
+        );
+
         // In memory only; the file is written once, when the window closes. See
         // [`app_settings::record_window_geometry`].
         let bounds = cx.observe_window_bounds(window, |_this, window, cx| {
@@ -262,9 +292,11 @@ impl Workspace {
             tab_scroll: ScrollHandle::new(),
             tab_scrollbar: ScrollbarState::new(),
             about,
+            settings,
             menu_open: false,
             titlebar,
             _about_events: about_events,
+            _settings_events: settings_events,
             _bounds: bounds,
         }
     }
@@ -329,9 +361,24 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Whether a dialog is covering the shell.
-    fn dialog_open(&self, cx: &App) -> bool {
-        self.about.read(cx).is_open()
+    /// Closes every dialog and the dropdown menu.
+    ///
+    /// Every `open_*` method starts here, which is what keeps the modals
+    /// mutually exclusive: only one of them can be on screen at a time, and
+    /// opening one always puts the menu away.
+    ///
+    /// Closing the settings dialog drops its live preview, so the palettes are
+    /// re-applied on the way out; without that the window would keep wearing a
+    /// theme that nothing in the settings names any more.
+    fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_open = false;
+        if self.about.read(cx).is_open() {
+            self.about.update(cx, |dialog, cx| dialog.close(cx));
+        }
+        if self.settings.read(cx).is_open() {
+            self.settings.update(cx, |dialog, cx| dialog.close(cx));
+            self.apply_preview(window, cx);
+        }
     }
 
     /// Shows or hides the application dropdown menu.
@@ -343,10 +390,90 @@ impl Workspace {
     }
 
     /// Opens the about dialog, closing whatever else was showing.
-    fn open_about(&mut self, cx: &mut Context<Self>) {
-        self.set_menu_open(false, cx);
+    fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_overlays(window, cx);
         self.about.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
+    }
+
+    /// Opens the settings dialog, closing whatever else was showing.
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_overlays(window, cx);
+        self.settings.update(cx, |dialog, cx| dialog.open(cx));
+        cx.notify();
+    }
+
+    /// Re-applies the saved settings to the window.
+    ///
+    /// The counterpart of the start-up sequence in [`main`], and the only place
+    /// a setting reaches a *live* window: the language the next frame is built
+    /// in, the menu bar the platform owns, both palettes, the title bar style
+    /// and the surface's background treatment.
+    ///
+    /// Deliberately does not move the focus — where the focus belongs after this
+    /// depends on whether the dialog closed, which only the caller knows.
+    ///
+    /// Every platform call in here acts on the window, and one of them —
+    /// `request_decorations` on X11 — is the call that used to re-enter gpui's
+    /// window callbacks and panic. It is safe from this stack: the settings
+    /// dialog emits its event, gpui delivers it after the button's own callback
+    /// has returned and released every borrow, and this runs from there. It must
+    /// stay that way; calling it from inside a widget callback would put the
+    /// borrow back.
+    fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = app_settings::current(cx);
+        // Before the repaint below, so the next frame is already drawn in the
+        // newly chosen language.
+        i18n::apply(settings.language.as_deref());
+        // The native macOS menu bar is built once and owned by the platform, so
+        // unlike the in-app menu it does not follow a repaint; it has to be
+        // handed over again.
+        cx.set_menus(app_menus());
+        apply_themes(&settings, cx);
+        // Ahead of the repaint, so the toolbar's next frame already knows
+        // whether it has to stand in for a title bar; and ahead of the two calls
+        // below, which leave the accent policy and the caption colors on the
+        // window, so a caption that comes back here comes back already themed.
+        //
+        // The field follows the call rather than the stored setting: everything
+        // that branches on it is asking what the window carries, not what was
+        // last saved.
+        if settings.window.titlebar != self.titlebar {
+            self.titlebar = settings.window.titlebar;
+            let custom = self.titlebar == TitlebarStyle::Custom;
+            window.set_titlebar_transparent(custom, custom.then_some(TRAFFIC_LIGHT_ORIGIN));
+            // The Linux counterpart of the call above, which only the Windows
+            // and macOS backends implement: swap the compositor's frame for
+            // client-side decorations (or back) on the live window.
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            window.request_decorations(if custom {
+                gpui::WindowDecorations::Client
+            } else {
+                gpui::WindowDecorations::Server
+            });
+        }
+        cx.refresh_windows();
+        window.set_background_appearance(window_appearance(&settings.window));
+        // After the background appearance, never before: on Windows that call
+        // re-arms the accent policy that would otherwise repaint the caption out
+        // from under us.
+        apply_caption_theme(window, &theme(cx));
+    }
+
+    /// Re-applies the palettes the settings dialog is currently showing.
+    ///
+    /// The unsaved half of [`Workspace::apply_settings`], and deliberately much
+    /// smaller: only the two palettes and the fonts are previewed, so this
+    /// touches no platform state beyond the native caption's colours, which have
+    /// to follow the chrome theme or the window would be half repainted.
+    ///
+    /// Reads [`app_settings::effective`], which answers the preview while one is
+    /// installed and the saved settings once it is dropped — so the same call
+    /// both applies a preview and undoes it.
+    fn apply_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        apply_themes(&app_settings::effective(cx), cx);
+        cx.refresh_windows();
+        apply_caption_theme(window, &theme(cx));
     }
 
     /// Opens the connection dialog.
@@ -367,20 +494,15 @@ impl Workspace {
     fn open_settings_action(
         &mut self,
         _: &OpenSettings,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_menu_open(false, cx);
-        // TODO: open the settings dialog, which is the next thing to be
-        // written. It replaces the settings global, persists it and emits an
-        // event the shell answers by re-applying the themes, the language and
-        // the window appearance.
-        log::info!("the settings were asked for; the settings dialog is not written yet");
+        self.open_settings(window, cx);
     }
 
     /// Opens the about dialog.
-    fn show_about_action(&mut self, _: &ShowAbout, _window: &mut Window, cx: &mut Context<Self>) {
-        self.open_about(cx);
+    fn show_about_action(&mut self, _: &ShowAbout, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_about(window, cx);
     }
 
     /// Closes the active pane.
@@ -433,6 +555,16 @@ impl Workspace {
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
             self.focus_shell(window, cx);
+            return;
+        }
+        if self.settings.read(cx).is_open() {
+            // Routed through the dialog rather than closed from here: it stacks
+            // a colour editor, two dropdowns and a delete confirmation of its
+            // own, and each of those has to be able to take `Escape` for itself
+            // before the whole form is thrown away. gpui matches key bindings
+            // ahead of key listeners, so this handler — not the dialog's own —
+            // is where the key actually lands.
+            self.settings.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }
         cx.propagate();
@@ -952,13 +1084,24 @@ fn render_placeholder(theme: &Theme) -> AnyElement {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme(cx);
+        // The one place the interface font size is read: everything below
+        // inherits it unless it sets a size of its own, which is what makes the
+        // setting — and the settings dialog's live preview of it — visible.
+        let ui_font_size = app_settings::effective(cx).ui_font_size;
         self.watch_tab_scroll(cx);
         let toolbar = self.render_toolbar(window, cx);
         let body = self.render_body(cx);
         let status_bar = self.render_status_bar(cx);
         let about = self
-            .dialog_open(cx)
+            .about
+            .read(cx)
+            .is_open()
             .then(|| div().absolute().inset_0().child(self.about.clone()));
+        let settings = self
+            .settings
+            .read(cx)
+            .is_open()
+            .then(|| div().absolute().inset_0().child(self.settings.clone()));
 
         // With client-side decorations the compositor stops drawing the drop
         // shadow along with the frame, so the window has to bring its own: the
@@ -990,7 +1133,7 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .text_color(theme.text)
-            .text_size(px(13.))
+            .text_size(px(ui_font_size))
             // The tab strip's overlay bar is answered from here rather than
             // from the strip: gpui hands a drag move to every listener of that
             // type wherever it sits, and the root is the one element that is
@@ -1024,7 +1167,8 @@ impl Render for Workspace {
             .child(toolbar)
             .child(body)
             .child(status_bar)
-            .children(about);
+            .children(about)
+            .children(settings);
 
         let Some(tiling) = tiling else {
             // A server-decorated window: the compositor frames and shadows it,

@@ -39,3 +39,103 @@ about:
   tagline: JDBC 드라이버를 JNI로 감싸고 gpui로 화면을 그리는 데이터베이스 작업 도구입니다.
   license: "%{license} 라이선스로 배포됩니다."
   credits: gpui 0.2.2(벤더링 및 패치)로 만들었습니다.
+
+# 설정 대화 상자와 그 안의 테마 편집기.
+settings:
+  title: 설정
+  system_default: 시스템 설정 따름
+  save_failed: "설정을 저장하지 못했습니다: %{error}"
+
+  section:
+    appearance: 모양
+    window: 창
+    language: 언어
+    database: 데이터베이스
+    jvm: 자바 가상 머신
+
+  ui_theme: 인터페이스 테마
+  editor_theme: 에디터 테마
+  editor_follows_ui: 에디터 테마를 인터페이스 테마에 맞춤
+  ui_font_size: 인터페이스 크기
+  editor_font: 에디터 글꼴
+  editor_font_size: 에디터 크기
+  font_size_hint: 6 – 32 pt
+
+  opacity: 불투명도
+  opacity_hint: "% — 100 미만이면 바탕 화면이 비칩니다"
+  blur: 창 뒤의 바탕 화면을 흐리게
+  titlebar: 제목 표시줄
+  titlebar_custom: rudbman이 그림
+  titlebar_system: 시스템이 그림
+
+  language: 인터페이스 언어
+  language_hint: 설정을 저장하면 메뉴와 대화 상자가 선택한 언어로 다시 그려집니다.
+
+  fetch_batch_rows: 배치당 행 수
+  fetch_batch_rows_hint: 그리드를 스크롤할 때 한 번에 가져오는 행 수
+  query_timeout: 문 실행 제한 시간
+  query_timeout_hint: 초 — 0이면 제한 없음
+  confirm_writes_default: 새 연결에서 쓰기 문을 실행하기 전에 확인
+
+  jvm_heap: 자바 힙
+  jvm_heap_hint: MB — 드라이버가 사용하는 -Xmx
+  jvm_args: 추가 인수
+  jvm_hint: 큰 결과 집합을 가져오면 rudbman에 닿기 전에 자바 힙이 먼저 찹니다. 메모리가 부족해 실패하는 쿼리는 대개 여기서 힙을 늘려야 합니다. 두 설정 모두 rudbman을 다시 시작해야 적용됩니다. 추가 인수는 공백으로 구분합니다.
+
+  manage:
+    duplicate: 복제…
+    edit: 편집…
+    delete: 삭제
+    copy_name: "%{name} (복사본)"
+    delete_theme_confirm: "테마 “%{name}”을(를) 삭제할까요?"
+    delete_editor_theme_confirm: "에디터 테마 “%{name}”을(를) 삭제할까요?"
+    write_failed: "파일을 쓰지 못했습니다: %{error}"
+    delete_failed: "파일을 지우지 못했습니다: %{error}"
+
+  editor:
+    theme_title: 인터페이스 테마 편집
+    editor_theme_title: 에디터 테마 편집
+    name: 이름
+    dark: 어두운 팔레트입니다
+    invalid: 모든 색은 #RRGGBB 형식으로 써야 합니다.
+    grid_group: 결과 그리드 — 색을 지정하지 않으면 파일에서 생략됩니다
+    automatic: 자동
+    automatic_slot: "%{name} (자동)"
+
+    slot:
+      background: 창
+      surface: 패널
+      surface_hover: 가리킴
+      surface_active: 눌림
+      border: 구분선
+      text: 텍스트
+      text_muted: 흐린 텍스트
+      accent: 강조
+      danger: 오류
+      success: 성공
+      overlay: 대화 상자 배경
+      grid_header: 그리드 머리글
+      grid_row_alt: 교차 행
+      grid_selection: 그리드 선택
+      grid_null: NULL 표시
+      grid_pk: 기본 키
+
+    code:
+      foreground: 텍스트
+      cursor: 캐럿
+      selection: 선택 영역
+      line_highlight: 현재 줄
+      gutter: 줄 번호
+      gutter_active: 현재 줄 번호
+      keyword: 키워드
+      string: 문자열
+      number: 숫자
+      comment: 주석
+      function: 함수
+      type: 타입 이름
+      operator: 연산자
+      identifier: 식별자
+      punctuation: 구두점
+      bracket_match: 짝 괄호
+      error: 오류
+      warning: 경고

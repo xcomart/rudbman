@@ -39,3 +39,103 @@ about:
   tagline: "Инструмент для работы с базами данных: драйверы JDBC подключаются через JNI, интерфейс нарисован на gpui."
   license: "Распространяется по лицензии %{license}."
   credits: Собран на основе gpui 0.2.2 (встроенного и пропатченного).
+
+# Диалог настроек и редактор тем внутри него.
+settings:
+  title: Настройки
+  system_default: Как в системе
+  save_failed: "Не удалось сохранить настройки: %{error}"
+
+  section:
+    appearance: Внешний вид
+    window: Окно
+    language: Язык
+    database: База данных
+    jvm: Виртуальная машина Java
+
+  ui_theme: Тема интерфейса
+  editor_theme: Тема редактора
+  editor_follows_ui: Подбирать тему редактора под тему интерфейса
+  ui_font_size: Размер шрифта интерфейса
+  editor_font: Шрифт редактора
+  editor_font_size: Размер шрифта редактора
+  font_size_hint: 6 – 32 pt
+
+  opacity: Непрозрачность
+  opacity_hint: "% — меньше 100 — и сквозь окно виден рабочий стол"
+  blur: Размывать рабочий стол за окном
+  titlebar: Заголовок окна
+  titlebar_custom: Рисует rudbman
+  titlebar_system: Рисует система
+
+  language: Язык интерфейса
+  language_hint: Меню и диалоги перерисовываются на выбранном языке сразу после сохранения настроек.
+
+  fetch_batch_rows: Строк в пакете
+  fetch_batch_rows_hint: строк, получаемых за раз при прокрутке таблицы
+  query_timeout: Тайм-аут запроса
+  query_timeout_hint: секунд — 0 означает без ограничения
+  confirm_writes_default: Спрашивать перед изменяющим запросом в новом подключении
+
+  jvm_heap: Куча Java
+  jvm_heap_hint: МБ — значение -Xmx, с которым работает драйвер
+  jvm_args: Дополнительные аргументы
+  jvm_hint: Большая выборка сначала заполняет кучу Java и лишь потом доходит до rudbman, поэтому запросу, которому не хватило памяти, обычно нужна куча побольше. Обе настройки вступают в силу при следующем запуске rudbman. Дополнительные аргументы разделяются пробелами.
+
+  manage:
+    duplicate: Дублировать…
+    edit: Изменить…
+    delete: Удалить
+    copy_name: "%{name} (копия)"
+    delete_theme_confirm: "Удалить тему «%{name}»?"
+    delete_editor_theme_confirm: "Удалить тему редактора «%{name}»?"
+    write_failed: "Не удалось записать файл: %{error}"
+    delete_failed: "Не удалось удалить файл: %{error}"
+
+  editor:
+    theme_title: Изменение темы интерфейса
+    editor_theme_title: Изменение темы редактора
+    name: Название
+    dark: Это тёмная палитра
+    invalid: Каждый цвет записывается как #RRGGBB.
+    grid_group: Таблица результатов — без указанного цвета в файл не записывается
+    automatic: Автоматически
+    automatic_slot: "%{name} (автоматически)"
+
+    slot:
+      background: Окно
+      surface: Панели
+      surface_hover: Под курсором
+      surface_active: Нажатое
+      border: Разделители
+      text: Текст
+      text_muted: Приглушённый текст
+      accent: Акцент
+      danger: Ошибки
+      success: Успех
+      overlay: Фон диалога
+      grid_header: Заголовок таблицы
+      grid_row_alt: Чередующаяся строка
+      grid_selection: Выделение в таблице
+      grid_null: Отметка NULL
+      grid_pk: Первичный ключ
+
+    code:
+      foreground: Текст
+      cursor: Каретка
+      selection: Выделение
+      line_highlight: Текущая строка
+      gutter: Номера строк
+      gutter_active: Номер текущей строки
+      keyword: Ключевые слова
+      string: Строки
+      number: Числа
+      comment: Комментарии
+      function: Функции
+      type: Имена типов
+      operator: Операторы
+      identifier: Идентификаторы
+      punctuation: Пунктуация
+      bracket_match: Парная скобка
+      error: Ошибки
+      warning: Предупреждения

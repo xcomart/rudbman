@@ -39,3 +39,103 @@ about:
   tagline: Ein Datenbankwerkzeug, das JDBC-Treiber über JNI einbindet und seine Oberfläche mit gpui zeichnet.
   license: "Lizenziert unter %{license}."
   credits: Erstellt mit gpui 0.2.2 (eingebunden und gepatcht).
+
+# Der Einstellungsdialog und der Themen-Editor darin.
+settings:
+  title: Einstellungen
+  system_default: Systemeinstellung verwenden
+  save_failed: "Die Einstellungen konnten nicht gespeichert werden: %{error}"
+
+  section:
+    appearance: Darstellung
+    window: Fenster
+    language: Sprache
+    database: Datenbank
+    jvm: Java-VM
+
+  ui_theme: Oberflächen-Thema
+  editor_theme: Editor-Thema
+  editor_follows_ui: Editor-Thema an das Oberflächen-Thema anpassen
+  ui_font_size: Schriftgröße der Oberfläche
+  editor_font: Editor-Schriftart
+  editor_font_size: Schriftgröße im Editor
+  font_size_hint: 6 – 32 pt
+
+  opacity: Deckkraft
+  opacity_hint: "% — unter 100 scheint der Schreibtisch durch"
+  blur: Hintergrund hinter dem Fenster weichzeichnen
+  titlebar: Titelleiste
+  titlebar_custom: Von rudbman gezeichnet
+  titlebar_system: Vom System gezeichnet
+
+  language: Sprache der Oberfläche
+  language_hint: Menüs und Dialoge werden in der gewählten Sprache neu gezeichnet, sobald die Einstellungen gespeichert sind.
+
+  fetch_batch_rows: Zeilen pro Stapel
+  fetch_batch_rows_hint: Zeilen, die beim Blättern jeweils geholt werden
+  query_timeout: Zeitlimit je Anweisung
+  query_timeout_hint: Sekunden — 0 bedeutet kein Limit
+  confirm_writes_default: Bei neuen Verbindungen vor schreibenden Anweisungen nachfragen
+
+  jvm_heap: Java-Heap
+  jvm_heap_hint: MB — das -Xmx, unter dem ein Treiber läuft
+  jvm_args: Zusätzliche Argumente
+  jvm_hint: Große Ergebnismengen füllen den Java-Heap, bevor sie rudbman erreichen; einer Abfrage, der der Speicher ausgeht, fehlt meist Heap. Beide Einstellungen greifen beim nächsten Start von rudbman. Zusätzliche Argumente werden durch Leerzeichen getrennt.
+
+  manage:
+    duplicate: Duplizieren…
+    edit: Bearbeiten…
+    delete: Löschen
+    copy_name: "%{name} (Kopie)"
+    delete_theme_confirm: "Thema „%{name}“ löschen?"
+    delete_editor_theme_confirm: "Editor-Thema „%{name}“ löschen?"
+    write_failed: "Die Datei konnte nicht geschrieben werden: %{error}"
+    delete_failed: "Die Datei konnte nicht entfernt werden: %{error}"
+
+  editor:
+    theme_title: Oberflächen-Thema bearbeiten
+    editor_theme_title: Editor-Thema bearbeiten
+    name: Name
+    dark: Dies ist eine dunkle Palette
+    invalid: Jede Farbe muss als #RRGGBB geschrieben werden.
+    grid_group: Ergebnisraster — ohne angegebene Farbe bleibt es aus der Datei heraus
+    automatic: Automatisch
+    automatic_slot: "%{name} (automatisch)"
+
+    slot:
+      background: Fenster
+      surface: Bereiche
+      surface_hover: Überfahren
+      surface_active: Gedrückt
+      border: Trennlinien
+      text: Text
+      text_muted: Gedämpfter Text
+      accent: Akzent
+      danger: Fehler
+      success: Erfolg
+      overlay: Dialoghintergrund
+      grid_header: Rasterkopf
+      grid_row_alt: Wechselnde Zeile
+      grid_selection: Rasterauswahl
+      grid_null: NULL-Kennzeichnung
+      grid_pk: Primärschlüssel
+
+    code:
+      foreground: Text
+      cursor: Schreibmarke
+      selection: Auswahl
+      line_highlight: Aktuelle Zeile
+      gutter: Zeilennummern
+      gutter_active: Aktuelle Zeilennummer
+      keyword: Schlüsselwörter
+      string: Zeichenketten
+      number: Zahlen
+      comment: Kommentare
+      function: Funktionen
+      type: Typnamen
+      operator: Operatoren
+      identifier: Bezeichner
+      punctuation: Satzzeichen
+      bracket_match: Passende Klammer
+      error: Fehler
+      warning: Warnungen

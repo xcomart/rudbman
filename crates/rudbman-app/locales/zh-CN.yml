@@ -39,3 +39,103 @@ about:
   tagline: 一款用 JNI 封装 JDBC 驱动、并以 gpui 绘制界面的数据库工具。
   license: "以 %{license} 许可证发布。"
   credits: 基于 gpui 0.2.2（已内置并打补丁）构建。
+
+# 设置对话框及其中的主题编辑器。
+settings:
+  title: 设置
+  system_default: 跟随系统设置
+  save_failed: "无法保存设置：%{error}"
+
+  section:
+    appearance: 外观
+    window: 窗口
+    language: 语言
+    database: 数据库
+    jvm: Java 虚拟机
+
+  ui_theme: 界面主题
+  editor_theme: 编辑器主题
+  editor_follows_ui: 让编辑器主题跟随界面主题
+  ui_font_size: 界面字号
+  editor_font: 编辑器字体
+  editor_font_size: 编辑器字号
+  font_size_hint: 6 – 32 pt
+
+  opacity: 不透明度
+  opacity_hint: "% — 低于 100 时可以透出桌面"
+  blur: 模糊窗口背后的桌面
+  titlebar: 标题栏
+  titlebar_custom: 由 rudbman 绘制
+  titlebar_system: 由系统绘制
+
+  language: 界面语言
+  language_hint: 保存设置后，菜单和对话框会用所选语言重新绘制。
+
+  fetch_batch_rows: 每批行数
+  fetch_batch_rows_hint: 滚动结果网格时每次取回的行数
+  query_timeout: 语句超时
+  query_timeout_hint: 秒 — 0 表示不限制
+  confirm_writes_default: 新建连接在执行写入语句前先确认
+
+  jvm_heap: Java 堆
+  jvm_heap_hint: MB — 驱动运行时的 -Xmx
+  jvm_args: 附加参数
+  jvm_hint: 取回大结果集时，数据先占满 Java 堆才会到达 rudbman，因此因内存不足而失败的查询通常需要在这里加大堆。两项设置都在 rudbman 下次启动时生效。附加参数以空格分隔。
+
+  manage:
+    duplicate: 复制…
+    edit: 编辑…
+    delete: 删除
+    copy_name: "%{name}（副本）"
+    delete_theme_confirm: "要删除主题“%{name}”吗？"
+    delete_editor_theme_confirm: "要删除编辑器主题“%{name}”吗？"
+    write_failed: "无法写入文件：%{error}"
+    delete_failed: "无法删除文件：%{error}"
+
+  editor:
+    theme_title: 编辑界面主题
+    editor_theme_title: 编辑编辑器主题
+    name: 名称
+    dark: 这是一套深色配色
+    invalid: 每种颜色都必须写成 #RRGGBB。
+    grid_group: 结果网格 — 未指定颜色时不会写入文件
+    automatic: 自动
+    automatic_slot: "%{name}（自动）"
+
+    slot:
+      background: 窗口
+      surface: 面板
+      surface_hover: 悬停
+      surface_active: 按下
+      border: 分隔线
+      text: 文字
+      text_muted: 次要文字
+      accent: 强调色
+      danger: 错误
+      success: 成功
+      overlay: 对话框背景
+      grid_header: 网格表头
+      grid_row_alt: 交替行
+      grid_selection: 网格选区
+      grid_null: NULL 标记
+      grid_pk: 主键
+
+    code:
+      foreground: 文字
+      cursor: 光标
+      selection: 选区
+      line_highlight: 当前行
+      gutter: 行号
+      gutter_active: 当前行号
+      keyword: 关键字
+      string: 字符串
+      number: 数字
+      comment: 注释
+      function: 函数
+      type: 类型名
+      operator: 运算符
+      identifier: 标识符
+      punctuation: 标点
+      bracket_match: 匹配括号
+      error: 错误
+      warning: 警告

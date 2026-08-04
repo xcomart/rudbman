@@ -10,6 +10,16 @@
 //! the last window closes. Writing it as it changes would put a file write in
 //! the middle of a resize drag — a lot of syscalls to record a number nobody
 //! reads until the next start.
+//!
+//! # Two snapshots
+//!
+//! [`current`] is what is on disk (or will be, at the next save); [`effective`]
+//! is what the window is drawn from. They differ only while the settings dialog
+//! is showing unsaved edits — a palette being tried on, a font being compared —
+//! which it publishes through [`set_preview`]. Keeping the preview *beside* the
+//! persisted settings rather than writing it into them is what makes cancelling
+//! free: dropping the override is the revert, and a window closed mid-dialog
+//! still saves the settings the user last committed to.
 
 use gpui::{App, Bounds, Global, Hsla, Pixels, Point, Size, px};
 use rudbman_core::{AppSettings, WindowState};
@@ -18,6 +28,14 @@ use rudbman_core::{AppSettings, WindowState};
 pub struct CurrentSettings(pub AppSettings);
 
 impl Global for CurrentSettings {}
+
+/// Global wrapper holding unsaved settings the window is drawn from.
+///
+/// Installed while the settings dialog previews an edit and removed again when
+/// it closes; see [`set_preview`].
+struct PreviewSettings(AppSettings);
+
+impl Global for PreviewSettings {}
 
 /// Where a window is and how big it is, as `settings.json` records it.
 ///
@@ -131,6 +149,37 @@ pub fn replace(settings: AppSettings, cx: &mut App) {
     cx.set_global(CurrentSettings(settings));
 }
 
+/// A snapshot of the settings the interface should currently be drawn from.
+///
+/// The preview, while the settings dialog is showing one, and otherwise
+/// [`current`]. Everything that *renders* from the settings reads this;
+/// everything that *persists* them reads [`current`].
+pub fn effective(cx: &App) -> AppSettings {
+    cx.try_global::<PreviewSettings>()
+        .map(|preview| preview.0.clone())
+        .unwrap_or_else(|| current(cx))
+}
+
+/// Show `settings` without saving them.
+///
+/// The settings dialog calls this on every edit that is visible before it is
+/// committed. Nothing is written to disk and [`current`] is untouched, so
+/// [`clear_preview`] is all it takes to put the window back.
+pub fn set_preview(settings: AppSettings, cx: &mut App) {
+    cx.set_global(PreviewSettings(settings));
+}
+
+/// Drop the preview, if there is one, so [`effective`] answers [`current`]
+/// again.
+///
+/// Idempotent: the dialog closes by more paths than it opens by, and every one
+/// of them ends here.
+pub fn clear_preview(cx: &mut App) {
+    if cx.has_global::<PreviewSettings>() {
+        cx.remove_global::<PreviewSettings>();
+    }
+}
+
 /// Records where the window is, without touching the disk.
 ///
 /// Called from the shell's window-bounds observer, so it runs on every move and
@@ -170,6 +219,13 @@ pub fn save(cx: &App) {
 /// 0.62 saturate the surface alpha at 1.0 and the window goes opaque. That is
 /// why the toolbar and the status bar paint their surface untinted and only the
 /// body — one fill, edge to edge — goes through here.
+///
+/// Reads [`current`] rather than [`effective`], and so does not follow a
+/// preview. The fill is only half of what makes a window translucent: the other
+/// half is the platform surface being told to permit alpha, which happens in
+/// [`gpui::Window::set_background_appearance`] and only when the settings are
+/// saved. Tinting ahead of that would compose against an opaque surface and
+/// merely darken the window, which is a worse answer than not previewing at all.
 pub fn window_tint(color: Hsla, cx: &App) -> Hsla {
     let opacity = current(cx).window.background_opacity;
     if opacity < 1.0 {
@@ -277,5 +333,56 @@ mod tests {
             ..geometry()
         };
         assert!(!moved.matches(&state));
+    }
+
+    /// The whole of the settings dialog's live preview, and its undo: an
+    /// override that hides the saved settings from everything that draws, and
+    /// nothing at all from what saves.
+    #[gpui::test]
+    fn a_preview_hides_the_saved_settings_until_it_is_dropped(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(CurrentSettings(AppSettings::default()));
+            assert_eq!(effective(cx).theme, current(cx).theme);
+
+            let previewed = AppSettings {
+                theme: "dracula".to_string(),
+                ui_font_size: 20.0,
+                ..current(cx)
+            };
+            set_preview(previewed, cx);
+            assert_eq!(effective(cx).theme, "dracula");
+            assert_eq!(effective(cx).ui_font_size, 20.0);
+            // And nothing of it reached what would be written to disk.
+            assert_eq!(current(cx).theme, "one-dark");
+            assert_eq!(current(cx).ui_font_size, 14.0);
+
+            // Cancelling is the absence of the override, not a second copy.
+            clear_preview(cx);
+            assert_eq!(effective(cx).theme, "one-dark");
+            assert_eq!(effective(cx).ui_font_size, 14.0);
+            // Every path that closes the dialog ends here, so it has to be safe
+            // to run twice.
+            clear_preview(cx);
+            assert_eq!(effective(cx).theme, "one-dark");
+        });
+    }
+
+    /// A preview must not survive the settings being replaced under it either:
+    /// saving replaces the global and the dialog drops the override, and the
+    /// two together have to leave one answer.
+    #[gpui::test]
+    fn saving_and_dropping_the_preview_agree(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(CurrentSettings(AppSettings::default()));
+            let edited = AppSettings {
+                theme: "gruvbox-dark".to_string(),
+                ..current(cx)
+            };
+            set_preview(edited.clone(), cx);
+            replace(edited, cx);
+            clear_preview(cx);
+            assert_eq!(effective(cx).theme, "gruvbox-dark");
+            assert_eq!(current(cx).theme, "gruvbox-dark");
+        });
     }
 }

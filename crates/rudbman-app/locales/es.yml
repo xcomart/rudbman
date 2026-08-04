@@ -39,3 +39,103 @@ about:
   tagline: Una herramienta de bases de datos que envuelve controladores JDBC con JNI y dibuja su interfaz con gpui.
   license: "Distribuido bajo la licencia %{license}."
   credits: Creado con gpui 0.2.2 (incluido y parcheado).
+
+# El diálogo de ajustes y el editor de temas que contiene.
+settings:
+  title: Ajustes
+  system_default: Usar el ajuste del sistema
+  save_failed: "No se pudieron guardar los ajustes: %{error}"
+
+  section:
+    appearance: Apariencia
+    window: Ventana
+    language: Idioma
+    database: Base de datos
+    jvm: Máquina virtual de Java
+
+  ui_theme: Tema de la interfaz
+  editor_theme: Tema del editor
+  editor_follows_ui: Ajustar el tema del editor al de la interfaz
+  ui_font_size: Tamaño de la interfaz
+  editor_font: Fuente del editor
+  editor_font_size: Tamaño del editor
+  font_size_hint: 6 – 32 pt
+
+  opacity: Opacidad
+  opacity_hint: "% — por debajo de 100 se transparenta el escritorio"
+  blur: Desenfocar el escritorio detrás de la ventana
+  titlebar: Barra de título
+  titlebar_custom: La dibuja rudbman
+  titlebar_system: La dibuja el sistema
+
+  language: Idioma de la interfaz
+  language_hint: Los menús y los diálogos se vuelven a dibujar en el idioma elegido en cuanto se guardan los ajustes.
+
+  fetch_batch_rows: Filas por lote
+  fetch_batch_rows_hint: filas que se traen cada vez al desplazar la cuadrícula
+  query_timeout: Tiempo límite por sentencia
+  query_timeout_hint: segundos — 0 significa sin límite
+  confirm_writes_default: Preguntar antes de ejecutar una sentencia de escritura en una conexión nueva
+
+  jvm_heap: Montículo de Java
+  jvm_heap_hint: MB — el -Xmx con el que corre un controlador
+  jvm_args: Argumentos adicionales
+  jvm_hint: Traer un conjunto de resultados grande llena el montículo de Java antes de llegar a rudbman, así que una consulta que se queda sin memoria suele necesitar más montículo aquí. Ambos ajustes se aplican la próxima vez que se inicie rudbman. Los argumentos adicionales se separan con espacios.
+
+  manage:
+    duplicate: Duplicar…
+    edit: Editar…
+    delete: Eliminar
+    copy_name: "%{name} (copia)"
+    delete_theme_confirm: "¿Eliminar el tema «%{name}»?"
+    delete_editor_theme_confirm: "¿Eliminar el tema del editor «%{name}»?"
+    write_failed: "No se pudo escribir el archivo: %{error}"
+    delete_failed: "No se pudo eliminar el archivo: %{error}"
+
+  editor:
+    theme_title: Editar el tema de la interfaz
+    editor_theme_title: Editar el tema del editor
+    name: Nombre
+    dark: Esta es una paleta oscura
+    invalid: Cada color debe escribirse como #RRGGBB.
+    grid_group: Cuadrícula de resultados — sin un color indicado no se escribe en el archivo
+    automatic: Automático
+    automatic_slot: "%{name} (automático)"
+
+    slot:
+      background: Ventana
+      surface: Paneles
+      surface_hover: Bajo el puntero
+      surface_active: Pulsado
+      border: Separadores
+      text: Texto
+      text_muted: Texto atenuado
+      accent: Acento
+      danger: Errores
+      success: Éxito
+      overlay: Fondo del diálogo
+      grid_header: Cabecera de la cuadrícula
+      grid_row_alt: Fila alterna
+      grid_selection: Selección de la cuadrícula
+      grid_null: Marca de NULL
+      grid_pk: Clave primaria
+
+    code:
+      foreground: Texto
+      cursor: Cursor
+      selection: Selección
+      line_highlight: Línea actual
+      gutter: Números de línea
+      gutter_active: Número de la línea actual
+      keyword: Palabras clave
+      string: Cadenas
+      number: Números
+      comment: Comentarios
+      function: Funciones
+      type: Nombres de tipo
+      operator: Operadores
+      identifier: Identificadores
+      punctuation: Puntuación
+      bracket_match: Paréntesis emparejado
+      error: Errores
+      warning: Avisos

@@ -39,3 +39,103 @@ about:
   tagline: Un outil de bases de données qui enveloppe les pilotes JDBC via JNI et dessine son interface avec gpui.
   license: "Distribué sous licence %{license}."
   credits: Construit avec gpui 0.2.2 (intégré et corrigé).
+
+# La boîte de dialogue des réglages et l’éditeur de thèmes qu’elle contient.
+settings:
+  title: Réglages
+  system_default: Suivre le réglage du système
+  save_failed: "Les réglages n’ont pas pu être enregistrés : %{error}"
+
+  section:
+    appearance: Apparence
+    window: Fenêtre
+    language: Langue
+    database: Base de données
+    jvm: Machine virtuelle Java
+
+  ui_theme: Thème de l’interface
+  editor_theme: Thème de l’éditeur
+  editor_follows_ui: Accorder le thème de l’éditeur à celui de l’interface
+  ui_font_size: Taille de l’interface
+  editor_font: Police de l’éditeur
+  editor_font_size: Taille de l’éditeur
+  font_size_hint: 6 – 32 pt
+
+  opacity: Opacité
+  opacity_hint: "% — en dessous de 100, le bureau transparaît"
+  blur: Flouter le bureau derrière la fenêtre
+  titlebar: Barre de titre
+  titlebar_custom: Dessinée par rudbman
+  titlebar_system: Dessinée par le système
+
+  language: Langue de l’interface
+  language_hint: Les menus et les boîtes de dialogue sont redessinés dans la langue choisie dès que les réglages sont enregistrés.
+
+  fetch_batch_rows: Lignes par lot
+  fetch_batch_rows_hint: lignes récupérées à chaque fois pendant le défilement
+  query_timeout: Délai par instruction
+  query_timeout_hint: secondes — 0 signifie aucune limite
+  confirm_writes_default: Demander confirmation avant une instruction d’écriture sur une nouvelle connexion
+
+  jvm_heap: Tas Java
+  jvm_heap_hint: Mo — le -Xmx sous lequel tourne un pilote
+  jvm_args: Arguments supplémentaires
+  jvm_hint: Récupérer un grand jeu de résultats remplit le tas Java avant d’atteindre rudbman ; une requête à court de mémoire réclame donc en général un tas plus grand ici. Les deux réglages prennent effet au prochain démarrage de rudbman. Les arguments supplémentaires sont séparés par des espaces.
+
+  manage:
+    duplicate: Dupliquer…
+    edit: Modifier…
+    delete: Supprimer
+    copy_name: "%{name} (copie)"
+    delete_theme_confirm: "Supprimer le thème « %{name} » ?"
+    delete_editor_theme_confirm: "Supprimer le thème d’éditeur « %{name} » ?"
+    write_failed: "Le fichier n’a pas pu être écrit : %{error}"
+    delete_failed: "Le fichier n’a pas pu être supprimé : %{error}"
+
+  editor:
+    theme_title: Modifier le thème de l’interface
+    editor_theme_title: Modifier le thème de l’éditeur
+    name: Nom
+    dark: Il s’agit d’une palette sombre
+    invalid: Chaque couleur doit être écrite sous la forme #RRGGBB.
+    grid_group: Grille de résultats — sans couleur indiquée, elle reste absente du fichier
+    automatic: Automatique
+    automatic_slot: "%{name} (automatique)"
+
+    slot:
+      background: Fenêtre
+      surface: Panneaux
+      surface_hover: Survolé
+      surface_active: Enfoncé
+      border: Séparateurs
+      text: Texte
+      text_muted: Texte atténué
+      accent: Accent
+      danger: Erreurs
+      success: Réussite
+      overlay: Fond de la boîte de dialogue
+      grid_header: En-tête de la grille
+      grid_row_alt: Ligne alternée
+      grid_selection: Sélection dans la grille
+      grid_null: Marque NULL
+      grid_pk: Clé primaire
+
+    code:
+      foreground: Texte
+      cursor: Curseur
+      selection: Sélection
+      line_highlight: Ligne courante
+      gutter: Numéros de ligne
+      gutter_active: Numéro de la ligne courante
+      keyword: Mots-clés
+      string: Chaînes
+      number: Nombres
+      comment: Commentaires
+      function: Fonctions
+      type: Noms de type
+      operator: Opérateurs
+      identifier: Identifiants
+      punctuation: Ponctuation
+      bracket_match: Parenthèse associée
+      error: Erreurs
+      warning: Avertissements

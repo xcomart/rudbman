@@ -76,3 +76,119 @@ about:
   tagline: A database workbench that wraps JDBC drivers in JNI and draws its interface with gpui.
   license: "Licensed under %{license}."
   credits: Built with gpui 0.2.2 (vendored and patched).
+
+# The settings dialog and the theme editor inside it.
+#
+# Never translated: hex colour values, the `#RRGGBB` notation, JVM flags and
+# the slot keys of a theme file. The slot *labels* below are translated — they
+# name what a colour is for, not what the file calls it.
+settings:
+  title: Settings
+  # Heads both dropdowns, and doubles as their placeholder so a trigger reads
+  # the same whether or not its list is open.
+  system_default: Use the system setting
+  save_failed: "The settings could not be saved: %{error}"
+
+  section:
+    appearance: Appearance
+    window: Window
+    language: Language
+    database: Database
+    jvm: Java virtual machine
+
+  ui_theme: Interface theme
+  editor_theme: Editor theme
+  editor_follows_ui: Match the editor theme to the interface theme
+  ui_font_size: Interface size
+  editor_font: Editor font
+  editor_font_size: Editor size
+  # Unit hint after a narrow field. A range, so it reads the same everywhere.
+  font_size_hint: 6 – 32 pt
+
+  opacity: Opacity
+  opacity_hint: "% — below 100 lets the desktop show through"
+  blur: Blur the desktop behind the window
+  titlebar: Title bar
+  titlebar_custom: Drawn by rudbman
+  titlebar_system: Drawn by the system
+
+  language: Interface language
+  language_hint: Menus and dialogs are re-drawn in the chosen language as soon as the settings are saved.
+
+  fetch_batch_rows: Rows per batch
+  fetch_batch_rows_hint: rows fetched at a time as the grid is scrolled
+  query_timeout: Statement timeout
+  query_timeout_hint: seconds — 0 means no limit
+  confirm_writes_default: Ask before running a write statement on a new connection
+
+  jvm_heap: Java heap
+  jvm_heap_hint: MB — the -Xmx a driver runs under
+  jvm_args: Extra arguments
+  jvm_hint: Fetching a large result set fills the Java heap before it reaches rudbman, so a query that runs out of memory usually wants a larger heap here. Both settings take effect the next time rudbman starts. Extra arguments are separated by spaces.
+
+  # The row of buttons under each theme picker.
+  manage:
+    duplicate: Duplicate…
+    edit: Edit…
+    delete: Delete
+    # Name given to the copy. Has to carry the original's name, or duplicating
+    # twice would produce two entries that read identically.
+    copy_name: "%{name} (copy)"
+    delete_theme_confirm: "Delete the theme “%{name}”?"
+    delete_editor_theme_confirm: "Delete the editor theme “%{name}”?"
+    write_failed: "The file could not be written: %{error}"
+    delete_failed: "The file could not be removed: %{error}"
+
+  # The colour editor the management row opens.
+  editor:
+    theme_title: Edit interface theme
+    editor_theme_title: Edit editor theme
+    name: Name
+    dark: This is a dark palette
+    invalid: Every colour has to be written as #RRGGBB.
+    # The five grid colours a theme file may leave out.
+    grid_group: Result grid — left out of the file unless a colour is given
+    automatic: Automatic
+    # How an automatic slot's own label reads while it is being derived.
+    automatic_slot: "%{name} (automatic)"
+
+    # The eleven required slots of an interface theme, plus the five grid ones.
+    slot:
+      background: Window
+      surface: Panels
+      surface_hover: Hovered
+      surface_active: Pressed
+      border: Separators
+      text: Text
+      text_muted: Muted text
+      accent: Accent
+      danger: Errors
+      success: Success
+      overlay: Dialog backdrop
+      grid_header: Grid header
+      grid_row_alt: Alternate row
+      grid_selection: Grid selection
+      grid_null: NULL marker
+      grid_pk: Primary key
+
+    # The nineteen slots of an editor theme. `background` is shared with the
+    # list above; the rest name what a SQL lexer hands out.
+    code:
+      foreground: Text
+      cursor: Caret
+      selection: Selection
+      line_highlight: Current line
+      gutter: Line numbers
+      gutter_active: Current line number
+      keyword: Keywords
+      string: Strings
+      number: Numbers
+      comment: Comments
+      function: Functions
+      type: Type names
+      operator: Operators
+      identifier: Identifiers
+      punctuation: Punctuation
+      bracket_match: Matching bracket
+      error: Errors
+      warning: Warnings
