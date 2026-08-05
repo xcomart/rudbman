@@ -1,0 +1,19 @@
+[package]
+name = "rudbman-sql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# No dependencies, and that is the point.
+#
+# This crate is consumed by the editor on every keystroke and by the statement
+# splitter on every execution, so its cost has to be predictable: a hand-written
+# byte scanner is both faster and easier to reason about than a regex engine, and
+# a lexer that pulled in `regex` would drag its 1.5MB of DFA machinery into a
+# code path that never needs backtracking. It also has no `rudbman-core`
+# dependency: a dialect is chosen by the *string* in `DriverDef::dialect`, so the
+# profile layer can depend on this crate rather than the other way round.
+#
+# There are no dev-dependencies either; the tests are `std` only.
