@@ -1,6 +1,7 @@
 package comart.rudbman.bridge;
 
 import com.google.gson.JsonObject;
+import comart.rudbman.bridge.job.Jobs;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -322,6 +323,11 @@ public final class Session implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        // First, and deliberately before any lock is taken: a job worker is
+        // holding the connection lock inside a streaming statement, and only a
+        // statement cancel will make it let go. Closing the session behind a
+        // running extract would otherwise block here until the extract finished.
+        Jobs.cancelAll(this);
         if (keepAliveExec != null) {
             try {
                 keepAliveExec.shutdownNow();

@@ -467,6 +467,39 @@ JOB_START { kind: "extract",
   디렉터리의 `templates/`에서 온다(내장 기본은 브리지 리소스).
 - 진행률·취소는 transfer와 동일하게 `JOB_POLL`/`JOB_CANCEL`.
 
+구현이 확정한 의미론(M4, Rust 쪽이 코딩할 계약):
+
+- **핸들 수명**: 종료 상태(`done|failed|cancelled`)를 처음 보고한 `JOB_POLL`이
+  그 호출 안에서 핸들을 등록 해제한다. 이후의 poll/cancel은 `protocol` 오류다 —
+  종료 상태를 읽었으면 폴링을 멈춘다. `CLOSE_SESSION`은 그 세션의 작업을 먼저
+  취소·해제한다(작업 스레드가 커넥션 락을 쥔 채라 취소 없이는 닫기가 막힌다).
+- **명세 오류는 동기적**: 잘못된 `objects`/`mode`/`charset` 등은 `JOB_START`가
+  오류 봉투로 즉시 거절한다. 실패한 작업으로 만들어 폴링시키지 않는다.
+- **락**: 실행 중 작업은 구간(테이블 스트림)마다 세션 커넥션 락을 쥔다. 같은
+  세션의 `EXECUTE`는 그동안 대기하므로, 추출 중에도 조회가 필요한 UI는 두 번째
+  세션을 연다.
+- **진행률**: `phase`는 `"starting"` → `"ddl"` → `"data:<schema>.<table>"` →
+  `"done"`. `rows_total`·`eta_s`는 `null`(COUNT 없음). `bytes`는 실행 중 버퍼만큼
+  (≤64KB) 뒤처지고 종료 시 정확하다. `errors[]`의 원소는 §4.4 오류 봉투 객체다.
+- **`ddl.constraints`**: `"alter"`(기본)는 **메타데이터 재구성 경로를 강제**한다 —
+  네이티브 DDL(MySQL `SHOW CREATE`)에서 FK를 떼어내려면 벤더 SQL 파싱이 필요해
+  하지 않는다. `"inline"`은 표시용 DDL과 같은 native 우선. 즉 재생 가능한
+  스크립트는 재구성 DDL의 알려진 맹점(체크 제약, 스토리지 절)을 감수한다.
+- **CSV**: NULL은 빈 비인용 필드, 빈 문자열은 `""`(PostgreSQL `COPY … CSV` 규약
+  — 둘이 구분된다). 열 이름 헤더 행을 쓴다. 값 안의 줄바꿈은 통과시키고
+  `output.newline`은 레코드 종결자에만 적용된다.
+- **리터럴**: 날짜/시간은 인용 문자열(`DATE '…'` 형은 SQL Server가 거부).
+  불리언은 Oracle/SQL Server/SQLite/MySQL/MariaDB에서 `1/0`, 그 외 `TRUE/FALSE`.
+  바이너리는 방언별 hex(`0x…`/`'\x…'`/`HEXTORAW`/`X'…'`). Oracle은 다중 VALUES가
+  없어 `insert_batch_rows`를 1로 강제한다.
+- **`include_drop`**: DROP 전부를 역순으로 먼저, `IF EXISTS`는 지원 방언에만
+  (Oracle/DB2 제외). 제약은 지우지 않으므로 순환 스키마의 재-DROP은 수동이다.
+- **템플릿 모델(행당)**: `table`/`schema`/`catalog`/`qualified`/`row_no`/
+  `columns[]`(`name`/`value`/`literal`/`type_name`/`jdbc_type`) + 각 열을 제
+  이름으로 직접. `${a.b}`는 중첩 경로가 아니라 프로세서 체인이다(jdbgen 규칙).
+- **패키징 노트**: 템플릿 엔진의 EUC-KR 패딩 폭 계산은 jlink 이미지에
+  `jdk.charsets` 모듈이 있어야 정확하다(없으면 휴리스틱 폴백).
+
 실행 방향(스크립트 파일 → DB)은 새 연산이 필요 없다. 파일을 에디터로 열고
 `rudbman-sql`의 문장 분리를 거쳐 기존 `EXECUTE` 파이프라인으로 순차 실행하며,
 문장 단위 오류 보고는 쿼리 팬의 다중 결과가 이미 하는 일이다.
