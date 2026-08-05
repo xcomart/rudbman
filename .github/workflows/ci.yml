@@ -75,6 +75,10 @@ jobs:
         run: |
           jar=$(find ~/.gradle/caches/modules-2/files-2.1/com.h2database -name 'h2-*.jar' | head -1)
           test -f "$jar"
+          # Git Bash's find answers with a POSIX path (/c/Users/...), which the
+          # native-Windows test binary cannot open; hand it over in the OS's
+          # own spelling.
+          if [ "$RUNNER_OS" = "Windows" ]; then jar=$(cygpath -w "$jar"); fi
           echo "RUDBMAN_TEST_H2_JAR=$jar" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
