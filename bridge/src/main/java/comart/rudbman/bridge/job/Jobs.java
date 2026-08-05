@@ -439,6 +439,20 @@ public final class Jobs {
          *         {@code {state, rows_done, rows_total, bytes, phase, errors[], eta_s}}
          */
         public final JsonObject progress() {
+            // A requested cancel is re-armed on every reading until the worker
+            // acknowledges it. Statement.cancel only bites while a command is
+            // actually executing, so a cancel that landed in the sliver between
+            // the worker's last flag check and the driver entering execution
+            // cancelled nothing — and no flag check can close that sliver from
+            // the worker's side, because the worker is then blocked inside the
+            // very call that needed cancelling. The poller is already knocking
+            // every 200ms; each knock re-delivers the cancel until it lands.
+            if (cancelRequested && !isTerminal()) {
+                Statement stmt = inFlight;
+                if (stmt != null) {
+                    cancelStatement(stmt);
+                }
+            }
             JsonObject o = new JsonObject();
             o.addProperty("state", state);
             o.addProperty("rows_done", rowsDone);
