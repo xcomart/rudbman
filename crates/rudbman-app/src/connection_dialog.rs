@@ -2246,7 +2246,7 @@ mod tests {
                     driver.id
                 );
                 assert!(
-                    !label.contains("connect."),
+                    !label.starts_with("connect."),
                     "untranslated label for {name}: {label:?}"
                 );
             }
@@ -2323,7 +2323,10 @@ mod tests {
             ts!("connect.hint_host_key"),
         ] {
             assert!(!label.is_empty(), "empty label");
-            assert!(!label.contains("connect."), "untranslated label {label:?}");
+            assert!(
+                !label.starts_with("connect."),
+                "untranslated label {label:?}"
+            );
         }
 
         // The copy's name has to carry the original's, or duplicating twice

@@ -243,6 +243,16 @@ driver:
   name: 名前
   class: ドライバークラス
   class_hint: ドライバーの資料に載っている完全修飾クラス名です。たとえば org.postgresql.Driver。
+  detect: 自動検出
+  detecting: JAR ファイルの中を調べています…
+  probe_found: "%{class} を見つけました。"
+  probe_choose: このドライバーには複数のクラスがあります。接続に使うものを選んでください。
+  probe_recommended: 推奨
+  probe_none: これらのファイルに JDBC ドライバーはありません。ソースや javadoc の JAR がこう見えます。正しいファイルを選んだか確認してください。
+  probe_damaged: "ファイルが壊れていて最後まで読めませんでした。ダウンロードし直してください。(%{error})"
+  probe_missing: "JAR ファイルが見つかりません: %{error}"
+  probe_jvm_failed: "Java ランタイムを起動できませんでした: %{error}"
+  probe_failed: "JAR ファイルを調べられませんでした: %{error}"
   url_template: URL テンプレート
   default_port: 既定のポート
   dialect: 方言

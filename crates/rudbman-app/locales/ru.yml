@@ -243,6 +243,16 @@ driver:
   name: Имя
   class: Класс драйвера
   class_hint: Полное имя класса, как его приводит документация драйвера, — например org.postgresql.Driver.
+  detect: Определить
+  detecting: Просмотр файлов JAR…
+  probe_found: "Найден %{class}."
+  probe_choose: В этом драйвере несколько классов. Выберите тот, через который подключаться.
+  probe_recommended: рекомендуется
+  probe_none: В этих файлах нет драйвера JDBC. Так выглядит JAR с исходниками или javadoc; проверьте, тот ли файл выбран.
+  probe_damaged: "Файл повреждён и не прочитался до конца; скачайте его заново. (%{error})"
+  probe_missing: "Файл JAR не найден: %{error}"
+  probe_jvm_failed: "Не удалось запустить среду выполнения Java: %{error}"
+  probe_failed: "Не удалось проверить файлы JAR: %{error}"
   url_template: Шаблон URL
   default_port: Порт по умолчанию
   dialect: Диалект

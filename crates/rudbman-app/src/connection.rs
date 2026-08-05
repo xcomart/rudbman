@@ -429,7 +429,15 @@ pub fn connect(
 /// The heap and the extra arguments only take effect on the first call of a
 /// process — JNI permits one VM and offers no way to reconfigure it — which is
 /// what the settings dialog's "takes effect on the next start" hint is about.
-fn start_jvm(settings: &AppSettings) -> Result<&'static Jvm, ConnectError> {
+///
+/// Shared with the driver manager, which needs a VM for
+/// [`Jvm::probe_drivers`](rudbman_jdbc::Jvm::probe_drivers) and must reach it
+/// through the same settings — a probe that ran under a different heap than the
+/// connection that follows would be a difference nobody could see.
+///
+/// **Blocks** on the first call of a process, for as long as
+/// `JNI_CreateJavaVM` takes.
+pub(crate) fn start_jvm(settings: &AppSettings) -> Result<&'static Jvm, ConnectError> {
     let mut config = JvmConfig::from_settings(settings);
     if config.bridge_jar().as_os_str().is_empty() {
         config = JvmConfig::new(default_bridge_jar());

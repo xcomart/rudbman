@@ -243,6 +243,16 @@ driver:
   name: Name
   class: Treiberklasse
   class_hint: Der voll qualifizierte Klassenname, wie ihn die Dokumentation des Treibers angibt — zum Beispiel org.postgresql.Driver.
+  detect: Ermitteln
+  detecting: Die JAR-Dateien werden durchgesehen …
+  probe_found: "%{class} gefunden."
+  probe_choose: Dieser Treiber bringt mehrere Klassen mit. Wählen Sie die aus, mit der verbunden werden soll.
+  probe_recommended: empfohlen
+  probe_none: In diesen Dateien steckt kein JDBC-Treiber. So sieht ein Quelltext- oder Javadoc-JAR aus; prüfen Sie, ob die richtige Datei gewählt wurde.
+  probe_damaged: "Die Datei ist beschädigt und ließ sich nicht bis zum Ende lesen; laden Sie sie erneut herunter. (%{error})"
+  probe_missing: "Die JAR-Datei wurde nicht gefunden: %{error}"
+  probe_jvm_failed: "Die Java-Laufzeitumgebung konnte nicht gestartet werden: %{error}"
+  probe_failed: "Die JAR-Dateien konnten nicht untersucht werden: %{error}"
   url_template: URL-Vorlage
   default_port: Standardport
   dialect: Dialekt

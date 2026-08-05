@@ -2169,9 +2169,9 @@ mod tests {
             ts!("statusbar.tunnel_lost", reason = "r"),
         ] {
             assert!(!label.is_empty(), "empty label");
-            assert!(!label.contains("empty."), "untranslated label {label:?}");
+            assert!(!label.starts_with("empty."), "untranslated label {label:?}");
             assert!(
-                !label.contains("statusbar."),
+                !label.starts_with("statusbar."),
                 "untranslated label {label:?}"
             );
         }

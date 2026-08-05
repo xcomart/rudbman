@@ -243,6 +243,16 @@ driver:
   name: 名称
   class: 驱动类
   class_hint: 驱动文档中给出的完全限定类名，例如 org.postgresql.Driver。
+  detect: 自动检测
+  detecting: 正在查看 JAR 文件…
+  probe_found: "找到了 %{class}。"
+  probe_choose: 该驱动包含多个类。请选择用于连接的那一个。
+  probe_recommended: 推荐
+  probe_none: 这些文件里没有 JDBC 驱动。源码包或 javadoc 包就是这样；请确认选对了文件。
+  probe_damaged: "文件已损坏，无法读完；请重新下载。（%{error}）"
+  probe_missing: "找不到 JAR 文件：%{error}"
+  probe_jvm_failed: "无法启动 Java 运行时：%{error}"
+  probe_failed: "无法检查 JAR 文件：%{error}"
   url_template: URL 模板
   default_port: 默认端口
   dialect: 方言

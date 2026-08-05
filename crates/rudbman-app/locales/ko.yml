@@ -243,6 +243,16 @@ driver:
   name: 이름
   class: 드라이버 클래스
   class_hint: 드라이버 문서에 나온 정규화된 클래스 이름입니다. 예를 들어 org.postgresql.Driver.
+  detect: 자동 검출
+  detecting: JAR 파일 안을 살펴보는 중…
+  probe_found: "%{class}을(를) 찾았습니다."
+  probe_choose: 이 드라이버에는 클래스가 여럿 있습니다. 접속에 쓸 것을 고르세요.
+  probe_recommended: 권장
+  probe_none: 이 파일에는 JDBC 드라이버가 없습니다. 소스나 자바독 JAR이 이렇게 보입니다. 올바른 파일을 골랐는지 확인하세요.
+  probe_damaged: "파일이 손상되어 끝까지 읽지 못했습니다. 다시 내려받으세요. (%{error})"
+  probe_missing: "JAR 파일을 찾을 수 없습니다: %{error}"
+  probe_jvm_failed: "자바 런타임을 시작하지 못했습니다: %{error}"
+  probe_failed: "JAR 파일을 검사하지 못했습니다: %{error}"
   url_template: URL 서식
   default_port: 기본 포트
   dialect: 방언

@@ -338,6 +338,26 @@ driver:
   name: Name
   class: Driver class
   class_hint: The fully qualified class name, as the driver's own documentation gives it — for example org.postgresql.Driver.
+  # Reads the class out of the registered JARs instead of making the user find
+  # it. The first probe of a session starts the Java runtime, so it can take a
+  # few seconds.
+  detect: Detect
+  detecting: Looking inside the JAR files…
+  probe_found: "Found %{class}."
+  # More than one java.sql.Driver in the archive. The vendor's own
+  # META-INF/services declaration is marked and preselected; the rest are
+  # usually internal or deprecated drivers.
+  probe_choose: This driver offers several classes. Pick the one to connect with.
+  probe_recommended: recommended
+  # A perfectly good archive with no driver in it, which is what a sources or
+  # javadoc JAR looks like — the mistake that is actually made.
+  probe_none: These files hold no JDBC driver. A sources or javadoc JAR looks like this; check that the right file was picked.
+  # The archive started reading and then failed, which means the bytes are bad
+  # rather than the file being the wrong one.
+  probe_damaged: "The file is damaged and could not be read to the end; download it again. (%{error})"
+  probe_missing: "The JAR file could not be found: %{error}"
+  probe_jvm_failed: "The Java runtime could not be started: %{error}"
+  probe_failed: "The JAR files could not be examined: %{error}"
   url_template: URL template
   default_port: Default port
   dialect: Dialect

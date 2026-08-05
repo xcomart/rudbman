@@ -243,6 +243,16 @@ driver:
   name: Nombre
   class: Clase del controlador
   class_hint: El nombre de clase completo, tal como lo da la documentación del controlador — por ejemplo org.postgresql.Driver.
+  detect: Detectar
+  detecting: Revisando los archivos JAR…
+  probe_found: "Se encontró %{class}."
+  probe_choose: Este controlador ofrece varias clases. Elige con cuál conectar.
+  probe_recommended: recomendada
+  probe_none: Estos archivos no contienen ningún controlador JDBC. Así se ve un JAR de fuentes o de javadoc; comprueba que elegiste el archivo correcto.
+  probe_damaged: "El archivo está dañado y no se pudo leer hasta el final; descárgalo de nuevo. (%{error})"
+  probe_missing: "No se encontró el archivo JAR: %{error}"
+  probe_jvm_failed: "No se pudo iniciar el entorno de ejecución de Java: %{error}"
+  probe_failed: "No se pudieron examinar los archivos JAR: %{error}"
   url_template: Plantilla de URL
   default_port: Puerto por omisión
   dialect: Dialecto

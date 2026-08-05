@@ -15,10 +15,21 @@
 //! a path in [`DriverDef::jars`], which is the class path the bridge builds an
 //! isolated loader from.
 //!
-//! Nothing here loads a driver class. Probing a JAR for the driver classes
-//! inside it is a bridge operation (`PROBE_DRIVER`, `0x50`), and this build of
-//! `rudbman-jdbc` offers no way to reach it without an open session — see the
-//! note on [`DriverManager::render_class_row`].
+//! # The class name is looked up, not typed
+//!
+//! [`DriverManager::detect_class`] asks the bridge which `java.sql.Driver`
+//! implementations the registered JARs hold ([`Jvm::probe_drivers`][probe]), so
+//! the user does not have to find a fully qualified class name in a vendor's
+//! documentation. The scan never runs a static initialiser, so looking at a file
+//! opens no socket and loads no native library.
+//!
+//! [probe]: rudbman_jdbc::Jvm::probe_drivers
+//!
+//! Three outcomes that are *not* the same thing, and are not worded as if they
+//! were: an archive with no driver in it means the wrong file was picked — a
+//! sources or javadoc JAR, which is the mistake people actually make; a damaged
+//! archive means a broken download; a path that is not there means the file
+//! moved. Each names its own fix.
 //!
 //! # The download does not block the window
 //!
@@ -33,15 +44,18 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui::{
     App, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    MouseButton, MouseUpEvent, PathPromptOptions, Render, ScrollHandle, SharedString, Window, div,
-    prelude::*, px,
+    MouseButton, MouseUpEvent, PathPromptOptions, Render, ScrollHandle, SharedString, Task, Window,
+    div, prelude::*, px,
 };
 use rudbman_core::{DriverDef, DriverStore, drivers_dir};
+use rudbman_jdbc::{BridgeErrorKind, DriverProbe, Error as JdbcError};
 use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, TextInput,
     Theme, form_row, hide_later, scroll_to, scrolled, theme,
 };
 
+use crate::app_settings;
+use crate::connection::{self, ConnectError};
 use crate::i18n::ts;
 use crate::maven::{self, Cancel, Coordinate, DownloadError, Progress};
 
@@ -68,6 +82,13 @@ mod tab {
     pub const NAME: isize = 400;
     /// Driver class.
     pub const CLASS: isize = 410;
+    /// The "detect it from the JAR" button beside the class.
+    pub const DETECT: isize = 411;
+    /// First index of the rows offered when a JAR holds several drivers.
+    ///
+    /// Nine of them before the URL template's index, which is more drivers than
+    /// any archive has ever shipped; a tenth would simply share the last index.
+    pub const PROBE_CHOICE: isize = 412;
     /// URL template.
     pub const URL_TEMPLATE: isize = 420;
     /// Default port.
@@ -101,6 +122,85 @@ pub enum DriverManagerEvent {
     Dismissed,
 }
 
+/// Where a driver-class probe has got to.
+enum Probe {
+    /// The scan is running. The task is held rather than detached so that
+    /// closing the manager abandons it.
+    Running {
+        /// Dropped, and so cancelled, with the manager.
+        _task: Task<()>,
+    },
+    /// Several drivers were found and the user has to say which.
+    Choosing {
+        /// Every class found, the declared services first.
+        candidates: Vec<String>,
+        /// The one [`DriverProbe::recommended`] would pick, preselected.
+        recommended: Option<String>,
+    },
+}
+
+/// Why a probe produced no class name.
+///
+/// Four cases rather than one string, because each has a different fix and the
+/// UI says so; see [`DriverManager::probed`].
+#[derive(Debug)]
+enum ProbeFailure {
+    /// The JVM would not start — no Java runtime, or no bridge JAR.
+    Jvm(String),
+    /// A registered JAR is not where the definition says it is.
+    Missing(String),
+    /// The archive could not be read to the end.
+    Damaged(String),
+    /// Anything else the JNI layer reported.
+    Other(String),
+}
+
+impl From<JdbcError> for ProbeFailure {
+    fn from(error: JdbcError) -> Self {
+        match error {
+            JdbcError::JvmStart(message) => ProbeFailure::Jvm(message),
+            // The bridge tells the two archive failures apart for us: a path
+            // that is not there is `driver`, a stream that dies part way
+            // through is `io`.
+            JdbcError::Bridge(bridge) => match bridge.kind {
+                BridgeErrorKind::Driver => ProbeFailure::Missing(bridge.message),
+                BridgeErrorKind::Io => ProbeFailure::Damaged(bridge.message),
+                _ => ProbeFailure::Other(bridge.to_string()),
+            },
+            other => ProbeFailure::Other(other.to_string()),
+        }
+    }
+}
+
+/// The classes a probe offers, in the order to offer them.
+///
+/// The `META-INF/services` declarations first — that is the vendor naming its
+/// own entry point — then whatever the scan turned up that the declaration did
+/// not already cover. Deduplicated, because the two lists overlap for every
+/// well-formed driver JAR.
+fn candidates_of(probe: &DriverProbe) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for class in probe.services.iter().chain(probe.classes.iter()) {
+        if !found.contains(class) {
+            found.push(class.clone());
+        }
+    }
+    found
+}
+
+/// What a probe failure is shown as.
+///
+/// Separate from [`DriverManager::probed`] so that "a damaged archive says the
+/// download is broken" can be asserted without a window.
+fn probe_message(failure: &ProbeFailure) -> SharedString {
+    match failure {
+        ProbeFailure::Jvm(error) => ts!("driver.probe_jvm_failed", error = error.clone()),
+        ProbeFailure::Missing(error) => ts!("driver.probe_missing", error = error.clone()),
+        ProbeFailure::Damaged(error) => ts!("driver.probe_damaged", error = error.clone()),
+        ProbeFailure::Other(error) => ts!("driver.probe_failed", error = error.clone()),
+    }
+}
+
 /// A download in flight.
 struct Download {
     /// What is being fetched, for the message.
@@ -119,6 +219,8 @@ pub struct DriverManager {
     selected: Option<String>,
     /// A download in flight, if any.
     download: Option<Download>,
+    /// A driver-class probe running, or waiting for the user to pick.
+    probe: Option<Probe>,
     /// Message strip under the form.
     status: Option<SharedString>,
     /// Whether the message is a failure rather than a report.
@@ -178,6 +280,7 @@ impl DriverManager {
             store,
             selected,
             download: None,
+            probe: None,
             status_is_error: status.is_some(),
             status,
             confirming: false,
@@ -263,6 +366,9 @@ impl DriverManager {
         self.collect(cx);
         self.confirming = false;
         self.status = None;
+        // A chooser listing another driver's classes would be answered into
+        // this one's class field.
+        self.probe = None;
         self.selected = Some(id);
         self.fill_form(cx);
         cx.notify();
@@ -271,6 +377,7 @@ impl DriverManager {
     /// Adds a driver definition with nothing in it and selects it.
     fn new_driver(&mut self, cx: &mut Context<Self>) {
         self.collect(cx);
+        self.probe = None;
         let id = unique_id("driver", &self.store);
         self.store.upsert(DriverDef {
             id: id.clone(),
@@ -530,6 +637,12 @@ impl DriverManager {
             cx.notify();
             return;
         }
+        // Backing out of the class chooser — or of a probe still running —
+        // undoes only that, not the whole form.
+        if self.probe.take().is_some() {
+            cx.notify();
+            return;
+        }
         if self.download.is_some() {
             self.cancel_download(cx);
             return;
@@ -693,25 +806,196 @@ impl DriverManager {
             .children(self.scrollbar(LIST_SCROLLBAR).render(chrome))
     }
 
-    /// The driver class field.
+    /// The driver class field, its "detect" button, and whatever the last probe
+    /// had to say.
     ///
-    /// There is no "detect it from the JAR" button, and its absence is
-    /// deliberate rather than an oversight: the bridge implements
-    /// `PROBE_DRIVER` (`0x50`), which scans a JAR for `java.sql.Driver`
-    /// implementations without initialising any of them, but this build of
-    /// `rudbman-jdbc` exposes no way to invoke an operation without an open
-    /// session — `Session::call_raw` goes through a session's worker thread, and
-    /// `Jvm::call_detached` is crate-private. Probing happens *before* there is
-    /// a session, so until the JNI layer publishes an entry point for it the
-    /// class is typed in, with the hint below naming the two places it is
-    /// written down in every driver's own documentation.
-    fn render_class_row(&self, cx: &App) -> impl IntoElement + use<> {
+    /// The button is held while the selected driver has no JAR: there is nothing
+    /// to look inside of, and a button that can only report "add a JAR first" is
+    /// a worse way of saying what the JAR row already says.
+    fn render_class_row(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let this = cx.entity();
+        let has_jars = self.current().is_some_and(|driver| !driver.jars.is_empty());
+        let probing = matches!(self.probe, Some(Probe::Running { .. }));
+
+        let detect = Button::new("driver-detect", ts!("driver.detect"))
+            .variant(ButtonVariant::Secondary)
+            .disabled(!has_jars || probing)
+            .tab_index(tab::DETECT)
+            .on_click({
+                let this = this.clone();
+                move |_, _window, cx| {
+                    this.update(cx, |manager, cx| manager.detect_class(cx));
+                }
+            });
+
+        // Starting the JVM is part of the first probe of a process and takes
+        // seconds, so the wait is said out loud rather than left to a button
+        // that has simply gone quiet.
+        let running = probing.then(|| hint(ts!("driver.detecting"), cx));
+
+        // More than one driver in the archive: the vendor's own
+        // `META-INF/services` declaration heads the list and is preselected, and
+        // the rest — internal and deprecated drivers, mostly — follow. Picking
+        // one for the user silently is exactly what the scan cannot be trusted
+        // to do.
+        let choice = match &self.probe {
+            Some(Probe::Choosing {
+                candidates,
+                recommended,
+            }) => {
+                let rows: Vec<_> = candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(index, class)| {
+                        let this = this.clone();
+                        let picked = class.clone();
+                        let preferred = Some(class) == recommended.as_ref();
+                        div()
+                            .id(("driver-probe-choice", index))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.))
+                            .px(px(8.))
+                            .py(px(4.))
+                            .rounded_md()
+                            .cursor_pointer()
+                            .tab_index(tab::PROBE_CHOICE + index as isize)
+                            .when(preferred, |row| row.bg(chrome.surface_active))
+                            .when(!preferred, |row| {
+                                row.hover(|row| row.bg(chrome.surface_hover))
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(11.))
+                                    .text_color(chrome.text)
+                                    .child(SharedString::from(class.clone())),
+                            )
+                            .when(preferred, |row| {
+                                row.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(10.))
+                                        .text_color(chrome.accent)
+                                        .child(ts!("driver.probe_recommended")),
+                                )
+                            })
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |manager, cx| {
+                                    manager.take_class(picked.clone(), cx);
+                                });
+                            })
+                    })
+                    .collect();
+
+                Some(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(hint(ts!("driver.probe_choose"), cx))
+                        .children(rows),
+                )
+            }
+            _ => None,
+        };
+
         div()
             .flex()
             .flex_col()
             .gap(px(4.))
-            .child(self.class_input.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(div().flex_1().min_w_0().child(self.class_input.clone()))
+                    .child(detect),
+            )
+            .children(running)
+            .children(choice)
             .child(hint(ts!("driver.class_hint"), cx))
+    }
+
+    /// Asks the bridge which `java.sql.Driver` implementations the selected
+    /// driver's JARs hold.
+    ///
+    /// Everything about this blocks — the first probe of a process starts the
+    /// JVM, and the scan then reads every entry of every archive — so it runs on
+    /// a background task and the view only ever sees the answer.
+    fn detect_class(&mut self, cx: &mut Context<Self>) {
+        self.collect(cx);
+        let jars = self
+            .current()
+            .map(|driver| driver.jars.clone())
+            .unwrap_or_default();
+        if jars.is_empty() || matches!(self.probe, Some(Probe::Running { .. })) {
+            return;
+        }
+
+        let settings = app_settings::current(cx);
+        self.status = None;
+        cx.notify();
+
+        let scan = cx.background_spawn(async move {
+            // The same bootstrap the connection path uses, so a probe and the
+            // connection that follows it run in one VM under one set of options.
+            let jvm = connection::start_jvm(&settings).map_err(|error| match error {
+                ConnectError::JvmStart(message) => ProbeFailure::Jvm(message),
+                other => ProbeFailure::Other(other.message()),
+            })?;
+            jvm.probe_drivers(&jars).map_err(ProbeFailure::from)
+        });
+
+        let task = cx.spawn(async move |manager, cx| {
+            let outcome = scan.await;
+            manager
+                .update(cx, |manager, cx| manager.probed(outcome, cx))
+                .ok();
+        });
+        self.probe = Some(Probe::Running { _task: task });
+    }
+
+    /// Records what a probe found.
+    ///
+    /// The three failure modes get three different sentences on purpose. An
+    /// archive with nothing in it is a *wrong file* — a sources or javadoc JAR,
+    /// which is the mistake that is actually made; a damaged archive is a *broken
+    /// download*; a path that is not there is a *moved file*. One "could not
+    /// probe" for all three would leave the user guessing which.
+    fn probed(&mut self, outcome: Result<DriverProbe, ProbeFailure>, cx: &mut Context<Self>) {
+        self.probe = None;
+        let probe = match outcome {
+            Ok(probe) => probe,
+            Err(failure) => {
+                self.report(probe_message(&failure), true, cx);
+                return;
+            }
+        };
+
+        let candidates = candidates_of(&probe);
+        match candidates.len() {
+            0 => self.report(ts!("driver.probe_none"), true, cx),
+            1 => self.take_class(candidates[0].clone(), cx),
+            _ => {
+                self.probe = Some(Probe::Choosing {
+                    recommended: probe.recommended().map(str::to_owned),
+                    candidates,
+                });
+                cx.notify();
+            }
+        }
+    }
+
+    /// Writes a probed class into the field and puts the chooser away.
+    fn take_class(&mut self, class: String, cx: &mut Context<Self>) {
+        self.probe = None;
+        set_text(&self.class_input, class.clone(), cx);
+        self.report(ts!("driver.probe_found", class = class), false, cx);
     }
 
     /// The class path: one row per JAR, plus the two ways to add one.
@@ -892,7 +1176,7 @@ impl DriverManager {
                 .into_any_element();
         }
 
-        let class_row = self.render_class_row(cx);
+        let class_row = self.render_class_row(chrome, cx);
         let jars = self.render_jars(chrome, cx);
         let maven = self.render_maven(chrome, cx);
 
@@ -1167,6 +1451,289 @@ mod tests {
         assert_eq!(unique_id("driver", &store), "driver-2");
     }
 
+    /// A throwaway file under the temp directory, removed with the test.
+    struct TempFile(PathBuf);
+
+    impl TempFile {
+        fn new(name: &str, contents: &[u8]) -> TempFile {
+            let path = std::env::temp_dir().join(format!("rudbman-app-probe-{name}"));
+            std::fs::write(&path, contents).expect("the temp directory is writable");
+            TempFile(path)
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// The 22 bytes of an archive with no entries at all: a valid JAR holding no
+    /// driver, which is what a sources or javadoc archive looks like here.
+    const EMPTY_ZIP: [u8; 22] = [
+        0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+
+    /// Probes `jars` through the real JVM and the real bridge.
+    fn probe(jars: &[PathBuf]) -> Result<DriverProbe, ProbeFailure> {
+        let jvm = connection::start_jvm(&rudbman_core::AppSettings::default())
+            .expect("the JVM starts; build the bridge with `cd bridge && ./gradlew jar`");
+        jvm.probe_drivers(jars).map_err(ProbeFailure::from)
+    }
+
+    /// A manager whose selected driver is H2 with `jars` and no class name.
+    fn manager_over(
+        jars: Vec<PathBuf>,
+        cx: &mut gpui::TestAppContext,
+    ) -> gpui::Entity<DriverManager> {
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let manager = cx.new(DriverManager::new);
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| {
+                // The built-in definitions rather than whatever is on this
+                // machine, so the test says the same thing everywhere.
+                manager.store = DriverStore::default();
+                let mut driver = manager.store.get("h2").cloned().expect("built-in H2");
+                driver.jars = jars;
+                driver.class = String::new();
+                manager.store.upsert(driver);
+                manager.selected = Some("h2".to_string());
+                manager.fill_form(cx);
+            });
+        });
+        manager
+    }
+
+    /// What the manager is currently showing under the form.
+    fn status(
+        manager: &gpui::Entity<DriverManager>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (SharedString, bool) {
+        cx.update(|cx| {
+            let manager = manager.read(cx);
+            (
+                manager.status.clone().unwrap_or_default(),
+                manager.status_is_error,
+            )
+        })
+    }
+
+    /// The whole point of the button, against the real H2 archive: the user
+    /// registers a JAR and is told the class name instead of having to find it.
+    #[gpui::test]
+    fn detecting_the_class_of_a_real_driver_jar_fills_the_field(cx: &mut gpui::TestAppContext) {
+        let jar = crate::connection::h2::jar();
+        let manager = manager_over(vec![jar.clone()], cx);
+        let probed = probe(&[jar]);
+
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| manager.probed(probed, cx));
+        });
+
+        cx.update(|cx| {
+            let manager = manager.read(cx);
+            assert_eq!(
+                manager.class_input.read(cx).content(),
+                "org.h2.Driver",
+                "the declared service is what lands in the field"
+            );
+            // H2 ships exactly one driver, so there is nothing to choose.
+            assert!(manager.probe.is_none());
+        });
+        let (message, is_error) = status(&manager, cx);
+        assert!(!is_error, "{message}");
+        assert!(message.contains("org.h2.Driver"), "{message}");
+    }
+
+    /// A sources or javadoc JAR: a perfectly good archive with no driver in it.
+    /// Not an error from the bridge, and a sentence of its own here.
+    #[gpui::test]
+    fn an_archive_with_no_driver_says_so_rather_than_failing(cx: &mut gpui::TestAppContext) {
+        let jar = TempFile::new("empty.jar", &EMPTY_ZIP);
+        let manager = manager_over(vec![jar.0.clone()], cx);
+        let probed = probe(std::slice::from_ref(&jar.0));
+        assert!(
+            probed.is_ok(),
+            "an archive without a driver is not a failure"
+        );
+
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| manager.probed(probed, cx));
+        });
+
+        let (message, is_error) = status(&manager, cx);
+        assert!(is_error);
+        assert_eq!(message, ts!("driver.probe_none"));
+        // Nothing was written into the field on the way past.
+        cx.update(|cx| {
+            assert_eq!(manager.read(cx).class_input.read(cx).content(), "");
+        });
+    }
+
+    /// A half-written download: the archive starts reading and then fails. It
+    /// must not be reported as "no driver in it" — the file is right, the bytes
+    /// are not, and the fix is to fetch it again.
+    #[gpui::test]
+    fn a_damaged_archive_is_reported_as_a_broken_download(cx: &mut gpui::TestAppContext) {
+        let whole = std::fs::read(crate::connection::h2::jar()).expect("the H2 jar is readable");
+        let jar = TempFile::new("truncated.jar", &whole[..whole.len() / 2]);
+        let manager = manager_over(vec![jar.0.clone()], cx);
+
+        let probed = probe(std::slice::from_ref(&jar.0));
+        let Err(ProbeFailure::Damaged(reported)) = &probed else {
+            panic!("the bridge answers `io` for a truncated archive, got {probed:?}");
+        };
+        let expected = ts!("driver.probe_damaged", error = reported.clone());
+
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| manager.probed(probed, cx));
+        });
+
+        let (message, is_error) = status(&manager, cx);
+        assert!(is_error);
+        assert_eq!(message, expected);
+        assert_ne!(
+            message,
+            ts!("driver.probe_none"),
+            "a broken file is not an empty one"
+        );
+    }
+
+    /// A path the definition names and the disk does not have.
+    #[gpui::test]
+    fn a_jar_that_is_not_there_names_the_file_rather_than_the_archive(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let missing = PathBuf::from("/nonexistent/rudbman/nope.jar");
+        let manager = manager_over(vec![missing.clone()], cx);
+        let probed = probe(&[missing]);
+        assert!(
+            matches!(probed, Err(ProbeFailure::Missing(_))),
+            "expected a driver error"
+        );
+
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| manager.probed(probed, cx));
+        });
+        let (message, is_error) = status(&manager, cx);
+        assert!(is_error);
+        assert!(message.contains("nope.jar"), "{message}");
+    }
+
+    /// Several drivers in one archive: nothing is chosen for the user, and the
+    /// vendor's own declaration is what comes up preselected.
+    #[gpui::test]
+    fn several_drivers_are_offered_rather_than_guessed_between(cx: &mut gpui::TestAppContext) {
+        let manager = manager_over(vec![PathBuf::from("/tmp/whatever.jar")], cx);
+        // The shape a driver JAR with an internal second driver has: the scan
+        // finds both, the declaration names one.
+        let probed = DriverProbe {
+            classes: vec![
+                "com.example.LegacyDriver".to_string(),
+                "com.example.Driver".to_string(),
+            ],
+            services: vec!["com.example.Driver".to_string()],
+        };
+
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| manager.probed(Ok(probed), cx));
+        });
+
+        cx.update(|cx| {
+            let manager = manager.read(cx);
+            let Some(Probe::Choosing {
+                candidates,
+                recommended,
+            }) = &manager.probe
+            else {
+                panic!("two drivers must be offered, not picked between")
+            };
+            // The declaration heads the list and is the default.
+            assert_eq!(
+                candidates,
+                &vec![
+                    "com.example.Driver".to_string(),
+                    "com.example.LegacyDriver".to_string()
+                ]
+            );
+            assert_eq!(recommended.as_deref(), Some("com.example.Driver"));
+            // And nothing has been written into the field yet.
+            assert_eq!(manager.class_input.read(cx).content(), "");
+        });
+
+        // Picking one fills the field and puts the chooser away.
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| {
+                manager.take_class("com.example.LegacyDriver".to_string(), cx);
+            });
+        });
+        cx.update(|cx| {
+            let manager = manager.read(cx);
+            assert_eq!(
+                manager.class_input.read(cx).content(),
+                "com.example.LegacyDriver"
+            );
+            assert!(manager.probe.is_none());
+        });
+    }
+
+    #[test]
+    fn the_declared_service_heads_the_candidate_list_and_duplicates_collapse() {
+        let probe = DriverProbe {
+            classes: vec!["a.B".to_string(), "a.C".to_string()],
+            services: vec!["a.C".to_string()],
+        };
+        assert_eq!(
+            candidates_of(&probe),
+            vec!["a.C".to_string(), "a.B".to_string()],
+            "the vendor's own declaration comes first and is not repeated"
+        );
+
+        // No declaration: the scan order stands.
+        let scanned = DriverProbe {
+            classes: vec!["a.B".to_string(), "a.C".to_string()],
+            services: Vec::new(),
+        };
+        assert_eq!(
+            candidates_of(&scanned),
+            vec!["a.B".to_string(), "a.C".to_string()]
+        );
+
+        assert!(
+            candidates_of(&DriverProbe {
+                classes: Vec::new(),
+                services: Vec::new()
+            })
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_four_probe_failures_read_as_four_different_things() {
+        // Each names a different fix; one sentence for all four would leave the
+        // user guessing which of them they are looking at.
+        let messages = [
+            probe_message(&ProbeFailure::Jvm("no runtime".into())),
+            probe_message(&ProbeFailure::Missing("/nope.jar".into())),
+            probe_message(&ProbeFailure::Damaged("unexpected end".into())),
+            probe_message(&ProbeFailure::Other("something".into())),
+        ];
+        for message in &messages {
+            assert!(!message.is_empty());
+            assert!(!message.contains("driver."), "untranslated: {message:?}");
+        }
+        let mut unique: Vec<&str> = messages.iter().map(SharedString::as_ref).collect();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), 4, "two failures read the same: {messages:?}");
+        // And none of them reads like the empty-archive case, which is not a
+        // failure at all.
+        assert!(!unique.contains(&ts!("driver.probe_none").as_ref()));
+    }
+
     #[test]
     fn every_label_the_manager_draws_has_a_translation() {
         // `t!` answers with the key path when a key is missing, so a typo
@@ -1204,9 +1771,22 @@ mod tests {
             ts!("driver.delete"),
             ts!("driver.delete_confirm", name = "X"),
             ts!("driver.none_selected"),
+            ts!("driver.detect"),
+            ts!("driver.detecting"),
+            ts!("driver.probe_found", class = "org.h2.Driver"),
+            ts!("driver.probe_choose"),
+            ts!("driver.probe_recommended"),
+            ts!("driver.probe_none"),
+            ts!("driver.probe_damaged", error = "e"),
+            ts!("driver.probe_missing", error = "e"),
+            ts!("driver.probe_jvm_failed", error = "e"),
+            ts!("driver.probe_failed", error = "e"),
         ] {
             assert!(!label.is_empty(), "empty label");
-            assert!(!label.contains("driver."), "untranslated label {label:?}");
+            assert!(
+                !label.starts_with("driver."),
+                "untranslated label {label:?}"
+            );
         }
     }
 }
