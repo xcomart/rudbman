@@ -40,7 +40,7 @@ gpui = { path = "vendor/gpui" }
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "Apache-2.0"
+license = "MIT"
 authors = ["rudbman contributors"]
 repository = "https://github.com/xcomart/rudbman"
 
