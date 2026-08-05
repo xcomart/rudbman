@@ -18,6 +18,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Ausgewähltes Objekt abfragen
+  open_sql_file: SQL-Datei öffnen…
+  extract_script: Skript extrahieren…
   about: Über rudbman
   quit: Beenden
   connection: Verbindung
@@ -375,3 +377,31 @@ query:
   hint_auth: Diese Verbindung darf das nicht.
   hint_network: Die Verbindung zur Datenbank ging verloren.
   hint_cancelled: Die Anweisung wurde abgebrochen.
+  open_file_select: SQL-Datei auswählen
+
+extract:
+  title: Skript extrahieren
+  object: Objekt
+  output: Ausgabedatei
+  output_none: Keine Datei gewählt
+  browse: Durchsuchen…
+  template_select: Vorlagendatei auswählen
+  ddl: Schema einschließen
+  drop: DROP-Anweisungen voranstellen
+  data: Zeilen einschließen
+  mode: Zeilenformat
+  mode_insert: INSERT-Anweisungen
+  mode_csv: CSV
+  mode_template: Vorlage
+  batch_rows: Zeilen pro INSERT
+  template: Vorlagendatei
+  template_none: Keine Vorlage gewählt
+  where: WHERE-Klausel
+  start: Extrahieren
+  starting: wird gestartet…
+  counters: "%{rows} Zeilen, %{bytes}"
+  cancelling: Wird abgebrochen…
+  done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
+  cancelled: "Abgebrochen. Die unvollständige Datei liegt unter %{path}."
+  failed: "Die Extraktion schlug fehl: %{error}"
+  failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.

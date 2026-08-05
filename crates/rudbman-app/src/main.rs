@@ -38,6 +38,7 @@ mod connection;
 mod connection_dialog;
 mod driver_manager;
 mod explorer;
+mod extract_dialog;
 mod i18n;
 mod icons;
 mod maven;
@@ -61,6 +62,7 @@ mod theme_picker;
 rust_i18n::i18n!("locales", fallback = "en");
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use gpui::{
     AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
@@ -83,6 +85,7 @@ use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
 use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
+use extract_dialog::{ExtractDialog, ExtractDialogEvent};
 use i18n::ts;
 use icons::Icons;
 use pane_tree::{Axis, Pane, PaneId, PaneItem, PaneNode, PaneTree, SplitId};
@@ -117,6 +120,11 @@ actions!(
         NewQuery,
         /// Open a query pane over the object selected in the explorer.
         QueryObject,
+        /// Read a `.sql` file into a query pane on the connection whose tab is
+        /// showing.
+        OpenSqlFile,
+        /// Open the extraction dialog over the object selected in the explorer.
+        ExtractScript,
         /// Close the open dialog or dropdown menu, if there is one.
         DismissDialog,
     ]
@@ -404,6 +412,8 @@ struct Workspace {
     connect: Entity<ConnectionDialog>,
     /// The settings dialog, rendered only while it reports itself open.
     settings: Entity<SettingsDialog>,
+    /// The script extraction dialog, rendered only while it reports itself open.
+    extract: Entity<ExtractDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
     /// The write confirmation, while a query pane is waiting on it.
@@ -426,6 +436,8 @@ struct Workspace {
     _explorer_events: Subscription,
     /// Keeps the settings dialog subscription alive.
     _settings_events: Subscription,
+    /// Keeps the extraction dialog subscription alive.
+    _extract_events: Subscription,
     /// Records the window's placement as it is moved and resized.
     _bounds: Subscription,
 }
@@ -511,6 +523,18 @@ impl Workspace {
             },
         );
 
+        let extract = cx.new(ExtractDialog::new);
+        let extract_events = cx.subscribe_in(
+            &extract,
+            window,
+            |this, dialog, event, window, cx| match event {
+                ExtractDialogEvent::Dismissed => {
+                    dialog.update(cx, |dialog, cx| dialog.close(cx));
+                    this.focus_shell(window, cx);
+                }
+            },
+        );
+
         // In memory only; the file is written once, when the window closes. See
         // [`app_settings::record_window_geometry`].
         let bounds = cx.observe_window_bounds(window, |_this, window, cx| {
@@ -531,6 +555,7 @@ impl Workspace {
             about,
             connect,
             settings,
+            extract,
             menu_open: false,
             confirm: None,
             titlebar,
@@ -538,6 +563,7 @@ impl Workspace {
             _connect_events: connect_events,
             _explorer_events: explorer_events,
             _settings_events: settings_events,
+            _extract_events: extract_events,
             _bounds: bounds,
         }
     }
@@ -1379,6 +1405,13 @@ impl Workspace {
             self.settings.update(cx, |dialog, cx| dialog.close(cx));
             self.apply_preview(window, cx);
         }
+        if self.extract.read(cx).is_open() {
+            // A job still running is cancelled by the close, through the drop
+            // chain `extract_dialog` documents. That is the honest reading of
+            // "the card is gone": a job whose progress nobody can see is one
+            // nobody can stop either.
+            self.extract.update(cx, |dialog, cx| dialog.close(cx));
+        }
     }
 
     /// Shows or hides the application dropdown menu.
@@ -1401,6 +1434,109 @@ impl Workspace {
         self.close_overlays(window, cx);
         self.settings.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
+    }
+
+    /// Opens the extraction dialog over `target`, closing whatever else was
+    /// showing.
+    ///
+    /// Nothing happens without a live session behind the object: the dialog's
+    /// only button starts a job on one, so a card that could not have run
+    /// anything is worse than no card. The session handle is passed in rather
+    /// than looked up later — the tab may be closed while the dialog is up, and
+    /// holding a [`connection::SessionHandle`] is what keeps the session and its
+    /// tunnel standing until the job is done with them.
+    fn open_extract(&mut self, target: ObjectTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.session_of(target.connection) else {
+            return;
+        };
+        self.close_overlays(window, cx);
+        self.extract
+            .update(cx, |dialog, cx| dialog.open(target, session, cx));
+        cx.notify();
+    }
+
+    /// Reads `path` into a query pane on the connection whose tab is showing.
+    ///
+    /// The read is a background task because a script can be a hundred
+    /// megabytes and the rope behind the editor is built for exactly that; the
+    /// editor, the statement splitter and "run everything" then handle it like
+    /// anything else that was typed.
+    ///
+    /// Invalid UTF-8 is replaced rather than refused. A `.sql` file in a legacy
+    /// encoding is still mostly readable as UTF-8 — the ASCII half of it always
+    /// is — and a user who can see their script can fix the part that came out
+    /// wrong, which is more than an error message offers.
+    fn load_sql_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.has_live_connection() {
+            return;
+        }
+        let reading =
+            cx.background_spawn(async move { std::fs::read(&path).map(|bytes| (path, bytes)) });
+
+        cx.spawn_in(window, async move |workspace, cx| {
+            match reading.await {
+                Ok((path, bytes)) => {
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_query(&text, window, cx);
+                            log::debug!("opened {}", path.display());
+                        })
+                        .ok();
+                }
+                // Nowhere to put this on screen: the shell has no transient
+                // message strip, and inventing one for the case where a file
+                // the user just picked has gone away is out of proportion.
+                Err(error) => log::error!("could not read the SQL file: {error}"),
+            }
+        })
+        .detach();
+    }
+
+    /// Whether the tab on screen has a session behind it.
+    fn has_live_connection(&self) -> bool {
+        self.active_connection()
+            .is_some_and(|open| matches!(open.state, ConnectionState::Open(_)))
+    }
+
+    /// Asks the platform for a `.sql` file and opens what it hands back.
+    ///
+    /// Nothing waits on the prompt, for the reason the other pickers in this
+    /// application do not: on X11 that call is the one gpui had to be patched
+    /// around.
+    fn open_sql_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Asked before the prompt as well as after: opening a file picker over
+        // a window that has nowhere to put the file is a dead end the user only
+        // finds out about once they have chosen one.
+        if !self.has_live_connection() {
+            return;
+        }
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(ts!("query.open_file_select")),
+        });
+
+        cx.spawn_in(window, async move |workspace, cx| {
+            let chosen = match paths.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    log::warn!("the file picker could not be opened: {error:#}");
+                    return;
+                }
+            };
+            let Some(path) = chosen.into_iter().next() else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.load_sql_file(path, window, cx);
+                })
+                .ok();
+        })
+        .detach();
     }
 
     /// Re-applies the saved settings to the window.
@@ -1548,6 +1684,35 @@ impl Workspace {
         self.open_query_for(&target, window, cx);
     }
 
+    /// Reads a `.sql` file into a query pane.
+    fn open_sql_file_action(
+        &mut self,
+        _: &OpenSqlFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        self.open_sql_file(window, cx);
+    }
+
+    /// Opens the extraction dialog over the object selected in the explorer.
+    ///
+    /// Gated exactly as [`Workspace::query_object_action`] is: without a
+    /// relation selected there is nothing to extract, and a dialog that opened
+    /// on no object would have to invent one.
+    fn extract_script_action(
+        &mut self,
+        _: &ExtractScript,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        let Some(target) = self.explorer.read(cx).selected_relation(cx) else {
+            return;
+        };
+        self.open_extract(target, window, cx);
+    }
+
     /// Closes the active pane.
     fn close_pane_action(&mut self, _: &ClosePane, window: &mut Window, cx: &mut Context<Self>) {
         self.close_active_pane(window, cx);
@@ -1621,6 +1786,14 @@ impl Workspace {
             // ahead of key listeners, so this handler — not the dialog's own —
             // is where the key actually lands.
             self.settings.update(cx, |dialog, cx| dialog.escape(cx));
+            return;
+        }
+        if self.extract.read(cx).is_open() {
+            // Routed through the dialog: it stacks a dropdown, and while a job
+            // is running `Escape` is the cancel button rather than a close —
+            // dismissing the card would leave a job writing to a file with
+            // nobody left to stop it.
+            self.extract.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }
         cx.propagate();
@@ -1773,6 +1946,11 @@ impl Workspace {
             MenuEntry::new(ts!("menu.query_object"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+Enter"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(QueryObject), cx)),
+            MenuEntry::new(ts!("menu.open_sql_file"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+O"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSqlFile), cx)),
+            MenuEntry::new(ts!("menu.extract_script"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(ExtractScript), cx)),
             MenuEntry::new(ts!("menu.toggle_explorer"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
@@ -2535,6 +2713,11 @@ impl Render for Workspace {
             .read(cx)
             .is_open()
             .then(|| div().absolute().inset_0().child(self.settings.clone()));
+        let extract = self
+            .extract
+            .read(cx)
+            .is_open()
+            .then(|| div().absolute().inset_0().child(self.extract.clone()));
         let confirm = self.render_confirm(cx);
 
         // With client-side decorations the compositor stops drawing the drop
@@ -2597,6 +2780,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::toggle_explorer_action))
             .on_action(cx.listener(Self::new_query_action))
             .on_action(cx.listener(Self::query_object_action))
+            .on_action(cx.listener(Self::open_sql_file_action))
+            .on_action(cx.listener(Self::extract_script_action))
             .on_action(cx.listener(Self::close_pane_action))
             .on_action(cx.listener(Self::focus_next_pane_action))
             .on_action(cx.listener(Self::focus_prev_pane_action))
@@ -2609,6 +2794,7 @@ impl Render for Workspace {
             .children(about)
             .children(connect)
             .children(settings)
+            .children(extract)
             .children(confirm);
 
         let Some(tiling) = tiling else {
@@ -3050,6 +3236,8 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.new_query"), NewQuery),
                 MenuItem::action(ts!("menu.query_object"), QueryObject),
+                MenuItem::action(ts!("menu.open_sql_file"), OpenSqlFile),
+                MenuItem::action(ts!("menu.extract_script"), ExtractScript),
             ],
         },
         Menu {
@@ -3086,6 +3274,9 @@ fn bind_shortcuts(cx: &mut App) {
         // `Ctrl+T` is free: the SQL editor binds no `T` chord, and the shell has
         // no tab-cycling gesture to clash with.
         KeyBinding::new(&format!("{modifier}-t"), NewQuery, Some(KEY_CONTEXT)),
+        // `Ctrl+O` is "open a file" everywhere, and the SQL editor binds no `O`
+        // chord of its own for it to be taken away from.
+        KeyBinding::new(&format!("{modifier}-o"), OpenSqlFile, Some(KEY_CONTEXT)),
         // Scoped to the sidebar rather than the window, because the same chord
         // is the editor's "run the statement" — see `explorer::KEY_CONTEXT`.
         KeyBinding::new(
@@ -4111,6 +4302,110 @@ mod tests {
             })
             .expect("the window is open");
         cx.run_until_parked();
+    }
+
+    /// Opening a `.sql` file is a query pane with the file already in it.
+    ///
+    /// Driven through [`Workspace::load_sql_file`] rather than the action: the
+    /// action's first step is a platform file picker, which a headless test has
+    /// no way to answer.
+    #[gpui::test]
+    fn a_sql_file_opens_as_a_query_pane_with_its_text_in_it(cx: &mut gpui::TestAppContext) {
+        let (window, _id) = workspace_over_h2("open-file", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("report.sql");
+        let script = "-- nightly report\nSELECT 1;\nSELECT 2;\n";
+        std::fs::write(&path, script).expect("the fixture is written");
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.load_sql_file(path.clone(), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                let pane = workspace
+                    .active_query()
+                    .expect("the file opened a query pane and brought it to the front");
+                assert_eq!(pane.read(cx).editor_text(cx), script);
+            })
+            .expect("the window is open");
+    }
+
+    /// A file whose bytes are not UTF-8 still opens: the invalid runs are
+    /// replaced rather than the whole file refused.
+    #[gpui::test]
+    fn a_file_that_is_not_utf8_opens_lossily(cx: &mut gpui::TestAppContext) {
+        let (window, _id) = workspace_over_h2("open-latin1", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("latin1.sql");
+        // `SELECT 'é'` as Latin-1: the accented byte is not valid UTF-8.
+        let mut bytes = b"SELECT '".to_vec();
+        bytes.push(0xE9);
+        bytes.extend_from_slice(b"'");
+        std::fs::write(&path, &bytes).expect("the fixture is written");
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.load_sql_file(path.clone(), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                let pane = workspace
+                    .active_query()
+                    .expect("the file opened a query pane");
+                let text = pane.read(cx).editor_text(cx);
+                assert!(
+                    text.starts_with("SELECT '"),
+                    "the readable part of the file was thrown away: {text:?}"
+                );
+                assert!(
+                    text.contains('\u{fffd}'),
+                    "the undecodable byte was dropped rather than replaced: {text:?}"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// With no connection open there is nowhere to put a file, so nothing is
+    /// opened — the same gate [`Workspace::open_query`] applies.
+    #[gpui::test]
+    fn a_sql_file_needs_a_connection_to_open_into(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+            rudbman_editor::init(cx);
+            rudbman_grid::init(cx);
+        });
+        let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("orphan.sql");
+        std::fs::write(&path, "SELECT 1").expect("the fixture is written");
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.load_sql_file(path.clone(), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                assert!(workspace.work_area().is_none(), "no connection, no area");
+                assert!(workspace.active_query().is_none());
+            })
+            .expect("the window is open");
     }
 
     #[test]

@@ -10,6 +10,7 @@
 use serde::Deserialize;
 
 use crate::codec::{ColumnKind, Value};
+use crate::error::BridgeError;
 
 /// `java.sql.Types.REAL`.
 ///
@@ -347,6 +348,91 @@ impl DdlResult {
     }
 }
 
+/// The response to `JOB_POLL` (`0x41`): one reading of a running job.
+///
+/// Every member is a snapshot taken without a lock, so a reading of a *running*
+/// job may mix a counter from one instant with a phase from the next. That is
+/// harmless for a progress bar, and the one reading that matters is exact: the
+/// job writes every counter before it writes its terminal state, so a poll that
+/// sees a terminal [`state`](JobProgress::state) sees the final numbers with it.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct JobProgress {
+    /// What the job is doing, or what it ended as.
+    pub state: JobState,
+    /// Rows processed so far.
+    pub rows_done: u64,
+    /// The total, when the caller asked for it to be counted up front.
+    ///
+    /// **Normally `None`**, because no `COUNT(*)` is run before the work: on a
+    /// large table it costs as much as the extraction. A UI that wants a
+    /// determinate progress bar has to ask for the count and pay for it.
+    pub rows_total: Option<u64>,
+    /// Bytes written to the output file.
+    ///
+    /// Lags by up to one 64KB buffer while the job runs — the count is read
+    /// without flushing — and is exact once the state is terminal.
+    pub bytes: u64,
+    /// What the job is working on: `starting`, `ddl`, `data:<schema>.<table>`,
+    /// then `done`.
+    ///
+    /// Free text meant for a status line. Do not branch on it: the table part
+    /// is a display name, not a parseable qualified identifier.
+    pub phase: String,
+    /// Failures that did not stop the job, and the one that did.
+    ///
+    /// Full error envelopes, the same ones a failed call answers with, so a
+    /// job's failure can be rendered by whatever already renders those. A
+    /// `failed` state always leaves one here; a `cancelled` one often does,
+    /// carrying the driver's account of the statement being aborted, which is
+    /// the cancel working rather than a fault.
+    pub errors: Vec<BridgeError>,
+    /// Seconds remaining, when there is a row total to extrapolate from.
+    ///
+    /// `None` whenever it would be a guess — which, with no row total, is
+    /// almost always.
+    pub eta_s: Option<f64>,
+}
+
+impl JobProgress {
+    /// Whether the job has finished, one way or another.
+    ///
+    /// **Stop polling when this is true.** The reading that reports a terminal
+    /// state is also the one that retires the handle inside the bridge; a
+    /// further poll is a `protocol` error. See [`Job::poll`](crate::Job::poll).
+    pub fn is_terminal(&self) -> bool {
+        self.state.is_terminal()
+    }
+}
+
+/// What a job is doing.
+///
+/// A closed set on purpose, unlike [`BridgeErrorKind`](crate::BridgeErrorKind):
+/// a state this version has not heard of would have to be guessed either
+/// terminal — abandoning a running job — or running — polling a dead handle
+/// forever. Failing to parse says out loud that the JAR is newer than the
+/// crate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobState {
+    /// Still working.
+    Running,
+    /// Finished, having written everything that was asked for.
+    Done,
+    /// Stopped by a failure. [`JobProgress::errors`] says which.
+    Failed,
+    /// Stopped by a cancel. The partial output file is left where it is, on
+    /// purpose: it is work the user may still want.
+    Cancelled,
+}
+
+impl JobState {
+    /// Whether this is an end state.
+    pub fn is_terminal(self) -> bool {
+        !matches!(self, JobState::Running)
+    }
+}
+
 impl Value<'_> {
     /// Renders a cell as text, using the logical type to decide how.
     ///
@@ -443,6 +529,62 @@ mod tests {
         .expect("parses");
         assert!(!result.may_have_more);
         assert!(result.is_exhausted());
+    }
+
+    #[test]
+    fn a_running_job_reports_the_two_unknowns_as_null() {
+        let progress: JobProgress = serde_json::from_str(
+            r#"{"state":"running","rows_done":1024,"rows_total":null,"bytes":65536,
+                "phase":"data:PUBLIC.T","errors":[],"eta_s":null}"#,
+        )
+        .expect("parses");
+        assert_eq!(progress.state, JobState::Running);
+        assert!(!progress.is_terminal());
+        // Not zero: "no idea how many" and "none yet" are different answers and
+        // a progress bar has to be able to tell them apart.
+        assert_eq!(progress.rows_total, None);
+        assert_eq!(progress.eta_s, None);
+    }
+
+    #[test]
+    fn a_failed_job_carries_whole_error_envelopes() {
+        let progress: JobProgress = serde_json::from_str(
+            r#"{"state":"failed","rows_done":7,"rows_total":10,"bytes":128,"phase":"data:S.T",
+                "errors":[{"kind":"sql","sql_state":"42S04","vendor_code":42102,
+                           "message":"table not found","causes":["boom"],"stack":null}],
+                "eta_s":3}"#,
+        )
+        .expect("parses");
+        assert!(progress.is_terminal());
+        assert_eq!(progress.rows_total, Some(10));
+        // An integer on the wire: a JSON number is a JSON number, and the
+        // seconds are a float here because that is what an estimate is.
+        assert_eq!(progress.eta_s, Some(3.0));
+        assert_eq!(progress.errors.len(), 1);
+        assert_eq!(progress.errors[0].sql_state_class(), Some("42"));
+        assert_eq!(progress.errors[0].causes, ["boom"]);
+    }
+
+    #[test]
+    fn every_terminal_state_is_terminal_and_running_is_not() {
+        for (word, state) in [
+            ("running", JobState::Running),
+            ("done", JobState::Done),
+            ("failed", JobState::Failed),
+            ("cancelled", JobState::Cancelled),
+        ] {
+            // The wire spelling is the bridge's; a rename here would silently
+            // turn a finished job into one that is polled forever.
+            assert_eq!(
+                serde_json::from_str::<JobState>(&format!("\"{word}\"")).expect("parses"),
+                state
+            );
+            assert_eq!(state.is_terminal(), word != "running");
+        }
+        assert!(
+            serde_json::from_str::<JobState>("\"paused\"").is_err(),
+            "an unknown state has to fail loudly rather than be guessed"
+        );
     }
 
     #[test]

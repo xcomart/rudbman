@@ -18,6 +18,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Interroger l'objet sélectionné
+  open_sql_file: Ouvrir un fichier SQL…
+  extract_script: Extraire un script…
   about: À propos de rudbman
   quit: Quitter
   connection: Connexion
@@ -375,3 +377,31 @@ query:
   hint_auth: Cette connexion n'y est pas autorisée.
   hint_network: La connexion à la base de données a été perdue.
   hint_cancelled: L'instruction a été annulée.
+  open_file_select: Choisissez un fichier SQL
+
+extract:
+  title: Extraire un script
+  object: Objet
+  output: Fichier de sortie
+  output_none: Aucun fichier choisi
+  browse: Parcourir…
+  template_select: Choisissez un fichier de modèle
+  ddl: Inclure le schéma
+  drop: Faire précéder d'instructions DROP
+  data: Inclure les lignes
+  mode: Format des lignes
+  mode_insert: Instructions INSERT
+  mode_csv: CSV
+  mode_template: Modèle
+  batch_rows: Lignes par INSERT
+  template: Fichier de modèle
+  template_none: Aucun modèle choisi
+  where: Clause WHERE
+  start: Extraire
+  starting: démarrage…
+  counters: "%{rows} lignes, %{bytes}"
+  cancelling: Annulation…
+  done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
+  cancelled: "Annulé. Le fichier partiel est resté dans %{path}."
+  failed: "L'extraction a échoué : %{error}"
+  failed_unknown: L'extraction a échoué sans que le pont en donne la raison.

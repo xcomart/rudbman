@@ -67,8 +67,8 @@ DB→DB 데이터 전송을 하나의 창에서 수행한다.
   (드라이버 등록 UI에서 클래스명 자동 검출)
 - `utils/MavenREST.java`, `ui/MavenExplorer.java` — 메이븐 중앙에서 드라이버 JAR
   다운로드. **로직은 Rust로 이식**한다(HTTP는 Rust가 하는 편이 낫다)
-- `template/TemplateManager.java` — 스크립트 추출 템플릿 엔진. M4에서 판단:
-  Java에 두고 브리지로 호출하거나, Rust로 이식하거나
+- `template/TemplateManager.java` — 스크립트 추출 템플릿 엔진. M4에서 Java에
+  남기기로 확정하고 브리지에 실었다(§12.3)
 - `resources/icons/*.png` 13종 — 드라이버 아이콘
 
 **DBMeta에 없어서 새로 써야 하는 것**: 외래 키(`getImportedKeys`/`getExportedKeys`),
@@ -407,9 +407,12 @@ comart.rudbman.bridge/
 ├── codec/BatchWriter    §4.6 인코더
 ├── meta/Describe.java   DatabaseMetaData 조회 → JSON
 ├── meta/Ddl.java        DDL 역생성 (방언별)
-├── job/BackupJob.java   §6
-├── job/TransferJob.java §6
-└── json/                최소 JSON 직렬화기 (Gson 의존 회피 여부는 미결, §12)
+├── job/Jobs.java        작업 스레드·진행률·취소 공통 틀 (§6). M4에서 도입
+├── job/ExtractJob.java  스크립트 추출 (§6, M4)
+├── job/BackupJob.java   §6, M6
+├── job/TransferJob.java §6, M6
+├── template/            jdbgen TemplateManager 승계 (§12.3 해결 — Java에 남김)
+└── Json.java            Gson 래퍼 (§12.1 해결 — Gson을 JAR에 병합)
 ```
 
 의존성은 최소로 유지한다. 브리지 JAR이 무거워질수록 jlink 이미지와 시동 시간이
@@ -441,6 +444,66 @@ Rust는 `JOB_POLL`을 주기적으로(200ms 정도) 호출해 진행률 바를 �
 백업도 같은 틀이다. `kind: "backup"`은 결과를 타겟 커넥션 대신 파일로 쓴다
 (SQL INSERT 스크립트 / CSV / 압축). 파일 I/O도 Java가 한다 — 데이터가 있는 쪽에서.
 
+**스크립트 추출(M4)도 같은 틀의 첫 입주자다.** 행 데이터가 파일로 흘러가는
+작업이므로 §12.3의 결론대로 템플릿 엔진과 함께 JVM 쪽에 산다:
+
+```
+JOB_START { kind: "extract",
+            objects: [{catalog?, schema?, name}],
+            output:  { path, charset: "UTF-8", newline: "\n|\r\n" },
+            ddl:     { include: true|false, include_drop: false,
+                       constraints: "inline|alter" },   // FK는 항상 뒤로 몰아 ALTER
+            data:    { include: true|false, mode: "insert|csv|template",
+                       template_path?, insert_batch_rows: 1,
+                       where?: "…" },                   // 객체 하나일 때만 유효
+          } → { job }
+```
+
+- DDL은 `meta/Ddl`을 객체 목록에 반복 적용하되 **CREATE 전부 → FK ALTER 전부**의
+  순서로 쓴다. 순환 참조 때문에 생성 순서로는 풀 수 없는 스키마가 실존한다.
+- `mode: "insert"`는 방언의 식별자 인용과 리터럴 이스케이프를 따르고,
+  `insert_batch_rows > 1`이면 다중 VALUES로 묶는다. `mode: "template"`은
+  `template/`(jdbgen 승계) 엔진에 행을 통과시킨다 — 템플릿 파일은 설정
+  디렉터리의 `templates/`에서 온다(내장 기본은 브리지 리소스).
+- 진행률·취소는 transfer와 동일하게 `JOB_POLL`/`JOB_CANCEL`.
+
+구현이 확정한 의미론(M4, Rust 쪽이 코딩할 계약):
+
+- **핸들 수명**: 종료 상태(`done|failed|cancelled`)를 처음 보고한 `JOB_POLL`이
+  그 호출 안에서 핸들을 등록 해제한다. 이후의 poll/cancel은 `protocol` 오류다 —
+  종료 상태를 읽었으면 폴링을 멈춘다. `CLOSE_SESSION`은 그 세션의 작업을 먼저
+  취소·해제한다(작업 스레드가 커넥션 락을 쥔 채라 취소 없이는 닫기가 막힌다).
+- **명세 오류는 동기적**: 잘못된 `objects`/`mode`/`charset` 등은 `JOB_START`가
+  오류 봉투로 즉시 거절한다. 실패한 작업으로 만들어 폴링시키지 않는다.
+- **락**: 실행 중 작업은 구간(테이블 스트림)마다 세션 커넥션 락을 쥔다. 같은
+  세션의 `EXECUTE`는 그동안 대기하므로, 추출 중에도 조회가 필요한 UI는 두 번째
+  세션을 연다.
+- **진행률**: `phase`는 `"starting"` → `"ddl"` → `"data:<schema>.<table>"` →
+  `"done"`. `rows_total`·`eta_s`는 `null`(COUNT 없음). `bytes`는 실행 중 버퍼만큼
+  (≤64KB) 뒤처지고 종료 시 정확하다. `errors[]`의 원소는 §4.4 오류 봉투 객체다.
+- **`ddl.constraints`**: `"alter"`(기본)는 **메타데이터 재구성 경로를 강제**한다 —
+  네이티브 DDL(MySQL `SHOW CREATE`)에서 FK를 떼어내려면 벤더 SQL 파싱이 필요해
+  하지 않는다. `"inline"`은 표시용 DDL과 같은 native 우선. 즉 재생 가능한
+  스크립트는 재구성 DDL의 알려진 맹점(체크 제약, 스토리지 절)을 감수한다.
+- **CSV**: NULL은 빈 비인용 필드, 빈 문자열은 `""`(PostgreSQL `COPY … CSV` 규약
+  — 둘이 구분된다). 열 이름 헤더 행을 쓴다. 값 안의 줄바꿈은 통과시키고
+  `output.newline`은 레코드 종결자에만 적용된다.
+- **리터럴**: 날짜/시간은 인용 문자열(`DATE '…'` 형은 SQL Server가 거부).
+  불리언은 Oracle/SQL Server/SQLite/MySQL/MariaDB에서 `1/0`, 그 외 `TRUE/FALSE`.
+  바이너리는 방언별 hex(`0x…`/`'\x…'`/`HEXTORAW`/`X'…'`). Oracle은 다중 VALUES가
+  없어 `insert_batch_rows`를 1로 강제한다.
+- **`include_drop`**: DROP 전부를 역순으로 먼저, `IF EXISTS`는 지원 방언에만
+  (Oracle/DB2 제외). 제약은 지우지 않으므로 순환 스키마의 재-DROP은 수동이다.
+- **템플릿 모델(행당)**: `table`/`schema`/`catalog`/`qualified`/`row_no`/
+  `columns[]`(`name`/`value`/`literal`/`type_name`/`jdbc_type`) + 각 열을 제
+  이름으로 직접. `${a.b}`는 중첩 경로가 아니라 프로세서 체인이다(jdbgen 규칙).
+- **패키징 노트**: 템플릿 엔진의 EUC-KR 패딩 폭 계산은 jlink 이미지에
+  `jdk.charsets` 모듈이 있어야 정확하다(없으면 휴리스틱 폴백).
+
+실행 방향(스크립트 파일 → DB)은 새 연산이 필요 없다. 파일을 에디터로 열고
+`rudbman-sql`의 문장 분리를 거쳐 기존 `EXECUTE` 파이프라인으로 순차 실행하며,
+문장 단위 오류 보고는 쿼리 팬의 다중 결과가 이미 하는 일이다.
+
 `rows_total`은 대개 모른다. 사전 `COUNT(*)`는 선택 사항으로 두고(체크박스),
 기본은 무한 진행률 + 처리 행 수 표시.
 
@@ -468,9 +531,21 @@ logman의 셀프 드로우 타이틀바와 `pane_tree`를 그대로 승계한다
 └─────────────────────────────────────────────────────────────┘
 ```
 
-`pane_tree.rs`는 현재 터미널 뷰에 특화돼 있다. 패널 내용을 열거형
-(`Editor | Grid | TableDetail | Erd | QueryBuilder`)으로 일반화하는 것이 이식
-작업의 핵심이다.
+구현이 확정한 모양(M3~M4): 작업 영역은 **연결별 문서**다. 상단 연결 탭마다
+자기 `WorkArea`(팬 트리·분할 비율·활성 팬·쿼리 번호)를 갖고, 탭 전환이 문서
+전체를 갈아끼운다. 각 팬은 내용물 하나가 아니라 **미니탭의 목록**
+(`PaneItem::TableDetail | Query`, M5가 `Erd`를 더한다)이며, 같은 개체를 다시
+활성화하면 새 탭 대신 열려 있는 탭으로 이동한다. 탐색기는 모든 연결의 트리
+데이터를 유지하되 활성 연결의 루트만 그린다 — 전환은 순수 필터라 왕복이 없다.
+연결 탭을 **닫으면** 그 문서가 통째로 정리되고(팬이 세션 핸들과 커서를 놓는
+것이 §9.3의 정리 경로다), 연결이 **끊기면** 탭은 남되 쿼리 팬이 detach되어
+SQL과 받은 행은 읽히고 실행만 거부한다.
+
+한 가지 규율이 이 구조 전체를 관통한다: gpui는 포커스된 요소가 렌더 트리를
+떠나도 포커스를 정리하지 않고, 액션과 키바인딩을 **마지막으로 그린 프레임**의
+포커스 요소에 대고 해석한다. 서브트리를 숨기거나 제거하는 모든 경로(사이드바
+토글, 탭·팬 닫기, 연결 전환)는 같은 update 안에서 포커스를 되찾아야 하며,
+그러지 않으면 이후의 모든 메뉴·단축키가 소리 없이 버려진다.
 
 ### 7.2 UI 테마
 
@@ -750,6 +825,10 @@ logman의 흐름을 그대로 따른다.
 
 ## 11. 마일스톤
 
+현황(2026-08-05): **M0~M4 완료**, main에는 M0~M3까지 머지됨. 다음은 M5 또는
+M6 — M6은 M4가 만든 job 프레임(§6)을 그대로 재사용하므로 선후는 자유다.
+세션을 넘어가는 인수인계는 [status.md](status.md)가 담당한다.
+
 | | 범위 | 완료 기준 |
 |---|---|---|
 | **M0** | 워크스페이스, gpui 벤더링, `rudbman-ui`·`rudbman-core` 이식, 테마/설정/i18n | 빈 창이 뜨고 테마 전환과 설정 저장이 동작. `cargo test` 통과 |
@@ -775,12 +854,14 @@ M3이 전체 작업량의 40% 안팎이다. M0~M3이 "쓸 만한 도구"의 최�
 
 ## 12. 미결 사항
 
-1. **브리지 JAR의 JSON 라이브러리** — Gson(230KB, 검증됨) vs 자체 최소 직렬화기.
-   자체 구현은 의존성 0이지만 이스케이프 처리에서 버그가 나기 쉽다. M1에서 결정.
+1. **브리지 JAR의 JSON 라이브러리** — **해결(M1): Gson.** 이스케이프 처리를
+   직접 짜서 버그를 들이는 것보다 검증된 230KB가 싸다. JAR에 병합해 싣는다.
 2. **쿼리 이력 저장소** — SQLite(rusqlite, 네이티브 의존성 추가) vs JSON Lines
    (단순, 검색 느림). 이력 규모 예상치가 나오면 결정.
-3. **스크립트 추출 템플릿 엔진** — jdbgen의 Java 구현을 브리지에 두고 호출할지,
-   Rust로 이식할지. Rust 이식이 깔끔하지만 기존 템플릿 자산과의 호환이 걸린다.
+3. **스크립트 추출 템플릿 엔진** — **해결(M4): Java에 남기고 브리지에 싣는다.**
+   추출은 §6의 데이터 플레인 작업이라 행이 흐르는 JVM 쪽에서 돌아야 하고, jdbgen
+   템플릿 자산과의 호환은 엔진(885줄, 동일 저자 MIT)을 그대로 승계할 때 공짜로
+   온다. Rust 이식은 파서의 미묘한 비호환 위험만 더한다.
 4. **ERD 자동 배치 알고리즘** — Sugiyama 자체 구현 vs 기존 크레이트. M5에서 조사.
 5. **PNG 내보내기** — gpui 오프스크린 렌더 경로 확인 필요. SVG만으로 시작.
 6. **SSH 에이전트 전달과 점프 호스트 다단** — 배스천이 둘 이상 겹치는 환경이
@@ -791,8 +872,9 @@ M3이 전체 작업량의 40% 안팎이다. M0~M3이 "쓸 만한 도구"의 최�
    (a) fetch 시점에 임시 파일로 흘려보내기 — 정확하지만 열지도 않을 LOB에 디스크를
    쓴다, (b) 인라인 상한(4KB 정도)까지만 즉시 읽고 그 이상은 기본 키로 단일 행을
    재질의 — 키 없는 결과 집합에서는 거부해야 한다, (c) 현재 배치에 한해서만 허용.
-   `LOB_READ`를 구현하는 M3에서 결정한다. 브리지는 이미 `lob_id → (행, 열, 크기,
-   이진 여부)`를 기록하고 있어 어느 쪽도 뒤에 붙일 수 있다.
+   M3·M4를 지나도록 뷰어가 없어 아직 결정하지 않았다 — LOB 뷰어를 붙이는
+   마일스톤에서 결정한다. 브리지는 이미 `lob_id → (행, 열, 크기, 이진 여부)`를
+   기록하고 있어 어느 쪽도 뒤에 붙일 수 있다.
 
 ---
 

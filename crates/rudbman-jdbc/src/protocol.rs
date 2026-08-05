@@ -51,11 +51,18 @@ pub enum Op {
     Commit,
     /// Roll back. Handle: session.
     Rollback,
-    /// Start a backup or transfer job. Handle: session. Not implemented yet.
+    /// Start a job. Handle: session. Request: `{kind, …}` — `extract` today,
+    /// `backup` and `transfer` later. Response: `{job}`.
     JobStart,
-    /// Poll a job's progress. Handle: job. Not implemented yet.
+    /// Poll a job's progress. Handle: job.
+    ///
+    /// The first poll that reports a terminal state unregisters the job in the
+    /// same call, so a later poll or cancel is a `protocol` error.
     JobPoll,
-    /// Cancel a job. Handle: job. Not implemented yet.
+    /// Cancel a job. Handle: job. Response: `{cancelled}`.
+    ///
+    /// The second operation that may arrive on a thread other than the session
+    /// worker, for the same reason [`Op::Cancel`] does.
     JobCancel,
     /// Inspect driver JARs without initialising anything in them.
     ProbeDriver,

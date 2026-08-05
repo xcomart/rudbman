@@ -118,7 +118,8 @@ class SessionLifecycleTest {
 
     @Test
     void deferredOpsReportThemselvesAsUnimplemented() {
-        for (int op : new int[]{Ops.LOB_READ, Ops.JOB_START, Ops.JOB_POLL, Ops.JOB_CANCEL}) {
+        // The job operations arrived in M4; LOB_READ is what is left.
+        for (int op : new int[]{Ops.LOB_READ}) {
             JsonObject err = Resp.of(Bridge.call(op, 0, 0, null)).error();
             assertEquals("protocol", err.get("kind").getAsString());
             assertTrue(err.get("message").getAsString().contains("not implemented"),

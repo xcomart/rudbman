@@ -36,8 +36,13 @@ import java.util.Set;
  * {@link DatabaseMetaData#getIdentifierQuoteString()} does not support quoted
  * identifiers at all; then nothing is ever quoted, because emitting a quote
  * character would be worse than emitting an ambiguous name.
+ *
+ * <p>Public rather than package private because the script extractor in
+ * {@code job/} generates {@code SELECT} and {@code INSERT} statements that have
+ * to agree with the generated DDL character for character; two implementations
+ * of these rules would drift.
  */
-final class Ident {
+public final class Ident {
 
     /**
      * SQL:2011 reserved words, plus the handful from SQL-92 that vendors still
@@ -112,7 +117,7 @@ final class Ident {
      * @param dbm the connection metadata
      * @return the rules for this connection
      */
-    static Ident of(DatabaseMetaData dbm) {
+    public static Ident of(DatabaseMetaData dbm) {
         String q = str(dbm, 'q');
         boolean supported = q != null && !q.isEmpty() && !q.trim().isEmpty();
         String extra = str(dbm, 'e');
@@ -158,7 +163,7 @@ final class Ident {
      * @param id the identifier, may be {@code null}
      * @return the SQL text, or {@code null} when {@code id} was {@code null}
      */
-    String q(String id) {
+    public String q(String id) {
         if (id == null) {
             return null;
         }
@@ -202,7 +207,7 @@ final class Ident {
      *              empty parts are dropped
      * @return the qualified SQL name
      */
-    String qualify(String... parts) {
+    public String qualify(String... parts) {
         StringBuilder sb = new StringBuilder();
         for (String p : parts) {
             if (p == null || p.isEmpty()) {
@@ -222,7 +227,7 @@ final class Ident {
      * @param s the text, must not be {@code null}
      * @return the quoted literal with embedded quotes doubled
      */
-    static String literal(String s) {
+    public static String literal(String s) {
         return "'" + s.replace("'", "''") + "'";
     }
 }

@@ -22,7 +22,17 @@
 //! of the call and detaches again — expensive, and rare.
 //!
 //! [`Canceller`] is the `Send + Sync` handle for that, so the cancel button can
-//! hold one while the query it aborts is still running.
+//! hold one while the query it aborts is still running. [`Job::cancel`] takes
+//! the same path and for the same reason: the worker may be blocked in a
+//! statement that is waiting for the connection lock the job holds.
+//!
+//! # Jobs run beside the worker, not on it
+//!
+//! A [`Job`] is started through the queue and polled through the queue, but the
+//! work itself runs on a thread inside the bridge and takes the session's
+//! connection lock per phase. An `EXECUTE` issued while a job is streaming a
+//! table therefore waits for that table — the second session is the answer,
+//! not a second worker.
 //!
 //! # Panics stay inside
 //!
@@ -50,14 +60,29 @@ use crate::error::{Error, Result};
 use crate::jvm::Jvm;
 use crate::protocol::{Op, parse_json, take_payload};
 use crate::response::{
-    Cancelled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, Ping, SessionInfo,
+    Cancelled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, JobProgress, Ping, SessionInfo,
 };
-use crate::spec::{ConnectionSpec, DdlSource, DescribeRequest, StatementSpec};
+use crate::spec::{ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, StatementSpec};
 
 /// The `OPEN_SESSION` response body.
 #[derive(Deserialize)]
 struct Opened {
     session: i64,
+}
+
+/// The `JOB_START` response body.
+#[derive(Deserialize)]
+struct Started {
+    job: i64,
+}
+
+/// The `JOB_CANCEL` response body.
+///
+/// Not [`Cancelled`], which counts statements: a job either was still running
+/// or was not.
+#[derive(Deserialize)]
+struct JobCancelled {
+    cancelled: bool,
 }
 
 /// One JDBC connection, its worker thread, and everything that runs on it.
@@ -187,6 +212,36 @@ impl Session {
         })
     }
 
+    /// Starts a script extraction and returns its handle.
+    ///
+    /// The work runs on a thread of the bridge's own, not on this session's
+    /// worker, so this call returns as soon as the specification has been
+    /// accepted. Watch it with [`Job::poll`].
+    ///
+    /// **The job holds this session's connection lock while it streams a
+    /// table.** An [`execute`](Session::execute) on the same session blocks for
+    /// that stretch, which is why a UI that has to keep querying during a long
+    /// extraction opens a second session.
+    ///
+    /// # Errors
+    ///
+    /// A malformed specification — no objects, no output path, a charset the
+    /// JVM does not know, a `where` with more than one object, neither DDL nor
+    /// data — fails **here**, as a `protocol` error envelope, rather than
+    /// becoming a job that fails on its first poll. Nothing is validated on the
+    /// Rust side: the bridge is the single authority on what a malformed
+    /// request is.
+    pub fn start_job(&self, spec: &ExtractSpec) -> Result<Job> {
+        let body = serde_json::to_vec(spec)?;
+        let started: Started = self.json_call(Op::JobStart, self.handle, 0, Some(body))?;
+        Ok(Job {
+            jvm: self.jvm,
+            worker: Arc::clone(&self.worker),
+            handle: started.job,
+            terminal: false,
+        })
+    }
+
     /// Turns auto-commit on or off.
     pub fn set_auto_commit(&self, on: bool) -> Result<()> {
         self.unit_call(Op::SetAutoCommit, self.handle, i64::from(on))
@@ -221,11 +276,10 @@ impl Session {
 
     /// Calls an operation this crate does not model yet.
     ///
-    /// The escape hatch for `LOB_READ` and the job operations, which the bridge
-    /// answers with a `protocol` /
-    /// [not implemented](crate::BridgeError::is_not_implemented) error until
-    /// their request shapes are settled. Goes through the worker like every
-    /// other command, so it stays serialised against the connection.
+    /// The escape hatch for `LOB_READ`, which the bridge answers with a
+    /// `protocol` [not implemented](crate::BridgeError::is_not_implemented)
+    /// error until its request shape is settled. Goes through the worker like
+    /// every other command, so it stays serialised against the connection.
     pub fn call_raw(
         &self,
         op: Op,
@@ -399,8 +453,148 @@ impl Drop for Cursor {
     }
 }
 
+/// One long-running operation inside the bridge: a script extraction today,
+/// a backup or a DB-to-DB transfer later (architecture document, §6).
+///
+/// A job runs on a thread of the bridge's own and writes its output where the
+/// rows already are. Nothing of it crosses the JNI boundary except a handle
+/// and, per poll, a [`JobProgress`].
+///
+/// # The terminal reading retires the handle
+///
+/// The first [`poll`](Job::poll) that answers a terminal state unregisters the
+/// job **inside that call**. Polling again is a `protocol` error, and this type
+/// does not hide it: the loop belongs to the caller, and quietly repeating the
+/// last answer would let a poller spin forever on a job that is long gone.
+///
+/// ```no_run
+/// # fn main() -> anyhow::Result<()> {
+/// # let session: rudbman_jdbc::Session = unimplemented!();
+/// # let spec: rudbman_jdbc::ExtractSpec = unimplemented!();
+/// let mut job = session.start_job(&spec)?;
+/// let progress = loop {
+///     let progress = job.poll()?;
+///     if progress.is_terminal() {
+///         break progress;
+///     }
+///     std::thread::sleep(std::time::Duration::from_millis(200));
+/// };
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Threads
+///
+/// [`Job::poll`] goes through the session's worker, like every other command.
+/// [`Job::cancel`] does not, for the same reason [`Canceller`] does not: the
+/// worker may be blocked in a statement waiting for the connection lock the job
+/// itself is holding, and queueing the cancel behind that would deliver it
+/// after the work it was meant to stop.
+///
+/// Dropping a job that never reported a terminal state cancels it and takes one
+/// reading, so the bridge-side handle is released. That is best effort — a job
+/// that has not noticed the cancel yet is still registered when the poll
+/// returns — and the real backstop is closing the session, which cancels and
+/// forgets every job of its own.
+pub struct Job {
+    jvm: &'static Jvm,
+    worker: Arc<Worker>,
+    handle: i64,
+    /// Whether a terminal reading has already been taken, which is exactly when
+    /// the bridge-side handle stopped existing.
+    terminal: bool,
+}
+
+impl std::fmt::Debug for Job {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Job")
+            .field("handle", &self.handle)
+            .field("terminal", &self.terminal)
+            .finish()
+    }
+}
+
+impl Job {
+    /// The bridge-side job handle.
+    pub fn handle(&self) -> i64 {
+        self.handle
+    }
+
+    /// Whether a terminal reading has already been taken.
+    ///
+    /// Once this is true the handle no longer exists inside the bridge, so
+    /// [`Job::poll`] can only fail and [`Job::cancel`] has nothing to cancel.
+    pub fn is_terminal(&self) -> bool {
+        self.terminal
+    }
+
+    /// Takes one reading.
+    ///
+    /// Two hundred milliseconds is the interval the architecture document
+    /// suggests; the call is cheap — it reads a handful of volatile counters —
+    /// but it is still a JNI round trip per progress bar frame.
+    ///
+    /// # Errors
+    ///
+    /// After a terminal reading, a `protocol` error: the handle was retired by
+    /// the call that reported the end. Stop polling when
+    /// [`JobProgress::is_terminal`] holds.
+    pub fn poll(&mut self) -> Result<JobProgress> {
+        let payload = take_payload(self.worker.call(Op::JobPoll, self.handle, 0, None)?)?;
+        let progress: JobProgress = parse_json(&payload)?;
+        if progress.is_terminal() {
+            // The bridge unregistered the job while answering this very call.
+            self.terminal = true;
+        }
+        Ok(progress)
+    }
+
+    /// Asks the job to stop, and returns whether it was still running.
+    ///
+    /// The cancel sets a flag and interrupts the statement in flight; the job
+    /// notices at the next row or phase boundary and ends as
+    /// [`JobState::Cancelled`](crate::JobState::Cancelled) — which a
+    /// [`poll`](Job::poll) still has to read. **The partial output file is left
+    /// where it is**, on purpose.
+    ///
+    /// `false` once a terminal reading has been taken, without a call: a cancel
+    /// button clicked in the same instant the job finished is a race, not a
+    /// mistake, and answering "there was nothing left to cancel" is the honest
+    /// reading of it. That is deliberately not what [`Job::poll`] does with the
+    /// same situation — a poll loop is the caller's own and has to be told to
+    /// stop.
+    pub fn cancel(&self) -> Result<bool> {
+        if self.terminal {
+            return Ok(false);
+        }
+        let response = self
+            .jvm
+            .call_detached(Op::JobCancel, self.handle, 0, None)?;
+        let payload = take_payload(response)?;
+        let cancelled: JobCancelled = parse_json(&payload)?;
+        Ok(cancelled.cancelled)
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        if self.terminal {
+            // The handle is already gone; there is nothing to release.
+            return;
+        }
+        if let Err(error) = self.cancel() {
+            log::debug!("cancelling job {} failed: {error}", self.handle);
+        }
+        // One reading, to retire the handle if the job has already stopped. It
+        // often has not — the worker notices the flag at the next row boundary
+        // — and then the handle lives on until the session is closed, which
+        // cancels and forgets what is left.
+        let _ = self.worker.call(Op::JobPoll, self.handle, 0, None);
+    }
+}
+
 /// One command for a session worker.
-enum Job {
+enum Command {
     /// Invoke `Bridge.call` and send the raw response envelope back.
     Call {
         op: Op,
@@ -421,7 +615,7 @@ struct Worker {
     /// an `mpsc::Sender` is `Send` but not `Sync` — and holding it across the
     /// reply is deliberate: commands for one connection are serialised at the
     /// door rather than piling up in a queue whose depth nobody bounds.
-    sender: Mutex<Option<Sender<Job>>>,
+    sender: Mutex<Option<Sender<Command>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -454,7 +648,7 @@ impl Worker {
         let guard = self.sender.lock();
         let sender = guard.as_ref().ok_or(Error::WorkerGone)?;
         sender
-            .send(Job::Call {
+            .send(Command::Call {
                 op,
                 handle,
                 arg,
@@ -470,7 +664,7 @@ impl Worker {
     /// Stops the worker and waits for the thread to end.
     fn shutdown(&self) {
         if let Some(sender) = self.sender.lock().take() {
-            let _ = sender.send(Job::Stop);
+            let _ = sender.send(Command::Stop);
         }
         if let Some(thread) = self.thread.lock().take()
             && thread.join().is_err()
@@ -483,7 +677,7 @@ impl Worker {
 }
 
 /// The worker thread body: attach once, then serve the queue until told to stop.
-fn run(jvm: &'static Jvm, receiver: Receiver<Job>, ready: Sender<Result<()>>) {
+fn run(jvm: &'static Jvm, receiver: Receiver<Command>, ready: Sender<Result<()>>) {
     // The attachment lasts for the whole closure, which is the whole life of
     // the session. `jni` 0.22 has no `AttachCurrentThreadAsDaemon` of its own;
     // it attaches permanently and detaches when the thread ends, and since this
@@ -494,14 +688,14 @@ fn run(jvm: &'static Jvm, receiver: Receiver<Job>, ready: Sender<Result<()>>) {
             // Nobody is waiting for this worker any more.
             return Ok(());
         }
-        while let Ok(job) = receiver.recv() {
-            let Job::Call {
+        while let Ok(command) = receiver.recv() {
+            let Command::Call {
                 op,
                 handle,
                 arg,
                 request,
                 reply,
-            } = job
+            } = command
             else {
                 break;
             };

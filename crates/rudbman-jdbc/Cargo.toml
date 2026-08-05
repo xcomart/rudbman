@@ -20,3 +20,11 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# The extraction tests need a directory to write a script into and to have it
+# removed again however the test ends.
+tempfile.workspace = true
+# One test reads a job's progress off `call_raw`, because the typed path needs a
+# live `Job` and what it is testing is a job that has been dropped.
+serde_json.workspace = true

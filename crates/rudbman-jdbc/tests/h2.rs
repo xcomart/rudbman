@@ -29,8 +29,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use rudbman_jdbc::{
-    Batch, BridgeErrorKind, ColumnKind, ConnectionSpec, DdlSource, DescribeRequest, Error, Jvm,
-    JvmConfig, Op, Param, Session, StatementSpec, Value, default_bridge_jar,
+    Batch, BridgeErrorKind, ColumnKind, ConnectionSpec, DataMode, DataOptions, DdlOptions,
+    DdlSource, DescribeRequest, Error, ExtractSpec, Job, JobProgress, JobState, Jvm, JvmConfig,
+    ObjectRef, Op, Param, Session, StatementSpec, Value, default_bridge_jar,
 };
 
 /// The process-wide JVM, started by whichever test needs it first.
@@ -833,6 +834,314 @@ fn cancel_reaches_a_statement_the_worker_is_blocked_in() {
         0,
         "nothing was running, which is not an error"
     );
+}
+
+// --- jobs: the data plane --------------------------------------------------
+
+/// Polls until the job stops running and returns that one reading.
+///
+/// The reading that reports a terminal state is also the one that retires the
+/// handle, so it is the last thing anybody may ask this job for — which is why
+/// it is returned rather than merely observed.
+fn drain(job: &mut Job) -> JobProgress {
+    for _ in 0..1200 {
+        let progress = job.poll().expect("the job answers a poll");
+        if progress.is_terminal() {
+            return progress;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("the job never reached a terminal state");
+}
+
+#[test]
+fn an_extract_job_writes_a_script_without_a_row_crossing_the_boundary() {
+    let session = session();
+    exec(
+        &session,
+        "create table t (id integer not null primary key, txt varchar(40))",
+    );
+    exec(
+        &session,
+        "insert into t values (1, 'plain'), (2, 'it''s quoted'), (3, null)",
+    );
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let path = dir.path().join("extract.sql");
+    let mut job = session
+        .start_job(
+            &ExtractSpec::new(&path)
+                .with_object(ObjectRef::new("T").with_schema("PUBLIC"))
+                .with_ddl(DdlOptions::included())
+                .with_data(DataOptions::included(DataMode::Insert)),
+        )
+        .expect("the specification is accepted");
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    assert_eq!(end.rows_done, 3, "{end:?}");
+    assert_eq!(end.phase, "done");
+    assert!(end.errors.is_empty(), "{:?}", end.errors);
+    // No COUNT(*) is run up front, so neither of these is ever known here.
+    assert_eq!(end.rows_total, None);
+    assert_eq!(end.eta_s, None);
+
+    // The file was written by the JVM: nothing in this test ever saw a row.
+    let script = std::fs::read_to_string(&path).expect("the script is where it was asked for");
+    assert_eq!(
+        end.bytes as usize,
+        script.len(),
+        "the byte count lags while a job runs and is exact once it has ended"
+    );
+    assert!(script.contains("CREATE TABLE"), "{script}");
+    assert!(script.contains("INSERT INTO"), "{script}");
+    assert!(
+        script.contains("'it''s quoted'"),
+        "an apostrophe has to be doubled, or the script does not run: {script}"
+    );
+    assert!(
+        script.contains("NULL"),
+        "the third row is a NULL and has to say so: {script}"
+    );
+}
+
+#[test]
+fn the_row_format_and_the_predicate_reach_the_bridge_by_name() {
+    // The serde test pins the JSON this crate writes; this one pins that the
+    // bridge reads those names. A member silently ignored on the far side looks
+    // exactly like a member that worked.
+    let session = session();
+    exec(&session, "create table t (id integer, txt varchar(20))");
+    exec(
+        &session,
+        "insert into t values (1, 'keep'), (2, ''), (3, null)",
+    );
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let path = dir.path().join("rows.csv");
+    let mut job = session
+        .start_job(
+            &ExtractSpec::new(&path)
+                .with_object(ObjectRef::new("T").with_schema("PUBLIC"))
+                .with_data(DataOptions::included(DataMode::Csv).with_where("id <> 1")),
+        )
+        .expect("the specification is accepted");
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    assert_eq!(end.rows_done, 2, "the predicate was applied: {end:?}");
+
+    let csv = std::fs::read_to_string(&path).expect("the file is there");
+    let lines: Vec<&str> = csv.lines().collect();
+    assert_eq!(lines[0], "ID,TXT", "a header row of column names: {csv}");
+    // The convention that makes plain CSV lossless enough: NULL is nothing at
+    // all, the empty string is a pair of quotes.
+    assert_eq!(lines[1], "2,\"\"", "{csv}");
+    assert_eq!(lines[2], "3,", "{csv}");
+}
+
+#[test]
+fn a_malformed_specification_fails_the_start_rather_than_becoming_a_failed_job() {
+    let session = session();
+    exec(&session, "create table t (id integer)");
+    exec(&session, "create table u (id integer)");
+    let dir = tempfile::tempdir().expect("a temp directory");
+
+    // Nothing to extract. Not short-circuited on the Rust side: the bridge is
+    // the single authority on what a malformed request is.
+    let error = session
+        .start_job(
+            &ExtractSpec::new(dir.path().join("nothing.sql"))
+                .with_data(DataOptions::included(DataMode::Insert)),
+        )
+        .expect_err("an empty object list is not a job");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Protocol);
+    assert!(!error.is_not_implemented(), "{error:?}");
+    assert!(error.message.contains("objects"), "{}", error.message);
+
+    // A predicate names columns, and columns belong to one table.
+    let error = session
+        .start_job(
+            &ExtractSpec::new(dir.path().join("ambiguous.sql"))
+                .with_objects([
+                    ObjectRef::new("T").with_schema("PUBLIC"),
+                    ObjectRef::new("U").with_schema("PUBLIC"),
+                ])
+                .with_data(DataOptions::included(DataMode::Insert).with_where("id > 1")),
+        )
+        .expect_err("one predicate cannot serve two tables");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Protocol);
+    assert!(error.message.contains("where"), "{}", error.message);
+
+    // A rejected specification leaves nothing behind: no file, no job, and a
+    // session that is still good for the next attempt.
+    assert!(!dir.path().join("nothing.sql").exists());
+    assert!(session.ping().expect("still alive").ok);
+}
+
+#[test]
+fn a_terminal_reading_retires_the_job_handle() {
+    // The rule the whole poll loop is built on. Losing it means either a poller
+    // that spins forever on a handle the bridge has forgotten, or a bridge that
+    // keeps every job it ever ran.
+    let session = session();
+    exec(&session, "create table t (id integer)");
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let mut job = session
+        .start_job(
+            &ExtractSpec::new(dir.path().join("once.sql"))
+                .with_object(ObjectRef::new("T").with_schema("PUBLIC"))
+                .with_ddl(DdlOptions::included()),
+        )
+        .expect("the specification is accepted");
+
+    assert_eq!(drain(&mut job).state, JobState::Done);
+    assert!(job.is_terminal(), "the crate knows the handle is spent");
+
+    let error = job
+        .poll()
+        .expect_err("the handle died in the call that reported the end");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Protocol, "{error:?}");
+
+    // A cancel after that is answered locally and does not go near the bridge:
+    // a button clicked in the instant the job finished is a race, not a fault.
+    assert!(
+        !job.cancel().expect("answered without a round trip"),
+        "there was nothing left to cancel"
+    );
+}
+
+/// How many rows the cancellation tests give themselves to catch a job in.
+const BIG_ROWS: u64 = 200_000;
+
+/// Creates a table big enough that extracting it cannot finish instantly.
+fn create_big_table(session: &Session) {
+    exec(session, "create table big (id integer, v varchar(80))");
+    exec(
+        session,
+        &format!("insert into big select x, 'row number ' || x from system_range(1, {BIG_ROWS})"),
+    );
+}
+
+#[test]
+fn cancelling_a_job_mid_flight_keeps_the_partial_file_and_the_session() {
+    let session = session();
+    create_big_table(&session);
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let path = dir.path().join("cancelled.sql");
+    let mut job = session
+        .start_job(
+            &ExtractSpec::new(&path)
+                .with_object(ObjectRef::new("BIG").with_schema("PUBLIC"))
+                .with_data(DataOptions::included(DataMode::Insert)),
+        )
+        .expect("the specification is accepted");
+
+    // Wait for the job to be moving rows before cancelling it: a cancel that
+    // arrived after the last row would prove nothing.
+    let mut seen = 0;
+    for _ in 0..2000 {
+        let progress = job.poll().expect("the job answers a poll");
+        assert_eq!(
+            progress.state,
+            JobState::Running,
+            "the job outran the sampler: {progress:?}"
+        );
+        seen = progress.rows_done;
+        if seen > 0 {
+            assert_eq!(progress.phase, "data:PUBLIC.BIG");
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(seen > 0, "no rows were ever reported");
+
+    assert!(
+        job.cancel().expect("the cancel is answered"),
+        "the job was still running when the cancel arrived"
+    );
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Cancelled, "{end:?}");
+    assert!(
+        end.rows_done < BIG_ROWS,
+        "a cancel that only landed after the last row proves nothing: {end:?}"
+    );
+    // Partial output is kept rather than deleted: it is work the user may still
+    // want, and deleting it is a decision this layer does not get to make.
+    let written = std::fs::metadata(&path)
+        .expect("the partial file is there")
+        .len();
+    assert!(
+        written > 0,
+        "the file should hold what was written before the cancel"
+    );
+
+    // And the session survived having a statement cancelled underneath it.
+    let batch = fetch_one(&session, "select count(*) from big", 1);
+    assert_eq!(batch.value(0, 0), Some(Value::I64(BIG_ROWS as i64)));
+}
+
+#[test]
+fn dropping_a_job_nobody_polled_stops_it_instead_of_leaving_it_writing() {
+    let session = session();
+    create_big_table(&session);
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let path = dir.path().join("abandoned.sql");
+    let handle = {
+        let job = session
+            .start_job(
+                &ExtractSpec::new(&path)
+                    .with_object(ObjectRef::new("BIG").with_schema("PUBLIC"))
+                    .with_data(DataOptions::included(DataMode::Insert)),
+            )
+            .expect("the specification is accepted");
+        job.handle()
+        // Dropped here, without a single poll: a best-effort cancel and one
+        // reading to retire the handle.
+    };
+
+    // Read through `call_raw`, because the typed path needs a live `Job` and
+    // this test is about one that no longer exists. Two answers are correct:
+    // the drop's own reading retired the handle, or the job had not stopped in
+    // time and the next reading finds it cancelled. What must not happen is a
+    // job that keeps writing a file nobody is waiting for.
+    for _ in 0..200 {
+        match session.call_raw(Op::JobPoll, handle, 0, None) {
+            Err(Error::Bridge(error)) => {
+                assert_eq!(error.kind, BridgeErrorKind::Protocol, "{error:?}");
+                return;
+            }
+            Err(error) => panic!("expected an error envelope, got {error:?}"),
+            Ok(payload) => {
+                let progress: JobProgress =
+                    serde_json::from_slice(&payload).expect("a progress object");
+                assert_ne!(
+                    progress.state,
+                    JobState::Done,
+                    "an abandoned job ran to completion: {progress:?}"
+                );
+                if progress.state == JobState::Cancelled {
+                    assert!(progress.rows_done < BIG_ROWS, "{progress:?}");
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+    panic!("the abandoned job was still running long after it was dropped");
 }
 
 // --- driver probing, before any session exists -----------------------------

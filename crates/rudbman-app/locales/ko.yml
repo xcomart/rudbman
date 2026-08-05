@@ -18,6 +18,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 선택한 객체 조회
+  open_sql_file: SQL 파일 열기…
+  extract_script: 스크립트 추출…
   about: rudbman 정보
   quit: 종료
   connection: 연결
@@ -375,3 +377,31 @@ query:
   hint_auth: 이 접속에는 그럴 권한이 없습니다.
   hint_network: 데이터베이스와의 연결이 끊어졌습니다.
   hint_cancelled: 문장 실행이 취소되었습니다.
+  open_file_select: SQL 파일 선택
+
+extract:
+  title: 스크립트 추출
+  object: 객체
+  output: 출력 파일
+  output_none: 선택한 파일 없음
+  browse: 찾아보기…
+  template_select: 템플릿 파일 선택
+  ddl: 스키마 포함
+  drop: 앞에 DROP 문 넣기
+  data: 데이터 포함
+  mode: 행 형식
+  mode_insert: INSERT 문
+  mode_csv: CSV
+  mode_template: 템플릿
+  batch_rows: INSERT당 행 수
+  template: 템플릿 파일
+  template_none: 선택한 템플릿 없음
+  where: WHERE 절
+  start: 추출
+  starting: 시작하는 중…
+  counters: "%{rows}행, %{bytes}"
+  cancelling: 취소하는 중…
+  done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
+  cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
+  failed: "추출에 실패했습니다: %{error}"
+  failed_unknown: 브리지가 이유를 알려주지 않은 채 추출에 실패했습니다.

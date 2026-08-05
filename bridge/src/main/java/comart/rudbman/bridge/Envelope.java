@@ -84,6 +84,25 @@ public final class Envelope {
      * @return an ERROR envelope
      */
     public static byte[] error(Throwable t) {
+        byte[] json = Json.bytes(describe(t));
+        byte[] out = new byte[json.length + 1];
+        out[0] = TAG_ERROR;
+        System.arraycopy(json, 0, out, 1, json.length);
+        return out;
+    }
+
+    /**
+     * Describes a failure in the same shape an ERROR envelope carries.
+     *
+     * <p>Split out of {@link #error} because a job reports its failures inside an
+     * OK envelope - {@code JOB_POLL} succeeded, the job did not - and the two
+     * must not describe the same exception differently.
+     *
+     * @param t the failure
+     * @return an object with {@code kind}, {@code sql_state}, {@code vendor_code},
+     *         {@code message}, {@code causes} and {@code stack}
+     */
+    public static JsonObject describe(Throwable t) {
         JsonObject o = new JsonObject();
         o.addProperty("kind", kindOf(t));
 
@@ -93,12 +112,7 @@ public final class Envelope {
         o.addProperty("message", messageOf(t));
         o.add("causes", causes(t));
         o.addProperty("stack", stack(t));
-
-        byte[] json = Json.bytes(o);
-        byte[] out = new byte[json.length + 1];
-        out[0] = TAG_ERROR;
-        System.arraycopy(json, 0, out, 1, json.length);
-        return out;
+        return o;
     }
 
     private static String messageOf(Throwable t) {

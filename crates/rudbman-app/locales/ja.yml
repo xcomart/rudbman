@@ -18,6 +18,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 選択したオブジェクトを照会
+  open_sql_file: SQL ファイルを開く…
+  extract_script: スクリプトを抽出…
   about: rudbman について
   quit: 終了
   connection: 接続
@@ -375,3 +377,31 @@ query:
   hint_auth: この接続にはその権限がありません。
   hint_network: データベースとの接続が失われました。
   hint_cancelled: 文の実行はキャンセルされました。
+  open_file_select: SQL ファイルを選択
+
+extract:
+  title: スクリプトの抽出
+  object: オブジェクト
+  output: 出力ファイル
+  output_none: ファイルが未選択
+  browse: 参照…
+  template_select: テンプレートファイルを選択
+  ddl: スキーマを含める
+  drop: 先に DROP 文を入れる
+  data: 行を含める
+  mode: 行の形式
+  mode_insert: INSERT 文
+  mode_csv: CSV
+  mode_template: テンプレート
+  batch_rows: INSERT あたりの行数
+  template: テンプレートファイル
+  template_none: テンプレートが未選択
+  where: WHERE 句
+  start: 抽出
+  starting: 開始しています…
+  counters: "%{rows} 行、%{bytes}"
+  cancelling: キャンセルしています…
+  done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
+  cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
+  failed: "抽出に失敗しました: %{error}"
+  failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。

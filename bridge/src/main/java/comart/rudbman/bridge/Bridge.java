@@ -2,6 +2,7 @@ package comart.rudbman.bridge;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import comart.rudbman.bridge.job.Jobs;
 import comart.rudbman.bridge.meta.Describe;
 import comart.rudbman.bridge.meta.SessionInfo;
 
@@ -89,10 +90,13 @@ public final class Bridge {
                 return rollback(handle);
             case Ops.PROBE_DRIVER:
                 return Envelope.ok(DriverProbe.probe(Json.request(req)));
-            case Ops.LOB_READ:
             case Ops.JOB_START:
+                return Envelope.ok(Jobs.start(Registry.session(handle), Json.request(req)));
             case Ops.JOB_POLL:
+                return Envelope.ok(Jobs.poll(handle));
             case Ops.JOB_CANCEL:
+                return Envelope.ok(Jobs.cancel(handle));
+            case Ops.LOB_READ:
                 throw new BridgeException("protocol",
                         "operation 0x" + Integer.toHexString(op)
                                 + " is not implemented in this build");

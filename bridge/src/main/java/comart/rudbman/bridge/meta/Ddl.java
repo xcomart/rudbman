@@ -137,7 +137,79 @@ public final class Ddl {
                         "no native DDL source for " + dialect + "; retry with source 'metadata'");
             }
         }
-        return result(fromMetadata(dbm, dialect, id, catalog, schema, table), "metadata");
+        return result(fromMetadata(dbm, dialect, id, catalog, schema, table, null), "metadata");
+    }
+
+    /**
+     * One object's DDL, split into the statements that create it and the foreign
+     * keys that have to wait for every other object to exist.
+     */
+    public static final class Script {
+
+        /** Which layer answered: {@code native} or {@code metadata}. */
+        public final String source;
+        /**
+         * The {@code CREATE TABLE}, its indexes and its comments, as one blob of
+         * text with {@code ;} terminated statements - the same shape
+         * {@code DESCRIBE kind: "ddl"} returns.
+         */
+        public final String creates;
+        /** {@code ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY …} statements, unterminated. */
+        public final List<String> alters;
+
+        Script(String source, String creates, List<String> alters) {
+            this.source = source;
+            this.creates = creates;
+            this.alters = alters;
+        }
+    }
+
+    /**
+     * Builds one object's DDL for a script file rather than for display.
+     *
+     * <p>The difference from {@link #of} is the foreign keys. A script has to
+     * replay into an empty database, and a schema whose tables reference each
+     * other in a cycle - which is common enough that the design calls it out -
+     * cannot be replayed in any creation order at all. So the keys are lifted out
+     * of the {@code CREATE} and handed back separately, for the caller to write
+     * after every {@code CREATE} in the whole script.
+     *
+     * <p><strong>Splitting forces the reconstruction path.</strong> The native
+     * layer hands back the server's own text, and finding the foreign keys inside
+     * that text means parsing vendor SQL - MySQL inlines them in the
+     * {@code CREATE}, and a regular expression over a statement that may contain
+     * the words {@code FOREIGN KEY} inside a comment or a default is not a
+     * trade this bridge makes. The metadata layer knows structurally where the
+     * keys are, so {@code splitForeignKeys} selects it. The cost is the
+     * reconstruction's documented blind spots (check constraints, storage
+     * clauses); the caller offers the user the choice.
+     *
+     * @param conn             the live connection
+     * @param dbm              the connection metadata
+     * @param catalog          catalog, may be {@code null}
+     * @param schema           schema, may be {@code null}
+     * @param table            the object name, required
+     * @param splitForeignKeys whether foreign keys move to {@link Script#alters}
+     * @return the object's script
+     * @throws SQLException if the driver fails on the portable path
+     */
+    public static Script script(Connection conn, DatabaseMetaData dbm, String catalog,
+                                String schema, String table, boolean splitForeignKeys)
+            throws SQLException {
+        Dialect dialect = Dialect.of(dbm);
+        Ident id = Ident.of(dbm);
+        if (!splitForeignKeys) {
+            String text = nativeDdl(conn, dialect, id, catalog, schema, table);
+            if (text != null) {
+                return new Script("native", text, new ArrayList<>());
+            }
+            return new Script("metadata",
+                    fromMetadata(dbm, dialect, id, catalog, schema, table, null),
+                    new ArrayList<>());
+        }
+        List<String> alters = new ArrayList<>();
+        String creates = fromMetadata(dbm, dialect, id, catalog, schema, table, alters);
+        return new Script("metadata", creates, alters);
     }
 
     private static JsonObject result(String ddl, String source) {
@@ -271,8 +343,14 @@ public final class Ddl {
         final TreeMap<Integer, String> order = new TreeMap<>();
     }
 
+    /**
+     * @param alterOut when non-{@code null}, foreign keys are appended here as
+     *                 {@code ALTER TABLE} statements instead of being written
+     *                 into the {@code CREATE} body
+     */
     private static String fromMetadata(DatabaseMetaData dbm, Dialect dialect, Ident id,
-                                       String catalog, String schema, String table)
+                                       String catalog, String schema, String table,
+                                       List<String> alterOut)
             throws SQLException {
         List<Col> cols = readColumns(dbm, catalog, schema, table);
         if (cols.isEmpty()) {
@@ -304,7 +382,12 @@ public final class Ddl {
         }
         boolean catalogQualified = catalog != null && !catalog.isEmpty();
         for (Fk fk : fks) {
-            body.add("    " + foreignKey(fk, id, catalogQualified));
+            if (alterOut == null) {
+                body.add("    " + foreignKey(fk, id, catalogQualified));
+            } else {
+                alterOut.add("ALTER TABLE " + qualified + " ADD "
+                        + foreignKey(fk, id, catalogQualified));
+            }
         }
         sb.append(String.join(",\n", body)).append("\n)");
 

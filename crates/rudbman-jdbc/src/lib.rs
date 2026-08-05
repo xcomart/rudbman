@@ -53,9 +53,11 @@
 //! * [`Session`] owns a connection and the worker thread that serialises every
 //!   command for it. [`Canceller`] is the one path that does not queue.
 //! * [`Cursor`] executes and fetches; [`Batch`] decodes what comes back.
-//! * Requests are [`ConnectionSpec`], [`StatementSpec`] and [`DescribeRequest`];
-//!   responses are [`ExecuteResult`], [`SessionInfo`], [`DescribeResult`] and
-//!   friends.
+//! * [`Job`] is the data plane: a script extraction ([`ExtractSpec`]) whose rows
+//!   never cross the boundary at all, watched through [`JobProgress`].
+//! * Requests are [`ConnectionSpec`], [`StatementSpec`], [`DescribeRequest`] and
+//!   [`ExtractSpec`]; responses are [`ExecuteResult`], [`SessionInfo`],
+//!   [`DescribeResult`] and friends.
 //!
 //! # Four things worth knowing before using it
 //!
@@ -106,10 +108,11 @@ pub use error::{BridgeError, BridgeErrorKind, Error, Result};
 pub use jvm::{BRIDGE_JAR_ENV, JAVA_HOME_ENV, Jvm, JvmConfig, default_bridge_jar};
 pub use protocol::Op;
 pub use response::{
-    Cancelled, ColumnInfo, DdlResult, DescribeResult, DriverProbe, ExecuteResult, Ping,
-    SQL_TYPE_REAL, SessionInfo,
+    Cancelled, ColumnInfo, DdlResult, DescribeResult, DriverProbe, ExecuteResult, JobProgress,
+    JobState, Ping, SQL_TYPE_REAL, SessionInfo,
 };
-pub use session::{Canceller, Cursor, Session};
+pub use session::{Canceller, Cursor, Job, Session};
 pub use spec::{
-    ConnectionSpec, DdlSource, DescribeRequest, KeepAliveSpec, Param, ProbeRequest, StatementSpec,
+    ConnectionSpec, Constraints, DataMode, DataOptions, DdlOptions, DdlSource, DescribeRequest,
+    ExtractSpec, KeepAliveSpec, Newline, ObjectRef, OutputSpec, Param, ProbeRequest, StatementSpec,
 };
