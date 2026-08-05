@@ -9,8 +9,9 @@
 //! The binary owns the application shell: a tab strip of open connections, the
 //! work area below it, a status bar, and the dialogs rendered on top of
 //! everything else. The work area is a tree of panes ([`pane_tree`]), each
-//! showing one thing — an editor, a result grid, an ERD canvas — and in M0
-//! showing the empty state, because nothing can open a connection yet.
+//! holding a strip of tabs — a detail panel, an editor over its results, an ERD
+//! canvas — and showing the one of them on top, or the empty state while it
+//! holds none.
 //!
 //! What is deliberately *not* here: the connection dialog (M1) and the explorer
 //! tree (M2). The menu already carries the row that will open the first of them;
@@ -45,10 +46,12 @@ mod theme_picker;
 // in English while the rest of that language stays translated.
 rust_i18n::i18n!("locales", fallback = "en");
 
+use std::collections::HashMap;
+
 use gpui::{
     AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
-    Focusable, KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, ScrollHandle,
-    SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
+    Focusable, Hsla, KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point,
+    ScrollHandle, SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div,
     prelude::*, px, relative, size,
 };
@@ -68,7 +71,7 @@ use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
 use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
 use i18n::ts;
 use icons::Icons;
-use pane_tree::{Axis, PaneContent, PaneId, PaneNode, PaneTree, SplitId};
+use pane_tree::{Axis, Pane, PaneId, PaneItem, PaneNode, PaneTree, SplitId};
 use query::{ConfirmRequest, QueryPane, QueryPaneEvent};
 use settings_dialog::{SettingsDialog, SettingsDialogEvent};
 use table_detail::{TableDetail, TableDetailEvent};
@@ -298,10 +301,16 @@ struct Workspace {
     /// becomes what it is meant to be: the fallback that keeps the shortcuts
     /// alive while nothing else holds the keyboard.
     focus_handle: FocusHandle,
-    /// The panes of the work area. Never empty.
-    panes: PaneTree<PaneContent>,
+    /// The panes of the work area. Never empty, though a pane may hold no tabs.
+    panes: PaneTree<Pane>,
     /// The pane the status bar and the pane commands act on.
     active_pane: PaneId,
+    /// Number the next query tab is titled with.
+    ///
+    /// Counts up for the life of the window and is never reused: two tabs
+    /// called "Query 3" — one of them a query that was closed and reopened —
+    /// would be worse than a gap in the numbering.
+    next_query: u64,
     /// The explorer sidebar.
     explorer: Entity<Explorer>,
     /// Whether the sidebar is showing.
@@ -435,7 +444,7 @@ impl Workspace {
             record_window_geometry(window, cx);
         });
 
-        let panes = PaneTree::single(PaneContent::Placeholder);
+        let panes = PaneTree::single(Pane::new());
         let active_pane = panes.first_leaf().0;
         let settings_snapshot = app_settings::current(cx);
 
@@ -443,6 +452,7 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             panes,
             active_pane,
+            next_query: 1,
             explorer,
             explorer_visible: settings_snapshot.explorer_visible,
             explorer_width: settings_snapshot.explorer_width,
@@ -578,8 +588,19 @@ impl Workspace {
         .detach();
     }
 
-    /// Opens a detail panel for `target` in the active pane.
+    /// Opens a detail panel for `target`, or brings the open one to the front.
+    ///
+    /// Activating the same object twice is a navigation, not a request for a
+    /// second copy: the panel that is already open shows exactly what a new one
+    /// would, and a strip filling up with duplicates of one table is nobody's
+    /// idea of a workspace. The search covers every pane, so activating an
+    /// object from one half of a split jumps to the pane already showing it.
     fn open_object(&mut self, target: ObjectTarget, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((pane, index)) = self.detail_tab(&target, cx) {
+            self.activate_tab(pane, index, window, cx);
+            return;
+        }
+
         let panel = cx.new(|cx| TableDetail::new(target, cx));
         // Subscribe first, *then* ask. A panel that requested its own metadata
         // from its constructor would emit into an empty room and sit at
@@ -590,17 +611,7 @@ impl Workspace {
         })
         .detach();
         panel.update(cx, |panel, cx| panel.refresh(cx));
-
-        let pane = self.active_pane();
-        // Whatever was in the pane is about to stop being rendered, and it may
-        // be holding the keyboard; see [`Workspace::reclaim_focus`].
-        if let Some(focus) = self.pane_focus(pane, cx) {
-            self.reclaim_focus(&focus, window, cx);
-        }
-        if let Some(content) = self.panes.get_mut(pane) {
-            *content = PaneContent::TableDetail(panel);
-        }
-        cx.notify();
+        self.append_tab(PaneItem::TableDetail(panel), window, cx);
     }
 
     /// Opens a query pane in the active pane, with `sql` already in it.
@@ -649,12 +660,17 @@ impl Workspace {
         })
         .detach();
 
-        let target = self.active_pane();
-        if let Some(content) = self.panes.get_mut(target) {
-            *content = PaneContent::Query(pane.clone());
-        }
+        let number = self.next_query;
+        self.next_query += 1;
+        self.append_tab(
+            PaneItem::Query {
+                pane: pane.clone(),
+                number,
+            },
+            window,
+            cx,
+        );
         pane.update(cx, |pane, cx| pane.focus_editor(window, cx));
-        cx.notify();
     }
 
     /// Opens a query pane over one explorer object, pre-filled with a `SELECT`.
@@ -668,11 +684,134 @@ impl Workspace {
         self.open_query(&sql, window, cx);
     }
 
-    /// The query pane the status bar and the run commands act on.
+    /// The query pane the status bar and the run commands act on: the active
+    /// tab of the active pane, when that tab is a query.
     fn active_query(&self) -> Option<&Entity<QueryPane>> {
-        match self.panes.get(self.active_pane()) {
-            Some(PaneContent::Query(pane)) => Some(pane),
+        match self.panes.get(self.active_pane())?.active()? {
+            PaneItem::Query { pane, .. } => Some(pane),
+            PaneItem::TableDetail(_) => None,
+        }
+    }
+
+    /// Where `target` is already open, if it is: the pane and the tab in it.
+    fn detail_tab(&self, target: &ObjectTarget, cx: &App) -> Option<(PaneId, usize)> {
+        self.panes
+            .leaves()
+            .into_iter()
+            .find_map(|(id, pane)| pane.detail_of(target, cx).map(|index| (id, index)))
+    }
+
+    /// Appends a tab to the active pane and brings it to the front.
+    ///
+    /// The tab that was showing stops being rendered the moment this returns,
+    /// and it may be holding the keyboard; see [`Workspace::reclaim_focus`].
+    /// Nothing is focused in its place here — the callers that open something
+    /// typeable do that themselves — so the shell takes the keyboard back.
+    fn append_tab(&mut self, item: PaneItem, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.active_pane();
+        if self.pane_holds_focus(target, window, cx) {
+            self.focus_shell(window, cx);
+        }
+        if let Some(pane) = self.panes.get_mut(target) {
+            pane.push(item);
+        }
+        cx.notify();
+    }
+
+    /// Brings the tab `index` of `pane` to the front, and the pane marker with
+    /// it.
+    ///
+    /// The keyboard follows only if it was inside the tab going off screen:
+    /// activating a tab from the explorer, which is where a click that lands
+    /// here comes from, must not pull the caret out of the sidebar.
+    fn activate_tab(
+        &mut self,
+        pane: PaneId,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.panes.contains(pane) {
+            return;
+        }
+        self.active_pane = pane;
+        let held = self.pane_holds_focus(pane, window, cx);
+        let moved = self
+            .panes
+            .get_mut(pane)
+            .is_some_and(|pane| pane.activate(index));
+        if moved && held {
+            self.focus_active_tab(pane, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Closes the tab `index` of `pane`.
+    ///
+    /// Dropping the tab drops the view in it, which closes whatever cursor or
+    /// fetch it was holding. The neighbour that takes its place inherits the
+    /// keyboard when the closed tab had it, because the tab strip is a place a
+    /// user closes several tabs in a row from and a focus that fell back to the
+    /// shell every time would swallow the editor shortcuts in between.
+    fn close_tab(
+        &mut self,
+        pane: PaneId,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active = self
+            .panes
+            .get(pane)
+            .is_some_and(|pane| pane.active_index() == index);
+        // Only the active tab is rendered, so only it can be holding the
+        // keyboard; see [`Workspace::reclaim_focus`].
+        let held = active && self.pane_holds_focus(pane, window, cx);
+        let Some(closed) = self.panes.get_mut(pane).and_then(|pane| pane.close(index)) else {
+            return;
+        };
+        drop(closed);
+        if held {
+            self.focus_active_tab(pane, window, cx);
+        }
+        self.drop_stale_confirm(cx);
+        cx.notify();
+    }
+
+    /// Puts the keyboard on the active tab of `pane`, or on the shell when that
+    /// tab has nothing to type into.
+    ///
+    /// A query pane takes the caret into its editor, which is what makes closing
+    /// the tab in front of one leave the user typing where they were. A detail
+    /// panel and an empty pane fall back to the shell, whose handlers are what
+    /// keep the menu rows and the shortcuts alive.
+    fn focus_active_tab(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        let query = match self.panes.get(pane).and_then(Pane::active) {
+            Some(PaneItem::Query { pane, .. }) => Some(pane.clone()),
             _ => None,
+        };
+        match query {
+            Some(pane) => pane.update(cx, |pane, cx| pane.focus_editor(window, cx)),
+            None => self.focus_shell(window, cx),
+        }
+    }
+
+    /// Drops a write confirmation whose pane is no longer open anywhere.
+    ///
+    /// The dialog asks on behalf of one query pane and sends the answer back to
+    /// it; a pane that has been closed has nobody to answer.
+    fn drop_stale_confirm(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = &self.confirm else {
+            return;
+        };
+        let open = self.panes.leaves().into_iter().any(|(_, pane)| {
+            pane.items()
+                .iter()
+                .any(|item| matches!(item, PaneItem::Query { pane, .. } if pane == &pending.pane))
+        });
+        if !open {
+            self.confirm = None;
+            cx.notify();
         }
     }
 
@@ -836,7 +975,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Empties every pane that was running against `closed`.
+    /// Lets go of everything that was running against `closed`.
     ///
     /// A query pane holds a [`connection::SessionHandle`], which is what keeps
     /// the session — and the tunnel under it — alive while a fetch is out. That
@@ -845,43 +984,54 @@ impl Workspace {
     /// anything in, and §9.3's rule that a tunnel dies with its session would
     /// hold only until someone had opened an editor.
     ///
-    /// The pane is emptied rather than removed: the layout the user arranged is
-    /// theirs, and a tab closing should not rearrange the window.
+    /// The two kinds of tab part company here, because what the user would lose
+    /// differs. A detail panel shows what the database said and nothing the user
+    /// wrote, so its tab closes with the connection. A query pane holds the
+    /// statement they typed, so its tab stays and is detached instead: the SQL
+    /// and the rows already fetched remain readable and copyable, and every path
+    /// that would talk to the database refuses. Panes themselves are never
+    /// removed — the layout the user arranged is theirs, and closing a
+    /// connection should not rearrange the window.
     fn abandon_panes_of(
         &mut self,
         closed: ConnectionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let stale: Vec<PaneId> = self
-            .panes
-            .leaves()
-            .into_iter()
-            .filter_map(|(id, content)| match content {
-                PaneContent::Query(pane) if pane.read(cx).connection() == closed => Some(id),
-                _ => None,
-            })
-            .collect();
-        for id in stale {
-            // The editor of an emptied pane may be where the keyboard is, and
-            // a placeholder renders none of it; see
-            // [`Workspace::reclaim_focus`].
-            if let Some(focus) = self.pane_focus(id, cx) {
-                self.reclaim_focus(&focus, window, cx);
+        for id in self.panes.leaf_ids() {
+            let Some(pane) = self.panes.get(id) else {
+                continue;
+            };
+            // Highest index first, so closing one does not shift the next.
+            let doomed: Vec<usize> = pane
+                .items()
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, item)| {
+                    matches!(item, PaneItem::TableDetail(panel) if panel.read(cx).target().connection == closed)
+                })
+                .map(|(index, _)| index)
+                .collect();
+            let orphaned: Vec<Entity<QueryPane>> = pane
+                .items()
+                .iter()
+                .filter_map(|item| match item {
+                    PaneItem::Query { pane, .. } if pane.read(cx).connection() == closed => {
+                        Some(pane.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            for index in doomed {
+                self.close_tab(id, index, window, cx);
             }
-            if let Some(content) = self.panes.get_mut(id) {
-                *content = PaneContent::Placeholder;
+            for pane in orphaned {
+                pane.update(cx, |pane, cx| pane.detach(cx));
             }
         }
-        // A confirmation waiting on a pane that has just gone would have nobody
-        // to answer.
-        if let Some(pending) = &self.confirm
-            && !self.panes.leaves().iter().any(
-                |(_, content)| matches!(content, PaneContent::Query(pane) if pane == &pending.pane),
-            )
-        {
-            self.confirm = None;
-        }
+        self.drop_stale_confirm(cx);
     }
 
     /// Brings one connection tab to the front.
@@ -907,7 +1057,7 @@ impl Workspace {
     /// Splits the active pane along `axis` and moves the marker to the new one.
     fn split_active(&mut self, axis: Axis, cx: &mut Context<Self>) {
         let target = self.active_pane();
-        let Some(new) = self.panes.split(target, axis, PaneContent::Placeholder) else {
+        let Some(new) = self.panes.split(target, axis, Pane::new()) else {
             return;
         };
         self.active_pane = new;
@@ -921,20 +1071,21 @@ impl Workspace {
     fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let target = self.active_pane();
         let next = self.panes.next_leaf(target).unwrap_or(target);
-        // Read before the pane goes, because afterwards there is nothing left
-        // to ask which handle its editor or its detail panel was focusing.
-        let focus = self.pane_focus(target, cx);
+        // Asked before the pane goes, because afterwards there is nothing left
+        // to ask whether its editor or its detail panel had the keyboard.
+        let held = self.pane_holds_focus(target, window, cx);
         if self.panes.remove(target).is_none() {
             return;
         }
-        if let Some(focus) = focus {
-            self.reclaim_focus(&focus, window, cx);
+        if held {
+            self.focus_shell(window, cx);
         }
         self.active_pane = if self.panes.contains(next) {
             next
         } else {
             self.panes.first_leaf().0
         };
+        self.drop_stale_confirm(cx);
         cx.notify();
     }
 
@@ -983,12 +1134,22 @@ impl Workspace {
         }
     }
 
-    /// The handle the focus of one pane's contents hangs from, if it has one.
-    fn pane_focus(&self, pane: PaneId, cx: &App) -> Option<FocusHandle> {
-        match self.panes.get(pane)? {
-            PaneContent::Query(pane) => Some(pane.read(cx).focus_handle(cx)),
-            PaneContent::TableDetail(panel) => Some(panel.read(cx).focus_handle(cx)),
-            PaneContent::Placeholder => None,
+    /// Whether the keyboard is inside what `pane` is showing, as the last drawn
+    /// frame had it.
+    ///
+    /// Tab aware, and only the active tab needs asking: the others are not
+    /// rendered, so nothing in them can hold the focus. A query pane answers for
+    /// both of its focusable halves — the editor and the grid of the active
+    /// result — through [`QueryPane::contains_focus`], because its
+    /// [`Focusable`] impl names only the editor and a focus left on a grid would
+    /// strand exactly as [`Workspace::reclaim_focus`] describes.
+    fn pane_holds_focus(&self, pane: PaneId, window: &Window, cx: &App) -> bool {
+        match self.panes.get(pane).and_then(Pane::active) {
+            Some(PaneItem::Query { pane, .. }) => pane.read(cx).contains_focus(window, cx),
+            Some(PaneItem::TableDetail(panel)) => {
+                panel.read(cx).focus_handle(cx).contains_focused(window, cx)
+            }
+            None => false,
         }
     }
 
@@ -1490,15 +1651,28 @@ impl Workspace {
     /// Renders the work area.
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
-        // A lone pane with nothing beside it needs no frame: there is only one
-        // thing on screen, so nothing has to be said about which one is active.
-        let frame = self.panes.leaf_count() > 1;
-        let active = self.active_pane();
         let root = self.panes.root();
-        // With a session open the pane is empty because nothing that would fill
-        // it exists yet, not because there is nothing to connect to; telling the
-        // user "no connections" over a live tab would be a plain lie.
-        let connected = !self.connections.is_empty();
+        let chrome = PaneChrome {
+            active: self.active_pane(),
+            // A lone pane with nothing beside it needs no frame: there is only
+            // one thing on screen, so nothing has to be said about which one is
+            // active.
+            frame: self.panes.leaf_count() > 1,
+            // With a session open the pane is empty because nothing that would
+            // fill it exists yet, not because there is nothing to connect to;
+            // telling the user "no connections" over a live tab would be a
+            // plain lie.
+            connected: !self.connections.is_empty(),
+            theme: theme.clone(),
+            colors: self
+                .connections
+                .iter()
+                .filter_map(|open| {
+                    let color = rudbman_ui::parse_hex(open.profile.color.as_deref()?)?;
+                    Some((open.id, color))
+                })
+                .collect(),
+        };
 
         // The sidebar and the handle that resizes it, both left out entirely
         // when the panel is hidden — a zero-width flex child would still take
@@ -1550,7 +1724,7 @@ impl Workspace {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .child(render_pane(root, active, frame, connected, &theme, cx)),
+                    .child(render_pane(root, &chrome, cx)),
             )
             .into_any_element()
     }
@@ -1876,6 +2050,82 @@ impl Workspace {
     }
 }
 
+/// What every pane of one frame is drawn against.
+///
+/// Gathered once by [`Workspace::render_body`] and handed down the recursion
+/// rather than recomputed per leaf: the palette and the connection colours are
+/// the same for every pane on screen, and the alternative is a `render_pane`
+/// with seven parameters, most of them constants of the frame.
+struct PaneChrome {
+    /// The pane the marker is on, drawn with an accent frame.
+    active: PaneId,
+    /// Whether panes are framed at all, which they are once there are two.
+    frame: bool,
+    /// Whether any connection is open, which decides the empty state's wording.
+    connected: bool,
+    /// The palette.
+    theme: Theme,
+    /// The colour tag of every connection that has one, for the tab dots.
+    ///
+    /// A profile with no colour is simply absent, and its tabs draw no dot: an
+    /// invented colour would read as a tag the user chose.
+    colors: HashMap<ConnectionId, Hsla>,
+}
+
+/// Renders one pane's tab strip.
+///
+/// The same widget as the connection strip at the top of the window, minus the
+/// dropdown and the "+": a pane's tabs are opened from the explorer and the
+/// query commands, so a "new tab" button here would have nothing to open.
+///
+/// The strip lists every tab of the pane whatever connection tab is showing.
+/// Filtering by the connection on top would hide half of a split the moment the
+/// user looked at another database, and the reason to keep two panes open is
+/// usually that they are about two different ones. What says which database a
+/// tab belongs to is its dot, in the colour of the profile — the same colour the
+/// explorer marks that connection's root with.
+fn render_tab_strip(
+    id: PaneId,
+    pane: &Pane,
+    chrome: &PaneChrome,
+    cx: &mut Context<Workspace>,
+) -> TabBar {
+    let this = cx.entity();
+    let tabs: Vec<TabItem> = pane
+        .items()
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let tab = TabItem::new(("pane-tab", index), item.title(cx));
+            match chrome.colors.get(&item.connection(cx)) {
+                Some(color) => tab.dot(*color),
+                None => tab,
+            }
+        })
+        .collect();
+
+    TabBar::new(("pane-tabs", id.as_u64()))
+        .tabs(tabs)
+        .active(pane.active_index())
+        .scroll_handle(pane.scroll_handle())
+        // Only the third slot can ever be read: this strip carries neither the
+        // dropdown nor the "+" the first two label.
+        .tooltips("", "", ts!("tab.close"))
+        .on_select({
+            let this = this.clone();
+            move |index, window, cx| {
+                this.update(cx, |workspace, cx| {
+                    workspace.activate_tab(id, index, window, cx);
+                });
+            }
+        })
+        .on_close(move |index, window, cx| {
+            this.update(cx, |workspace, cx| {
+                workspace.close_tab(id, index, window, cx);
+            });
+        })
+}
+
 /// Renders one node of a pane tree.
 ///
 /// A split becomes a flex box in the direction of its axis, with each child
@@ -1897,32 +2147,42 @@ impl Workspace {
 /// that it can straddle them at all: an in-flow handle would have to be given
 /// room, which is exactly what the hairline seam is meant not to need.
 fn render_pane(
-    node: &PaneNode<PaneContent>,
-    active: PaneId,
-    frame: bool,
-    connected: bool,
-    theme: &Theme,
+    node: &PaneNode<Pane>,
+    chrome: &PaneChrome,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     match node {
         PaneNode::Leaf { id, payload } => {
-            let border = if *id == active {
+            let theme = &chrome.theme;
+            let border = if *id == chrome.active {
                 theme.accent
             } else {
                 theme.border
             };
+            let body = match payload.active() {
+                Some(PaneItem::TableDetail(panel)) => panel.clone().into_any_element(),
+                Some(PaneItem::Query { pane, .. }) => pane.clone().into_any_element(),
+                None => render_placeholder(chrome.connected, theme),
+            };
             div()
                 .id(("pane", id.as_u64()))
                 .flex()
+                .flex_col()
                 .size_full()
                 .min_w_0()
                 .min_h_0()
-                .when(frame, |pane| pane.border_1().border_color(border))
-                .child(match payload {
-                    PaneContent::Placeholder => render_placeholder(connected, theme),
-                    PaneContent::TableDetail(panel) => panel.clone().into_any_element(),
-                    PaneContent::Query(pane) => pane.clone().into_any_element(),
-                })
+                .when(chrome.frame, |pane| pane.border_1().border_color(border))
+                // No strip over an empty pane: a bar with nothing in it would
+                // be a band of chrome saying nothing over the very words that
+                // explain what the pane is for.
+                .children((!payload.is_empty()).then(|| {
+                    div()
+                        .flex()
+                        .flex_none()
+                        .w_full()
+                        .child(render_tab_strip(*id, payload, chrome, cx))
+                }))
+                .child(div().flex().flex_1().min_w_0().min_h_0().child(body))
                 .into_any_element()
         }
         PaneNode::Split {
@@ -1938,8 +2198,8 @@ fn render_pane(
             // Both children are rendered up front because each one needs `cx`
             // for the handles further down the tree, and a closure holding it
             // could not then be called twice.
-            let first = render_pane(first, active, frame, connected, theme, cx);
-            let second = render_pane(second, active, frame, connected, theme, cx);
+            let first = render_pane(first, chrome, cx);
+            let second = render_pane(second, chrome, cx);
             let half = |share: f32, child: AnyElement| {
                 div()
                     .flex()
@@ -3089,6 +3349,260 @@ mod tests {
                     workspace.focus_handle.is_focused(window),
                     "the focus stayed on the editor of the closed pane"
                 );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// A window with one live H2 connection in its tab strip, and the id that
+    /// connection was given.
+    ///
+    /// The session is opened before the window is built, as every test here
+    /// does: the call blocks, and the rule the shell itself follows is that
+    /// nothing blocking runs inside a gpui update.
+    fn workspace_over_h2(
+        name: &str,
+        cx: &mut gpui::TestAppContext,
+    ) -> (gpui::WindowHandle<Workspace>, ConnectionId) {
+        let profile = connection::h2::profile(name);
+        let connected = connection::connect(
+            &profile,
+            &connection::h2::driver(),
+            &connection::Credentials::typed(Some(String::new()), None),
+            &AppSettings::default(),
+        )
+        .expect("H2 opens an in-memory database without a server");
+
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+            rudbman_editor::init(cx);
+            rudbman_grid::init(cx);
+        });
+        let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+        let id = next_connection_id();
+        window
+            .update(cx, |workspace, _window, _cx| {
+                workspace.connections.push(Connection {
+                    id,
+                    profile,
+                    state: ConnectionState::Open(Box::new(connected)),
+                });
+                workspace.active_connection = 0;
+            })
+            .expect("the window is open");
+        (window, id)
+    }
+
+    /// An object of `connection` in the public schema.
+    fn object(connection: ConnectionId, name: &str) -> ObjectTarget {
+        ObjectTarget {
+            connection,
+            catalog: None,
+            schema: Some("PUBLIC".to_string()),
+            folder: explorer::Folder::Tables,
+            name: name.to_string(),
+        }
+    }
+
+    /// The titles of one pane's tabs, in strip order.
+    fn tab_titles(workspace: &Workspace, pane: PaneId, cx: &App) -> Vec<String> {
+        workspace
+            .panes
+            .get(pane)
+            .expect("the pane is in the tree")
+            .items()
+            .iter()
+            .map(|item| item.title(cx).to_string())
+            .collect()
+    }
+
+    /// Which tab of one pane is on top.
+    fn active_tab(workspace: &Workspace, pane: PaneId) -> usize {
+        workspace
+            .panes
+            .get(pane)
+            .expect("the pane is in the tree")
+            .active_index()
+    }
+
+    /// Opening things does not throw away what the pane already held, and
+    /// opening the *same* object twice does not open it twice.
+    #[gpui::test]
+    fn a_detail_and_a_query_are_two_tabs_of_one_pane(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2("tabs", cx);
+        let target = object(id, "ORDERS");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let first = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_object(target.clone(), window, cx);
+                workspace.open_query("SELECT 1", window, cx);
+
+                let pane = workspace.active_pane();
+                // Both are open, in the order they were opened, and the query —
+                // the one just asked for — is the one showing.
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    ["PUBLIC.ORDERS", "Query 1"]
+                );
+                assert_eq!(active_tab(workspace, pane), 1);
+                assert!(workspace.active_query().is_some());
+
+                // The same object again is a navigation, not a second copy.
+                workspace.open_object(target.clone(), window, cx);
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    ["PUBLIC.ORDERS", "Query 1"]
+                );
+                assert_eq!(active_tab(workspace, pane), 0);
+                assert!(
+                    workspace.active_query().is_none(),
+                    "the detail tab is the one showing, so no query pane is active"
+                );
+                pane
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.split_active(Axis::Horizontal, cx);
+                let second = workspace.active_pane();
+                assert_ne!(second, first, "the split produced a pane of its own");
+                workspace.open_query("SELECT 2", window, cx);
+                assert_eq!(tab_titles(workspace, second, cx), ["Query 2"]);
+
+                // Asking for the object from the other pane jumps to the pane
+                // already showing it rather than opening a copy beside it.
+                workspace.open_object(target.clone(), window, cx);
+                assert_eq!(workspace.active_pane(), first);
+                assert_eq!(active_tab(workspace, first), 0);
+                assert_eq!(
+                    tab_titles(workspace, first, cx),
+                    ["PUBLIC.ORDERS", "Query 1"]
+                );
+                assert_eq!(tab_titles(workspace, second, cx), ["Query 2"]);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// Closing a tab is the same focus hazard as closing a pane: the view in it
+    /// stops being rendered, and gpui resolves actions against the focused
+    /// element of the last drawn frame. The keyboard has to land on the
+    /// neighbour that took its place — or on the shell, when nothing did.
+    #[gpui::test]
+    fn closing_a_tab_hands_the_keyboard_to_the_tab_beside_it(cx: &mut gpui::TestAppContext) {
+        let (window, _id) = workspace_over_h2("tab-focus", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_query("SELECT 1", window, cx);
+                workspace.open_query("SELECT 2", window, cx);
+                workspace.active_pane()
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                let editor = workspace
+                    .active_query()
+                    .expect("the second query is showing")
+                    .read(cx)
+                    .focus_handle(cx);
+                assert!(editor.is_focused(window), "the editor did not take focus");
+
+                workspace.close_tab(pane, 1, window, cx);
+                assert_eq!(tab_titles(workspace, pane, cx), ["Query 1"]);
+                assert_eq!(active_tab(workspace, pane), 0);
+                let neighbour = workspace
+                    .active_query()
+                    .expect("the first query took its place")
+                    .read(cx)
+                    .focus_handle(cx);
+                assert!(
+                    neighbour.is_focused(window),
+                    "the focus stayed on the editor of the closed tab"
+                );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.close_tab(pane, 0, window, cx);
+                assert!(
+                    workspace
+                        .panes
+                        .get(pane)
+                        .expect("the pane outlives its tabs")
+                        .is_empty(),
+                    "closing the last tab must leave the pane standing"
+                );
+                assert!(
+                    workspace.focus_handle.is_focused(window),
+                    "an empty pane has nothing to type into, so the shell takes over"
+                );
+            })
+            .expect("the window is open");
+
+        // The regression the rule exists for: with the focus stranded on an
+        // editor nothing renders, this dispatch would never arrive.
+        let showing = window
+            .update(&mut cx, |workspace, _window, _cx| {
+                workspace.explorer_visible
+            })
+            .expect("the window is open");
+        cx.dispatch_action(ToggleExplorer);
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                assert_ne!(
+                    workspace.explorer_visible, showing,
+                    "the action was dropped: the focus is on something unrendered"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// Closing a connection tab: what the database said goes with it, what the
+    /// user wrote stays.
+    #[gpui::test]
+    fn closing_a_connection_closes_its_details_and_detaches_its_queries(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (window, id) = workspace_over_h2("abandon", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_object(object(id, "ORDERS"), window, cx);
+                workspace.open_query("SELECT 1", window, cx);
+                let pane = workspace.active_pane();
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    ["PUBLIC.ORDERS", "Query 1"]
+                );
+                pane
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.close_connection(0, window, cx);
+
+                // The detail panel described a database nobody can ask any
+                // more; the statement in the editor is still the user's.
+                assert_eq!(tab_titles(workspace, pane, cx), ["Query 1"]);
+                let query = workspace
+                    .active_query()
+                    .expect("the query tab survived the connection")
+                    .read(cx);
+                assert!(!query.is_attached(), "the session was not let go of");
+                assert_eq!(query.status_cells().0, ts!("statusbar.disconnected"));
             })
             .expect("the window is open");
         cx.run_until_parked();

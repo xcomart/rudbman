@@ -354,6 +354,7 @@ query:
   cancel: Annuler
   cancelling: Annulation…
   result: "Résultat %{index}"
+  tab: "Requête %{index}"
   empty: Écrivez une instruction puis exécutez-la.
   no_results: L'instruction n'a produit aucun résultat.
   running: en cours…

@@ -354,6 +354,7 @@ query:
   cancel: Abbrechen
   cancelling: Wird abgebrochen…
   result: "Ergebnis %{index}"
+  tab: "Abfrage %{index}"
   empty: Schreiben Sie eine Anweisung und führen Sie sie aus.
   no_results: Die Anweisung lieferte kein Ergebnis.
   running: läuft…

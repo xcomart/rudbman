@@ -354,6 +354,7 @@ query:
   cancel: キャンセル
   cancelling: キャンセル中…
   result: "結果 %{index}"
+  tab: "クエリ %{index}"
   empty: 文を書いて実行してください。
   no_results: 文は結果を返しませんでした。
   running: 実行中…

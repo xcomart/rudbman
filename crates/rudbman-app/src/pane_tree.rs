@@ -1,10 +1,10 @@
 //! How the work area is divided into panes.
 //!
-//! The body of the window shows a binary tree: every leaf is one pane holding
-//! one thing ([`PaneContent`]), and every interior node divides its area in two
-//! along an [`Axis`]. Splitting a pane replaces its leaf with a split; closing a
-//! pane collapses the split it sat in and promotes its sibling into the split's
-//! place, which is what keeps the tree free of one-child nodes.
+//! The body of the window shows a binary tree: every leaf is one [`Pane`] — a
+//! strip of tabs and the one of them on top — and every interior node divides
+//! its area in two along an [`Axis`]. Splitting a pane replaces its leaf with a
+//! split; closing a pane collapses the split it sat in and promotes its sibling
+//! into the split's place, which is what keeps the tree free of one-child nodes.
 //!
 //! The *mechanics* are deliberately free of gpui: the promotion and collapse
 //! rules are the part of a split layout that is easy to get subtly wrong, so
@@ -12,33 +12,44 @@
 //! payload the tree never looks inside. The view layer walks the result through
 //! [`PaneTree::root`] and renders one nested flex box per node.
 //!
-//! [`PaneContent`] — the shell's own payload — is the exception, and only
-//! because a panel *is* a view: it carries the entity handles the renderer
-//! needs. Nothing above it does.
+//! [`Pane`] — the shell's own payload — is the exception, and only because a
+//! panel *is* a view: it carries the entity handles the renderer needs. Nothing
+//! above it does.
 //!
-//! # Why the tree is generic *and* the payload is an enum
+//! # Why the tree is generic *and* the payload is concrete
 //!
 //! [`PaneTree`] is generic over what a leaf holds, and the shell instantiates it
-//! at `PaneTree<PaneContent>`. Both halves of that are deliberate.
+//! at `PaneTree<Pane>`. Both halves of that are deliberate.
 //!
 //! The tree is generic because none of its rules depend on the payload: a
 //! split, a promotion and a collapse rearrange *shape*, and a tree hardwired to
-//! [`PaneContent`] would make every test of those rules build a database view
-//! first. The mechanics tests below stay on a `u32` payload for exactly that
-//! reason — distinguishable leaves make an assertion about layout order
-//! readable in a way `Placeholder, Placeholder, Placeholder` never could.
+//! [`Pane`] would make every test of those rules build a database view first.
+//! The mechanics tests below stay on a `u32` payload for exactly that reason —
+//! distinguishable leaves make an assertion about layout order readable in a way
+//! three empty panes never could.
 //!
-//! The payload is an enum rather than a boxed trait object because the shell
-//! has to know what it is looking at anyway: the status bar reports a row count
-//! for a grid and nothing of the sort for an ERD canvas, and a `Box<dyn Pane>`
-//! would only push that decision into a downcast. A new kind of panel is one
-//! variant here plus one arm where the shell renders a leaf; the tree, and
-//! every test in this file, stays untouched.
+//! A tab is an enum rather than a boxed trait object because the shell has to
+//! know what it is looking at anyway: the status bar reports a row count for a
+//! grid and nothing of the sort for an ERD canvas, and a `Box<dyn Panel>` would
+//! only push that decision into a downcast. A new kind of panel is one variant
+//! of [`PaneItem`] plus one arm where the shell renders the active tab; the
+//! tree, and every test in this file, stays untouched.
+//!
+//! # Why a pane holds a list rather than one panel
+//!
+//! Reading a table's columns while writing the statement that queries it is the
+//! ordinary case, and a pane that held exactly one thing answered it by throwing
+//! the previous panel away. Tabs make the two coexist without forcing the user
+//! to split the window for every object they open. An empty list is a state of
+//! its own — the pane keeps standing, showing the empty state — because closing
+//! the last tab must not rearrange a layout the user placed.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gpui::Entity;
+use gpui::{App, Entity, ScrollHandle, SharedString};
 
+use crate::explorer::{ConnectionId, ObjectTarget};
+use crate::i18n::ts;
 use crate::query::QueryPane;
 use crate::table_detail::TableDetail;
 
@@ -69,7 +80,7 @@ static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
 /// id and a pane id name different things and must not be swappable.
 static NEXT_SPLIT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// What one pane of the work area shows.
+/// What one tab of a pane shows.
 ///
 /// The tree knows none of these variants — see the module docs — so a milestone
 /// that adds a kind of panel adds a variant here and an arm to the renderer,
@@ -81,17 +92,10 @@ static NEXT_SPLIT_ID: AtomicU64 = AtomicU64::new(1);
 /// for, and what the tests below use — while the shell's own instantiation
 /// carries the handles the renderer needs.
 #[derive(Debug)]
-pub enum PaneContent {
-    /// The empty state: no connection is open, so there is nothing to show yet.
-    ///
-    /// A real variant rather than an `Option<T>` around the others because a
-    /// pane with nothing in it is a state the shell keeps rendering — closing
-    /// the last result of a connection leaves the pane standing, empty, rather
-    /// than tearing the layout down.
-    Placeholder,
+pub enum PaneItem {
     /// One object's columns, keys, references and DDL.
     ///
-    /// Holds the panel itself: dropping the pane drops the handle, and with it
+    /// Holds the panel itself: dropping the tab drops the handle, and with it
     /// the view and whatever fetch it had out.
     TableDetail(Entity<TableDetail>),
     /// A SQL editor over the results of what it ran.
@@ -100,8 +104,143 @@ pub enum PaneContent {
     /// halves share a statement, a cursor and a generation counter, and putting
     /// them in separate panes would mean a channel between them that neither
     /// the user nor the layout ever asked for.
-    Query(Entity<QueryPane>),
+    Query {
+        /// The editor and its results.
+        pane: Entity<QueryPane>,
+        /// Which query pane of this window it is, counting from one.
+        ///
+        /// Kept beside the view rather than inside it because it is the tab
+        /// strip's business and nothing else's: the pane runs statements and
+        /// knows nothing of where it is drawn. Numbers are never reused, so two
+        /// tabs open at once never carry the same title.
+        number: u64,
+    },
     // M5 adds `Erd`, M7 `QueryBuilder`; see the architecture document, §7.1.
+}
+
+impl PaneItem {
+    /// The title its tab carries.
+    ///
+    /// A detail panel is named after the object it describes, qualified by its
+    /// schema; a query pane has no name of its own, so it takes its number.
+    pub fn title(&self, cx: &App) -> SharedString {
+        match self {
+            PaneItem::TableDetail(panel) => SharedString::from(panel.read(cx).target().qualified()),
+            PaneItem::Query { number, .. } => ts!("query.tab", index = number),
+        }
+    }
+
+    /// The connection this tab belongs to, which is the colour its dot takes.
+    ///
+    /// Every pane shows every tab, whichever connection tab is on top, so the
+    /// dot is the only thing saying which database a tab is about.
+    pub fn connection(&self, cx: &App) -> ConnectionId {
+        match self {
+            PaneItem::TableDetail(panel) => panel.read(cx).target().connection,
+            PaneItem::Query { pane, .. } => pane.read(cx).connection(),
+        }
+    }
+}
+
+/// One pane of the work area: its tabs, and which of them is on top.
+///
+/// Only the active tab is rendered. That is what makes closing or switching one
+/// a focus hazard — gpui resolves actions against the focused element of the
+/// last drawn frame — and why the shell reclaims the keyboard around every call
+/// that changes what this returns from [`Pane::active`].
+#[derive(Debug, Default)]
+pub struct Pane {
+    /// The tabs, in the order the strip draws them.
+    items: Vec<PaneItem>,
+    /// Index into [`Pane::items`] of the tab on top. Meaningless while empty,
+    /// and kept in range by every method that removes a tab.
+    active: usize,
+    /// Horizontal scroll of this pane's own tab strip.
+    ///
+    /// One per pane rather than one per window: two panes side by side each
+    /// scroll their own strip, and a shared handle would move both.
+    scroll: ScrollHandle,
+}
+
+impl Pane {
+    /// A pane with nothing in it, which renders the empty state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The tabs, in display order.
+    pub fn items(&self) -> &[PaneItem] {
+        &self.items
+    }
+
+    /// Whether the pane holds no tabs at all.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Index of the tab on top; zero while the pane is empty.
+    pub fn active_index(&self) -> usize {
+        self.active
+    }
+
+    /// The tab on top, if there is one.
+    pub fn active(&self) -> Option<&PaneItem> {
+        self.items.get(self.active)
+    }
+
+    /// The tab at `index`, if there is one.
+    pub fn get(&self, index: usize) -> Option<&PaneItem> {
+        self.items.get(index)
+    }
+
+    /// The scroll handle of this pane's tab strip.
+    pub fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+
+    /// Brings the tab at `index` to the top. Answers whether it moved.
+    ///
+    /// An index that names no tab, and one that is already on top, both change
+    /// nothing — which is what lets the caller skip the focus dance around a
+    /// click on the active tab.
+    pub fn activate(&mut self, index: usize) -> bool {
+        if index >= self.items.len() || index == self.active {
+            return false;
+        }
+        self.active = index;
+        true
+    }
+
+    /// Appends a tab and brings it to the top.
+    pub fn push(&mut self, item: PaneItem) {
+        self.items.push(item);
+        self.active = self.items.len() - 1;
+    }
+
+    /// Removes the tab at `index` and hands it back.
+    ///
+    /// The tab that follows the closed one takes its place, and the one before
+    /// it when nothing follows: that is what makes a run of closes walk in one
+    /// direction rather than jumping to the end of the strip.
+    pub fn close(&mut self, index: usize) -> Option<PaneItem> {
+        if index >= self.items.len() {
+            return None;
+        }
+        let item = self.items.remove(index);
+        if index < self.active {
+            self.active -= 1;
+        }
+        self.active = self.active.min(self.items.len().saturating_sub(1));
+        Some(item)
+    }
+
+    /// The index of the tab showing `target`, if one is open here.
+    pub fn detail_of(&self, target: &ObjectTarget, cx: &App) -> Option<usize> {
+        self.items.iter().position(|item| match item {
+            PaneItem::TableDetail(panel) => panel.read(cx).target() == target,
+            PaneItem::Query { .. } => false,
+        })
+    }
 }
 
 /// The identity of one pane, stable for as long as the pane exists.
@@ -918,28 +1057,43 @@ mod tests {
 
     // The tests above pin the mechanics down with a payload that can be told
     // apart at a glance; the ones below pin down the instantiation the shell
-    // actually builds, which is the part a new variant of `PaneContent` could
+    // actually builds, which is the part a new variant of `PaneItem` could
     // break without any of the above noticing.
 
     #[test]
     fn the_shell_layout_splits_and_collapses_like_any_other() {
-        let mut tree = PaneTree::single(PaneContent::Placeholder);
+        let mut tree = PaneTree::single(Pane::new());
         let one = tree.first_leaf().0;
         let two = tree
-            .split(one, Axis::Horizontal, PaneContent::Placeholder)
+            .split(one, Axis::Horizontal, Pane::new())
             .expect("1 exists");
         let three = tree
-            .split(two, Axis::Vertical, PaneContent::Placeholder)
+            .split(two, Axis::Vertical, Pane::new())
             .expect("2 exists");
 
         assert_eq!(tree.leaf_count(), 3);
         assert_eq!(tree.leaf_ids(), vec![one, two, three]);
-        assert!(matches!(tree.get(three), Some(PaneContent::Placeholder)));
+        assert!(tree.get(three).expect("three exists").is_empty());
 
-        assert!(matches!(tree.remove(three), Some(PaneContent::Placeholder)));
-        assert!(matches!(tree.remove(two), Some(PaneContent::Placeholder)));
+        assert!(tree.remove(three).is_some());
+        assert!(tree.remove(two).is_some());
         // Down to the one pane the shell always keeps, which cannot be closed.
         assert_eq!(tree.leaf_count(), 1);
         assert!(tree.remove(one).is_none());
+    }
+
+    /// A tab is a view, so the ordering rules are asserted in the shell's own
+    /// tests, where a session exists to build one from. What can be said here is
+    /// that an empty pane answers every question without panicking: it is the
+    /// state a freshly split pane starts in and the one it returns to when its
+    /// last tab is closed.
+    #[test]
+    fn an_empty_pane_has_no_active_tab_and_nothing_to_close() {
+        let mut pane = Pane::new();
+        assert!(pane.is_empty());
+        assert!(pane.active().is_none());
+        // Nothing to close, and nothing to activate.
+        assert!(pane.close(0).is_none());
+        assert!(!pane.activate(0));
     }
 }

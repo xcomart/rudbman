@@ -501,6 +501,9 @@ query:
   cancelling: Cancelling…
   # One tab per result of the run. `index` counts from one.
   result: "Result %{index}"
+  # The title of a query pane's tab in the pane it sits in. `index` counts
+  # from one and is never reused, so two open tabs never share a title.
+  tab: "Query %{index}"
   # The result area before anything has been run, and after a run that produced
   # nothing at all.
   empty: Write a statement and run it.

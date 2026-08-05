@@ -354,6 +354,7 @@ query:
   cancel: 取消
   cancelling: 正在取消…
   result: "结果 %{index}"
+  tab: "查询 %{index}"
   empty: 写一条语句然后执行。
   no_results: 该语句没有产生任何结果。
   running: 执行中…

@@ -354,6 +354,7 @@ query:
   cancel: Cancelar
   cancelling: Cancelando…
   result: "Resultado %{index}"
+  tab: "Consulta %{index}"
   empty: Escriba una sentencia y ejecútela.
   no_results: La sentencia no devolvió ningún resultado.
   running: ejecutando…

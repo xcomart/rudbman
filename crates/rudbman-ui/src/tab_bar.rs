@@ -55,21 +55,38 @@ pub struct TabItem {
     pub title: SharedString,
     /// Connection state dot. `None` renders no dot at all.
     pub status: Option<TabStatus>,
+    /// Dot colour chosen by the owner, overriding the one [`TabItem::status`]
+    /// would take from the theme.
+    ///
+    /// For the strips whose dot means something the four states cannot say — a
+    /// pane's tabs mark which connection each of them belongs to, in the colour
+    /// that connection's profile carries. `None` leaves the status in charge.
+    pub dot: Option<Hsla>,
 }
 
 impl TabItem {
-    /// Creates a tab without a status dot.
+    /// Creates a tab without a dot.
     pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
             title: title.into(),
             status: None,
+            dot: None,
         }
     }
 
     /// Attaches a status dot to the tab.
     pub fn status(mut self, status: TabStatus) -> Self {
         self.status = Some(status);
+        self
+    }
+
+    /// Attaches a dot in a colour of the caller's choosing.
+    ///
+    /// Wins over [`TabItem::status`] when both are set, because a colour named
+    /// outright is the more specific of the two.
+    pub fn dot(mut self, color: Hsla) -> Self {
+        self.dot = Some(color);
         self
     }
 }
@@ -394,15 +411,13 @@ impl RenderOnce for TabBar {
                         window.refresh();
                     })
                 })
-                .when_some(tab.status, |this, status| {
-                    this.child(
-                        div()
-                            .flex_none()
-                            .size(px(6.))
-                            .rounded_full()
-                            .bg(status.color(theme)),
-                    )
-                })
+                .when_some(
+                    tab.dot
+                        .or_else(|| tab.status.map(|status| status.color(theme))),
+                    |this, color| {
+                        this.child(div().flex_none().size(px(6.)).rounded_full().bg(color))
+                    },
+                )
                 .child(div().whitespace_nowrap().child(tab.title))
                 .when_some(on_close.clone(), |this, handler| {
                     this.child(

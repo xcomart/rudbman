@@ -438,7 +438,13 @@ pub struct ConfirmRequest {
 /// The editor, the results, and the pipeline between them.
 pub struct QueryPane {
     editor: Entity<EditorView>,
-    session: SessionHandle,
+    /// The session everything here runs on, until the connection is closed.
+    ///
+    /// `None` once [`QueryPane::detach`] has run: the tab outlives its
+    /// connection, because the SQL in the editor is the user's and closing a
+    /// connection tab must not take it away, but nothing in it can be run any
+    /// more.
+    session: Option<SessionHandle>,
     /// Which connection tab this pane belongs to.
     connection: ConnectionId,
     dialect: Dialect,
@@ -532,7 +538,7 @@ impl QueryPane {
 
         Self {
             editor,
-            session,
+            session: Some(session),
             connection,
             dialect,
             read_only: profile.read_only,
@@ -559,10 +565,70 @@ impl QueryPane {
         self.connection
     }
 
+    /// Lets the session go, leaving the tab standing.
+    ///
+    /// The connection tab this pane belongs to has been closed. The
+    /// [`SessionHandle`] is what keeps the session — and the SSH tunnel under it
+    /// — alive while a fetch is out, so holding on to it would keep both open
+    /// behind a pane nobody can run anything in, and §9.3's rule that a tunnel
+    /// dies with its session would hold only until someone had opened an editor.
+    ///
+    /// What stays is everything that is the user's: the statement they wrote and
+    /// the rows already fetched. Every path that would talk to the database
+    /// refuses from here on, and the status bar says the pane is disconnected
+    /// rather than idle.
+    pub fn detach(&mut self, cx: &mut Context<Self>) {
+        self.session = None;
+        // A confirmation still on screen would run nothing if it were answered.
+        self.pending = None;
+        // The cursors of the results are answered by a session that is being
+        // closed; dropping them is what stops a scroll asking it for a page.
+        for tab in &mut self.results {
+            if let ResultBody::Rows(rows) = &mut tab.body {
+                rows.cursor = None;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Whether this pane still has a session behind it.
+    #[cfg(test)]
+    pub fn is_attached(&self) -> bool {
+        self.session.is_some()
+    }
+
     /// Puts the keyboard in the editor.
     pub fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
         let handle = self.editor.read(cx).focus_handle(cx);
         window.focus(&handle);
+    }
+
+    /// Whether the keyboard is anywhere inside this pane, as the last drawn
+    /// frame had it.
+    ///
+    /// The pane has two focusable halves — the editor and the grid of the active
+    /// result, which takes the focus when a cell is clicked — and
+    /// [`Focusable::focus_handle`] can only name one of them. Deciding whether a
+    /// tab about to stop being rendered is holding the keyboard has to ask about
+    /// both, or a focus left on a grid strands exactly the way the workspace's
+    /// `reclaim_focus` exists to prevent.
+    pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        if self
+            .editor
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            return true;
+        }
+        self.results.iter().any(|tab| match &tab.body {
+            ResultBody::Rows(rows) => rows
+                .grid
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx),
+            ResultBody::Message(_) => false,
+        })
     }
 
     /// Whether a statement is in flight.
@@ -574,7 +640,14 @@ impl QueryPane {
     ///
     /// Both blank while nothing has run, so the bar never carries a count from
     /// a pane whose results the user has already replaced.
+    ///
+    /// A detached pane says so instead of counting: its rows are a snapshot of a
+    /// connection that is gone, and "idle" would read as a pane that is merely
+    /// waiting to be told what to run.
     pub fn status_cells(&self) -> (SharedString, SharedString) {
+        if self.session.is_none() {
+            return (ts!("statusbar.disconnected"), SharedString::default());
+        }
         match (&self.run, &self.finished) {
             (RunState::Running(running), _) => (
                 ts!("query.running"),
@@ -598,6 +671,14 @@ impl QueryPane {
 
         if statements.is_empty() {
             self.notice = Some(ts!("query.no_statement"));
+            cx.notify();
+            return;
+        }
+        if self.session.is_none() {
+            // Said before the write confirmation rather than after it: being
+            // asked whether to run something that cannot be run is worse than
+            // being told there is nothing to run it on.
+            self.notice = Some(ts!("explorer.disconnected"));
             cx.notify();
             return;
         }
@@ -667,6 +748,15 @@ impl QueryPane {
         sort_base: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        // The one gate every run goes through, whichever way it was asked for:
+        // a sort round trip and an accepted write confirmation arrive here
+        // without passing `request` again.
+        let Some(session) = self.session.clone() else {
+            self.notice = Some(ts!("explorer.disconnected"));
+            cx.notify();
+            return;
+        };
+
         self.generation += 1;
         let generation = self.generation;
         // Dropping the old tabs drops their cursors, and `Cursor::drop` closes
@@ -681,11 +771,10 @@ impl QueryPane {
         self.run = RunState::Running(Box::new(Running {
             generation,
             started: Instant::now(),
-            canceller: self.session.session().canceller(),
+            canceller: session.session().canceller(),
             cancelling: false,
         }));
 
-        let session = self.session.clone();
         let fetch_rows = self.fetch_rows;
 
         cx.spawn(async move |pane, cx| {
@@ -893,6 +982,14 @@ impl QueryPane {
 
     /// The grid has come within sight of the last row it holds.
     fn fetch_more(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.session.is_none() {
+            // `detach` has already dropped the cursors, so this is only reached
+            // by a scroll that was already in flight; saying why the rows stop
+            // is better than a grid that quietly ends early.
+            self.notice = Some(ts!("explorer.disconnected"));
+            cx.notify();
+            return;
+        }
         let generation = self.generation;
         let fetch_rows = self.fetch_rows;
         let Some(tab) = self.rows_tab(id) else {
@@ -1005,6 +1102,14 @@ impl QueryPane {
         direction: Option<SortDirection>,
         cx: &mut Context<Self>,
     ) {
+        if self.session.is_none() {
+            // Sorting is a re-run, and there is nothing left to run it on. Said
+            // here rather than left to `start`, so the grid's own header click
+            // gets an answer even when the statement turns out unsortable.
+            self.notice = Some(ts!("explorer.disconnected"));
+            cx.notify();
+            return;
+        }
         if self.is_running() {
             self.notice = Some(ts!("query.busy"));
             cx.notify();
@@ -1906,5 +2011,98 @@ mod tests {
                 assert_eq!(pane.message_at(0), &ts!("query.rows_affected", count = 1));
             })
             .expect("the window is open");
+    }
+
+    /// The pane has two focusable halves and [`Focusable`] can name only one of
+    /// them, which is why the shell asks [`QueryPane::contains_focus`] instead
+    /// before it stops rendering a tab: a click in the grid puts the keyboard
+    /// somewhere the editor's handle knows nothing about.
+    #[gpui::test]
+    fn a_focused_result_grid_counts_as_focus_inside_the_pane(cx: &mut TestAppContext) {
+        let (connected, profile) = h2("grid-focus", &["create table G (ID int primary key)"]);
+        let window = pane(&connected, &profile, 500, cx);
+        run(&window, "select ID from G", cx);
+
+        window
+            .update(cx, |pane, window, cx| {
+                // Nothing is focused yet, so neither answer can be true by
+                // accident.
+                assert!(!pane.contains_focus(window, cx));
+
+                // What clicking a cell amounts to, without the mouse.
+                pane.grid_at(0).read(cx).focus_handle(cx).focus(window);
+                assert!(
+                    !pane.focus_handle(cx).contains_focused(window, cx),
+                    "the editor's handle answered for a focus that is not inside it"
+                );
+                assert!(
+                    pane.contains_focus(window, cx),
+                    "a focus in the grid would strand when the tab stops rendering"
+                );
+
+                pane.focus_editor(window, cx);
+                assert!(pane.contains_focus(window, cx));
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// Closing the connection tab leaves the SQL and the rows where they are
+    /// and takes the session away, which every path that would use one has to
+    /// notice rather than reach for a handle that is gone.
+    #[gpui::test]
+    fn a_detached_pane_keeps_its_rows_and_refuses_to_run(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "detached",
+            &[
+                "create table D (ID int primary key)",
+                "insert into D values (1), (2), (3)",
+            ],
+        );
+        let window = pane(&connected, &profile, 500, cx);
+        run(&window, "select ID from D order by ID", cx);
+        assert_eq!(column_zero(&window, 0, cx), ["1", "2", "3"]);
+
+        window
+            .update(cx, |pane, _window, cx| pane.detach(cx))
+            .expect("the window is open");
+
+        // The rows the user already has are theirs to read; the status bar is
+        // what says they are a snapshot of a connection that has gone.
+        assert_eq!(column_zero(&window, 0, cx), ["1", "2", "3"]);
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert!(!pane.is_attached());
+                assert_eq!(pane.status_cells().0, ts!("statusbar.disconnected"));
+            })
+            .expect("the window is open");
+
+        // Every way in refuses with the same wording: a run, a sort round trip,
+        // and a page the grid asks for as it nears the last row it holds.
+        run(&window, "select ID from D", cx);
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(!pane.is_running(), "a detached pane sent a statement");
+                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.results.len(),
+                    1,
+                    "the results of the last live run were replaced"
+                );
+
+                pane.notice = None;
+                pane.reorder(pane.results[0].id, 0, Some(SortDirection::Descending), cx);
+                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+
+                pane.notice = None;
+                pane.fetch_more(pane.results[0].id, cx);
+                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // The rows are still the ones the live run produced.
+        assert_eq!(column_zero(&window, 0, cx), ["1", "2", "3"]);
+        connected.close().expect("close");
     }
 }

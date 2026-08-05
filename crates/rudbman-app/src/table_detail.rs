@@ -193,6 +193,15 @@ impl TableDetail {
         }
     }
 
+    /// The object this panel describes.
+    ///
+    /// The shell's tab strip titles the tab with it and colours its dot by the
+    /// connection it names, and the explorer's "open this object" path compares
+    /// against it to reuse an open tab rather than opening a second copy.
+    pub fn target(&self) -> &ObjectTarget {
+        &self.target
+    }
+
     /// Records what a fetch produced.
     pub fn deliver(&mut self, outcome: Result<Details, SharedString>, cx: &mut Context<Self>) {
         self.load = match outcome {

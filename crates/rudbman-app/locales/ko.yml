@@ -354,6 +354,7 @@ query:
   cancel: 취소
   cancelling: 취소하는 중…
   result: "결과 %{index}"
+  tab: "쿼리 %{index}"
   empty: 문장을 작성한 뒤 실행하세요.
   no_results: 문장이 아무 결과도 내지 않았습니다.
   running: 실행 중…

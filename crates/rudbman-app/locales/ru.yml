@@ -354,6 +354,7 @@ query:
   cancel: Отмена
   cancelling: Отменяется…
   result: "Результат %{index}"
+  tab: "Запрос %{index}"
   empty: Напишите инструкцию и выполните её.
   no_results: Инструкция не вернула результата.
   running: выполняется…
