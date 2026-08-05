@@ -232,6 +232,16 @@ Rust는 `jmethodID` 하나만 캐시한다. Java 쪽은 모든 본문을 try/cat
 `imported_keys`, `exported_keys`, `indexes`, `procedures`, `functions`,
 `sequences`, `ddl`, `type_info`.
 
+응답은 `{kind, items[]}`가 기본형이되 **`ddl`만 `{kind, ddl, source}`다** — 테이블
+하나의 DDL은 문서 하나이고, 원소 1개짜리 배열은 받는 쪽의 unwrap만 늘린다.
+`ddl` 요청은 `source: auto|native|metadata`를 받는다: `native`는 DB가 자기 DDL을
+직접 주는 경로(MySQL `SHOW CREATE TABLE`, H2 `SCRIPT`), `metadata`는 JDBC
+메타데이터 역생성 폴백, `auto`(기본)는 네이티브 시도 후 폴백. 역생성 DDL은 표시용
+참고다 — CHECK 제약·트리거·파티션은 JDBC 메타데이터에 없어 나오지 않는다.
+`procedures`/`functions`의 항목은 `parameters[]`를 인라인으로 실어 온다(루틴
+200개짜리 스키마에 왕복 200번을 하지 않기 위해). `sequences`는 JDBC 표준 API가
+없어 방언별 카탈로그 질의이고, 모르는 DB는 오류가 아니라 빈 목록이다.
+
 `DESCRIBE`가 요청 JSON으로 분기하는 이유: 메타데이터 종류는 앞으로 계속 늘어나고,
 그때마다 연산 코드를 늘리면 Rust와 Java의 표가 어긋난다. 메타데이터는 호출 빈도가
 낮으니 JSON 파싱 비용은 무시할 수 있다.

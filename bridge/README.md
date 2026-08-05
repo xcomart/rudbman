@@ -59,7 +59,7 @@ the Rust side drop `ExceptionCheck` from the normal path.
 | `0x02` | `CLOSE_SESSION` | session | — | — | — |
 | `0x03` | `PING` | session | — | — | JSON `{ok, elapsed_ms}` |
 | `0x04` | `SESSION_INFO` | session | — | — | JSON product / driver / capability facts |
-| `0x10` | `DESCRIBE` | session | — | JSON `{kind, …}` | JSON `{kind, items[]}` |
+| `0x10` | `DESCRIBE` | session | — | JSON `{kind, …}` | JSON `{kind, items[]}` (`ddl`: `{kind, ddl, source}`) |
 | `0x20` | `EXECUTE` | session | — | JSON statement spec | JSON `{cursor, columns[], update_count, has_result_set, has_more}` |
 | `0x21` | `FETCH` | cursor | max rows | — | binary `RDB1` batch |
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
@@ -181,25 +181,124 @@ something"*. Keep calling `MORE_RESULTS` until it answers `has_more: false`
 { "kind": "columns", "catalog": null, "schema": "APP", "table": "CHILD" }
 ```
 
-Implemented kinds: `catalogs`, `schemas`, `tables`, `columns`, `primary_keys`,
-`imported_keys`, `exported_keys`, `indexes`, `type_info`.
-Deferred to a later milestone: `ddl`, `procedures`, `functions`, `sequences`.
+| kind | needs | notes |
+|---|---|---|
+| `catalogs` | — | |
+| `schemas` | — | |
+| `tables` | — | `types[]` filters by `TABLE`, `VIEW`, … |
+| `columns` | — | |
+| `primary_keys` | exact `table` | |
+| `imported_keys` | exact `table` | |
+| `exported_keys` | exact `table` | |
+| `indexes` | exact `table` | `unique_only`, `approximate` |
+| `type_info` | — | |
+| `procedures` | — | each item carries its `parameters[]` |
+| `functions` | — | same shape as `procedures` |
+| `sequences` | — | vendor catalogue query; empty list on products without sequences |
+| `ddl` | exact `table` | answers `{ddl, source}`, not `items[]` |
 
-Every response is `{ "kind": "...", "items": [ … ] }`. Item keys are fixed
-snake_case chosen here, **not** the driver's metadata labels, so the Rust structs
-stay stable across drivers. Optional metadata columns that a driver omits come
-back as `null`; the reader collects the available labels once instead of asking
-for a missing one and catching the exception per cell.
+Every response except `ddl` is `{ "kind": "...", "items": [ … ] }`. Item keys are
+fixed snake_case chosen here, **not** the driver's metadata labels, so the Rust
+structs stay stable across drivers. Optional metadata columns that a driver omits
+come back as `null`; the reader collects the available labels once instead of
+asking for a missing one and catching the exception per cell.
 
 - `schema` is an exact name, `schema_pattern` a LIKE pattern; likewise
-  `table` / `table_pattern` and `column` / `column_pattern`.
-- `primary_keys`, `imported_keys`, `exported_keys` and `indexes` require an exact
-  `table`.
+  `table` / `table_pattern`, `column` / `column_pattern` and, for `procedures`
+  and `functions`, `name` / `name_pattern`.
 - `imported_keys` and `exported_keys` share one item shape with `pk_`/`fk_`
   prefixes; only the direction of the query differs.
 - `indexes` accepts `unique_only` (default false) and `approximate`
   (default **true** — a statistics refresh on a large schema is the difference
   between instant and a minute).
+
+#### `procedures` and `functions`
+
+Each item carries `catalog`, `schema`, `name`, `specific_name`, `remarks`, `type`
+(the raw JDBC code), `type_name` and a `parameters[]` array of
+`{name, mode, mode_name, data_type, jdbc_type, type_name, precision, length,
+scale, radix, nullable, is_nullable, remarks, default, ordinal}`.
+
+The parameter list travels with the routine instead of needing a call per
+routine: the explorer tree draws a signature, and a schema with two hundred
+procedures would otherwise cost two hundred round trips. The join key is
+`SPECIFIC_NAME` when the driver supplies one on both sides — that is what keeps
+overloads apart — and the routine name otherwise. A driver that refuses
+`getProcedureColumns` costs the signatures, not the routine list.
+
+`mode` codes are **not** shared between the two families. `procedureColumnOut` is
+4 and `procedureColumnResult` is 3, while `functionColumnOut` is 3 and
+`functionColumnResult` is 5; `mode_name` is the resolved text, use it.
+
+Which of the two lists a routine appears in is a per-product decision. H2 2.x
+returns an empty result from `getFunctions` unconditionally and reports
+`CREATE ALIAS` functions through `getProcedures`. An empty list means "this
+server files them elsewhere", not "there are none".
+
+#### `sequences`
+
+JDBC has no sequence accessor — sequences were standardised in SQL:2003, long
+after `DatabaseMetaData` was fixed — so this kind is a vendor catalogue query.
+
+| product | source |
+|---|---|
+| H2 | `INFORMATION_SCHEMA.SEQUENCES` |
+| PostgreSQL | `information_schema.sequences` (only what the user may see) |
+| Oracle | `ALL_SEQUENCES` — no `START WITH` column exists, so `start_value` is null |
+| MariaDB | `information_schema.SEQUENCES`, probed; empty list where the build has no such view |
+| everything else | empty list |
+
+**An empty list is a correct answer.** MySQL, SQLite and any unrecognised product
+are simply not asked, and a query that is attempted and rejected — no privilege,
+no such view — lands in the same place. Items are
+`{catalog, schema, name, data_type, start_value, min_value, max_value, increment,
+cycle, cache, current_value, remarks}`; every value but `cycle` is a string,
+because an Oracle sequence maximum is `NUMBER(28)` and does not fit a `long`.
+
+`schema` and `name` filter exactly, in Java rather than in a `WHERE` clause,
+because the column holding the schema name differs per product.
+
+#### `ddl`
+
+```json
+{ "kind": "ddl", "schema": "APP", "table": "CHILD", "source": "auto" }
+```
+
+Answers `{ "kind": "ddl", "ddl": "CREATE TABLE …", "source": "native" | "metadata" }`
+— one document, not a list of rows.
+
+`source` in the request selects the layer: `auto` (default) tries the native path
+and falls back, `native` fails if there is none, `metadata` always reconstructs.
+
+1. **Native.** MySQL and MariaDB answer `SHOW CREATE TABLE`; H2 answers `SCRIPT
+   NODATA NOPASSWORDS NOSETTINGS TABLE`, filtered down to the rows naming this
+   table (a script still carries the user, the schema and every alias and
+   sequence around it). H2 2.x has no `SQL` column in `INFORMATION_SCHEMA.TABLES`
+   — that was an H2 1.4 thing — so `SCRIPT` is what is left. Where this works it
+   *is* the truth, storage clauses and `CHECK` constraints included.
+2. **Reverse generation.** Everything else is assembled from `getColumns`,
+   `getPrimaryKeys`, `getImportedKeys` and `getIndexInfo`. This path works on
+   every driver, which is why it exists.
+
+A native attempt that fails — no privilege, an unexpected result shape — falls
+through to reverse generation rather than failing the request, and when the
+session is not in auto-commit the attempt is fenced with a savepoint so that a
+rejected probe cannot poison an open transaction (PostgreSQL aborts the whole
+transaction on any statement error).
+
+Identifiers are quoted **only when leaving the quotes off would change meaning**:
+a character outside the portable alphabet, a case that would not survive the
+server's folding, or a reserved word. `getSQLKeywords()` lists only the vendor's
+additions beyond the standard — H2 answers `LIMIT,TOP,…` and not `ORDER` — so the
+SQL:2011 reserved words are carried in the bridge and unioned with it.
+
+The reconstruction is **for display**. It replays on H2 in the test suite, but it
+is not a migration tool: JDBC metadata carries no `CHECK` constraints, triggers,
+partitioning, tablespaces, collations or generated-column expressions, `UNIQUE`
+constraints arrive as unique indexes and are emitted as `CREATE UNIQUE INDEX`,
+and a view reaches this path as a bare column list. Indexes that merely back the
+primary key or a foreign key are dropped, because the server creates them again
+and emitting them would make the statement fail to replay.
 
 ### `FETCH`
 
@@ -350,7 +449,17 @@ src/main/java/comart/rudbman/bridge/
 ├── Params.java            EXECUTE parameter binding
 ├── DriverProbe.java       PROBE_DRIVER
 ├── codec/                 RDB1 encoder
-└── meta/                  DESCRIBE, SESSION_INFO, java.sql.Types names
+└── meta/
+    ├── Describe.java      DESCRIBE dispatch, the DatabaseMetaData kinds
+    ├── Routines.java      procedures and functions with their parameters
+    ├── Sequences.java     sequences, per-product catalogue queries
+    ├── Ddl.java           native DDL, and reverse generation as the fallback
+    ├── Dialect.java       product name → the vendor paths that apply
+    ├── Ident.java         identifier quoting, only where it is needed
+    ├── Attempt.java       savepoint-fenced query that is allowed to fail
+    ├── RsView.java        reader for metadata result sets with optional columns
+    ├── SessionInfo.java   SESSION_INFO
+    └── SqlTypes.java      java.sql.Types names
 ```
 
 ## Inherited code
@@ -363,8 +472,9 @@ From [jdbgen](https://github.com/comart/jdbgen) (MIT, Dennis Soungjin Park):
 - `types/db/SqlTypes.java` → `meta/SqlTypes.java`
 - `utils/ClassUtils.java` → `DriverProbe.java`
 
-New here: primary keys, foreign keys, indexes, `type_info`, the `RDB1` codec, the
-handle registry, cancellation and the error envelope.
+New here: primary keys, foreign keys, indexes, `type_info`, routines and
+sequences, DDL generation, the `RDB1` codec, the handle registry, cancellation
+and the error envelope.
 
 ## Tests
 
@@ -372,10 +482,17 @@ handle registry, cancellation and the error envelope.
 ./gradlew test
 ```
 
-H2 in-memory is the reference database. The interesting one is
-`FetchRoundTripTest`: it asserts through `support/Batch.java`, a decoder written
-from the format description above rather than from the encoder. That round trip
-is the only thing that proves the format the Rust decoder has to read.
+H2 in-memory is the reference database. Two of these earn their keep by round
+tripping rather than by asserting on strings:
+
+- `FetchRoundTripTest` asserts through `support/Batch.java`, a decoder written
+  from the format description above rather than from the encoder. That round trip
+  is the only thing that proves the format the Rust decoder has to read.
+- `DdlTest.reverseGeneratedDdlReplays` executes the reconstructed DDL into a
+  second schema and compares the two tables through the same metadata the
+  reconstruction was built from. String assertions only prove that the expected
+  words appear somewhere; replaying proves that what came out is the table that
+  went in.
 
 ## Known gaps
 
@@ -387,5 +504,11 @@ is the only thing that proves the format the Rust decoder has to read.
   request shape is not settled. Whichever wins, re-reading a LOB after the
   result set has advanced needs a forward-only-safe strategy — most drivers
   invalidate a `Blob` as soon as the row changes.
-- `DESCRIBE` kinds `ddl`, `procedures`, `functions` and `sequences` are deferred.
 - `LONGVARCHAR` / `LONGVARBINARY` inline rather than becoming LOB references.
+- Only MySQL, MariaDB and H2 have a native `ddl` path; every other product gets
+  the reverse-generated form with the limits listed above.
+- `sequences` covers H2, PostgreSQL, Oracle and MariaDB. SQL Server
+  (`sys.sequences`) and Db2 (`SYSCAT.SEQUENCES`) have sequences and are not
+  wired up; they return the empty list.
+- Reverse-generated DDL emits a `CREATE TABLE` for a view, because JDBC metadata
+  does not carry the view's query text.

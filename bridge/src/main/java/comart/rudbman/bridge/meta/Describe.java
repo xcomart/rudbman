@@ -1,6 +1,7 @@
 package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import comart.rudbman.bridge.BridgeException;
 import comart.rudbman.bridge.Json;
@@ -10,6 +11,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
 
 /**
  * {@code DESCRIBE} (op {@code 0x10}): {@link DatabaseMetaData} queries rendered
@@ -25,6 +27,17 @@ import java.util.List;
  * <pre>{ "kind": "...", "items": [ { ... }, ... ] }</pre>
  * Key names are fixed snake_case, not the driver's metadata labels, so that the
  * Rust structs stay stable across drivers.
+ *
+ * <p>The single exception is {@code kind: "ddl"}, which answers
+ * <pre>{ "kind": "ddl", "ddl": "CREATE TABLE …", "source": "native" | "metadata" }</pre>
+ * because a table's DDL is one document, not a list of rows, and wrapping it in
+ * a one-element array would only make the Rust side unwrap it again. See
+ * {@link Ddl}.
+ *
+ * <p>Three kinds reach past {@link DatabaseMetaData}: {@code ddl} and
+ * {@code sequences} need vendor catalogue queries ({@link Ddl},
+ * {@link Sequences}), and both are written so that an unsupported or forbidden
+ * query degrades to a reconstruction or an empty list rather than to an error.
  */
 public final class Describe {
 
@@ -48,6 +61,16 @@ public final class Describe {
         session.lock();
         try {
             DatabaseMetaData dbm = session.metaData();
+            if ("ddl".equals(kind)) {
+                // The one kind that answers with a document rather than a list.
+                JsonObject out = new JsonObject();
+                out.addProperty("kind", kind);
+                for (Map.Entry<String, JsonElement> e
+                        : Ddl.of(session.connection(), dbm, req).entrySet()) {
+                    out.add(e.getKey(), e.getValue());
+                }
+                return out;
+            }
             JsonArray items;
             switch (kind) {
                 case "catalogs":       items = catalogs(dbm); break;
@@ -59,12 +82,9 @@ public final class Describe {
                 case "exported_keys":  items = exportedKeys(dbm, req); break;
                 case "indexes":        items = indexes(dbm, req); break;
                 case "type_info":      items = typeInfo(dbm); break;
-                case "ddl":
-                case "procedures":
-                case "functions":
-                case "sequences":
-                    throw new BridgeException("protocol",
-                            "describe kind '" + kind + "' is not implemented in this build");
+                case "procedures":     items = Routines.procedures(dbm, req); break;
+                case "functions":      items = Routines.functions(dbm, req); break;
+                case "sequences":      items = Sequences.of(session.connection(), dbm, req); break;
                 default:
                     throw new BridgeException("protocol", "unknown describe kind: " + kind);
             }

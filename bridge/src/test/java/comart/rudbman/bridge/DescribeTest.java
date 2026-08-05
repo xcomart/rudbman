@@ -205,17 +205,6 @@ class DescribeTest {
     }
 
     @Test
-    void deferredKindsAreReportedAsUnimplemented() {
-        for (String kind : new String[]{"ddl", "procedures", "functions", "sequences"}) {
-            JsonObject req = new JsonObject();
-            req.addProperty("kind", kind);
-            JsonObject err = H2.call(Ops.DESCRIBE, session, 0, req).error();
-            assertEquals("protocol", err.get("kind").getAsString(), kind);
-            assertTrue(err.get("message").getAsString().contains("not implemented"), kind);
-        }
-    }
-
-    @Test
     void unknownKindIsAProtocolError() {
         JsonObject req = new JsonObject();
         req.addProperty("kind", "nonsense");
