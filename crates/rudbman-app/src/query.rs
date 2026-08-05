@@ -1454,6 +1454,7 @@ impl Focusable for QueryPane {
 impl Render for QueryPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
+        let fonts = crate::app_settings::effective(cx);
         let share = self.editor_share.clamp(MIN_SHARE, 1. - MIN_SHARE);
         let id = cx.entity_id();
         let toolbar = self.render_toolbar(&chrome, cx);
@@ -1475,11 +1476,25 @@ impl Render for QueryPane {
                 },
             ))
             .child(
+                // The editor draws with whatever text style it inherits, so
+                // this wrapper is where the editor font settings take effect —
+                // through `effective`, so the settings dialog's live preview
+                // reaches the editor the same way it reaches the chrome. With
+                // no family configured it falls back to the generic monospace
+                // alias rather than the UI font: SQL is columnar text, and the
+                // DDL tab already reads the same way.
                 div()
                     .flex()
                     .flex_basis(relative(share))
                     .min_w_0()
                     .min_h_0()
+                    .font_family(
+                        fonts
+                            .editor_font_family
+                            .clone()
+                            .unwrap_or_else(|| "monospace".to_string()),
+                    )
+                    .text_size(px(fonts.editor_font_size))
                     .child(self.editor.clone()),
             )
             .child(
