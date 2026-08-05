@@ -13,6 +13,11 @@ menu:
   new_connection: 새 연결…
   settings: 설정…
   toggle_explorer: 탐색기
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: 새 쿼리
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: 선택한 객체 조회
   about: rudbman 정보
   quit: 종료
   connection: 연결
@@ -343,3 +348,29 @@ detail:
   current_value: 현재값
   cycle: 순환
   cache: 캐시
+
+query:
+  run: 실행
+  cancel: 취소
+  cancelling: 취소하는 중…
+  result: "결과 %{index}"
+  empty: 문장을 작성한 뒤 실행하세요.
+  no_results: 문장이 아무 결과도 내지 않았습니다.
+  running: 실행 중…
+  rows_affected: "%{count}행 변경됨"
+  executed: 문장을 실행했습니다.
+  row_count: "%{count}행"
+  elapsed: "%{seconds}초"
+  busy: 이 창에서 이미 문장이 실행 중입니다.
+  no_statement: 실행할 문장이 없습니다.
+  read_only: 읽기 전용 접속이라 문장을 보내지 않았습니다.
+  confirm_title: 이 문장을 실행할까요?
+  confirm_body: "데이터를 변경하는 문장: %{count}개"
+  confirm_run: 실행
+  lob_unsupported: LOB 뷰어는 아직 없습니다.
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: 문장의 구문과 대상 객체를 읽을 권한이 있는지 확인하세요.
+  hint_constraint: 테이블이 선언한 제약 조건을 위반했습니다.
+  hint_auth: 이 접속에는 그럴 권한이 없습니다.
+  hint_network: 데이터베이스와의 연결이 끊어졌습니다.
+  hint_cancelled: 문장 실행이 취소되었습니다.

@@ -13,6 +13,11 @@ menu:
   new_connection: 新建连接…
   settings: 设置…
   toggle_explorer: 资源管理器
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: 新建查询
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: 查询所选对象
   about: 关于 rudbman
   quit: 退出
   connection: 连接
@@ -343,3 +348,29 @@ detail:
   current_value: 当前值
   cycle: 循环
   cache: 缓存
+
+query:
+  run: 执行
+  cancel: 取消
+  cancelling: 正在取消…
+  result: "结果 %{index}"
+  empty: 写一条语句然后执行。
+  no_results: 该语句没有产生任何结果。
+  running: 执行中…
+  rows_affected: "影响 %{count} 行"
+  executed: 语句已执行。
+  row_count: "%{count} 行"
+  elapsed: "%{seconds} 秒"
+  busy: 此窗格中已有语句在执行。
+  no_statement: 没有可执行的语句。
+  read_only: 此连接为只读，语句未发送。
+  confirm_title: 执行这条语句吗？
+  confirm_body: "会修改数据的语句：%{count} 条"
+  confirm_run: 执行
+  lob_unsupported: LOB 查看器尚未实现。
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: 请检查语句的语法，以及对其所引用对象的读取权限。
+  hint_constraint: 语句违反了表上声明的约束。
+  hint_auth: 此连接没有这样做的权限。
+  hint_network: 与数据库的连接已断开。
+  hint_cancelled: 语句已被取消。

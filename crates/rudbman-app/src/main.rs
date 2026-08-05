@@ -32,6 +32,8 @@ mod maven;
 // inside a binary crate read as dead code.
 #[allow(dead_code)]
 mod pane_tree;
+mod query;
+mod query_source;
 mod settings_dialog;
 mod table_detail;
 mod theme_editor;
@@ -52,10 +54,10 @@ use gpui::{
 };
 use rudbman_core::{AppSettings, ConnectionProfile, DriverStore, TitlebarStyle, WindowState};
 use rudbman_ui::{
-    DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton, MenuEntry, Scrollbar,
-    ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme, ThemeRegistry,
-    WindowControlIcons, WindowControls, hide_later, scroll_to, scrolled, set_editor_theme,
-    set_theme, theme, theme_store,
+    Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
+    MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
+    ThemeRegistry, WindowControlIcons, WindowControls, hide_later, modal, scroll_to, scrolled,
+    set_editor_theme, set_theme, theme, theme_store,
 };
 
 use about_dialog::{AboutDialog, AboutDialogEvent};
@@ -67,6 +69,7 @@ use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, Root
 use i18n::ts;
 use icons::Icons;
 use pane_tree::{Axis, PaneContent, PaneId, PaneNode, PaneTree, SplitId};
+use query::{ConfirmRequest, QueryPane, QueryPaneEvent};
 use settings_dialog::{SettingsDialog, SettingsDialogEvent};
 use table_detail::{TableDetail, TableDetailEvent};
 
@@ -93,6 +96,10 @@ actions!(
         SplitBelow,
         /// Show or hide the explorer sidebar.
         ToggleExplorer,
+        /// Open an empty query pane on the connection whose tab is showing.
+        NewQuery,
+        /// Open a query pane over the object selected in the explorer.
+        QueryObject,
         /// Close the open dialog or dropdown menu, if there is one.
         DismissDialog,
     ]
@@ -273,6 +280,14 @@ impl ConnectionState {
     }
 }
 
+/// A query pane's write confirmation, waiting for an answer.
+struct PendingConfirm {
+    /// The pane that asked, and that the answer goes back to.
+    pane: Entity<QueryPane>,
+    /// What the dialog shows.
+    request: Box<ConfirmRequest>,
+}
+
 /// The root view: title bar, work area, status bar and dialogs.
 struct Workspace {
     /// Focus target for the window, so the shortcuts stay live.
@@ -309,6 +324,11 @@ struct Workspace {
     settings: Entity<SettingsDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
+    /// The write confirmation, while a query pane is waiting on it.
+    ///
+    /// Held here rather than in the pane because a modal centres itself in its
+    /// nearest positioned ancestor, and inside a pane that is the wrong box.
+    confirm: Option<PendingConfirm>,
     /// Title bar style currently *on the window*.
     ///
     /// Starts as the style the window was created with. Not read from the
@@ -434,6 +454,7 @@ impl Workspace {
             connect,
             settings,
             menu_open: false,
+            confirm: None,
             titlebar,
             _about_events: about_events,
             _connect_events: connect_events,
@@ -577,6 +598,79 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens a query pane in the active pane, with `sql` already in it.
+    ///
+    /// Nothing happens without a live session: a SQL editor with no connection
+    /// behind it can be typed into and never run, which is worse than a pane
+    /// that says there is nothing to connect to.
+    fn open_query(&mut self, sql: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.active_connection() else {
+            return;
+        };
+        let ConnectionState::Open(connected) = &open.state else {
+            return;
+        };
+        let session = connected.handle();
+        let id = open.id;
+        let profile = open.profile.clone();
+        // The dialect the editor highlights with and the sort round trip quotes
+        // with is the *driver's*, not the profile's: a profile names a driver
+        // and a driver names a dialect.
+        let dialect = DriverStore::load()
+            .ok()
+            .and_then(|store| {
+                store
+                    .get(&profile.driver_id)
+                    .map(|driver| driver.dialect.clone())
+            })
+            .unwrap_or_else(|| "generic".to_string());
+        let settings = app_settings::current(cx);
+
+        let pane = cx.new(|cx| QueryPane::new(session, id, &profile, &dialect, &settings, sql, cx));
+        // The elapsed clock and the row count live in the pane; the status bar
+        // that draws them is here, so the shell redraws whenever the pane does.
+        cx.observe(&pane, |_workspace, _pane, cx| cx.notify())
+            .detach();
+        cx.subscribe(&pane, |workspace, pane, event, cx| {
+            let QueryPaneEvent::ConfirmWrites(request) = event;
+            workspace.confirm = Some(PendingConfirm {
+                pane: pane.clone(),
+                request: Box::new(ConfirmRequest {
+                    count: request.count,
+                    preview: request.preview.clone(),
+                }),
+            });
+            cx.notify();
+        })
+        .detach();
+
+        let target = self.active_pane();
+        if let Some(content) = self.panes.get_mut(target) {
+            *content = PaneContent::Query(pane.clone());
+        }
+        pane.update(cx, |pane, cx| pane.focus_editor(window, cx));
+        cx.notify();
+    }
+
+    /// Opens a query pane over one explorer object, pre-filled with a `SELECT`.
+    fn open_query_for(
+        &mut self,
+        target: &ObjectTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sql = format!("SELECT * FROM {}", target.qualified());
+        self.open_query(&sql, window, cx);
+    }
+
+    /// The query pane the status bar and the run commands act on.
+    fn active_query(&self) -> Option<&Entity<QueryPane>> {
+        match self.panes.get(self.active_pane()) {
+            Some(PaneContent::Query(pane)) => Some(pane),
+            _ => None,
+        }
+    }
+
     /// Fetches everything one detail panel shows.
     fn load_details(
         &mut self,
@@ -713,6 +807,7 @@ impl Workspace {
         self.explorer.update(cx, |explorer, cx| {
             explorer.update_source(cx, |source| source.remove_root(closed));
         });
+        self.abandon_panes_of(closed, cx);
         if let ConnectionState::Open(connected) = connection.state {
             // CLOSE_SESSION and then the tunnel, in that order, and off the UI
             // thread because both of them talk to a socket.
@@ -727,6 +822,43 @@ impl Workspace {
             .active_connection
             .min(self.connections.len().saturating_sub(1));
         cx.notify();
+    }
+
+    /// Empties every pane that was running against `closed`.
+    ///
+    /// A query pane holds a [`connection::SessionHandle`], which is what keeps
+    /// the session — and the tunnel under it — alive while a fetch is out. That
+    /// is right for a fetch and wrong for a closed tab: without this, closing a
+    /// connection would leave the session open behind a pane nobody can run
+    /// anything in, and §9.3's rule that a tunnel dies with its session would
+    /// hold only until someone had opened an editor.
+    ///
+    /// The pane is emptied rather than removed: the layout the user arranged is
+    /// theirs, and a tab closing should not rearrange the window.
+    fn abandon_panes_of(&mut self, closed: ConnectionId, cx: &mut Context<Self>) {
+        let stale: Vec<PaneId> = self
+            .panes
+            .leaves()
+            .into_iter()
+            .filter_map(|(id, content)| match content {
+                PaneContent::Query(pane) if pane.read(cx).connection() == closed => Some(id),
+                _ => None,
+            })
+            .collect();
+        for id in stale {
+            if let Some(content) = self.panes.get_mut(id) {
+                *content = PaneContent::Placeholder;
+            }
+        }
+        // A confirmation waiting on a pane that has just gone would have nobody
+        // to answer.
+        if let Some(pending) = &self.confirm
+            && !self.panes.leaves().iter().any(
+                |(_, content)| matches!(content, PaneContent::Query(pane) if pane == &pending.pane),
+            )
+        {
+            self.confirm = None;
+        }
     }
 
     /// Brings one connection tab to the front.
@@ -808,6 +940,10 @@ impl Workspace {
     /// theme that nothing in the settings names any more.
     fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_open = false;
+        if self.confirm.is_some() {
+            // Declining is the only safe reading of "the dialog went away".
+            self.answer_confirm(false, window, cx);
+        }
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
         }
@@ -964,6 +1100,29 @@ impl Workspace {
         self.toggle_explorer(cx);
     }
 
+    /// Opens an empty query pane on the connection whose tab is showing.
+    fn new_query_action(&mut self, _: &NewQuery, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_menu_open(false, cx);
+        self.open_query("", window, cx);
+    }
+
+    /// Opens a query pane over the object selected in the explorer.
+    ///
+    /// Scoped to the sidebar's key context, so the same chord means "run the
+    /// statement" once the focus is in a SQL editor.
+    fn query_object_action(
+        &mut self,
+        _: &QueryObject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        let Some(target) = self.explorer.read(cx).selected_relation(cx) else {
+            return;
+        };
+        self.open_query_for(&target, window, cx);
+    }
+
     /// Closes the active pane.
     fn close_pane_action(&mut self, _: &ClosePane, _window: &mut Window, cx: &mut Context<Self>) {
         self.close_active_pane(cx);
@@ -1009,6 +1168,11 @@ impl Workspace {
         // The dropdown menu paints above everything else, so it goes first.
         if self.menu_open {
             self.set_menu_open(false, cx);
+            return;
+        }
+        if self.confirm.is_some() {
+            self.answer_confirm(false, window, cx);
+            self.focus_shell(window, cx);
             return;
         }
         if self.about.read(cx).is_open() {
@@ -1178,6 +1342,12 @@ impl Workspace {
             MenuEntry::new(ts!("menu.new_connection"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+N"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(NewConnection), cx)),
+            MenuEntry::new(ts!("menu.new_query"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+T"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(NewQuery), cx)),
+            MenuEntry::new(ts!("menu.query_object"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+Enter"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(QueryObject), cx)),
             MenuEntry::new(ts!("menu.toggle_explorer"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
@@ -1478,9 +1648,21 @@ impl Workspace {
         (label, state)
     }
 
+    /// The two right-hand status bar cells — rows and elapsed time — which the
+    /// active query pane owns.
+    ///
+    /// Blank for every other kind of pane, because there is nothing running
+    /// behind them to count.
+    fn query_cells(&self, cx: &App) -> (SharedString, SharedString) {
+        self.active_query()
+            .map(|pane| pane.read(cx).status_cells())
+            .unwrap_or_default()
+    }
+
     fn render_status_bar(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
         let (connection, state) = self.status_cells();
+        let (rows, elapsed) = self.query_cells(cx);
         let state_color = match self.active_connection().map(|open| &open.state) {
             Some(ConnectionState::Open(_)) => Some(theme.success),
             Some(ConnectionState::Failed(_) | ConnectionState::Dead(_)) => Some(theme.danger),
@@ -1513,9 +1695,119 @@ impl Workspace {
                     .when_some(state_color, |cell, color| cell.text_color(color))
                     .child(state),
             )
-            .child(div().flex_none().whitespace_nowrap().child(NOTHING))
-            .child(div().flex_none().whitespace_nowrap().child(NOTHING))
+            .child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .child(if rows.is_empty() { NOTHING } else { rows }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .child(if elapsed.is_empty() { NOTHING } else { elapsed }),
+            )
             .into_any_element()
+    }
+
+    /// The write confirmation, while a query pane is waiting on one.
+    ///
+    /// Two buttons and the statement itself: a dialog that asked "are you
+    /// sure?" without showing what it is about would be asking the user to
+    /// remember rather than to read.
+    fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let pending = self.confirm.as_ref()?;
+        let theme = theme(cx);
+        let this = cx.entity();
+        let dismiss = this.clone();
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(theme.text)
+                    .child(ts!("query.confirm_body", count = pending.request.count)),
+            )
+            .child(
+                div()
+                    .id("confirm-preview")
+                    .max_h(px(200.))
+                    .overflow_y_scroll()
+                    .p(px(8.))
+                    .rounded_md()
+                    .bg(theme.surface)
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_size(px(11.))
+                    .text_color(theme.text_muted)
+                    .child(pending.request.preview.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("confirm-cancel", ts!("common.cancel"))
+                            .variant(ButtonVariant::Secondary)
+                            .on_click({
+                                let this = this.clone();
+                                move |_, window, cx| {
+                                    this.update(cx, |workspace, cx| {
+                                        workspace.answer_confirm(false, window, cx);
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("confirm-run", ts!("query.confirm_run"))
+                            .variant(ButtonVariant::Danger)
+                            .on_click(move |_, window, cx| {
+                                this.update(cx, |workspace, cx| {
+                                    workspace.answer_confirm(true, window, cx);
+                                });
+                            }),
+                    ),
+            );
+
+        Some(
+            modal(
+                "query-confirm",
+                ts!("query.confirm_title"),
+                px(460.),
+                body,
+                move |window, cx| {
+                    dismiss.update(cx, |workspace, cx| {
+                        workspace.answer_confirm(false, window, cx);
+                    });
+                },
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// Answers the write confirmation, one way or the other.
+    fn answer_confirm(&mut self, run: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.confirm.take() else {
+            return;
+        };
+        pending.pane.update(cx, |pane, cx| {
+            if run {
+                pane.confirmed(cx);
+            } else {
+                pane.declined(cx);
+            }
+        });
+        if run {
+            pending
+                .pane
+                .update(cx, |pane, cx| pane.focus_editor(window, cx));
+        }
+        cx.notify();
     }
 }
 
@@ -1564,6 +1856,7 @@ fn render_pane(
                 .child(match payload {
                     PaneContent::Placeholder => render_placeholder(connected, theme),
                     PaneContent::TableDetail(panel) => panel.clone().into_any_element(),
+                    PaneContent::Query(pane) => pane.clone().into_any_element(),
                 })
                 .into_any_element()
         }
@@ -1712,6 +2005,7 @@ impl Render for Workspace {
             .read(cx)
             .is_open()
             .then(|| div().absolute().inset_0().child(self.settings.clone()));
+        let confirm = self.render_confirm(cx);
 
         // With client-side decorations the compositor stops drawing the drop
         // shadow along with the frame, so the window has to bring its own: the
@@ -1771,6 +2065,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::show_about_action))
             .on_action(cx.listener(Self::toggle_explorer_action))
+            .on_action(cx.listener(Self::new_query_action))
+            .on_action(cx.listener(Self::query_object_action))
             .on_action(cx.listener(Self::close_pane_action))
             .on_action(cx.listener(Self::focus_next_pane_action))
             .on_action(cx.listener(Self::focus_prev_pane_action))
@@ -1782,7 +2078,8 @@ impl Render for Workspace {
             .child(status_bar)
             .children(about)
             .children(connect)
-            .children(settings);
+            .children(settings)
+            .children(confirm);
 
         let Some(tiling) = tiling else {
             // A server-decorated window: the compositor frames and shadows it,
@@ -2218,10 +2515,12 @@ fn app_menus() -> Vec<Menu> {
         },
         Menu {
             name: ts!("menu.connection"),
-            items: vec![MenuItem::action(
-                ts!("menu.mac.new_connection"),
-                NewConnection,
-            )],
+            items: vec![
+                MenuItem::action(ts!("menu.mac.new_connection"), NewConnection),
+                MenuItem::separator(),
+                MenuItem::action(ts!("menu.new_query"), NewQuery),
+                MenuItem::action(ts!("menu.query_object"), QueryObject),
+            ],
         },
         Menu {
             name: ts!("menu.view"),
@@ -2254,6 +2553,16 @@ fn bind_shortcuts(cx: &mut App) {
         // `Ctrl+B` is what every editor with a sidebar binds it to, and unlike
         // the pane chords it has no contender inside a SQL editor.
         KeyBinding::new(&format!("{modifier}-b"), ToggleExplorer, Some(KEY_CONTEXT)),
+        // `Ctrl+T` is free: the SQL editor binds no `T` chord, and the shell has
+        // no tab-cycling gesture to clash with.
+        KeyBinding::new(&format!("{modifier}-t"), NewQuery, Some(KEY_CONTEXT)),
+        // Scoped to the sidebar rather than the window, because the same chord
+        // is the editor's "run the statement" — see `explorer::KEY_CONTEXT`.
+        KeyBinding::new(
+            &format!("{modifier}-enter"),
+            QueryObject,
+            Some(explorer::KEY_CONTEXT),
+        ),
         KeyBinding::new("escape", DismissDialog, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-w"), ClosePane, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-]"), FocusNextPane, Some(KEY_CONTEXT)),
@@ -2287,6 +2596,10 @@ fn main() {
         i18n::apply(settings.language.as_deref());
 
         rudbman_ui::init(cx);
+        // After the widget layer, because both scope their bindings to key
+        // contexts the shell's own bindings have to be able to outrank.
+        rudbman_editor::init(cx);
+        rudbman_grid::init(cx);
         bind_shortcuts(cx);
         cx.set_menus(app_menus());
 

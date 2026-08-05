@@ -13,6 +13,11 @@ menu:
   new_connection: 新規接続…
   settings: 設定…
   toggle_explorer: エクスプローラー
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: 新しいクエリ
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: 選択したオブジェクトを照会
   about: rudbman について
   quit: 終了
   connection: 接続
@@ -343,3 +348,29 @@ detail:
   current_value: 現在値
   cycle: 循環
   cache: キャッシュ
+
+query:
+  run: 実行
+  cancel: キャンセル
+  cancelling: キャンセル中…
+  result: "結果 %{index}"
+  empty: 文を書いて実行してください。
+  no_results: 文は結果を返しませんでした。
+  running: 実行中…
+  rows_affected: "%{count} 行を更新しました"
+  executed: 文を実行しました。
+  row_count: "%{count} 行"
+  elapsed: "%{seconds} 秒"
+  busy: このペインでは既に文が実行中です。
+  no_statement: 実行する文がありません。
+  read_only: 読み取り専用の接続のため、文は送信されませんでした。
+  confirm_title: この文を実行しますか?
+  confirm_body: "データを変更する文: %{count} 件"
+  confirm_run: 実行する
+  lob_unsupported: LOB ビューアーはまだありません。
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: 文の構文と、対象を読む権限があるかを確認してください。
+  hint_constraint: テーブルが宣言している制約に違反しました。
+  hint_auth: この接続にはその権限がありません。
+  hint_network: データベースとの接続が失われました。
+  hint_cancelled: 文の実行はキャンセルされました。

@@ -690,8 +690,17 @@ impl<S: GridSource> GridView<S> {
     /// Two binary searches over the left edges, which is why several hundred
     /// columns cost nothing: the ones off either side are never looked at again.
     fn visible_columns(&self) -> Range<usize> {
-        if self.laid_out.is_empty() || self.viewport_width <= 0. {
+        if self.laid_out.is_empty() {
             return 0..0;
+        }
+        // The viewport is measured by the body's canvas during prepaint, which
+        // is after the header for this frame was already built — and the
+        // notify that measurement issues does not buy a second frame for an
+        // entity that has just been drawn. On that first frame the header must
+        // draw every column, clipped by its container, or it stays empty until
+        // something else happens to invalidate the grid.
+        if self.viewport_width <= 0. {
+            return 0..self.laid_out.len();
         }
         let left = self.h_offset;
         let right = left + self.viewport_width;
@@ -1817,6 +1826,30 @@ mod tests {
             probe.max_row.get() > 800_000,
             "the reads did not follow the viewport"
         );
+    }
+
+    /// The frame that has laid columns out but not yet measured the viewport —
+    /// the first one, where the header is built before the body's canvas runs —
+    /// draws every column rather than none.
+    ///
+    /// A `VisualTestContext` draws repeatedly, so the ordinary tests never see
+    /// this frame: the real app did, as a permanently empty header band,
+    /// because the notify issued by the measurement does not buy a second
+    /// frame for an entity that was just drawn.
+    #[gpui::test]
+    fn an_unmeasured_viewport_shows_every_header(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(5, 7, probe), cx);
+
+        grid.update(&mut cx, |grid, _| {
+            assert!(!grid.laid_out.is_empty(), "the fixture never laid out");
+            grid.viewport_width = 0.;
+            assert_eq!(
+                grid.visible_columns(),
+                0..grid.laid_out.len(),
+                "the header of the unmeasured frame"
+            );
+        });
     }
 
     /// The next batch is asked for once, not once per frame, and asked for again

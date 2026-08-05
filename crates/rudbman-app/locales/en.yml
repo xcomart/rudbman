@@ -36,6 +36,11 @@ menu:
   settings: Settings…
   # Shows and hides the explorer sidebar.
   toggle_explorer: Explorer
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: New query
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: Query the selected object
   about: About rudbman
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
@@ -482,3 +487,55 @@ detail:
   current_value: Current
   cycle: Cycle
   cache: Cache
+
+# The query pane: a SQL editor over the results of what it ran. Opened with the
+# menu row or its shortcut, and over the object selected in the explorer with
+# the second row.
+query:
+  # The two buttons of the run toolbar.
+  run: Run
+  cancel: Cancel
+  # The cancel button once the cancel has been issued and the driver has not
+  # answered yet. A word of its own rather than a disabled "Cancel", because
+  # what is happening is not what the button offered.
+  cancelling: Cancelling…
+  # One tab per result of the run. `index` counts from one.
+  result: "Result %{index}"
+  # The result area before anything has been run, and after a run that produced
+  # nothing at all.
+  empty: Write a statement and run it.
+  no_results: The statement produced no result.
+  # While a statement is in flight. Also the status bar's row cell then, which
+  # is why it is a state rather than a sentence.
+  running: running…
+  # A statement that changed rows, and one that changed none — a CREATE TABLE,
+  # say. Each is a result tab of its own.
+  rows_affected: "%{count} rows affected"
+  executed: Statement executed.
+  # The status bar's row and elapsed cells. `seconds` arrives already rounded.
+  row_count: "%{count} rows"
+  elapsed: "%{seconds} s"
+  # Refused rather than queued: a second statement would wait behind the first
+  # on the session's own worker thread and look like a hang.
+  busy: A statement is already running in this pane.
+  # Nothing to send — an empty buffer, or one holding only comments.
+  no_statement: There is no statement to run.
+  # The profile is marked read-only, so a write is refused rather than asked
+  # about: asking would offer something the connection will not do.
+  read_only: This connection is read-only; the statement was not sent.
+  # The write confirmation, shown when the profile asks before a write.
+  confirm_title: Run this statement?
+  confirm_body: "Statements that change data: %{count}"
+  confirm_run: Run it
+  # A LOB cell that was opened. Only its size travelled with the row, and
+  # reading the body needs a bridge operation that is not implemented yet.
+  lob_unsupported: The LOB viewer is not built yet.
+  # The error envelope, under the driver's own message.
+  sql_state: "SQLSTATE %{state}"
+  # One-line suggestions, chosen by the leading two characters of the SQLSTATE,
+  # which is the only part drivers agree on.
+  hint_syntax: Check the statement's syntax, and that you may read what it names.
+  hint_constraint: The statement broke a constraint the table declares.
+  hint_auth: This connection is not allowed to do that.
+  hint_network: The connection to the database was lost.
+  hint_cancelled: The statement was cancelled.

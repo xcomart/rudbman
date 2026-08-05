@@ -30,7 +30,10 @@ raw-window-handle.workspace = true
 
 [dependencies]
 rudbman-core.workspace = true
+rudbman-editor.workspace = true
+rudbman-grid.workspace = true
 rudbman-jdbc.workspace = true
+rudbman-sql.workspace = true
 rudbman-ssh.workspace = true
 rudbman-ui.workspace = true
 

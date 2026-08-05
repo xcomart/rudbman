@@ -13,6 +13,11 @@ menu:
   new_connection: Nouvelle connexion…
   settings: Préférences…
   toggle_explorer: Explorateur
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: Nouvelle requête
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: Interroger l'objet sélectionné
   about: À propos de rudbman
   quit: Quitter
   connection: Connexion
@@ -343,3 +348,29 @@ detail:
   current_value: Courant
   cycle: Cycle
   cache: Cache
+
+query:
+  run: Exécuter
+  cancel: Annuler
+  cancelling: Annulation…
+  result: "Résultat %{index}"
+  empty: Écrivez une instruction puis exécutez-la.
+  no_results: L'instruction n'a produit aucun résultat.
+  running: en cours…
+  rows_affected: "%{count} lignes modifiées"
+  executed: Instruction exécutée.
+  row_count: "%{count} lignes"
+  elapsed: "%{seconds} s"
+  busy: Une instruction est déjà en cours dans ce panneau.
+  no_statement: Il n'y a aucune instruction à exécuter.
+  read_only: Cette connexion est en lecture seule ; l'instruction n'a pas été envoyée.
+  confirm_title: Exécuter cette instruction ?
+  confirm_body: "Instructions qui modifient des données : %{count}"
+  confirm_run: Exécuter
+  lob_unsupported: La visionneuse de LOB n'existe pas encore.
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: Vérifiez la syntaxe de l'instruction et vos droits de lecture.
+  hint_constraint: L'instruction viole une contrainte de la table.
+  hint_auth: Cette connexion n'y est pas autorisée.
+  hint_network: La connexion à la base de données a été perdue.
+  hint_cancelled: L'instruction a été annulée.

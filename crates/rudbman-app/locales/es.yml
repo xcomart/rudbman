@@ -13,6 +13,11 @@ menu:
   new_connection: Nueva conexión…
   settings: Ajustes…
   toggle_explorer: Explorador
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: Nueva consulta
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: Consultar el objeto seleccionado
   about: Acerca de rudbman
   quit: Salir
   connection: Conexión
@@ -343,3 +348,29 @@ detail:
   current_value: Actual
   cycle: Ciclo
   cache: Caché
+
+query:
+  run: Ejecutar
+  cancel: Cancelar
+  cancelling: Cancelando…
+  result: "Resultado %{index}"
+  empty: Escriba una sentencia y ejecútela.
+  no_results: La sentencia no devolvió ningún resultado.
+  running: ejecutando…
+  rows_affected: "%{count} filas afectadas"
+  executed: Sentencia ejecutada.
+  row_count: "%{count} filas"
+  elapsed: "%{seconds} s"
+  busy: Ya hay una sentencia ejecutándose en este panel.
+  no_statement: No hay ninguna sentencia que ejecutar.
+  read_only: Esta conexión es de solo lectura; la sentencia no se envió.
+  confirm_title: "¿Ejecutar esta sentencia?"
+  confirm_body: "Sentencias que modifican datos: %{count}"
+  confirm_run: Ejecutar
+  lob_unsupported: El visor de LOB todavía no existe.
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: Revise la sintaxis de la sentencia y sus permisos de lectura.
+  hint_constraint: La sentencia infringe una restricción de la tabla.
+  hint_auth: Esta conexión no tiene permiso para hacerlo.
+  hint_network: Se perdió la conexión con la base de datos.
+  hint_cancelled: La sentencia se canceló.

@@ -56,6 +56,14 @@ use rudbman_ui::{ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView
 use crate::i18n::ts;
 use crate::icons;
 
+/// Key context the sidebar's own shortcuts are scoped to.
+///
+/// Sits above the tree's own `TreeView` context, so a chord bound here is live
+/// while the focus is anywhere in the sidebar and nowhere else — which is what
+/// keeps "query the selected object" off the `Ctrl`+`Enter` the SQL editor
+/// binds to "run the statement".
+pub const KEY_CONTEXT: &str = "Explorer";
+
 /// Identity of one open connection, for as long as its tab lives.
 ///
 /// Not the profile's [`Uuid`](uuid::Uuid) — two tabs may be open on one profile
@@ -775,6 +783,16 @@ impl Explorer {
         let node = node.clone();
         self.update_source(cx, |source| source.invalidate(&node));
     }
+
+    /// The selected node, when it names an object with rows to select from.
+    ///
+    /// What "query the selected object" acts on. Routines and sequences answer
+    /// `None`: `SELECT * FROM` a stored procedure is not a statement in any
+    /// dialect this program has to care about.
+    pub fn selected_relation(&self, cx: &App) -> Option<ObjectTarget> {
+        let target = self.tree.read(cx).selected()?.as_target()?;
+        target.folder.is_relation().then_some(target)
+    }
 }
 
 impl EventEmitter<ExplorerEvent> for Explorer {}
@@ -792,6 +810,7 @@ impl Render for Explorer {
 
         div()
             .id("explorer")
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .flex()
             .flex_col()

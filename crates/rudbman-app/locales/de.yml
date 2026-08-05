@@ -13,6 +13,11 @@ menu:
   new_connection: Neue Verbindung…
   settings: Einstellungen…
   toggle_explorer: Explorer
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: Neue Abfrage
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: Ausgewähltes Objekt abfragen
   about: Über rudbman
   quit: Beenden
   connection: Verbindung
@@ -343,3 +348,29 @@ detail:
   current_value: Aktuell
   cycle: Zyklus
   cache: Cache
+
+query:
+  run: Ausführen
+  cancel: Abbrechen
+  cancelling: Wird abgebrochen…
+  result: "Ergebnis %{index}"
+  empty: Schreiben Sie eine Anweisung und führen Sie sie aus.
+  no_results: Die Anweisung lieferte kein Ergebnis.
+  running: läuft…
+  rows_affected: "%{count} Zeilen geändert"
+  executed: Anweisung ausgeführt.
+  row_count: "%{count} Zeilen"
+  elapsed: "%{seconds} s"
+  busy: In diesem Bereich läuft bereits eine Anweisung.
+  no_statement: Es gibt keine Anweisung zum Ausführen.
+  read_only: Diese Verbindung ist schreibgeschützt; die Anweisung wurde nicht gesendet.
+  confirm_title: Diese Anweisung ausführen?
+  confirm_body: "Anweisungen, die Daten ändern: %{count}"
+  confirm_run: Ausführen
+  lob_unsupported: Der LOB-Betrachter existiert noch nicht.
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: Prüfen Sie die Syntax der Anweisung und Ihre Leserechte auf das Genannte.
+  hint_constraint: Die Anweisung verletzt eine Bedingung der Tabelle.
+  hint_auth: Diese Verbindung darf das nicht.
+  hint_network: Die Verbindung zur Datenbank ging verloren.
+  hint_cancelled: Die Anweisung wurde abgebrochen.

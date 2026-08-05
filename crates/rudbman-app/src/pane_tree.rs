@@ -39,6 +39,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::Entity;
 
+use crate::query::QueryPane;
 use crate::table_detail::TableDetail;
 
 /// Fraction of a split the first child gets when the split is created.
@@ -93,8 +94,14 @@ pub enum PaneContent {
     /// Holds the panel itself: dropping the pane drops the handle, and with it
     /// the view and whatever fetch it had out.
     TableDetail(Entity<TableDetail>),
-    // M3 adds `Editor` and `Grid`, M5 `Erd`, M7 `QueryBuilder`; see the
-    // architecture document, §7.1.
+    /// A SQL editor over the results of what it ran.
+    ///
+    /// One variant rather than the `Editor | Grid` pair §7.1 sketches: the two
+    /// halves share a statement, a cursor and a generation counter, and putting
+    /// them in separate panes would mean a channel between them that neither
+    /// the user nor the layout ever asked for.
+    Query(Entity<QueryPane>),
+    // M5 adds `Erd`, M7 `QueryBuilder`; see the architecture document, §7.1.
 }
 
 /// The identity of one pane, stable for as long as the pane exists.
