@@ -49,8 +49,10 @@ use crate::codec::Batch;
 use crate::error::{Error, Result};
 use crate::jvm::Jvm;
 use crate::protocol::{Op, parse_json, take_payload};
-use crate::response::{Cancelled, ColumnInfo, DescribeResult, ExecuteResult, Ping, SessionInfo};
-use crate::spec::{ConnectionSpec, DescribeRequest, StatementSpec};
+use crate::response::{
+    Cancelled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, Ping, SessionInfo,
+};
+use crate::spec::{ConnectionSpec, DdlSource, DescribeRequest, StatementSpec};
 
 /// The `OPEN_SESSION` response body.
 #[derive(Deserialize)]
@@ -126,8 +128,46 @@ impl Session {
     }
 
     /// Runs a metadata query.
+    ///
+    /// Every kind but `ddl` comes back here as `{kind, items[]}`. `ddl` answers
+    /// a document instead and has [`Session::describe_ddl`] to itself; asking
+    /// for it through this method fails with a protocol error rather than
+    /// half-parsing.
     pub fn describe(&self, request: &DescribeRequest) -> Result<DescribeResult> {
         let body = serde_json::to_vec(request)?;
+        self.json_call(Op::Describe, self.handle, 0, Some(body))
+    }
+
+    /// Reads one table's `CREATE` statement.
+    ///
+    /// `catalog` and `schema` are exact names, `None` meaning "wherever the
+    /// connection is pointed"; `table` is exact and required.
+    ///
+    /// [`DdlSource`] picks the layer, and [`DdlResult::source`] reports which
+    /// one actually answered — with [`DdlSource::Auto`] a server that has no
+    /// native path, or refuses it, silently yields reconstructed text, and the
+    /// UI should say so.
+    ///
+    /// # Errors
+    ///
+    /// * [`DdlSource::Native`] against a product with no native path is a `sql`
+    ///   error suggesting `metadata`, not a fallback.
+    /// * An unknown table is whatever the driver says — usually a `sql` error of
+    ///   class `42`, and on some drivers an empty `CREATE TABLE` shell, because
+    ///   `getColumns` for a table that does not exist is an empty result rather
+    ///   than a failure.
+    pub fn describe_ddl(
+        &self,
+        catalog: Option<&str>,
+        schema: Option<&str>,
+        table: &str,
+        source: DdlSource,
+    ) -> Result<DdlResult> {
+        let mut request = DescribeRequest::new("ddl").with_table(table);
+        request.catalog = catalog.map(str::to_string);
+        request.schema = schema.map(str::to_string);
+        request.source = Some(source);
+        let body = serde_json::to_vec(&request)?;
         self.json_call(Op::Describe, self.handle, 0, Some(body))
     }
 

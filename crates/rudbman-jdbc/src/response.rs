@@ -306,6 +306,47 @@ pub struct DescribeResult {
     pub items: Vec<serde_json::Map<String, serde_json::Value>>,
 }
 
+/// The response to `DESCRIBE` with `kind: "ddl"`: one table's `CREATE` text.
+///
+/// The one metadata kind that answers with a document instead of a list, which
+/// is why it has [`Session::describe_ddl`](crate::Session::describe_ddl) to
+/// itself. A one-element array would only have added an unwrap at every call
+/// site.
+#[derive(Clone, Debug, Deserialize)]
+pub struct DdlResult {
+    /// The statement text, ready to show. One `CREATE TABLE`, possibly followed
+    /// by `CREATE INDEX` statements for indexes that do not merely back a
+    /// declared key.
+    pub ddl: String,
+    /// Which layer produced it: `"native"` or `"metadata"`.
+    ///
+    /// Kept as a string rather than an enum so that a bridge which learns a
+    /// third path does not fail to parse here. Use [`DdlResult::is_native`] and
+    /// [`DdlResult::is_reconstructed`] instead of matching on the text.
+    pub source: String,
+}
+
+impl DdlResult {
+    /// Whether the server quoted its own DDL back.
+    ///
+    /// When this is true the text is authoritative — everything the server
+    /// stores, including what JDBC metadata cannot see.
+    pub fn is_native(&self) -> bool {
+        self.source == "native"
+    }
+
+    /// Whether the text was reassembled from JDBC metadata.
+    ///
+    /// **Label it in the UI.** It is close enough to read and usually close
+    /// enough to run, but `CHECK` constraints, triggers, partitioning,
+    /// collations and generated-column expressions are not in JDBC metadata at
+    /// all and are therefore not in this text either. It is not a migration
+    /// artefact.
+    pub fn is_reconstructed(&self) -> bool {
+        self.source == "metadata"
+    }
+}
+
 impl Value<'_> {
     /// Renders a cell as text, using the logical type to decide how.
     ///
@@ -402,5 +443,27 @@ mod tests {
         .expect("parses");
         assert!(!result.may_have_more);
         assert!(result.is_exhausted());
+    }
+
+    #[test]
+    fn a_ddl_answer_says_which_layer_produced_it() {
+        let native: DdlResult =
+            serde_json::from_str(r#"{"kind":"ddl","ddl":"CREATE TABLE t()","source":"native"}"#)
+                .expect("parses");
+        assert!(native.is_native());
+        assert!(!native.is_reconstructed());
+
+        let reconstructed: DdlResult =
+            serde_json::from_str(r#"{"kind":"ddl","ddl":"CREATE TABLE t()","source":"metadata"}"#)
+                .expect("parses");
+        assert!(reconstructed.is_reconstructed());
+        assert!(!reconstructed.is_native());
+
+        // A layer this version has not heard of still parses — the text is the
+        // wire's to name, and failing here would break on a bridge upgrade.
+        let future: DdlResult =
+            serde_json::from_str(r#"{"kind":"ddl","ddl":"x","source":"catalogue"}"#)
+                .expect("an unknown source is not a parse failure");
+        assert!(!future.is_native() && !future.is_reconstructed());
     }
 }

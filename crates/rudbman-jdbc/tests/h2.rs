@@ -29,8 +29,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use rudbman_jdbc::{
-    Batch, BridgeErrorKind, ColumnKind, ConnectionSpec, DescribeRequest, Error, Jvm, JvmConfig, Op,
-    Param, Session, StatementSpec, Value, default_bridge_jar,
+    Batch, BridgeErrorKind, ColumnKind, ConnectionSpec, DdlSource, DescribeRequest, Error, Jvm,
+    JvmConfig, Op, Param, Session, StatementSpec, Value, default_bridge_jar,
 };
 
 /// The process-wide JVM, started by whichever test needs it first.
@@ -357,15 +357,204 @@ fn describe_answers_every_implemented_kind() {
         );
     }
 
-    // A kind the bridge knows about but has not implemented is distinguishable
-    // from one nobody has heard of.
+    // A kind nobody has heard of is a protocol error, and it is *not* the
+    // "not implemented" one — that distinction is what tells a caller whether to
+    // wait for a milestone or to go and fix a table mismatch.
     let error = session
-        .describe(&DescribeRequest::new("procedures"))
-        .expect_err("procedures is deferred");
+        .describe(&DescribeRequest::new("phlogiston"))
+        .expect_err("there is no such kind");
     let Error::Bridge(error) = error else {
         panic!("expected an error envelope, got {error:?}")
     };
-    assert!(error.is_not_implemented(), "{error:?}");
+    assert_eq!(error.kind, BridgeErrorKind::Protocol);
+    assert!(!error.is_not_implemented(), "{error:?}");
+    assert!(error.message.contains("unknown describe kind"), "{error:?}");
+}
+
+#[test]
+fn routines_arrive_with_their_signatures_attached() {
+    let session = session();
+    exec(&session, "create schema app");
+    // A method that is on every JVM's boot classpath and has exactly one
+    // overload, so the alias resolves without a classpath of our own.
+    exec(
+        &session,
+        "create alias app.f_sqrt for 'java.lang.Math.sqrt'",
+    );
+
+    let procedures = session
+        .describe(&DescribeRequest::new("procedures").with_schema("APP"))
+        .expect("describes procedures");
+    assert_eq!(procedures.kind, "procedures");
+    let routine = procedures
+        .items
+        .iter()
+        .find(|item| item.get("name").and_then(|v| v.as_str()) == Some("F_SQRT"))
+        .unwrap_or_else(|| panic!("F_SQRT is missing from {:?}", procedures.items));
+    assert_eq!(routine.get("schema").and_then(|v| v.as_str()), Some("APP"));
+
+    // The signature travels with the routine: a schema of two hundred of these
+    // would otherwise be two hundred round trips before the tree could draw one
+    // of them.
+    let parameters = routine
+        .get("parameters")
+        .and_then(|v| v.as_array())
+        .expect("parameters are inlined");
+    let modes: Vec<&str> = parameters
+        .iter()
+        .filter_map(|p| p.get("mode_name")?.as_str())
+        .collect();
+    assert!(
+        modes.contains(&"RETURN") && modes.contains(&"IN"),
+        "expected a return value and an argument: {parameters:?}"
+    );
+
+    // H2 2.x answers getFunctions with nothing at all and files CREATE ALIAS
+    // routines under getProcedures. An empty list is "filed elsewhere", not
+    // "none" — and it is an answer, not an error.
+    let functions = session
+        .describe(&DescribeRequest::new("functions").with_schema("APP"))
+        .expect("describes functions");
+    assert!(
+        functions.items.is_empty(),
+        "H2 is expected to file this alias under procedures: {:?}",
+        functions.items
+    );
+
+    // Narrowing by exact name.
+    let one = session
+        .describe(
+            &DescribeRequest::new("procedures")
+                .with_schema("APP")
+                .with_name("F_SQRT"),
+        )
+        .expect("narrows to one routine");
+    assert_eq!(one.items.len(), 1);
+}
+
+#[test]
+fn sequences_come_from_the_vendor_catalogue() {
+    let session = session();
+    exec(&session, "create schema app");
+    exec(
+        &session,
+        "create sequence app.seq_order start with 100 increment by 5 \
+         minvalue 10 maxvalue 100000 cycle cache 20",
+    );
+
+    let sequences = session
+        .describe(&DescribeRequest::new("sequences").with_schema("APP"))
+        .expect("describes sequences");
+    let sequence = sequences
+        .items
+        .iter()
+        .find(|item| item.get("name").and_then(|v| v.as_str()) == Some("SEQ_ORDER"))
+        .unwrap_or_else(|| panic!("SEQ_ORDER is missing from {:?}", sequences.items));
+
+    // Every value but `cycle` is a string: an Oracle sequence maximum is
+    // NUMBER(28) and does not fit an i64.
+    assert_eq!(
+        sequence.get("start_value").and_then(|v| v.as_str()),
+        Some("100")
+    );
+    assert_eq!(
+        sequence.get("increment").and_then(|v| v.as_str()),
+        Some("5")
+    );
+    assert_eq!(sequence.get("cycle").and_then(|v| v.as_bool()), Some(true));
+
+    // A product the bridge has no catalogue query for answers an empty list,
+    // and so does a schema that holds no sequences. Neither is an error.
+    let none = session
+        .describe(&DescribeRequest::new("sequences").with_schema("NO_SUCH_SCHEMA"))
+        .expect("an empty list is a correct answer");
+    assert!(none.items.is_empty());
+}
+
+// --- DDL: the one kind that answers with a document ------------------------
+
+#[test]
+fn describe_ddl_asks_the_server_for_its_own_create_text() {
+    let session = session();
+    exec(
+        &session,
+        "create table parent (id integer primary key, code varchar(10) not null)",
+    );
+
+    let ddl = session
+        .describe_ddl(None, Some("PUBLIC"), "PARENT", DdlSource::Auto)
+        .expect("H2 can quote its own DDL back");
+    assert!(
+        ddl.is_native(),
+        "H2 has SCRIPT, so auto should not have fallen back: {ddl:?}"
+    );
+    assert!(!ddl.is_reconstructed());
+    let text = ddl.ddl.to_uppercase();
+    assert!(text.contains("CREATE"), "{}", ddl.ddl);
+    assert!(text.contains("PARENT"), "{}", ddl.ddl);
+    assert!(text.contains("CODE"), "{}", ddl.ddl);
+
+    // Asking for the native path explicitly gets the same answer here; on a
+    // product without one it would be a sql error rather than a silent
+    // downgrade.
+    let native = session
+        .describe_ddl(None, Some("PUBLIC"), "PARENT", DdlSource::Native)
+        .expect("H2 has a native path");
+    assert!(native.is_native());
+}
+
+#[test]
+fn describe_ddl_can_be_forced_through_the_reverse_generated_path() {
+    let session = session();
+    exec(
+        &session,
+        "create table child (
+             id        integer primary key,
+             parent_id integer not null,
+             note      varchar(40))",
+    );
+    exec(&session, "create index idx_child_note on child (note)");
+
+    let ddl = session
+        .describe_ddl(None, Some("PUBLIC"), "CHILD", DdlSource::Metadata)
+        .expect("the fallback works on every driver, which is why it exists");
+    assert!(
+        ddl.is_reconstructed(),
+        "metadata was demanded, so the native path must not have answered: {ddl:?}"
+    );
+
+    let text = ddl.ddl.to_uppercase();
+    assert!(text.contains("CREATE TABLE"), "{}", ddl.ddl);
+    for column in ["ID", "PARENT_ID", "NOTE"] {
+        assert!(text.contains(column), "{column} missing from {}", ddl.ddl);
+    }
+    assert!(text.contains("PRIMARY KEY"), "{}", ddl.ddl);
+    // An index that does not merely back a declared key is emitted separately.
+    assert!(text.contains("IDX_CHILD_NOTE"), "{}", ddl.ddl);
+
+    // For display, but close enough to run: replaying it in a database that has
+    // never seen the table is the strongest cheap check there is.
+    let elsewhere = Session::open(jvm(), &spec(&fresh_url(), "sa", "")).expect("connects");
+    elsewhere
+        .execute(&StatementSpec::new(&ddl.ddl))
+        .expect("the reconstructed DDL replays");
+}
+
+#[test]
+fn ddl_is_not_reachable_through_the_list_shaped_path() {
+    // The reason `describe_ddl` exists: the answer is a document, and a caller
+    // that asks for it through `describe` gets a parse failure rather than a
+    // silently empty list.
+    let session = session();
+    exec(&session, "create table t (id integer)");
+
+    let error = session
+        .describe(&DescribeRequest::new("ddl").with_table("T"))
+        .expect_err("the shapes differ");
+    assert!(
+        matches!(error, Error::Protocol(_)),
+        "expected a shape mismatch, got {error:?}"
+    );
 }
 
 // --- the round trip that matters -------------------------------------------

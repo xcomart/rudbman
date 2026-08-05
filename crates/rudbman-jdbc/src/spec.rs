@@ -289,14 +289,32 @@ fn base64(bytes: &[u8]) -> String {
 /// list of metadata kinds keeps growing and a new operation code every time is
 /// how the Rust and Java tables drift apart. Metadata is called rarely enough
 /// that the JSON parse costs nothing worth counting.
+///
+/// Every kind answers `{kind, items[]}` — **except `ddl`**, which answers one
+/// document rather than a list of rows and therefore has its own path,
+/// [`Session::describe_ddl`](crate::Session::describe_ddl). Asking for `ddl`
+/// through [`Session::describe`](crate::Session::describe) fails to parse, on
+/// purpose: the two answers are different shapes and the type system is the
+/// right place to say so.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DescribeRequest {
     /// One of `catalogs`, `schemas`, `tables`, `columns`, `primary_keys`,
-    /// `imported_keys`, `exported_keys`, `indexes`, `type_info`.
+    /// `imported_keys`, `exported_keys`, `indexes`, `type_info`, `procedures`,
+    /// `functions`, `sequences`.
     ///
-    /// `ddl`, `procedures`, `functions` and `sequences` are accepted names that
-    /// this build of the bridge answers with a `protocol` /
-    /// [`not implemented`](crate::BridgeError::is_not_implemented) error.
+    /// `ddl` is the thirteenth kind and goes through
+    /// [`Session::describe_ddl`](crate::Session::describe_ddl) instead.
+    ///
+    /// `procedures` and `functions` carry each routine's `parameters[]` inline,
+    /// so a schema with two hundred routines costs one round trip rather than
+    /// two hundred. Which of the two lists a routine appears in is the product's
+    /// decision — H2 files `CREATE ALIAS` functions under `procedures` and
+    /// answers `getFunctions` with nothing at all — so an empty list means
+    /// "filed elsewhere", not "none".
+    ///
+    /// `sequences` is a vendor catalogue query, because JDBC never grew an
+    /// accessor for sequences. An empty list is a correct answer on a product
+    /// the bridge has no query for, and on one where the query was refused.
     pub kind: String,
     /// Exact catalog name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -320,6 +338,13 @@ pub struct DescribeRequest {
     /// Column name as a `LIKE` pattern.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column_pattern: Option<String>,
+    /// `procedures`, `functions` and `sequences` only: exact routine or
+    /// sequence name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `procedures` and `functions` only: routine name as a `LIKE` pattern.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_pattern: Option<String>,
     /// `tables` only: the table types to list, e.g. `["TABLE", "VIEW"]`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub types: Option<Vec<String>>,
@@ -333,6 +358,12 @@ pub struct DescribeRequest {
     /// instant answer and a minute of waiting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approximate: Option<bool>,
+    /// `ddl` only: which layer should answer.
+    ///
+    /// Set for you by [`Session::describe_ddl`](crate::Session::describe_ddl);
+    /// every other kind ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<DdlSource>,
 }
 
 impl DescribeRequest {
@@ -342,6 +373,12 @@ impl DescribeRequest {
             kind: kind.into(),
             ..Default::default()
         }
+    }
+
+    /// Sets the exact catalog name.
+    pub fn with_catalog(mut self, catalog: impl Into<String>) -> Self {
+        self.catalog = Some(catalog.into());
+        self
     }
 
     /// Sets the exact schema name.
@@ -355,6 +392,44 @@ impl DescribeRequest {
         self.table = Some(table.into());
         self
     }
+
+    /// Sets the exact routine or sequence name.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+}
+
+/// Which layer should produce a table's DDL.
+///
+/// The two layers answer different questions, and neither is right for every
+/// caller:
+///
+/// * the **native** path asks the server to quote its own `CREATE` text back
+///   (MySQL's `SHOW CREATE TABLE`, H2's `SCRIPT`). Where it exists it *is* the
+///   truth — storage clauses, `CHECK` constraints, vendor syntax and all;
+/// * the **metadata** path reassembles the statement from `getColumns`,
+///   `getPrimaryKeys`, `getImportedKeys` and `getIndexInfo`. It works on every
+///   driver, which is why it exists, and it is **for display**: JDBC metadata
+///   carries no `CHECK` constraints, triggers, partitioning or collations, and a
+///   view arrives as a bare column list.
+///
+/// [`DdlResult::source`](crate::DdlResult::source) reports which one answered,
+/// so a UI can label reconstructed DDL as reconstructed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DdlSource {
+    /// Try the native path, fall back to reconstruction. The default, and what
+    /// an explorer pane wants.
+    #[default]
+    Auto,
+    /// Native only. Fails with a `sql` error on a product that has no native
+    /// path, rather than quietly handing back something reconstructed — which
+    /// is what a caller comparing DDL against a file needs.
+    Native,
+    /// Always reconstruct, even where a native path exists. Useful for
+    /// comparing two products, and for exercising the fallback.
+    Metadata,
 }
 
 /// The request body of `PROBE_DRIVER`: which archives to look inside.
@@ -484,6 +559,35 @@ mod tests {
         // Bare, this would serialise as `3` and be bound with setLong.
         let json = serde_json::to_string(&Param::F64(3.0)).expect("serialises");
         assert_eq!(json, r#"{"type":"f64","value":3.0}"#);
+    }
+
+    #[test]
+    fn the_ddl_source_words_are_the_ones_the_bridge_accepts() {
+        // The bridge rejects anything but these three by name, so a rename here
+        // is a protocol break rather than a refactor.
+        assert_eq!(
+            serde_json::to_string(&DdlSource::Auto).expect("serialises"),
+            r#""auto""#
+        );
+        assert_eq!(
+            serde_json::to_string(&DdlSource::Native).expect("serialises"),
+            r#""native""#
+        );
+        assert_eq!(
+            serde_json::to_string(&DdlSource::Metadata).expect("serialises"),
+            r#""metadata""#
+        );
+        assert_eq!(DdlSource::default(), DdlSource::Auto);
+    }
+
+    #[test]
+    fn a_describe_request_only_sends_what_was_set() {
+        // Absent and null are not the same thing to the bridge: a `schema` of
+        // null is "any schema", and sending one where the caller said nothing
+        // would silently widen the query.
+        let json = serde_json::to_string(&DescribeRequest::new("tables").with_schema("APP"))
+            .expect("serialises");
+        assert_eq!(json, r#"{"kind":"tables","schema":"APP"}"#);
     }
 
     #[test]

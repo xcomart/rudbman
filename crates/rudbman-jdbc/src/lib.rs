@@ -106,10 +106,10 @@ pub use error::{BridgeError, BridgeErrorKind, Error, Result};
 pub use jvm::{BRIDGE_JAR_ENV, JAVA_HOME_ENV, Jvm, JvmConfig, default_bridge_jar};
 pub use protocol::Op;
 pub use response::{
-    Cancelled, ColumnInfo, DescribeResult, DriverProbe, ExecuteResult, Ping, SQL_TYPE_REAL,
-    SessionInfo,
+    Cancelled, ColumnInfo, DdlResult, DescribeResult, DriverProbe, ExecuteResult, Ping,
+    SQL_TYPE_REAL, SessionInfo,
 };
 pub use session::{Canceller, Cursor, Session};
 pub use spec::{
-    ConnectionSpec, DescribeRequest, KeepAliveSpec, Param, ProbeRequest, StatementSpec,
+    ConnectionSpec, DdlSource, DescribeRequest, KeepAliveSpec, Param, ProbeRequest, StatementSpec,
 };
