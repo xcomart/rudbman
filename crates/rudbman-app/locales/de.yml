@@ -12,9 +12,11 @@ common:
 menu:
   new_connection: Neue Verbindung…
   settings: Einstellungen…
+  toggle_explorer: Explorer
   about: Über rudbman
   quit: Beenden
   connection: Verbindung
+  view: Ansicht
   tip_menu: Menü
   mac:
     new_connection: Neue Verbindung…
@@ -281,3 +283,63 @@ driver:
   delete: Löschen
   delete_confirm: "Die Treiberdefinition „%{name}“ löschen?"
   none_selected: Einen Treiber auswählen oder einen neuen anlegen.
+
+# Die Explorer-Seitenleiste.
+explorer:
+  title: Explorer
+  empty: Öffnen Sie eine Verbindung, um sie zu durchsuchen.
+  loading: wird geladen …
+  disconnected: Die Verbindung ist geschlossen.
+  unknown_connection: "(Verbindung)"
+  load_failed_unknown: Das konnte nicht geladen werden.
+
+  tables: Tabellen
+  views: Sichten
+  procedures: Prozeduren
+  functions: Funktionen
+  sequences: Sequenzen
+
+# Die Detailansicht eines Objekts.
+detail:
+  tab_columns: Spalten
+  tab_keys: Schlüssel
+  tab_references: Beziehungen
+  tab_ddl: DDL
+  tab_properties: Eigenschaften
+
+  loading: wird geladen …
+  refresh: Neu laden
+  copy: Kopieren
+  empty: nichts vorhanden
+  no_ddl: Für dieses Objekt gibt es keine CREATE-Anweisung zu zeigen.
+  ddl_reconstructed: Aus Metadaten rekonstruiert, als Anhaltspunkt. CHECK-Bedingungen, Trigger, Partitionierung und Sortierungen fehlen darin.
+
+  column: Spalte
+  type: Typ
+  nullable: "Null"
+  default: Vorgabe
+  key: Schlüssel
+  comment: Kommentar
+  name: Name
+  value: Wert
+  seq: Position
+  unique: Eindeutig
+  order: Reihenfolge
+  target: Verweist auf
+  source: Verwiesen von
+  on_update: Bei Änderung
+  on_delete: Bei Löschung
+
+  primary_key: Primärschlüssel
+  indexes: Indizes
+  references_out: Fremdschlüssel dieses Objekts
+  references_in: Fremdschlüssel auf dieses Objekt
+
+  schema: Schema
+  start_value: Start
+  increment: Schrittweite
+  min_value: Minimum
+  max_value: Maximum
+  current_value: Aktuell
+  cycle: Zyklus
+  cache: Cache

@@ -812,7 +812,7 @@ impl ConnectionDialog {
             // A session that opened but cannot answer a PING is not a working
             // connection, and finding that out here is the whole point of a
             // test that does more than call `getConnection`.
-            let ping = connected.session.ping();
+            let ping = connected.session().ping();
             let closed = connected.close();
             ping.map_err(ConnectError::from)?;
             closed.map_err(ConnectError::from)?;

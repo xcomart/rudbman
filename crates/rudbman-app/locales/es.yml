@@ -12,9 +12,11 @@ common:
 menu:
   new_connection: Nueva conexión…
   settings: Ajustes…
+  toggle_explorer: Explorador
   about: Acerca de rudbman
   quit: Salir
   connection: Conexión
+  view: Ver
   tip_menu: Menú
   mac:
     new_connection: Nueva conexión…
@@ -281,3 +283,63 @@ driver:
   delete: Eliminar
   delete_confirm: "¿Eliminar la definición de controlador «%{name}»?"
   none_selected: Elige un controlador o añade uno.
+
+# La barra lateral del explorador.
+explorer:
+  title: Explorador
+  empty: Abre una conexión para recorrerla.
+  loading: cargando…
+  disconnected: La conexión está cerrada.
+  unknown_connection: "(conexión)"
+  load_failed_unknown: No se pudo cargar.
+
+  tables: Tablas
+  views: Vistas
+  procedures: Procedimientos
+  functions: Funciones
+  sequences: Secuencias
+
+# El panel de detalle de un objeto.
+detail:
+  tab_columns: Columnas
+  tab_keys: Claves
+  tab_references: Referencias
+  tab_ddl: DDL
+  tab_properties: Propiedades
+
+  loading: cargando…
+  refresh: Recargar
+  copy: Copiar
+  empty: no hay nada
+  no_ddl: Este objeto no tiene ninguna sentencia CREATE que mostrar.
+  ddl_reconstructed: Reconstruido a partir de los metadatos, a título orientativo. No incluye restricciones CHECK, disparadores, particiones ni intercalaciones.
+
+  column: Columna
+  type: Tipo
+  nullable: Nulo
+  default: Predeterminado
+  key: Clave
+  comment: Comentario
+  name: Nombre
+  value: Valor
+  seq: Posición
+  unique: Única
+  order: Orden
+  target: Referencia a
+  source: Referenciado por
+  on_update: Al actualizar
+  on_delete: Al eliminar
+
+  primary_key: Clave primaria
+  indexes: Índices
+  references_out: Claves ajenas de este objeto
+  references_in: Claves ajenas que apuntan a este objeto
+
+  schema: Esquema
+  start_value: Inicio
+  increment: Incremento
+  min_value: Mínimo
+  max_value: Máximo
+  current_value: Actual
+  cycle: Ciclo
+  cache: Caché

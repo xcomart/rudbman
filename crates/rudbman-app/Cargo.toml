@@ -34,6 +34,11 @@ rudbman-jdbc.workspace = true
 rudbman-ssh.workspace = true
 rudbman-ui.workspace = true
 
+# The explorer and the detail panel read `DESCRIBE` items, which the JNI layer
+# hands over as JSON maps: the bridge's key names are fixed and stable across
+# drivers, so a map is the right shape and a struct per metadata kind would be
+# thirteen of them.
+serde_json.workspace = true
 # The connection orchestrator runs on a background thread and reports back to
 # the window through a one-shot channel, which is what lets a tunnel that dies
 # under a live session reach the tab that has to be marked dead.
@@ -67,6 +72,4 @@ gpui = { workspace = true, features = ["test-support"] }
 # The window-geometry round trip writes a real `settings.json` and reads it
 # back, rather than mocking the configuration directory out.
 tempfile.workspace = true
-# The connection tests build bridge error envelopes from the JSON the bridge
-# actually sends, rather than from a constructor `rudbman-jdbc` does not offer.
-serde_json.workspace = true
+

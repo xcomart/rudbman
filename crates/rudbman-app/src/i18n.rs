@@ -174,6 +174,90 @@ mod tests {
         "driver.class",
     ];
 
+    /// Every `key: value` pair of one locale file, as a dotted path.
+    ///
+    /// A hand-rolled reader rather than a YAML dependency: the files are two
+    /// levels of plain `key: value` by construction, and the two properties the
+    /// tests below need — the key set and whether a value is blank — do not
+    /// need a parser. It reads the *files*, not the compiled-in table, which is
+    /// the point: `rust-i18n`'s per-key fallback makes a missing key look like
+    /// a working lookup, and a value YAML swallowed looks like an empty string
+    /// with nothing to say where it went.
+    fn pairs(tag: &str) -> Vec<(String, String)> {
+        let path = format!("{}/locales/{tag}.yml", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{path}: {err}"));
+
+        let mut pairs = Vec::new();
+        let mut stack: Vec<String> = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = trimmed.split_once(':') else {
+                continue;
+            };
+            if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                continue;
+            }
+            let depth = (line.len() - trimmed.len()) / 2;
+            stack.truncate(depth);
+            stack.push(key.to_string());
+            let value = value.trim();
+            if !value.is_empty() {
+                pairs.push((stack.join("."), value.to_string()));
+            }
+        }
+        pairs
+    }
+
+    #[test]
+    fn every_locale_carries_exactly_the_keys_english_does() {
+        // A key missing from a translation is answered in English by the
+        // per-key fallback, so it is invisible on screen; a key *extra* in one
+        // is a rename nobody finished. Neither shows up in a running app.
+        let english: Vec<String> = pairs(FALLBACK).into_iter().map(|(key, _)| key).collect();
+        for (tag, _) in supported().iter().filter(|(tag, _)| *tag != FALLBACK) {
+            let theirs: Vec<String> = pairs(tag).into_iter().map(|(key, _)| key).collect();
+            let missing: Vec<&String> =
+                english.iter().filter(|key| !theirs.contains(key)).collect();
+            let extra: Vec<&String> = theirs.iter().filter(|key| !english.contains(key)).collect();
+            assert!(missing.is_empty(), "{tag} is missing {missing:?}");
+            assert!(
+                extra.is_empty(),
+                "{tag} has {extra:?}, which en.yml does not"
+            );
+        }
+    }
+
+    #[test]
+    fn no_translated_value_is_something_yaml_reads_as_a_keyword() {
+        // The one that got through: `nullable: Null` is YAML's *null literal*,
+        // so the column heading loaded as an empty string and the tab drew a
+        // blank. Every other keyword scalar has the same trap, and so do bare
+        // numbers, which load as numbers and render without their formatting.
+        const KEYWORDS: [&str; 22] = [
+            "null", "Null", "NULL", "~", "true", "True", "TRUE", "false", "False", "FALSE", "yes",
+            "Yes", "YES", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF",
+        ];
+        for (tag, _) in supported() {
+            for (key, value) in pairs(tag) {
+                // `_version` is a number on purpose; everything else is text.
+                if key == "_version" {
+                    continue;
+                }
+                assert!(
+                    !KEYWORDS.contains(&value.as_str()),
+                    "{tag}: {key} is the bare YAML keyword {value:?} and loads as nothing; quote it"
+                );
+                assert!(
+                    value.parse::<f64>().is_err(),
+                    "{tag}: {key} is the bare number {value:?} and loads as one; quote it"
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_shipped_languages_are_the_compiled_in_locales_in_tag_order() {
         let mut expected = rust_i18n::available_locales!();

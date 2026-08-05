@@ -294,34 +294,79 @@ impl From<JdbcError> for ConnectError {
     }
 }
 
-/// An open session and everything that has to outlive it.
+/// A session and the tunnel it runs over, kept together so that neither can
+/// outlive the other in the wrong order.
 ///
-/// Dropping this closes the session and *then* releases the tunnel lease, in
-/// that order, because Rust drops a struct's fields in declaration order —
-/// which is why [`Connected::session`] is declared above [`Connected::lease`]
-/// and must stay there.
+/// **The field order is the ordering guarantee.** Rust drops a struct's fields
+/// in declaration order, so whoever lets go of the last [`SessionHandle`]
+/// closes the session first and releases the tunnel second — §9.3 — whether
+/// that is the tab being closed or a metadata query that outlived it.
+struct Live {
+    /// The JDBC session. Declared first, so it is closed first.
+    session: Session,
+    /// The tunnel underneath, if any. Declared last, so it lies down last.
+    lease: Option<TunnelLease>,
+}
+
+/// A shared, `Send` claim on an open session.
+///
+/// The explorer loads a schema on a background task while the workspace owns
+/// the tab, so the session has to be reachable from both; a handle is what they
+/// share. Holding one keeps the session — and the tunnel under it — alive, which
+/// is what stops a fetch in flight from finding its connection closed out from
+/// under it.
+#[derive(Clone)]
+pub struct SessionHandle(Arc<Live>);
+
+impl SessionHandle {
+    /// The session, for the blocking calls that make up a fetch.
+    pub fn session(&self) -> &Session {
+        &self.0.session
+    }
+}
+
+impl fmt::Debug for SessionHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("SessionHandle")
+            .field(&self.0.session)
+            .finish()
+    }
+}
+
+/// An open session and everything that has to outlive it.
 pub struct Connected {
-    /// The JDBC session. Blocking, and `Send`, so it is moved onto whichever
-    /// background task needs it next.
-    pub session: Session,
+    /// The session and its tunnel; see [`Live`].
+    live: Arc<Live>,
     /// What `SESSION_INFO` said: the product, the version, the capability flags.
     pub info: SessionInfo,
-    /// The tunnel this session runs over, if any. Declared last so it is
-    /// released after the session is closed.
-    pub lease: Option<TunnelLease>,
 }
 
 impl fmt::Debug for Connected {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Connected")
-            .field("session", &self.session)
+            .field("session", &self.live.session)
             .field("product", &self.info.product_name)
-            .field("tunnelled", &self.lease.is_some())
+            .field("tunnelled", &self.live.lease.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl Connected {
+    /// The session, for a call on the calling thread.
+    pub fn session(&self) -> &Session {
+        &self.live.session
+    }
+
+    /// A handle a background task can carry.
+    pub fn handle(&self) -> SessionHandle {
+        SessionHandle(Arc::clone(&self.live))
+    }
+
+    /// The tunnel this session runs over, if any.
+    pub fn lease(&self) -> Option<&TunnelLease> {
+        self.live.lease.as_ref()
+    }
+
     /// A one-line description of the server for the status bar.
     ///
     /// The product name and its version, which is what a user checks first and
@@ -338,14 +383,29 @@ impl Connected {
         }
     }
 
-    /// Closes the session and then the tunnel, reporting only the first failure.
+    /// Closes the session and then the tunnel, reporting the failure.
     ///
-    /// The order is the whole point; see the module documentation.
+    /// A [`SessionHandle`] still out — a metadata fetch that has not come back
+    /// yet — takes the close with it: this returns without waiting, and the
+    /// last handle to be dropped runs the same two steps in the same order
+    /// through [`Live`]'s own drop. Waiting here instead would block the UI
+    /// thread's task on a query nobody is going to read.
     pub fn close(self) -> Result<(), JdbcError> {
-        let Connected { session, lease, .. } = self;
-        let result = session.close();
-        drop(lease);
-        result
+        match Arc::try_unwrap(self.live) {
+            Ok(Live { session, lease }) => {
+                let result = session.close();
+                drop(lease);
+                result
+            }
+            Err(shared) => {
+                log::debug!(
+                    "session {} is still in use by a background task; it closes with that",
+                    shared.session.handle()
+                );
+                drop(shared);
+                Ok(())
+            }
+        }
     }
 }
 
@@ -418,9 +478,8 @@ pub fn connect(
     let info = session.info().map_err(ConnectError::from)?;
 
     Ok(Connected {
-        session,
+        live: Arc::new(Live { session, lease }),
         info,
-        lease,
     })
 }
 
@@ -1147,8 +1206,8 @@ mod tests {
                 .is_some_and(|version| { version.split('.').count() >= 2 }),
             "no version in {product}"
         );
-        assert!(connected.session.ping().expect("ping").ok);
-        assert!(connected.lease.is_none(), "no tunnel was asked for");
+        assert!(connected.session().ping().expect("ping").ok);
+        assert!(connected.lease().is_none(), "no tunnel was asked for");
         connected.close().expect("the session closes");
         assert_eq!(open_tunnel_count(), 0);
     }

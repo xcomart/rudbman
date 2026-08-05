@@ -12,9 +12,11 @@ common:
 menu:
   new_connection: Новое подключение…
   settings: Настройки…
+  toggle_explorer: Обозреватель
   about: О программе rudbman
   quit: Выход
   connection: Подключение
+  view: Вид
   tip_menu: Меню
   mac:
     new_connection: Новое подключение…
@@ -281,3 +283,63 @@ driver:
   delete: Удалить
   delete_confirm: "Удалить определение драйвера «%{name}»?"
   none_selected: Выберите драйвер или добавьте новый.
+
+# Боковая панель обозревателя.
+explorer:
+  title: Обозреватель
+  empty: Откройте подключение, чтобы просмотреть его.
+  loading: загрузка…
+  disconnected: Подключение закрыто.
+  unknown_connection: "(подключение)"
+  load_failed_unknown: Не удалось загрузить.
+
+  tables: Таблицы
+  views: Представления
+  procedures: Процедуры
+  functions: Функции
+  sequences: Последовательности
+
+# Панель сведений об объекте.
+detail:
+  tab_columns: Столбцы
+  tab_keys: Ключи
+  tab_references: Ссылки
+  tab_ddl: DDL
+  tab_properties: Свойства
+
+  loading: загрузка…
+  refresh: Обновить
+  copy: Копировать
+  empty: ничего нет
+  no_ddl: Для этого объекта нечего показать в виде инструкции CREATE.
+  ddl_reconstructed: Восстановлено из метаданных, для справки. Ограничения CHECK, триггеры, секционирование и сортировки в текст не попадают.
+
+  column: Столбец
+  type: Тип
+  nullable: "Null"
+  default: По умолчанию
+  key: Ключ
+  comment: Комментарий
+  name: Имя
+  value: Значение
+  seq: Позиция
+  unique: Уникальный
+  order: Порядок
+  target: Ссылается на
+  source: Ссылаются из
+  on_update: При изменении
+  on_delete: При удалении
+
+  primary_key: Первичный ключ
+  indexes: Индексы
+  references_out: Внешние ключи этого объекта
+  references_in: Внешние ключи на этот объект
+
+  schema: Схема
+  start_value: Начало
+  increment: Шаг
+  min_value: Минимум
+  max_value: Максимум
+  current_value: Текущее
+  cycle: Цикл
+  cache: Кэш

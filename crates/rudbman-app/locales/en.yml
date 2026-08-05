@@ -34,11 +34,15 @@ common:
 menu:
   new_connection: New connection…
   settings: Settings…
+  # Shows and hides the explorer sidebar.
+  toggle_explorer: Explorer
   about: About rudbman
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
   # act on connections.
   connection: Connection
+  # Name of its third, holding what changes the layout of the window.
+  view: View
   # Hover label of the button that opens this menu. Named after the menu it
   # opens rather than described, the way the tab strip's own buttons are.
   tip_menu: Menu
@@ -389,3 +393,92 @@ driver:
   delete: Delete
   delete_confirm: "Delete the driver definition “%{name}”?"
   none_selected: Select a driver, or add one.
+
+# The explorer sidebar: one tree over every open connection.
+#
+# Never translated: catalogue, schema, table, routine and sequence names, which
+# are the database's own.
+explorer:
+  title: Explorer
+  # Shown in place of the tree when nothing is open.
+  empty: Open a connection to browse it.
+  # The placeholder row under a node whose children are still on their way.
+  loading: loading…
+  # A node was asked for after its connection had gone — the tab was closed, or
+  # the session died, while the request was in flight.
+  disconnected: The connection is closed.
+  # A root whose profile the shell can no longer name. Only reachable through a
+  # bug, but a blank row would be worse than a word.
+  unknown_connection: "(connection)"
+  # An error row whose message went missing, for the same reason.
+  load_failed_unknown: This could not be loaded.
+
+  # The five folders under a schema.
+  tables: Tables
+  views: Views
+  procedures: Procedures
+  functions: Functions
+  sequences: Sequences
+
+# The object detail panel: what one table, view or routine is made of.
+#
+# Never translated: SQL keywords and clause names — NULL, NOT NULL, PK, UNIQUE,
+# ASC, DESC, CASCADE, RESTRICT, SET NULL, NO ACTION, SET DEFAULT — nor type
+# names, which are the driver's own words and what the DDL says.
+detail:
+  tab_columns: Columns
+  tab_keys: Keys
+  tab_references: References
+  tab_ddl: DDL
+  # The only tab a procedure, a function or a sequence gets: they have no
+  # columns to lay out.
+  tab_properties: Properties
+
+  loading: loading…
+  refresh: Refresh
+  copy: Copy
+  # A table that has none of whatever the tab lists — no indexes, no foreign
+  # keys — as against one that could not be read.
+  empty: nothing here
+  no_ddl: This object has no CREATE statement to show.
+  # The bridge reassembled the statement from JDBC metadata because the server
+  # has no way to quote its own back. JDBC metadata carries none of the things
+  # listed here, so the text is for reading rather than for restoring from.
+  ddl_reconstructed: Rebuilt from metadata, for reference. CHECK constraints, triggers, partitioning and collations are not in it.
+
+  # Column headings.
+  column: Column
+  type: Type
+  # Quoted: bare `Null` is YAML's null literal and would load as an empty
+  # heading. The word is the SQL keyword and is not translated.
+  nullable: "Null"
+  default: Default
+  key: Key
+  comment: Comment
+  name: Name
+  value: Value
+  seq: Position
+  unique: Unique
+  order: Order
+  target: References
+  source: Referenced by
+  on_update: On update
+  on_delete: On delete
+
+  # Section headings inside a tab.
+  primary_key: Primary key
+  indexes: Indexes
+  # Both directions of a foreign key, named by what they mean rather than by
+  # JDBC's "imported" and "exported", which do not say which way it points.
+  references_out: Foreign keys of this object
+  references_in: Foreign keys pointing at this object
+
+  # Rows of a sequence's properties.
+  schema: Schema
+  start_value: Start
+  increment: Increment
+  min_value: Minimum
+  max_value: Maximum
+  current_value: Current
+  cycle: Cycle
+  cache: Cache

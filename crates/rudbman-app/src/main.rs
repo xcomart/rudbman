@@ -22,6 +22,7 @@ mod caption;
 mod connection;
 mod connection_dialog;
 mod driver_manager;
+mod explorer;
 mod i18n;
 mod icons;
 mod maven;
@@ -32,6 +33,7 @@ mod maven;
 #[allow(dead_code)]
 mod pane_tree;
 mod settings_dialog;
+mod table_detail;
 mod theme_editor;
 mod theme_picker;
 
@@ -61,10 +63,12 @@ use app_settings::WindowGeometry;
 use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
+use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
 use i18n::ts;
 use icons::Icons;
 use pane_tree::{Axis, PaneContent, PaneId, PaneNode, PaneTree, SplitId};
 use settings_dialog::{SettingsDialog, SettingsDialogEvent};
+use table_detail::{TableDetail, TableDetailEvent};
 
 actions!(
     rudbman,
@@ -87,6 +91,8 @@ actions!(
         SplitRight,
         /// Split the active pane, putting an empty pane below it.
         SplitBelow,
+        /// Show or hide the explorer sidebar.
+        ToggleExplorer,
         /// Close the open dialog or dropdown menu, if there is one.
         DismissDialog,
     ]
@@ -185,6 +191,22 @@ const TAB_SCROLLBAR: &str = "tab-scrollbar";
 /// Punctuation rather than a word, so it is the same in every language.
 const NOTHING: SharedString = SharedString::new_static("—");
 
+/// Marker for a drag of the explorer's right edge.
+///
+/// A type of its own rather than a [`DraggedSplit`] with a reserved id: the
+/// sidebar is not in the pane tree, and giving it a fake split id would put it
+/// in the path of every enclosing split's listener.
+struct DraggedExplorer;
+
+/// Narrowest the explorer may be dragged, in logical pixels.
+///
+/// Mirrors the clamp `AppSettings::sanitize` applies, so a width the drag
+/// produced survives the round trip through `settings.json` unchanged.
+const MIN_EXPLORER_WIDTH: f32 = 140.;
+
+/// Widest the explorer may be dragged.
+const MAX_EXPLORER_WIDTH: f32 = 720.;
+
 /// The divider a drag is currently holding.
 ///
 /// gpui delivers drag moves to every ancestor of the element the drag started
@@ -195,8 +217,20 @@ struct DraggedSplit {
     split: SplitId,
 }
 
+/// Mints an id no connection tab has ever had.
+///
+/// The explorer keys a whole subtree by it, so it has to survive a tab in the
+/// middle of the strip being closed — which an index into the tab list does
+/// not.
+fn next_connection_id() -> ConnectionId {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    ConnectionId(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 /// One connection tab: the profile it was opened from, and where it has got to.
 struct Connection {
+    /// Stable identity, for as long as the tab lives.
+    id: ConnectionId,
     /// The profile, as it was when the connection was asked for. A later edit
     /// in the dialog does not reach a session that is already open — reopening
     /// is what applies it.
@@ -253,6 +287,12 @@ struct Workspace {
     panes: PaneTree<PaneContent>,
     /// The pane the status bar and the pane commands act on.
     active_pane: PaneId,
+    /// The explorer sidebar.
+    explorer: Entity<Explorer>,
+    /// Whether the sidebar is showing.
+    explorer_visible: bool,
+    /// Its width in logical pixels, as the divider has left it.
+    explorer_width: f32,
     /// The open connections, one per tab, in the order they were opened.
     connections: Vec<Connection>,
     /// Index into [`Workspace::connections`] of the tab on screen.
@@ -280,6 +320,8 @@ struct Workspace {
     _about_events: Subscription,
     /// Keeps the connection dialog subscription alive.
     _connect_events: Subscription,
+    /// Keeps the explorer subscription alive.
+    _explorer_events: Subscription,
     /// Keeps the settings dialog subscription alive.
     _settings_events: Subscription,
     /// Records the window's placement as it is moved and resized.
@@ -323,6 +365,20 @@ impl Workspace {
             },
         );
 
+        let explorer = cx.new(Explorer::new);
+        let explorer_events = cx.subscribe_in(
+            &explorer,
+            window,
+            |this, _explorer, event, window, cx| match event {
+                // The explorer has no session of its own — see its module docs —
+                // so every fetch comes back here, where the tabs live.
+                ExplorerEvent::Load(node) => this.load_node(node.clone(), cx),
+                ExplorerEvent::Activated(target) => {
+                    this.open_object((**target).clone(), window, cx);
+                }
+            },
+        );
+
         let settings = cx.new(SettingsDialog::new);
         let settings_events = cx.subscribe_in(
             &settings,
@@ -361,11 +417,15 @@ impl Workspace {
 
         let panes = PaneTree::single(PaneContent::Placeholder);
         let active_pane = panes.first_leaf().0;
+        let settings_snapshot = app_settings::current(cx);
 
         Self {
             focus_handle: cx.focus_handle(),
             panes,
             active_pane,
+            explorer,
+            explorer_visible: settings_snapshot.explorer_visible,
+            explorer_width: settings_snapshot.explorer_width,
             connections: Vec::new(),
             active_connection: 0,
             tab_scroll: ScrollHandle::new(),
@@ -377,6 +437,7 @@ impl Workspace {
             titlebar,
             _about_events: about_events,
             _connect_events: connect_events,
+            _explorer_events: explorer_events,
             _settings_events: settings_events,
             _bounds: bounds,
         }
@@ -409,6 +470,7 @@ impl Workspace {
         };
         let Some(driver) = drivers.get(&profile.driver_id).cloned() else {
             self.connections.push(Connection {
+                id: next_connection_id(),
                 state: ConnectionState::Failed(ts!(
                     "connect.no_driver",
                     driver = profile.driver_id.clone()
@@ -416,6 +478,7 @@ impl Workspace {
                 profile,
             });
             self.active_connection = self.connections.len() - 1;
+            self.sync_explorer_root(self.active_connection, cx);
             cx.notify();
             return;
         };
@@ -439,10 +502,142 @@ impl Workspace {
         });
 
         self.connections.push(Connection {
+            id: next_connection_id(),
             profile,
             state: ConnectionState::Connecting { _task: task },
         });
         self.active_connection = index;
+        self.sync_explorer_root(index, cx);
+        cx.notify();
+    }
+
+    /// The session of one connection, when it is open.
+    fn session_of(&self, connection: ConnectionId) -> Option<connection::SessionHandle> {
+        self.connections
+            .iter()
+            .find(|open| open.id == connection)
+            .and_then(|open| match &open.state {
+                ConnectionState::Open(connected) => Some(connected.handle()),
+                _ => None,
+            })
+    }
+
+    /// Fetches the children of one explorer node.
+    ///
+    /// The session's own worker thread serialises this against everything else
+    /// that connection is doing, which is the reason the tree draws a
+    /// placeholder rather than pretending to be instant: a schema opened while a
+    /// statement is running waits for it.
+    fn load_node(&mut self, node: NodeId, cx: &mut Context<Self>) {
+        let Some(session) = self.session_of(node.connection()) else {
+            // The tab was closed, or its session died, between the tree asking
+            // and this running. The node keeps its placeholder; there is nobody
+            // to ask.
+            let explorer = self.explorer.clone();
+            let message = ts!("explorer.disconnected");
+            cx.defer(move |cx| {
+                explorer.update(cx, |explorer, cx| {
+                    explorer.deliver(node, Err(message), cx);
+                });
+            });
+            return;
+        };
+
+        let fetch = cx.background_spawn({
+            let node = node.clone();
+            async move { explorer::load_children(session.session(), &node) }
+        });
+        let explorer = self.explorer.clone();
+        cx.spawn(async move |_workspace, cx| {
+            let outcome = fetch.await.map_err(SharedString::from);
+            explorer
+                .update(cx, |explorer, cx| explorer.deliver(node, outcome, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Opens a detail panel for `target` in the active pane.
+    fn open_object(&mut self, target: ObjectTarget, _window: &mut Window, cx: &mut Context<Self>) {
+        let panel = cx.new(|cx| TableDetail::new(target, cx));
+        // Subscribe first, *then* ask. A panel that requested its own metadata
+        // from its constructor would emit into an empty room and sit at
+        // "loading…" for ever; see `TableDetail::new`.
+        cx.subscribe(&panel, |workspace, panel, event, cx| {
+            let TableDetailEvent::Load(target) = event;
+            workspace.load_details(panel.clone(), (**target).clone(), cx);
+        })
+        .detach();
+        panel.update(cx, |panel, cx| panel.refresh(cx));
+
+        let pane = self.active_pane();
+        if let Some(content) = self.panes.get_mut(pane) {
+            *content = PaneContent::TableDetail(panel);
+        }
+        cx.notify();
+    }
+
+    /// Fetches everything one detail panel shows.
+    fn load_details(
+        &mut self,
+        panel: Entity<TableDetail>,
+        target: ObjectTarget,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session_of(target.connection) else {
+            let message = ts!("explorer.disconnected");
+            cx.defer(move |cx| {
+                panel.update(cx, |panel, cx| panel.deliver(Err(message), cx));
+            });
+            return;
+        };
+
+        let fetch = cx.background_spawn({
+            let target = target.clone();
+            async move { table_detail::load_details(session.session(), &target) }
+        });
+        cx.spawn(async move |_workspace, cx| {
+            let outcome = fetch.await.map_err(SharedString::from);
+            panel
+                .update(cx, |panel, cx| panel.deliver(outcome, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Puts the explorer's root for one connection in step with its tab.
+    fn sync_explorer_root(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(open) = self.connections.get(index) else {
+            return;
+        };
+        let info = RootInfo {
+            name: if open.profile.name.trim().is_empty() {
+                ts!("connect.unnamed")
+            } else {
+                SharedString::from(open.profile.name.clone())
+            },
+            color: open.profile.color.clone().map(SharedString::from),
+            live: matches!(open.state, ConnectionState::Open(_)),
+        };
+        let id = open.id;
+        let live = info.live;
+        self.explorer.update(cx, |explorer, cx| {
+            explorer.update_source(cx, |source| source.upsert_root(id, info));
+            // A root opened while the handshake was still out answered "the
+            // connection is closed"; now that there is a session, that row has
+            // to go rather than stay until the tab does.
+            if live {
+                explorer.reload(&NodeId::Connection(id), cx);
+            }
+        });
+    }
+
+    /// Shows or hides the sidebar, and remembers which.
+    fn toggle_explorer(&mut self, cx: &mut Context<Self>) {
+        self.explorer_visible = !self.explorer_visible;
+        let mut settings = app_settings::current(cx);
+        settings.explorer_visible = self.explorer_visible;
+        app_settings::replace(settings, cx);
         cx.notify();
     }
 
@@ -464,7 +659,7 @@ impl Workspace {
                 // A tunnel that dies takes the session above it with it, and the
                 // tab has to say so rather than going quiet: the transaction the
                 // user was in the middle of is gone (§9.3).
-                if let Some(lease) = connected.lease.as_ref() {
+                if let Some(lease) = connected.lease() {
                     let died = lease.watch();
                     cx.spawn(async move |workspace, cx| {
                         let Ok(reason) = died.await else {
@@ -485,6 +680,7 @@ impl Workspace {
                 connection.state = ConnectionState::Failed(error.message().into());
             }
         }
+        self.sync_explorer_root(index, cx);
         cx.notify();
     }
 
@@ -503,6 +699,7 @@ impl Workspace {
         // Replacing the state drops the `Connected`, which closes the session
         // and releases the lease in that order.
         connection.state = ConnectionState::Dead(ts!("statusbar.tunnel_lost", reason = reason));
+        self.sync_explorer_root(index, cx);
         cx.notify();
     }
 
@@ -512,6 +709,10 @@ impl Workspace {
             return;
         }
         let connection = self.connections.remove(index);
+        let closed = connection.id;
+        self.explorer.update(cx, |explorer, cx| {
+            explorer.update_source(cx, |source| source.remove_root(closed));
+        });
         if let ConnectionState::Open(connected) = connection.state {
             // CLOSE_SESSION and then the tunnel, in that order, and off the UI
             // thread because both of them talk to a socket.
@@ -660,6 +861,11 @@ impl Workspace {
     /// borrow back.
     fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = app_settings::current(cx);
+        // The sidebar is not in the settings dialog, but the file it writes
+        // carries the width and the visibility all the same, so the live window
+        // follows what was actually saved.
+        self.explorer_visible = settings.explorer_visible;
+        self.explorer_width = settings.explorer_width;
         // Before the repaint below, so the next frame is already drawn in the
         // newly chosen language.
         i18n::apply(settings.language.as_deref());
@@ -745,6 +951,17 @@ impl Workspace {
     /// Opens the about dialog.
     fn show_about_action(&mut self, _: &ShowAbout, window: &mut Window, cx: &mut Context<Self>) {
         self.open_about(window, cx);
+    }
+
+    /// Shows or hides the explorer sidebar.
+    fn toggle_explorer_action(
+        &mut self,
+        _: &ToggleExplorer,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        self.toggle_explorer(cx);
     }
 
     /// Closes the active pane.
@@ -961,6 +1178,9 @@ impl Workspace {
             MenuEntry::new(ts!("menu.new_connection"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+N"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(NewConnection), cx)),
+            MenuEntry::new(ts!("menu.toggle_explorer"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
             MenuEntry::new(ts!("menu.settings"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+,"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
@@ -1045,6 +1265,30 @@ impl Workspace {
         // user "no connections" over a live tab would be a plain lie.
         let connected = !self.connections.is_empty();
 
+        // The sidebar and the handle that resizes it, both left out entirely
+        // when the panel is hidden — a zero-width flex child would still take
+        // the divider's hit area with it.
+        let sidebar = self.explorer_visible.then(|| {
+            div()
+                .flex()
+                .flex_none()
+                .w(px(self.explorer_width))
+                .min_h_0()
+                .child(self.explorer.clone())
+        });
+        let handle = self.explorer_visible.then(|| {
+            div()
+                .id("explorer-divider")
+                .occlude()
+                .flex_none()
+                .w(px(SPLIT_HANDLE))
+                // Pulled back over the sidebar's own border so the grab area
+                // straddles the seam rather than pushing the work area across.
+                .ml(px(-SPLIT_HANDLE))
+                .cursor_ew_resize()
+                .on_drag(DraggedExplorer, |_, _, _, cx| cx.new(|_| gpui::Empty))
+        });
+
         div()
             .flex()
             .flex_row()
@@ -1055,6 +1299,16 @@ impl Workspace {
             // place the window opacity may be applied; see
             // [`app_settings::window_tint`].
             .bg(app_settings::window_tint(theme.background, cx))
+            // Measured against this box rather than tracked as a delta, exactly
+            // as a split divider is: the width follows the pointer however far
+            // the gesture wandered.
+            .on_drag_move::<DraggedExplorer>(cx.listener(
+                |workspace, event: &DragMoveEvent<DraggedExplorer>, _window, cx| {
+                    workspace.drag_explorer(event, cx);
+                },
+            ))
+            .children(sidebar)
+            .children(handle)
             .child(
                 div()
                     .flex()
@@ -1064,6 +1318,36 @@ impl Workspace {
                     .child(render_pane(root, active, frame, connected, &theme, cx)),
             )
             .into_any_element()
+    }
+
+    /// Moves the sidebar's edge to wherever the pointer has dragged it.
+    ///
+    /// The width is persisted on release rather than per move: a drag is
+    /// hundreds of events and `settings.json` is written once when the window
+    /// closes, so writing the global on every one of them would be the only
+    /// thing in the frame doing work.
+    fn drag_explorer(&mut self, event: &DragMoveEvent<DraggedExplorer>, cx: &mut Context<Self>) {
+        let width = f32::from(event.event.position.x - event.bounds.left());
+        if !width.is_finite() {
+            return;
+        }
+        let width = width.clamp(MIN_EXPLORER_WIDTH, MAX_EXPLORER_WIDTH);
+        if (self.explorer_width - width).abs() > f32::EPSILON {
+            self.explorer_width = width;
+            cx.notify();
+        }
+    }
+
+    /// Writes the sidebar's width into the settings global.
+    ///
+    /// Called when the drag ends; [`app_settings::save`] takes it to disk with
+    /// everything else when the last window closes.
+    fn release_explorer(&mut self, cx: &mut Context<Self>) {
+        let mut settings = app_settings::current(cx);
+        if (settings.explorer_width - self.explorer_width).abs() > f32::EPSILON {
+            settings.explorer_width = self.explorer_width;
+            app_settings::replace(settings, cx);
+        }
     }
 
     /// Moves the divider of `split` to wherever the pointer has dragged it.
@@ -1279,6 +1563,7 @@ fn render_pane(
                 .when(frame, |pane| pane.border_1().border_color(border))
                 .child(match payload {
                     PaneContent::Placeholder => render_placeholder(connected, theme),
+                    PaneContent::TableDetail(panel) => panel.clone().into_any_element(),
                 })
                 .into_any_element()
         }
@@ -1472,17 +1757,20 @@ impl Render for Workspace {
                 MouseButton::Left,
                 cx.listener(|workspace, _: &MouseUpEvent, _window, cx| {
                     workspace.release_tab_scrollbar(cx);
+                    workspace.release_explorer(cx);
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|workspace, _: &MouseUpEvent, _window, cx| {
                     workspace.release_tab_scrollbar(cx);
+                    workspace.release_explorer(cx);
                 }),
             )
             .on_action(cx.listener(Self::new_connection_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::show_about_action))
+            .on_action(cx.listener(Self::toggle_explorer_action))
             .on_action(cx.listener(Self::close_pane_action))
             .on_action(cx.listener(Self::focus_next_pane_action))
             .on_action(cx.listener(Self::focus_prev_pane_action))
@@ -1935,6 +2223,13 @@ fn app_menus() -> Vec<Menu> {
                 NewConnection,
             )],
         },
+        Menu {
+            name: ts!("menu.view"),
+            items: vec![MenuItem::action(
+                ts!("menu.toggle_explorer"),
+                ToggleExplorer,
+            )],
+        },
     ]
 }
 
@@ -1956,6 +2251,9 @@ fn bind_shortcuts(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-q"), Quit, None),
         KeyBinding::new(&format!("{modifier}-n"), NewConnection, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{modifier}-,"), OpenSettings, Some(KEY_CONTEXT)),
+        // `Ctrl+B` is what every editor with a sidebar binds it to, and unlike
+        // the pane chords it has no contender inside a SQL editor.
+        KeyBinding::new(&format!("{modifier}-b"), ToggleExplorer, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", DismissDialog, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-w"), ClosePane, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-]"), FocusNextPane, Some(KEY_CONTEXT)),
@@ -2213,6 +2511,7 @@ mod tests {
                 assert_eq!(state, ts!("statusbar.idle"));
 
                 workspace.connections.push(Connection {
+                    id: next_connection_id(),
                     profile: profile.clone(),
                     state: ConnectionState::Open(Box::new(connected)),
                 });
@@ -2270,6 +2569,7 @@ mod tests {
         window
             .update(cx, |workspace, _window, _cx| {
                 workspace.connections.push(Connection {
+                    id: next_connection_id(),
                     profile,
                     state: ConnectionState::Failed(error.message().into()),
                 });

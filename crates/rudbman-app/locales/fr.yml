@@ -12,9 +12,11 @@ common:
 menu:
   new_connection: Nouvelle connexion…
   settings: Préférences…
+  toggle_explorer: Explorateur
   about: À propos de rudbman
   quit: Quitter
   connection: Connexion
+  view: Affichage
   tip_menu: Menu
   mac:
     new_connection: Nouvelle connexion…
@@ -281,3 +283,63 @@ driver:
   delete: Supprimer
   delete_confirm: "Supprimer la définition de pilote « %{name} » ?"
   none_selected: Choisissez un pilote, ou ajoutez-en un.
+
+# La barre latérale de l'explorateur.
+explorer:
+  title: Explorateur
+  empty: Ouvrez une connexion pour la parcourir.
+  loading: chargement…
+  disconnected: La connexion est fermée.
+  unknown_connection: "(connexion)"
+  load_failed_unknown: Impossible de charger ceci.
+
+  tables: Tables
+  views: Vues
+  procedures: Procédures
+  functions: Fonctions
+  sequences: Séquences
+
+# Le panneau de détail d'un objet.
+detail:
+  tab_columns: Colonnes
+  tab_keys: Clés
+  tab_references: Références
+  tab_ddl: DDL
+  tab_properties: Propriétés
+
+  loading: chargement…
+  refresh: Recharger
+  copy: Copier
+  empty: rien ici
+  no_ddl: Cet objet n'a aucune instruction CREATE à montrer.
+  ddl_reconstructed: Reconstruit à partir des métadonnées, à titre indicatif. Les contraintes CHECK, les déclencheurs, le partitionnement et les collations n'y figurent pas.
+
+  column: Colonne
+  type: Type
+  nullable: Nul
+  default: Défaut
+  key: Clé
+  comment: Commentaire
+  name: Nom
+  value: Valeur
+  seq: Position
+  unique: Unique
+  order: Ordre
+  target: Référence vers
+  source: Référencé par
+  on_update: À la mise à jour
+  on_delete: À la suppression
+
+  primary_key: Clé primaire
+  indexes: Index
+  references_out: Clés étrangères de cet objet
+  references_in: Clés étrangères pointant vers cet objet
+
+  schema: Schéma
+  start_value: Début
+  increment: Incrément
+  min_value: Minimum
+  max_value: Maximum
+  current_value: Courant
+  cycle: Cycle
+  cache: Cache

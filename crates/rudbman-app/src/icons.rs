@@ -87,8 +87,56 @@ pub const WINDOW_CLOSE: &str = "icons/window-close.svg";
 /// the title bar and the desktop icon stop agreeing. See `assets/README.md`.
 pub const LOGO: &str = "icons/logo.svg";
 
+// --- the explorer's object marks ------------------------------------------
+//
+// One glyph per kind of thing a database holds, because the tree is read by
+// shape before it is read by word: a schema with two hundred tables and four
+// views is only scannable if a view does not look like a table. They share the
+// set's 1.8 stroke and 24×24 box, and they are drawn as outlines rather than
+// filled shapes so that the theme's tint is what colours them.
+
+/// A base table.
+pub const TABLE: &str = "icons/table.svg";
+
+/// A view.
+///
+/// The table's frame, dashed — a view has the shape of a table without being
+/// one — with an eye inside it. The dashes are what tells the two apart at a
+/// glance down a long list, which is the only moment this distinction matters.
+pub const VIEW: &str = "icons/view.svg";
+
+/// One of the folders a schema is divided into.
+pub const FOLDER: &str = "icons/folder.svg";
+
+/// A schema, and — where a product has them — a catalogue.
+///
+/// The database cylinder, the same mark [`LOGO`] draws, because that is what
+/// the level *is*: everything under it is one database's contents.
+pub const SCHEMA: &str = "icons/schema.svg";
+
+/// A stored procedure.
+pub const PROCEDURE: &str = "icons/procedure.svg";
+
+/// A stored function.
+///
+/// The mathematician's *f*, not the procedure's arrow: a function is asked for
+/// a value and a procedure is told to do something, and the glyphs say which.
+pub const FUNCTION: &str = "icons/function.svg";
+
+/// A sequence.
+pub const SEQUENCE: &str = "icons/sequence.svg";
+
+/// Reloads whatever the panel is showing.
+pub const REFRESH: &str = "icons/refresh.svg";
+
+/// Copies the panel's text to the clipboard.
+pub const COPY: &str = "icons/copy.svg";
+
+/// Shows and hides the explorer.
+pub const SIDEBAR: &str = "icons/sidebar.svg";
+
 /// Every icon, paired with the bytes [`Icons`] hands back for it.
-const ICONS: [(&str, &[u8]); 7] = [
+const ICONS: [(&str, &[u8]); 17] = [
     (LOGO, include_bytes!("../assets/icons/logo.svg")),
     (TAB_LIST, include_bytes!("../assets/icons/tab-list.svg")),
     (NEW_TAB, include_bytes!("../assets/icons/new-tab.svg")),
@@ -108,6 +156,16 @@ const ICONS: [(&str, &[u8]); 7] = [
         WINDOW_CLOSE,
         include_bytes!("../assets/icons/window-close.svg"),
     ),
+    (TABLE, include_bytes!("../assets/icons/table.svg")),
+    (VIEW, include_bytes!("../assets/icons/view.svg")),
+    (FOLDER, include_bytes!("../assets/icons/folder.svg")),
+    (SCHEMA, include_bytes!("../assets/icons/schema.svg")),
+    (PROCEDURE, include_bytes!("../assets/icons/procedure.svg")),
+    (FUNCTION, include_bytes!("../assets/icons/function.svg")),
+    (SEQUENCE, include_bytes!("../assets/icons/sequence.svg")),
+    (REFRESH, include_bytes!("../assets/icons/refresh.svg")),
+    (COPY, include_bytes!("../assets/icons/copy.svg")),
+    (SIDEBAR, include_bytes!("../assets/icons/sidebar.svg")),
 ];
 
 /// The asset source backing every [`svg`](gpui::svg) element in the app.

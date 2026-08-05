@@ -6,11 +6,15 @@
 //! pane collapses the split it sat in and promotes its sibling into the split's
 //! place, which is what keeps the tree free of one-child nodes.
 //!
-//! The module is deliberately free of gpui types: the promotion and collapse
+//! The *mechanics* are deliberately free of gpui: the promotion and collapse
 //! rules are the part of a split layout that is easy to get subtly wrong, so
-//! they live in a plain data structure with unit tests of their own. The view
-//! layer walks the result through [`PaneTree::root`] and renders one nested
-//! flex box per node.
+//! they live in a plain data structure with unit tests of their own, over a
+//! payload the tree never looks inside. The view layer walks the result through
+//! [`PaneTree::root`] and renders one nested flex box per node.
+//!
+//! [`PaneContent`] — the shell's own payload — is the exception, and only
+//! because a panel *is* a view: it carries the entity handles the renderer
+//! needs. Nothing above it does.
 //!
 //! # Why the tree is generic *and* the payload is an enum
 //!
@@ -32,6 +36,10 @@
 //! every test in this file, stays untouched.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use gpui::Entity;
+
+use crate::table_detail::TableDetail;
 
 /// Fraction of a split the first child gets when the split is created.
 ///
@@ -65,17 +73,28 @@ static NEXT_SPLIT_ID: AtomicU64 = AtomicU64::new(1);
 /// The tree knows none of these variants — see the module docs — so a milestone
 /// that adds a kind of panel adds a variant here and an arm to the renderer,
 /// and touches nothing else.
+///
+/// This enum is the one thing in the file that is *not* free of gpui: a panel is
+/// a view, and a view is an [`Entity`]. The mechanics above it stay generic and
+/// testable on a plain payload — that is what [`PaneTree`]'s type parameter is
+/// for, and what the tests below use — while the shell's own instantiation
+/// carries the handles the renderer needs.
 #[derive(Debug)]
 pub enum PaneContent {
     /// The empty state: no connection is open, so there is nothing to show yet.
     ///
-    /// M0 has only this one. It is a real variant rather than an `Option<T>`
-    /// around the others because a pane with nothing in it is a state the shell
-    /// keeps rendering — closing the last result of a connection leaves the
-    /// pane standing, empty, rather than tearing the layout down.
+    /// A real variant rather than an `Option<T>` around the others because a
+    /// pane with nothing in it is a state the shell keeps rendering — closing
+    /// the last result of a connection leaves the pane standing, empty, rather
+    /// than tearing the layout down.
     Placeholder,
-    // M2 adds `TableDetail`, M3 `Editor` and `Grid`, M5 `Erd`, M7
-    // `QueryBuilder`; see the architecture document, §7.1.
+    /// One object's columns, keys, references and DDL.
+    ///
+    /// Holds the panel itself: dropping the pane drops the handle, and with it
+    /// the view and whatever fetch it had out.
+    TableDetail(Entity<TableDetail>),
+    // M3 adds `Editor` and `Grid`, M5 `Erd`, M7 `QueryBuilder`; see the
+    // architecture document, §7.1.
 }
 
 /// The identity of one pane, stable for as long as the pane exists.

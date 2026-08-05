@@ -12,9 +12,11 @@ common:
 menu:
   new_connection: 新規接続…
   settings: 設定…
+  toggle_explorer: エクスプローラー
   about: rudbman について
   quit: 終了
   connection: 接続
+  view: 表示
   tip_menu: メニュー
   mac:
     new_connection: 新規接続…
@@ -281,3 +283,63 @@ driver:
   delete: 削除
   delete_confirm: "ドライバー定義「%{name}」を削除しますか？"
   none_selected: ドライバーを選ぶか、新しく追加してください。
+
+# エクスプローラーのサイドバー。
+explorer:
+  title: エクスプローラー
+  empty: 接続を開くと中身をたどれます。
+  loading: 読み込み中…
+  disconnected: 接続は閉じています。
+  unknown_connection: "(接続)"
+  load_failed_unknown: 読み込めませんでした。
+
+  tables: テーブル
+  views: ビュー
+  procedures: プロシージャー
+  functions: 関数
+  sequences: シーケンス
+
+# オブジェクトの詳細パネル。
+detail:
+  tab_columns: 列
+  tab_keys: キー
+  tab_references: 参照
+  tab_ddl: DDL
+  tab_properties: プロパティ
+
+  loading: 読み込み中…
+  refresh: 再読み込み
+  copy: コピー
+  empty: ありません
+  no_ddl: このオブジェクトに表示できる CREATE 文はありません。
+  ddl_reconstructed: メタデータから組み立てた参考用です。CHECK 制約・トリガー・パーティション・照合順序は含まれていません。
+
+  column: 列
+  type: 型
+  nullable: NULL 可
+  default: 既定値
+  key: キー
+  comment: コメント
+  name: 名前
+  value: 値
+  seq: 位置
+  unique: 一意
+  order: 並び
+  target: 参照先
+  source: 参照元
+  on_update: 更新時
+  on_delete: 削除時
+
+  primary_key: 主キー
+  indexes: インデックス
+  references_out: このオブジェクトの外部キー
+  references_in: このオブジェクトを参照する外部キー
+
+  schema: スキーマ
+  start_value: 開始値
+  increment: 増分
+  min_value: 最小値
+  max_value: 最大値
+  current_value: 現在値
+  cycle: 循環
+  cache: キャッシュ

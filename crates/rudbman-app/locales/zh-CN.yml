@@ -12,9 +12,11 @@ common:
 menu:
   new_connection: 新建连接…
   settings: 设置…
+  toggle_explorer: 资源管理器
   about: 关于 rudbman
   quit: 退出
   connection: 连接
+  view: 视图
   tip_menu: 菜单
   mac:
     new_connection: 新建连接…
@@ -281,3 +283,63 @@ driver:
   delete: 删除
   delete_confirm: "删除驱动定义“%{name}”？"
   none_selected: 请选择一个驱动，或新建一个。
+
+# 资源管理器侧边栏。
+explorer:
+  title: 资源管理器
+  empty: 打开一个连接即可浏览。
+  loading: 正在加载…
+  disconnected: 连接已关闭。
+  unknown_connection: "(连接)"
+  load_failed_unknown: 无法加载。
+
+  tables: 表
+  views: 视图
+  procedures: 存储过程
+  functions: 函数
+  sequences: 序列
+
+# 对象详情面板。
+detail:
+  tab_columns: 列
+  tab_keys: 键
+  tab_references: 引用
+  tab_ddl: DDL
+  tab_properties: 属性
+
+  loading: 正在加载…
+  refresh: 刷新
+  copy: 复制
+  empty: 无
+  no_ddl: 该对象没有可显示的 CREATE 语句。
+  ddl_reconstructed: 由元数据重建，仅供参考。其中不含 CHECK 约束、触发器、分区和排序规则。
+
+  column: 列
+  type: 类型
+  nullable: 可空
+  default: 默认值
+  key: 键
+  comment: 注释
+  name: 名称
+  value: 值
+  seq: 位置
+  unique: 唯一
+  order: 排序
+  target: 引用目标
+  source: 引用来源
+  on_update: 更新时
+  on_delete: 删除时
+
+  primary_key: 主键
+  indexes: 索引
+  references_out: 该对象的外键
+  references_in: 指向该对象的外键
+
+  schema: 模式
+  start_value: 起始值
+  increment: 步长
+  min_value: 最小值
+  max_value: 最大值
+  current_value: 当前值
+  cycle: 循环
+  cache: 缓存

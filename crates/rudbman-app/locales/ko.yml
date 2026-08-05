@@ -12,9 +12,11 @@ common:
 menu:
   new_connection: 새 연결…
   settings: 설정…
+  toggle_explorer: 탐색기
   about: rudbman 정보
   quit: 종료
   connection: 연결
+  view: 보기
   tip_menu: 메뉴
   mac:
     new_connection: 새 연결…
@@ -281,3 +283,63 @@ driver:
   delete: 삭제
   delete_confirm: "드라이버 정의 “%{name}”을(를) 삭제할까요?"
   none_selected: 드라이버를 선택하거나 새로 추가하세요.
+
+# 탐색기 사이드바.
+explorer:
+  title: 탐색기
+  empty: 연결을 열면 내용을 탐색할 수 있습니다.
+  loading: 불러오는 중…
+  disconnected: 연결이 닫혔습니다.
+  unknown_connection: "(연결)"
+  load_failed_unknown: 불러오지 못했습니다.
+
+  tables: 테이블
+  views: 뷰
+  procedures: 프로시저
+  functions: 함수
+  sequences: 시퀀스
+
+# 객체 상세 패널.
+detail:
+  tab_columns: 열
+  tab_keys: 키
+  tab_references: 참조
+  tab_ddl: DDL
+  tab_properties: 속성
+
+  loading: 불러오는 중…
+  refresh: 새로 고침
+  copy: 복사
+  empty: 없음
+  no_ddl: 이 객체에는 보여줄 CREATE 구문이 없습니다.
+  ddl_reconstructed: 메타데이터에서 재구성한 참고용입니다. CHECK 제약, 트리거, 파티션, 콜레이션은 포함되지 않습니다.
+
+  column: 열
+  type: 타입
+  nullable: 널
+  default: 기본값
+  key: 키
+  comment: 설명
+  name: 이름
+  value: 값
+  seq: 순서
+  unique: 고유
+  order: 정렬
+  target: 참조 대상
+  source: 참조하는 쪽
+  on_update: 갱신 시
+  on_delete: 삭제 시
+
+  primary_key: 기본 키
+  indexes: 인덱스
+  references_out: 이 객체가 참조하는 외래 키
+  references_in: 이 객체를 참조하는 외래 키
+
+  schema: 스키마
+  start_value: 시작값
+  increment: 증가값
+  min_value: 최솟값
+  max_value: 최댓값
+  current_value: 현재값
+  cycle: 순환
+  cache: 캐시

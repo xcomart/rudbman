@@ -41,6 +41,21 @@ const DEFAULT_JVM_HEAP_MB: u32 = 1024;
 const MIN_JVM_HEAP_MB: u32 = 128;
 /// Rows fetched per result batch when none is configured. See §7.5.
 const DEFAULT_FETCH_BATCH_ROWS: u32 = 500;
+
+/// Width of the explorer sidebar on a first run, in logical pixels.
+const DEFAULT_EXPLORER_WIDTH: f32 = 260.0;
+
+/// Narrowest the explorer may be dragged.
+///
+/// A schema name has to survive: below this the tree is a column of ellipses,
+/// which is worse than the panel being closed.
+const MIN_EXPLORER_WIDTH: f32 = 140.0;
+
+/// Widest the explorer may be dragged.
+///
+/// Not a taste judgement — a sidebar wider than this on a small display leaves
+/// no work area at all, and the drag has no other floor to stop at.
+const MAX_EXPLORER_WIDTH: f32 = 720.0;
 /// Upper bound on the batch size: one batch crosses the JNI boundary as a
 /// single buffer, so an unbounded value is an out-of-memory waiting to happen.
 const MAX_FETCH_BATCH_ROWS: u32 = 100_000;
@@ -223,6 +238,19 @@ pub struct AppSettings {
     /// Value [`ConnectionProfile::confirm_writes`](crate::ConnectionProfile)
     /// starts at for a newly created profile.
     pub confirm_writes_default: bool,
+    /// Width of the explorer sidebar in logical pixels; clamped to
+    /// 140.0 ..= 720.0 on load.
+    ///
+    /// Top level rather than inside [`WindowState`]: that struct is what a live
+    /// window writes back as it is moved and resized, and the sidebar is a
+    /// preference the user set once. Mixing the two would have a window drag
+    /// rewriting a panel width.
+    pub explorer_width: f32,
+    /// Whether the explorer sidebar is showing.
+    ///
+    /// On by default: a workbench whose object tree is hidden until it is found
+    /// in a menu is a workbench that looks like it has none.
+    pub explorer_visible: bool,
     /// Window geometry and background treatment.
     pub window: WindowState,
     /// Top-level keys this build does not know, kept verbatim.
@@ -251,6 +279,8 @@ impl Default for AppSettings {
             fetch_batch_rows: DEFAULT_FETCH_BATCH_ROWS,
             query_timeout_s: 0,
             confirm_writes_default: true,
+            explorer_width: DEFAULT_EXPLORER_WIDTH,
+            explorer_visible: true,
             window: WindowState::default(),
             extra: BTreeMap::new(),
         }
@@ -340,6 +370,12 @@ impl AppSettings {
         self.editor_font_size = clamp_font_size(self.editor_font_size, DEFAULT_EDITOR_FONT_SIZE);
         blank_to_none(&mut self.editor_font_family);
         self.jvm_heap_mb = self.jvm_heap_mb.max(MIN_JVM_HEAP_MB);
+        self.explorer_width = clamp_f32(
+            self.explorer_width,
+            MIN_EXPLORER_WIDTH,
+            MAX_EXPLORER_WIDTH,
+            DEFAULT_EXPLORER_WIDTH,
+        );
         // An empty or whitespace-only argument would reach the JVM as an empty
         // string, which it rejects with a message about the wrong argument.
         self.jvm_extra_args.retain(|arg| !arg.trim().is_empty());
