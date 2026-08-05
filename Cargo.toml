@@ -59,6 +59,23 @@ parking_lot = "0.12"
 smallvec = "1"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+
+# --- text buffer: the SQL editor's document ---
+# A rope, because the editor has to hold a 100MB extracted script and stay
+# responsive: an insert is O(log n) rather than the memmove a `String` would do,
+# and line lookups are O(log n) rather than a scan. Two of its indexes are load
+# bearing beyond that — `byte_to_line`/`line_to_byte` are what let the syntax
+# cache address the buffer by line, and `char_to_utf16_cu`/`utf16_cu_to_char`
+# are what make the IME's UTF-16 offsets convertible in O(log n) instead of the
+# whole-string walk a flat buffer needs on every composition step. Default
+# features are off so that a line break is `\n` or `\r\n` and nothing else: with
+# `unicode_lines` a `\u{2028}` inside a string literal would split a line in the
+# rope that the SQL lexer does not split, and the two views of the buffer have
+# to agree.
+ropey = { version = "1.6", default-features = false, features = [
+    "cr_lines",
+    "simd",
+] }
 futures = "0.3"
 async-trait = "0.1"
 bitflags = "2"
@@ -134,6 +151,9 @@ rudbman-core = { path = "crates/rudbman-core" }
 rudbman-ui = { path = "crates/rudbman-ui" }
 rudbman-ssh = { path = "crates/rudbman-ssh" }
 rudbman-jdbc = { path = "crates/rudbman-jdbc" }
+rudbman-grid = { path = "crates/rudbman-grid" }
+rudbman-sql = { path = "crates/rudbman-sql" }
+rudbman-editor = { path = "crates/rudbman-editor" }
 rudbman-app = { path = "crates/rudbman-app" }
 
 [profile.dev]

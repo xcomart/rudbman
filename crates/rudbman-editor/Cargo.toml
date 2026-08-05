@@ -1,0 +1,33 @@
+[package]
+name = "rudbman-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The multi-line SQL code editor widget"
+
+[dependencies]
+# The document. See the workspace manifest for why a rope and why these
+# features.
+ropey.workspace = true
+# Tokens, line states and statement spans: the whole of what the editor knows
+# about SQL comes from here, and nothing in this crate parses.
+rudbman-sql.workspace = true
+# The nineteen-slot syntax palette, the overlay scrollbars, and the text field
+# the find bar is built out of.
+rudbman-ui.workspace = true
+
+gpui.workspace = true
+# The caret moves by grapheme cluster rather than by `char`, so that a Hangul
+# syllable or an emoji with a zero-width joiner in it is one cursor step -- the
+# same reason `rudbman-ui`'s text field depends on it. Here it is driven by
+# `GraphemeCursor` rather than `grapheme_indices`, so that a boundary can be
+# found next to an offset without walking the buffer to reach it.
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+# gpui's headless test platform. Every behaviour worth holding down here --
+# input handling above all -- only exists once there is a window and a focused
+# element, so the tests open one. Test-only: the library links gpui without it.
+gpui = { workspace = true, features = ["test-support"] }
