@@ -358,6 +358,16 @@ public final class ExtractJob extends Jobs.Job {
                 // A driver entitled to refuse the hint; nothing is lost.
             }
             inFlight(st);
+            // A cancel that raced the statement's creation was answered by
+            // Statement.cancel on a statement that was not yet executing, which
+            // JDBC lets a driver treat as a no-op — H2 does. The flag is the
+            // durable half of the request, so it gets one last look before
+            // execution begins; without it, a query the driver materialises
+            // (a view over a generator, say) would run to completion with the
+            // cancel already lost.
+            if (shouldStop()) {
+                return;
+            }
             try (ResultSet rs = st.executeQuery(sql)) {
                 ResultSetMetaData md = rs.getMetaData();
                 int n = md.getColumnCount();

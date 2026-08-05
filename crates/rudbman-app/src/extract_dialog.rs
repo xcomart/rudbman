@@ -1261,6 +1261,13 @@ mod tests {
                 return;
             }
             cx.executor().advance_clock(POLL_INTERVAL);
+            // The clock above is virtual and advancing it costs no wall time,
+            // but the job lives on a real bridge thread: noticing a cancel,
+            // closing the statement and finalising the file take real
+            // milliseconds. Two thousand instantaneous polls can all fire
+            // inside that window, so each turn yields one real millisecond —
+            // a two-second ceiling — to let the bridge actually move.
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         panic!("the job never reported a terminal state");
     }
@@ -1554,11 +1561,19 @@ mod tests {
     /// is, and hands the session back in one piece.
     #[gpui::test]
     fn cancelling_stops_the_job_and_leaves_the_session_usable(cx: &mut TestAppContext) {
+        // Not a big table but a slow one. A big table only loses the race on a
+        // fast enough disk — one CI runner finished 400k rows before the first
+        // poll — whereas a view that sleeps a millisecond per row cannot reach
+        // the end inside the test's lifetime, so the cancel always lands
+        // mid-flight.
         let connected = h2(
             "extract-cancel",
-            &["CREATE TABLE BIG AS SELECT X AS ID, \
-                 'padding padding padding padding padding padding' AS BODY \
-                 FROM SYSTEM_RANGE(1, 400000)"],
+            &[
+                "CREATE ALIAS NAP AS 'long nap(long ms) throws Exception { \
+                     Thread.sleep(ms); return ms; }'",
+                "CREATE VIEW BIG AS SELECT NAP(1) AS PAUSE, X AS ID \
+                     FROM SYSTEM_RANGE(1, 400000)",
+            ],
         );
         let dir = tempfile::tempdir().expect("a temporary directory");
         let path = dir.path().join("big.sql");
@@ -1595,20 +1610,23 @@ mod tests {
             .expect("the window is open");
 
         // The partial output is left on disk on purpose — it is work the user
-        // may still want — and it is partial: four hundred thousand rows of
-        // padding do not fit in what a cancelled job managed to write.
+        // may still want — and it is partial: four hundred thousand rows do
+        // not fit in what a job cancelled after milliseconds managed to write.
         let written = std::fs::metadata(&path)
             .expect("the partial file is left where it is")
             .len();
         assert!(
-            written < 400_000 * 40,
+            written < 400_000 * 20,
             "the job wrote {written} bytes, which is not a cancelled extraction"
         );
 
-        // And the session is not left holding the connection lock.
+        // And the session is not left holding the connection lock. Counting a
+        // plain range, not the sleeping view, so the check itself is instant.
         let cursor = connected
             .session()
-            .execute(&StatementSpec::new("SELECT COUNT(*) FROM BIG"))
+            .execute(&StatementSpec::new(
+                "SELECT COUNT(*) FROM SYSTEM_RANGE(1, 10)",
+            ))
             .expect("the session survived the cancelled job");
         drop(cursor);
     }
