@@ -1,8 +1,19 @@
-//! The explorer sidebar: one tree over every open connection.
+//! The explorer sidebar: the tree of the connection whose tab is on top.
 //!
 //! The panel down the left of the window (architecture document, §7.1). Each
 //! open connection is a root; under it the database's catalogues, schemas,
 //! folders and objects arrive one round trip at a time.
+//!
+//! # Why every root is kept and only one is drawn
+//!
+//! The source holds the roots and the fetched children of *every* open
+//! connection, and [`TreeSource::children`] answers the root level with the one
+//! the workspace named through [`ExplorerSource::set_visible_root`]. Switching
+//! the connection tab therefore switches the tree without costing a single round
+//! trip: nothing is thrown away, so coming back finds the schemas already open
+//! and the folders already counted. Expansion state survives untouched for the
+//! same reason — the widget keys it by [`NodeId`], and a node id names the
+//! connection it belongs to, so two connections can never collide.
 //!
 //! # Where the work happens
 //!
@@ -301,6 +312,12 @@ pub struct RootInfo {
 pub struct ExplorerSource {
     /// The open connections, in tab order.
     roots: Vec<ConnectionId>,
+    /// The one root the tree draws: the connection whose tab is on top.
+    ///
+    /// `None` while no connection is open at all, which is the only state the
+    /// panel's own empty rendering answers for. Everything the other roots have
+    /// fetched stays in the maps below, waiting for their tab to come back.
+    visible_root: Option<ConnectionId>,
     /// What each root draws.
     info: HashMap<ConnectionId, RootInfo>,
     /// Children that have been fetched, or are being fetched.
@@ -339,9 +356,36 @@ impl ExplorerSource {
             .retain(|node, _| node.connection() != connection);
     }
 
-    /// The roots, in tab order.
+    /// The roots, in tab order — every open connection, drawn or not.
+    ///
+    /// Test-only: the panel draws from [`ExplorerSource::visible_roots`], and
+    /// what the tests here have to be able to say is that the ones *not* drawn
+    /// are still there.
+    #[cfg(test)]
     pub fn roots(&self) -> &[ConnectionId] {
         &self.roots
+    }
+
+    /// Draws only `connection`'s root, or none at all with `None`.
+    ///
+    /// Called from every place the workspace's active connection changes. Purely
+    /// a filter: nothing is fetched, invalidated or forgotten, so the tab this
+    /// switches away from is exactly as the user left it when they come back.
+    pub fn set_visible_root(&mut self, connection: Option<ConnectionId>) {
+        self.visible_root = connection;
+    }
+
+    /// The roots the tree actually draws: at most one, and only while its
+    /// connection is still open.
+    ///
+    /// A root whose tab closed between the workspace naming it and this being
+    /// asked would otherwise be drawn out of a map it is no longer in, which is
+    /// a blank row rather than an error.
+    pub fn visible_roots(&self) -> Vec<ConnectionId> {
+        self.visible_root
+            .filter(|root| self.roots.contains(root))
+            .into_iter()
+            .collect()
     }
 
     /// Marks a node's children as being fetched.
@@ -406,9 +450,13 @@ impl TreeSource for ExplorerSource {
     fn children(&self, parent: Option<&NodeId>) -> ChildState<NodeId> {
         let Some(parent) = parent else {
             // The roots are always known: the workspace writes them as tabs open
-            // and close, so there is nothing to fetch.
+            // and close, so there is nothing to fetch. Only the connection whose
+            // tab is on top is answered with — see the module documentation.
             return ChildState::Loaded(
-                self.roots.iter().copied().map(NodeId::Connection).collect(),
+                self.visible_roots()
+                    .into_iter()
+                    .map(NodeId::Connection)
+                    .collect(),
             );
         };
         match parent {
@@ -784,6 +832,15 @@ impl Explorer {
         self.update_source(cx, |source| source.invalidate(&node));
     }
 
+    /// The connection roots the tree is drawing, for the shell's own tests.
+    ///
+    /// The source is behind the tree widget, which nothing outside this module
+    /// holds; asserting "the sidebar followed the tab" needs a way through.
+    #[cfg(test)]
+    pub fn visible_roots(&self, cx: &App) -> Vec<ConnectionId> {
+        self.tree.read(cx).source().visible_roots()
+    }
+
     /// The selected node, when it names an object with rows to select from.
     ///
     /// What "query the selected object" acts on. Routines and sequences answer
@@ -806,7 +863,11 @@ impl Focusable for Explorer {
 impl Render for Explorer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
-        let empty = self.tree.read(cx).source().roots().is_empty();
+        // What the tree would draw at the root level, not how many connections
+        // are open: with the roots filtered down to the active tab's, the two
+        // part company only while nothing is open at all — and that is the state
+        // the words below are for.
+        let empty = self.tree.read(cx).source().visible_roots().is_empty();
 
         div()
             .id("explorer")
@@ -1025,6 +1086,7 @@ pub(crate) mod tests {
                 live: true,
             },
         );
+        source.set_visible_root(Some(C));
         source.set_error(broken.clone(), "permission denied".into());
         let ChildState::Loaded(rows) = source.children(Some(&broken)) else {
             panic!("a failed node still answers")
@@ -1065,6 +1127,7 @@ pub(crate) mod tests {
                 live: true,
             },
         );
+        source.set_visible_root(Some(C));
         assert_eq!(
             source.children(None),
             ChildState::Loaded(vec![NodeId::Connection(C)])
@@ -1127,6 +1190,7 @@ pub(crate) mod tests {
                 live: true,
             },
         );
+        source.set_visible_root(Some(C));
         let folder = NodeId::Folder {
             connection: C,
             scope: scope("secret"),
@@ -1197,6 +1261,9 @@ pub(crate) mod tests {
         }
 
         source.remove_root(C);
+        // The workspace names the tab that took the closed one's place; the
+        // filter follows it.
+        source.set_visible_root(Some(other));
         assert_eq!(
             source.children(None),
             ChildState::Loaded(vec![NodeId::Connection(other)])
@@ -1211,6 +1278,61 @@ pub(crate) mod tests {
             source.children(Some(&NodeId::Connection(other))),
             ChildState::Loaded(_)
         ));
+    }
+
+    /// Switching the connection tab switches the tree, and costs nothing.
+    ///
+    /// The root level answers with the active connection alone, but everything
+    /// the other one fetched is still in the source — so coming back finds it
+    /// there rather than asking the database again.
+    #[test]
+    fn only_the_active_connections_root_is_drawn_and_the_rest_are_kept() {
+        let other = ConnectionId(2);
+        let mut source = ExplorerSource::default();
+        for connection in [C, other] {
+            source.upsert_root(
+                connection,
+                RootInfo {
+                    name: "x".into(),
+                    color: None,
+                    live: true,
+                },
+            );
+            source.set_children(
+                NodeId::Connection(connection),
+                folders_of(connection, scope("public")),
+            );
+        }
+
+        // Nothing named yet, which is what "no connections at all" looks like:
+        // an empty root level, and the panel's own empty wording over it.
+        assert_eq!(source.children(None), ChildState::Loaded(Vec::new()));
+        assert!(source.visible_roots().is_empty());
+
+        source.set_visible_root(Some(C));
+        assert_eq!(
+            source.children(None),
+            ChildState::Loaded(vec![NodeId::Connection(C)])
+        );
+
+        source.set_visible_root(Some(other));
+        assert_eq!(
+            source.children(None),
+            ChildState::Loaded(vec![NodeId::Connection(other)])
+        );
+        // The one switched away from kept every child it had fetched, so
+        // switching back is a filter and not a reload.
+        assert!(matches!(
+            source.children(Some(&NodeId::Connection(C))),
+            ChildState::Loaded(_)
+        ));
+        // And both are still roots: the filter hides one, it does not close it.
+        assert_eq!(source.roots(), [C, other]);
+
+        // A root named after its tab closed draws nothing rather than a row out
+        // of a map it has been removed from.
+        source.remove_root(other);
+        assert_eq!(source.children(None), ChildState::Loaded(Vec::new()));
     }
 
     #[test]

@@ -13,6 +13,20 @@
 //! canvas — and showing the one of them on top, or the empty state while it
 //! holds none.
 //!
+//! # One work area per connection
+//!
+//! The connection tab at the top is the window's mode: it selects a whole
+//! [`WorkArea`] — a pane tree, the pane the marker is on, and the query numbering
+//! — and the explorer's visible root along with it. Everything below the strip
+//! belongs to exactly one connection, so switching tabs switches the panes, the
+//! splits and the sidebar together, and switching back finds them as they were.
+//!
+//! The alternative, one tree shared by every connection, was tried first and
+//! reads badly: a split arranged for one database follows the user into the
+//! next, and a strip of tabs from three connections at once needs a colour dot
+//! per tab to be legible at all. Scoping the whole area is what makes the tab
+//! mean something.
+//!
 //! What is deliberately *not* here: the connection dialog (M1) and the explorer
 //! tree (M2). The menu already carries the row that will open the first of them;
 //! its handler is marked `TODO` and does nothing so far.
@@ -237,7 +251,71 @@ fn next_connection_id() -> ConnectionId {
     ConnectionId(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
 
-/// One connection tab: the profile it was opened from, and where it has got to.
+/// Everything one connection tab shows below the strip.
+///
+/// Held by the [`Connection`] itself, because the lifetimes match exactly:
+/// closing a tab is what discards the panes it opened, and the drop order that
+/// falls out of that is the one §9.3 asks for — every query pane, and with it
+/// every [`connection::SessionHandle`] and every open cursor, goes before the
+/// session it was running against is closed.
+struct WorkArea {
+    /// The panes. Never empty, though a pane may hold no tabs.
+    panes: PaneTree<Pane>,
+    /// The pane the status bar and the pane commands act on.
+    active_pane: PaneId,
+    /// Number the next query tab of this connection is titled with.
+    ///
+    /// Per connection rather than per window, so the numbering reads as "the
+    /// third query I opened on staging" rather than counting every editor in
+    /// the window. Counts up for the life of the tab and is never reused: two
+    /// tabs called "Query 3" — one of them a query that was closed and reopened
+    /// — would be worse than a gap in the numbering.
+    next_query: u64,
+}
+
+impl WorkArea {
+    /// A work area of one empty pane, which renders the empty state.
+    fn new() -> Self {
+        let panes = PaneTree::single(Pane::new());
+        let active_pane = panes.first_leaf().0;
+        Self {
+            panes,
+            active_pane,
+            next_query: 1,
+        }
+    }
+
+    /// The active pane, falling back to the first one.
+    ///
+    /// The fallback only matters if [`WorkArea::active_pane`] ever went stale;
+    /// the tree always has a pane, so this never fails.
+    fn active(&self) -> PaneId {
+        if self.panes.contains(self.active_pane) {
+            self.active_pane
+        } else {
+            self.panes.first_leaf().0
+        }
+    }
+
+    /// Every query pane in the area, in layout order.
+    ///
+    /// What the connection's death is applied to: the tabs stay and the editors
+    /// let go of the session, one by one.
+    fn queries(&self) -> Vec<Entity<QueryPane>> {
+        let mut found = Vec::new();
+        for (_, pane) in self.panes.leaves() {
+            for item in pane.items() {
+                if let PaneItem::Query { pane, .. } = item {
+                    found.push(pane.clone());
+                }
+            }
+        }
+        found
+    }
+}
+
+/// One connection tab: the profile it was opened from, where it has got to, and
+/// what it has open.
 struct Connection {
     /// Stable identity, for as long as the tab lives.
     id: ConnectionId,
@@ -247,6 +325,8 @@ struct Connection {
     profile: ConnectionProfile,
     /// What the session is doing.
     state: ConnectionState,
+    /// The panes below the strip while this tab is on top.
+    work: WorkArea,
 }
 
 /// The life of one connection tab.
@@ -301,16 +381,6 @@ struct Workspace {
     /// becomes what it is meant to be: the fallback that keeps the shortcuts
     /// alive while nothing else holds the keyboard.
     focus_handle: FocusHandle,
-    /// The panes of the work area. Never empty, though a pane may hold no tabs.
-    panes: PaneTree<Pane>,
-    /// The pane the status bar and the pane commands act on.
-    active_pane: PaneId,
-    /// Number the next query tab is titled with.
-    ///
-    /// Counts up for the life of the window and is never reused: two tabs
-    /// called "Query 3" — one of them a query that was closed and reopened —
-    /// would be worse than a gap in the numbering.
-    next_query: u64,
     /// The explorer sidebar.
     explorer: Entity<Explorer>,
     /// Whether the sidebar is showing.
@@ -318,6 +388,9 @@ struct Workspace {
     /// Its width in logical pixels, as the divider has left it.
     explorer_width: f32,
     /// The open connections, one per tab, in the order they were opened.
+    ///
+    /// Each carries the work area shown while its tab is on top, so this list
+    /// is what the whole window below the strip is drawn from.
     connections: Vec<Connection>,
     /// Index into [`Workspace::connections`] of the tab on screen.
     active_connection: usize,
@@ -358,7 +431,7 @@ struct Workspace {
 }
 
 impl Workspace {
-    /// Builds the shell around a single empty pane.
+    /// Builds the shell with no connection open, and so no work area at all.
     ///
     /// `titlebar` is the style the window was opened with; from then on the
     /// field tracks whatever the applied settings switched the window to.
@@ -444,15 +517,10 @@ impl Workspace {
             record_window_geometry(window, cx);
         });
 
-        let panes = PaneTree::single(Pane::new());
-        let active_pane = panes.first_leaf().0;
         let settings_snapshot = app_settings::current(cx);
 
         Self {
             focus_handle: cx.focus_handle(),
-            panes,
-            active_pane,
-            next_query: 1,
             explorer,
             explorer_visible: settings_snapshot.explorer_visible,
             explorer_width: settings_snapshot.explorer_width,
@@ -479,6 +547,23 @@ impl Workspace {
         self.connections.get(self.active_connection)
     }
 
+    /// The work area on screen: the active connection's.
+    ///
+    /// `None` only while no connection is open at all. Every pane command, the
+    /// status bar and the renderer go through this, which is what makes the
+    /// connection tab select the whole window below it — and what makes a pane
+    /// command over an empty window a no-op rather than an operation on a tree
+    /// nobody can see.
+    fn work_area(&self) -> Option<&WorkArea> {
+        self.active_connection().map(|open| &open.work)
+    }
+
+    /// The work area on screen, mutably.
+    fn work_area_mut(&mut self) -> Option<&mut WorkArea> {
+        let index = self.active_connection;
+        self.connections.get_mut(index).map(|open| &mut open.work)
+    }
+
     /// Opens a session for `profile` in a tab of its own.
     ///
     /// The tab appears immediately, in [`ConnectionState::Connecting`]: the
@@ -486,12 +571,17 @@ impl Workspace {
     /// nothing until it finished would look frozen. Everything that blocks
     /// happens on a background task, because [`connection::connect`] opens an
     /// SSH channel and a JDBC connection and both of those wait on a socket.
+    ///
+    /// The new tab comes to the front, which takes the work area that was
+    /// showing off screen — so the keyboard has to be asked about before
+    /// anything moves; see [`Workspace::follow_work_area`].
     fn open_connection(
         &mut self,
         profile: ConnectionProfile,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let held = self.area_holds_focus(window, cx);
         let drivers = match DriverStore::load() {
             Ok(drivers) => drivers,
             Err(error) => {
@@ -507,9 +597,12 @@ impl Workspace {
                     driver = profile.driver_id.clone()
                 )),
                 profile,
+                work: WorkArea::new(),
             });
             self.active_connection = self.connections.len() - 1;
             self.sync_explorer_root(self.active_connection, cx);
+            self.sync_visible_root(cx);
+            self.follow_work_area(held, window, cx);
             cx.notify();
             return;
         };
@@ -536,9 +629,12 @@ impl Workspace {
             id: next_connection_id(),
             profile,
             state: ConnectionState::Connecting { _task: task },
+            work: WorkArea::new(),
         });
         self.active_connection = index;
         self.sync_explorer_root(index, cx);
+        self.sync_visible_root(cx);
+        self.follow_work_area(held, window, cx);
         cx.notify();
     }
 
@@ -593,8 +689,10 @@ impl Workspace {
     /// Activating the same object twice is a navigation, not a request for a
     /// second copy: the panel that is already open shows exactly what a new one
     /// would, and a strip filling up with duplicates of one table is nobody's
-    /// idea of a workspace. The search covers every pane, so activating an
-    /// object from one half of a split jumps to the pane already showing it.
+    /// idea of a workspace. The search covers every pane of the work area on
+    /// screen, so activating an object from one half of a split jumps to the
+    /// pane already showing it — and it need cover no more than that, because
+    /// the explorer only offers objects of the connection whose area this is.
     fn open_object(&mut self, target: ObjectTarget, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((pane, index)) = self.detail_tab(&target, cx) {
             self.activate_tab(pane, index, window, cx);
@@ -660,8 +758,13 @@ impl Workspace {
         })
         .detach();
 
-        let number = self.next_query;
-        self.next_query += 1;
+        // Numbered within this connection's own area, which the checks above
+        // have already established exists.
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
+        let number = area.next_query;
+        area.next_query += 1;
         self.append_tab(
             PaneItem::Query {
                 pane: pane.clone(),
@@ -685,9 +788,14 @@ impl Workspace {
     }
 
     /// The query pane the status bar and the run commands act on: the active
-    /// tab of the active pane, when that tab is a query.
+    /// tab of the active pane of the work area on screen, when that tab is a
+    /// query.
+    ///
+    /// `None` with no connection open, because then there is no work area to
+    /// have an active pane at all.
     fn active_query(&self) -> Option<&Entity<QueryPane>> {
-        match self.panes.get(self.active_pane())?.active()? {
+        let area = self.work_area()?;
+        match area.panes.get(area.active())?.active()? {
             PaneItem::Query { pane, .. } => Some(pane),
             PaneItem::TableDetail(_) => None,
         }
@@ -695,7 +803,8 @@ impl Workspace {
 
     /// Where `target` is already open, if it is: the pane and the tab in it.
     fn detail_tab(&self, target: &ObjectTarget, cx: &App) -> Option<(PaneId, usize)> {
-        self.panes
+        self.work_area()?
+            .panes
             .leaves()
             .into_iter()
             .find_map(|(id, pane)| pane.detail_of(target, cx).map(|index| (id, index)))
@@ -708,11 +817,16 @@ impl Workspace {
     /// Nothing is focused in its place here — the callers that open something
     /// typeable do that themselves — so the shell takes the keyboard back.
     fn append_tab(&mut self, item: PaneItem, window: &mut Window, cx: &mut Context<Self>) {
-        let target = self.active_pane();
+        let Some(target) = self.active_pane() else {
+            return;
+        };
         if self.pane_holds_focus(target, window, cx) {
             self.focus_shell(window, cx);
         }
-        if let Some(pane) = self.panes.get_mut(target) {
+        if let Some(pane) = self
+            .work_area_mut()
+            .and_then(|area| area.panes.get_mut(target))
+        {
             pane.push(item);
         }
         cx.notify();
@@ -731,14 +845,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.panes.contains(pane) {
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
+        if !area.panes.contains(pane) {
             return;
         }
-        self.active_pane = pane;
+        area.active_pane = pane;
         let held = self.pane_holds_focus(pane, window, cx);
         let moved = self
-            .panes
-            .get_mut(pane)
+            .work_area_mut()
+            .and_then(|area| area.panes.get_mut(pane))
             .is_some_and(|pane| pane.activate(index));
         if moved && held {
             self.focus_active_tab(pane, window, cx);
@@ -761,13 +878,17 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let active = self
-            .panes
-            .get(pane)
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
             .is_some_and(|pane| pane.active_index() == index);
         // Only the active tab is rendered, so only it can be holding the
         // keyboard; see [`Workspace::reclaim_focus`].
         let held = active && self.pane_holds_focus(pane, window, cx);
-        let Some(closed) = self.panes.get_mut(pane).and_then(|pane| pane.close(index)) else {
+        let Some(closed) = self
+            .work_area_mut()
+            .and_then(|area| area.panes.get_mut(pane))
+            .and_then(|pane| pane.close(index))
+        else {
             return;
         };
         drop(closed);
@@ -786,7 +907,11 @@ impl Workspace {
     /// panel and an empty pane fall back to the shell, whose handlers are what
     /// keep the menu rows and the shortcuts alive.
     fn focus_active_tab(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        let query = match self.panes.get(pane).and_then(Pane::active) {
+        let query = match self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .and_then(Pane::active)
+        {
             Some(PaneItem::Query { pane, .. }) => Some(pane.clone()),
             _ => None,
         };
@@ -800,14 +925,21 @@ impl Workspace {
     ///
     /// The dialog asks on behalf of one query pane and sends the answer back to
     /// it; a pane that has been closed has nobody to answer.
+    ///
+    /// Every connection's work area is searched, not just the one on screen: a
+    /// pane of another connection is merely hidden, and a confirmation it is
+    /// waiting on is still live. Only closing that connection — which discards
+    /// its whole area — makes the question unanswerable.
     fn drop_stale_confirm(&mut self, cx: &mut Context<Self>) {
         let Some(pending) = &self.confirm else {
             return;
         };
-        let open = self.panes.leaves().into_iter().any(|(_, pane)| {
-            pane.items()
-                .iter()
-                .any(|item| matches!(item, PaneItem::Query { pane, .. } if pane == &pending.pane))
+        let open = self.connections.iter().any(|open| {
+            open.work.panes.leaves().into_iter().any(|(_, pane)| {
+                pane.items().iter().any(
+                    |item| matches!(item, PaneItem::Query { pane, .. } if pane == &pending.pane),
+                )
+            })
         });
         if !open {
             self.confirm = None;
@@ -870,6 +1002,20 @@ impl Workspace {
         });
     }
 
+    /// Points the explorer at the connection whose tab is on top.
+    ///
+    /// Called from everywhere [`Workspace::active_connection`] changes, and from
+    /// nowhere else: the tree keeps every root it has ever been given, and this
+    /// is the whole of what makes it show one of them. `None` — no connection
+    /// open at all — leaves it with an empty root level and its own empty
+    /// wording.
+    fn sync_visible_root(&mut self, cx: &mut Context<Self>) {
+        let visible = self.active_connection().map(|open| open.id);
+        self.explorer.update(cx, |explorer, cx| {
+            explorer.update_source(cx, |source| source.set_visible_root(visible));
+        });
+    }
+
     /// Shows or hides the sidebar, and remembers which.
     fn toggle_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.explorer_visible = !self.explorer_visible;
@@ -929,9 +1075,29 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Marks a connection dead because the tunnel under it closed.
+    /// Marks a connection dead because the tunnel under it closed, and lets its
+    /// editors go of the session.
+    ///
+    /// A query pane holds a [`connection::SessionHandle`], which is what keeps
+    /// the session — and the tunnel under it — alive while a fetch is out. That
+    /// is right for a fetch and wrong for a session that has ended: without the
+    /// detach below, a dead connection's editors would each hold a handle to a
+    /// session nobody can use, and §9.3's rule that a tunnel dies with its
+    /// session would hold only until someone had opened an editor.
+    ///
+    /// The two kinds of tab part company here, because what the user would lose
+    /// differs. A query pane holds the statement they typed, so its tab stays
+    /// and is detached: the SQL and the rows already fetched remain readable and
+    /// copyable, and every path that would talk to the database refuses. A
+    /// detail panel shows what the database already said and nothing the user
+    /// wrote, so it is simply left alone — a refresh of one finds no session and
+    /// says so, the same way the explorer does.
+    ///
+    /// Nothing is closed and no pane is removed. The connection's tab and its
+    /// whole work area stay reachable until the user closes the tab themselves;
+    /// a session dying under them must not rearrange their window.
     fn tunnel_died(&mut self, index: usize, reason: String, cx: &mut Context<Self>) {
-        let Some(connection) = self.connections.get_mut(index) else {
+        let Some(connection) = self.connections.get(index) else {
             return;
         };
         if !matches!(connection.state, ConnectionState::Open(_)) {
@@ -941,6 +1107,17 @@ impl Workspace {
             "the tunnel under {} closed: {reason}",
             connection.profile.name
         );
+
+        // Before the state is replaced, so that the handles the editors hold are
+        // gone by the time the `Connected` below is dropped and the session can
+        // actually close rather than outliving its own tab.
+        for pane in connection.work.queries() {
+            pane.update(cx, |pane, cx| pane.detach(cx));
+        }
+
+        let Some(connection) = self.connections.get_mut(index) else {
+            return;
+        };
         // Replacing the state drops the `Connected`, which closes the session
         // and releases the lease in that order.
         connection.state = ConnectionState::Dead(ts!("statusbar.tunnel_lost", reason = reason));
@@ -948,17 +1125,36 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Closes one connection tab, ending its session.
+    /// Closes one connection tab, ending its session and discarding everything
+    /// it had open.
+    ///
+    /// The tab's whole work area goes with it. That is the designed cleanup
+    /// path: dropping the area drops every pane, every pane drops its tabs, and
+    /// every query tab drops the [`connection::SessionHandle`] and the cursors
+    /// it was holding — which is what lets the session below actually close
+    /// rather than being kept alive by an editor nobody can run anything in
+    /// (architecture document, §9.3). Panes and splits of *other* connections
+    /// are untouched, because they were never in this tree.
+    ///
+    /// Closing the tab that is on top brings another area on screen, so the
+    /// keyboard has to be asked about before anything is removed; see
+    /// [`Workspace::follow_work_area`].
     fn close_connection(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.connections.len() {
             return;
         }
+        // Only the area on screen can be holding the keyboard, so only closing
+        // that one moves it.
+        let held = index == self.active_connection && self.area_holds_focus(window, cx);
+
         let connection = self.connections.remove(index);
         let closed = connection.id;
         self.explorer.update(cx, |explorer, cx| {
             explorer.update_source(cx, |source| source.remove_root(closed));
         });
-        self.abandon_panes_of(closed, window, cx);
+        // Explicitly, and before the session is handed over below: the order is
+        // the point.
+        drop(connection.work);
         if let ConnectionState::Open(connected) = connection.state {
             // CLOSE_SESSION and then the tunnel, in that order, and off the UI
             // thread because both of them talk to a socket.
@@ -969,136 +1165,137 @@ impl Workspace {
             })
             .detach();
         }
+
+        // Closing a tab to the left of the active one shifts it along; the tab
+        // on top must stay the same one, or the work area would change under a
+        // user who closed something else entirely. Closing the last tab of all
+        // clamps to whatever is left, and to zero when nothing is.
+        if index < self.active_connection {
+            self.active_connection -= 1;
+        }
         self.active_connection = self
             .active_connection
             .min(self.connections.len().saturating_sub(1));
+        self.sync_visible_root(cx);
+        self.follow_work_area(held, window, cx);
+        self.drop_stale_confirm(cx);
         cx.notify();
     }
 
-    /// Lets go of everything that was running against `closed`.
+    /// Brings one connection tab to the front, and its work area with it.
     ///
-    /// A query pane holds a [`connection::SessionHandle`], which is what keeps
-    /// the session — and the tunnel under it — alive while a fetch is out. That
-    /// is right for a fetch and wrong for a closed tab: without this, closing a
-    /// connection would leave the session open behind a pane nobody can run
-    /// anything in, and §9.3's rule that a tunnel dies with its session would
-    /// hold only until someone had opened an editor.
-    ///
-    /// The two kinds of tab part company here, because what the user would lose
-    /// differs. A detail panel shows what the database said and nothing the user
-    /// wrote, so its tab closes with the connection. A query pane holds the
-    /// statement they typed, so its tab stays and is detached instead: the SQL
-    /// and the rows already fetched remain readable and copyable, and every path
-    /// that would talk to the database refuses. Panes themselves are never
-    /// removed — the layout the user arranged is theirs, and closing a
-    /// connection should not rearrange the window.
-    fn abandon_panes_of(
-        &mut self,
-        closed: ConnectionId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        for id in self.panes.leaf_ids() {
-            let Some(pane) = self.panes.get(id) else {
-                continue;
-            };
-            // Highest index first, so closing one does not shift the next.
-            let doomed: Vec<usize> = pane
-                .items()
-                .iter()
-                .enumerate()
-                .rev()
-                .filter(|(_, item)| {
-                    matches!(item, PaneItem::TableDetail(panel) if panel.read(cx).target().connection == closed)
-                })
-                .map(|(index, _)| index)
-                .collect();
-            let orphaned: Vec<Entity<QueryPane>> = pane
-                .items()
-                .iter()
-                .filter_map(|item| match item {
-                    PaneItem::Query { pane, .. } if pane.read(cx).connection() == closed => {
-                        Some(pane.clone())
-                    }
-                    _ => None,
-                })
-                .collect();
-
-            for index in doomed {
-                self.close_tab(id, index, window, cx);
-            }
-            for pane in orphaned {
-                pane.update(cx, |pane, cx| pane.detach(cx));
-            }
+    /// The outgoing area stops being rendered entirely, editors and all, so this
+    /// is the same focus hazard as hiding the sidebar; see
+    /// [`Workspace::follow_work_area`] and [`Workspace::reclaim_focus`].
+    fn select_connection(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.connections.len() || self.active_connection == index {
+            return;
         }
-        self.drop_stale_confirm(cx);
+        let held = self.area_holds_focus(window, cx);
+        self.active_connection = index;
+        self.sync_visible_root(cx);
+        self.follow_work_area(held, window, cx);
+        cx.notify();
     }
 
-    /// Brings one connection tab to the front.
-    fn select_connection(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.connections.len() && self.active_connection != index {
-            self.active_connection = index;
-            cx.notify();
+    /// Whether the work area on screen is holding the keyboard.
+    ///
+    /// Asked *before* a switch, because it reads the last drawn frame — the one
+    /// that still holds the outgoing area.
+    fn area_holds_focus(&self, window: &Window, cx: &App) -> bool {
+        self.active_pane()
+            .is_some_and(|pane| self.pane_holds_focus(pane, window, cx))
+    }
+
+    /// Moves the keyboard onto the work area now on screen, when the one that
+    /// left had it.
+    ///
+    /// `held` is what [`Workspace::area_holds_focus`] answered before the
+    /// switch. The incoming area's active tab takes the caret if it has one to
+    /// take, and the shell takes it otherwise — including when no connection is
+    /// left at all. Doing nothing instead would leave the focus on an editor
+    /// nothing renders, which swallows every action from then on.
+    fn follow_work_area(&mut self, held: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !held {
+            return;
+        }
+        match self.active_pane() {
+            Some(pane) => self.focus_active_tab(pane, window, cx),
+            None => self.focus_shell(window, cx),
         }
     }
 
-    /// The active pane, falling back to the first one.
+    /// The active pane of the work area on screen.
     ///
-    /// The fallback only matters if [`Workspace::active_pane`] ever went stale;
-    /// the tree always has a pane, so this never fails.
-    fn active_pane(&self) -> PaneId {
-        if self.panes.contains(self.active_pane) {
-            self.active_pane
-        } else {
-            self.panes.first_leaf().0
-        }
+    /// `None` with no connection open, which is what makes every pane command
+    /// below a no-op rather than an operation on a tree nobody can see.
+    fn active_pane(&self) -> Option<PaneId> {
+        self.work_area().map(WorkArea::active)
     }
 
     /// Splits the active pane along `axis` and moves the marker to the new one.
     fn split_active(&mut self, axis: Axis, cx: &mut Context<Self>) {
-        let target = self.active_pane();
-        let Some(new) = self.panes.split(target, axis, Pane::new()) else {
+        let Some(target) = self.active_pane() else {
             return;
         };
-        self.active_pane = new;
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
+        let Some(new) = area.panes.split(target, axis, Pane::new()) else {
+            return;
+        };
+        area.active_pane = new;
         cx.notify();
     }
 
-    /// Closes the active pane, unless it is the last one.
+    /// Closes the active pane, unless it is the last one of its work area.
     ///
     /// The marker moves to the pane that follows the closed one in layout order,
     /// which is the neighbour that grew into the freed space.
     fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let target = self.active_pane();
-        let next = self.panes.next_leaf(target).unwrap_or(target);
+        let Some(target) = self.active_pane() else {
+            return;
+        };
+        let Some(area) = self.work_area() else {
+            return;
+        };
+        let next = area.panes.next_leaf(target).unwrap_or(target);
         // Asked before the pane goes, because afterwards there is nothing left
         // to ask whether its editor or its detail panel had the keyboard.
         let held = self.pane_holds_focus(target, window, cx);
-        if self.panes.remove(target).is_none() {
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
+        if area.panes.remove(target).is_none() {
             return;
         }
+        area.active_pane = if area.panes.contains(next) {
+            next
+        } else {
+            area.panes.first_leaf().0
+        };
         if held {
             self.focus_shell(window, cx);
         }
-        self.active_pane = if self.panes.contains(next) {
-            next
-        } else {
-            self.panes.first_leaf().0
-        };
         self.drop_stale_confirm(cx);
         cx.notify();
     }
 
     /// Moves the pane marker one step along the layout order.
     fn cycle_pane(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let from = self.active_pane();
+        let Some(from) = self.active_pane() else {
+            return;
+        };
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
         let next = if forward {
-            self.panes.next_leaf(from)
+            area.panes.next_leaf(from)
         } else {
-            self.panes.prev_leaf(from)
+            area.panes.prev_leaf(from)
         };
         if let Some(next) = next {
-            self.active_pane = next;
+            area.active_pane = next;
             cx.notify();
         }
     }
@@ -1144,7 +1341,11 @@ impl Workspace {
     /// [`Focusable`] impl names only the editor and a focus left on a grid would
     /// strand exactly as [`Workspace::reclaim_focus`] describes.
     fn pane_holds_focus(&self, pane: PaneId, window: &Window, cx: &App) -> bool {
-        match self.panes.get(pane).and_then(Pane::active) {
+        match self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .and_then(Pane::active)
+        {
             Some(PaneItem::Query { pane, .. }) => pane.read(cx).contains_focus(window, cx),
             Some(PaneItem::TableDetail(panel)) => {
                 panel.read(cx).focus_handle(cx).contains_focused(window, cx)
@@ -1601,6 +1802,9 @@ impl Workspace {
     /// The title is the profile's name and the dot is where the session has got
     /// to, so a tab that is still connecting, one that is live and one whose
     /// tunnel died are told apart without opening any of them.
+    ///
+    /// Selecting a tab is the window's one mode switch: it swaps the whole work
+    /// area below and the explorer's root along with it.
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> TabBar {
         let this = cx.entity();
         let tabs: Vec<TabItem> = self
@@ -1622,8 +1826,10 @@ impl Workspace {
             .active(self.active_connection)
             .on_select({
                 let this = this.clone();
-                move |index, _window, cx| {
-                    this.update(cx, |workspace, cx| workspace.select_connection(index, cx));
+                move |index, window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.select_connection(index, window, cx);
+                    });
                 }
             })
             .on_close({
@@ -1648,31 +1854,32 @@ impl Workspace {
             .on_new(|window, cx| window.dispatch_action(Box::new(NewConnection), cx))
     }
 
-    /// Renders the work area.
+    /// Renders the work area: the sidebar, and the active connection's panes.
+    ///
+    /// With no connection open there is no work area to draw, so the empty state
+    /// stands in for the whole of it — the same words a pane with no tabs shows,
+    /// in the wording that says there is nothing to connect to.
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
-        let root = self.panes.root();
-        let chrome = PaneChrome {
-            active: self.active_pane(),
-            // A lone pane with nothing beside it needs no frame: there is only
-            // one thing on screen, so nothing has to be said about which one is
-            // active.
-            frame: self.panes.leaf_count() > 1,
-            // With a session open the pane is empty because nothing that would
-            // fill it exists yet, not because there is nothing to connect to;
-            // telling the user "no connections" over a live tab would be a
-            // plain lie.
-            connected: !self.connections.is_empty(),
-            theme: theme.clone(),
-            colors: self
-                .connections
-                .iter()
-                .filter_map(|open| {
-                    let color = rudbman_ui::parse_hex(open.profile.color.as_deref()?)?;
-                    Some((open.id, color))
-                })
-                .collect(),
-        };
+        let work = self.work_area().map(|area| {
+            let chrome = PaneChrome {
+                active: area.active(),
+                // A lone pane with nothing beside it needs no frame: there is
+                // only one thing on screen, so nothing has to be said about
+                // which one is active.
+                frame: area.panes.leaf_count() > 1,
+                theme: theme.clone(),
+                colors: self
+                    .connections
+                    .iter()
+                    .filter_map(|open| {
+                        let color = rudbman_ui::parse_hex(open.profile.color.as_deref()?)?;
+                        Some((open.id, color))
+                    })
+                    .collect(),
+            };
+            (area.panes.root(), chrome)
+        });
 
         // The sidebar and the handle that resizes it, both left out entirely
         // when the panel is hidden — a zero-width flex child would still take
@@ -1718,14 +1925,10 @@ impl Workspace {
             ))
             .children(sidebar)
             .children(handle)
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .child(render_pane(root, &chrome, cx)),
-            )
+            .child(div().flex().flex_1().min_w_0().min_h_0().child(match work {
+                Some((root, chrome)) => render_pane(root, &chrome, cx),
+                None => render_placeholder(false, &theme),
+            }))
             .into_any_element()
     }
 
@@ -1790,9 +1993,10 @@ impl Workspace {
             return;
         }
 
+        let clamped = share.clamp(MIN_SPLIT_RATIO, 1. - MIN_SPLIT_RATIO);
         if self
-            .panes
-            .set_ratio(split, share.clamp(MIN_SPLIT_RATIO, 1. - MIN_SPLIT_RATIO))
+            .work_area_mut()
+            .is_some_and(|area| area.panes.set_ratio(split, clamped))
         {
             cx.notify();
         }
@@ -2061,8 +2265,6 @@ struct PaneChrome {
     active: PaneId,
     /// Whether panes are framed at all, which they are once there are two.
     frame: bool,
-    /// Whether any connection is open, which decides the empty state's wording.
-    connected: bool,
     /// The palette.
     theme: Theme,
     /// The colour tag of every connection that has one, for the tab dots.
@@ -2078,12 +2280,11 @@ struct PaneChrome {
 /// dropdown and the "+": a pane's tabs are opened from the explorer and the
 /// query commands, so a "new tab" button here would have nothing to open.
 ///
-/// The strip lists every tab of the pane whatever connection tab is showing.
-/// Filtering by the connection on top would hide half of a split the moment the
-/// user looked at another database, and the reason to keep two panes open is
-/// usually that they are about two different ones. What says which database a
-/// tab belongs to is its dot, in the colour of the profile — the same colour the
-/// explorer marks that connection's root with.
+/// Every tab of the strip belongs to the connection whose tab is on top — the
+/// work area is that connection's — so the dots all carry one colour, the one
+/// the explorer marks that connection's root with. That is the point of keeping
+/// them: with several connections open, a glance at a pane says which database
+/// its panels are about without reading the strip above the window.
 fn render_tab_strip(
     id: PaneId,
     pane: &Pane,
@@ -2162,7 +2363,10 @@ fn render_pane(
             let body = match payload.active() {
                 Some(PaneItem::TableDetail(panel)) => panel.clone().into_any_element(),
                 Some(PaneItem::Query { pane, .. }) => pane.clone().into_any_element(),
-                None => render_placeholder(chrome.connected, theme),
+                // A work area belongs to a connection, so a pane inside one is
+                // empty because nothing that would fill it has been opened yet
+                // — never because there is nothing to connect to.
+                None => render_placeholder(true, theme),
             };
             div()
                 .id(("pane", id.as_u64()))
@@ -2264,14 +2468,15 @@ fn render_pane(
     }
 }
 
-/// Renders the empty state of a pane that holds nothing.
+/// Renders the empty state: a pane with no tabs, or the whole body while no
+/// connection is open at all.
 ///
-/// Two wordings, and the difference matters. With nothing open the pane says
+/// Two wordings, and the difference matters. With nothing open the body says
 /// there is no connection and points at the way to make one — the menu row and
-/// its shortcut. With a session open it says the opposite: the connection is
-/// live, and the pane is empty because the explorer tree and the SQL editor
-/// that would fill it are not written yet. One wording for both states would
-/// have a live tab sitting above the words "no connections".
+/// its shortcut. Inside a work area it says the opposite: the connection is
+/// live, and the pane is empty because nothing has been opened into it yet. One
+/// wording for both states would have a live tab sitting above the words "no
+/// connections".
 ///
 /// Text only, and deliberately no button: a button that opens nothing is worse
 /// than no button at all.
@@ -3152,6 +3357,7 @@ mod tests {
                     id: next_connection_id(),
                     profile: profile.clone(),
                     state: ConnectionState::Open(Box::new(connected)),
+                    work: WorkArea::new(),
                 });
                 workspace.active_connection = 0;
 
@@ -3210,6 +3416,7 @@ mod tests {
                     id: next_connection_id(),
                     profile,
                     state: ConnectionState::Failed(error.message().into()),
+                    work: WorkArea::new(),
                 });
                 workspace.active_connection = 0;
 
@@ -3324,6 +3531,7 @@ mod tests {
                     id: next_connection_id(),
                     profile: profile.clone(),
                     state: ConnectionState::Open(Box::new(connected)),
+                    work: WorkArea::new(),
                 });
                 workspace.active_connection = 0;
                 // Two panes, because the last one is never closed.
@@ -3354,16 +3562,12 @@ mod tests {
         cx.run_until_parked();
     }
 
-    /// A window with one live H2 connection in its tab strip, and the id that
-    /// connection was given.
+    /// A live H2 session and the profile it was opened from.
     ///
-    /// The session is opened before the window is built, as every test here
-    /// does: the call blocks, and the rule the shell itself follows is that
-    /// nothing blocking runs inside a gpui update.
-    fn workspace_over_h2(
-        name: &str,
-        cx: &mut gpui::TestAppContext,
-    ) -> (gpui::WindowHandle<Workspace>, ConnectionId) {
+    /// Opened outside every gpui update on purpose, as each test here does: the
+    /// call blocks, and the rule the shell itself follows is that nothing
+    /// blocking runs inside an update.
+    fn h2_connection(name: &str) -> (ConnectionProfile, Connected) {
         let profile = connection::h2::profile(name);
         let connected = connection::connect(
             &profile,
@@ -3372,6 +3576,40 @@ mod tests {
             &AppSettings::default(),
         )
         .expect("H2 opens an in-memory database without a server");
+        (profile, connected)
+    }
+
+    /// Pushes a live connection tab, brings it to the front, and puts the
+    /// explorer in step with it — everything [`Workspace::open_connection`] does
+    /// once the handshake is in, minus the handshake.
+    fn push_connection(
+        workspace: &mut Workspace,
+        profile: ConnectionProfile,
+        connected: Connected,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> ConnectionId {
+        let id = next_connection_id();
+        let index = workspace.connections.len();
+        workspace.connections.push(Connection {
+            id,
+            profile,
+            state: ConnectionState::Open(Box::new(connected)),
+            work: WorkArea::new(),
+        });
+        workspace.select_connection(index, window, cx);
+        workspace.sync_explorer_root(index, cx);
+        workspace.sync_visible_root(cx);
+        id
+    }
+
+    /// A window with one live H2 connection in its tab strip, and the id that
+    /// connection was given.
+    fn workspace_over_h2(
+        name: &str,
+        cx: &mut gpui::TestAppContext,
+    ) -> (gpui::WindowHandle<Workspace>, ConnectionId) {
+        let (profile, connected) = h2_connection(name);
 
         cx.update(|cx| {
             app_settings::init(cx);
@@ -3380,18 +3618,17 @@ mod tests {
             rudbman_grid::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
-        let id = next_connection_id();
-        window
-            .update(cx, |workspace, _window, _cx| {
-                workspace.connections.push(Connection {
-                    id,
-                    profile,
-                    state: ConnectionState::Open(Box::new(connected)),
-                });
-                workspace.active_connection = 0;
+        let id = window
+            .update(cx, |workspace, window, cx| {
+                push_connection(workspace, profile, connected, window, cx)
             })
             .expect("the window is open");
         (window, id)
+    }
+
+    /// The work area on screen, which every assertion about panes goes through.
+    fn area(workspace: &Workspace) -> &WorkArea {
+        workspace.work_area().expect("a connection tab is open")
     }
 
     /// An object of `connection` in the public schema.
@@ -3407,7 +3644,7 @@ mod tests {
 
     /// The titles of one pane's tabs, in strip order.
     fn tab_titles(workspace: &Workspace, pane: PaneId, cx: &App) -> Vec<String> {
-        workspace
+        area(workspace)
             .panes
             .get(pane)
             .expect("the pane is in the tree")
@@ -3419,11 +3656,16 @@ mod tests {
 
     /// Which tab of one pane is on top.
     fn active_tab(workspace: &Workspace, pane: PaneId) -> usize {
-        workspace
+        area(workspace)
             .panes
             .get(pane)
             .expect("the pane is in the tree")
             .active_index()
+    }
+
+    /// The active pane of the work area on screen.
+    fn active_pane(workspace: &Workspace) -> PaneId {
+        workspace.active_pane().expect("a connection tab is open")
     }
 
     /// Opening things does not throw away what the pane already held, and
@@ -3439,7 +3681,7 @@ mod tests {
                 workspace.open_object(target.clone(), window, cx);
                 workspace.open_query("SELECT 1", window, cx);
 
-                let pane = workspace.active_pane();
+                let pane = active_pane(workspace);
                 // Both are open, in the order they were opened, and the query —
                 // the one just asked for — is the one showing.
                 assert_eq!(
@@ -3468,7 +3710,7 @@ mod tests {
         window
             .update(&mut cx, |workspace, window, cx| {
                 workspace.split_active(Axis::Horizontal, cx);
-                let second = workspace.active_pane();
+                let second = active_pane(workspace);
                 assert_ne!(second, first, "the split produced a pane of its own");
                 workspace.open_query("SELECT 2", window, cx);
                 assert_eq!(tab_titles(workspace, second, cx), ["Query 2"]);
@@ -3476,7 +3718,7 @@ mod tests {
                 // Asking for the object from the other pane jumps to the pane
                 // already showing it rather than opening a copy beside it.
                 workspace.open_object(target.clone(), window, cx);
-                assert_eq!(workspace.active_pane(), first);
+                assert_eq!(active_pane(workspace), first);
                 assert_eq!(active_tab(workspace, first), 0);
                 assert_eq!(
                     tab_titles(workspace, first, cx),
@@ -3501,7 +3743,7 @@ mod tests {
             .update(&mut cx, |workspace, window, cx| {
                 workspace.open_query("SELECT 1", window, cx);
                 workspace.open_query("SELECT 2", window, cx);
-                workspace.active_pane()
+                active_pane(workspace)
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -3535,7 +3777,7 @@ mod tests {
             .update(&mut cx, |workspace, window, cx| {
                 workspace.close_tab(pane, 0, window, cx);
                 assert!(
-                    workspace
+                    area(workspace)
                         .panes
                         .get(pane)
                         .expect("the pane outlives its tabs")
@@ -3567,25 +3809,39 @@ mod tests {
             .expect("the window is open");
     }
 
-    /// Closing a connection tab: what the database said goes with it, what the
-    /// user wrote stays.
+    /// Closing a connection tab takes its whole work area with it.
+    ///
+    /// The tabs belonged to that connection and nothing else, so keeping them
+    /// would leave the window carrying panels of a database nobody can ask —
+    /// and, worse, editors still holding a session handle each. A write
+    /// confirmation waiting on one of those panes has nobody left to answer it
+    /// and goes too.
     #[gpui::test]
-    fn closing_a_connection_closes_its_details_and_detaches_its_queries(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn closing_a_connection_discards_its_work_area(cx: &mut gpui::TestAppContext) {
         let (window, id) = workspace_over_h2("abandon", cx);
         let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
 
-        let pane = window
+        window
             .update(&mut cx, |workspace, window, cx| {
                 workspace.open_object(object(id, "ORDERS"), window, cx);
                 workspace.open_query("SELECT 1", window, cx);
-                let pane = workspace.active_pane();
+                let pane = active_pane(workspace);
                 assert_eq!(
                     tab_titles(workspace, pane, cx),
                     ["PUBLIC.ORDERS", "Query 1"]
                 );
-                pane
+                // As if the editor had asked before running a `DELETE`.
+                let query = workspace
+                    .active_query()
+                    .expect("the query is the tab on top")
+                    .clone();
+                workspace.confirm = Some(PendingConfirm {
+                    pane: query,
+                    request: Box::new(ConfirmRequest {
+                        count: 1,
+                        preview: "DELETE FROM PUBLIC.ORDERS".into(),
+                    }),
+                });
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -3594,15 +3850,264 @@ mod tests {
             .update(&mut cx, |workspace, window, cx| {
                 workspace.close_connection(0, window, cx);
 
-                // The detail panel described a database nobody can ask any
-                // more; the statement in the editor is still the user's.
-                assert_eq!(tab_titles(workspace, pane, cx), ["Query 1"]);
+                assert!(workspace.connections.is_empty());
+                // No connection, so no work area at all: the body renders the
+                // empty state and every pane command is a no-op.
+                assert!(workspace.work_area().is_none());
+                assert!(workspace.active_pane().is_none());
+                assert!(workspace.active_query().is_none());
+                assert!(
+                    workspace.confirm.is_none(),
+                    "the confirmation outlived the pane that asked"
+                );
+                assert!(
+                    workspace.explorer.read(cx).visible_roots(cx).is_empty(),
+                    "the sidebar is still showing a closed connection"
+                );
+
+                // And the pane commands, which have no tree to act on.
+                workspace.split_active(Axis::Horizontal, cx);
+                workspace.close_active_pane(window, cx);
+                workspace.cycle_pane(true, cx);
+                assert!(workspace.work_area().is_none());
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// A connection that dies under the user keeps its tabs and lets go of the
+    /// session: what the database said stays readable, what would ask it again
+    /// refuses.
+    #[gpui::test]
+    fn a_dead_connection_detaches_its_query_panes(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2("tunnel-death", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_object(object(id, "ORDERS"), window, cx);
+                workspace.open_query("SELECT 1", window, cx);
+                active_pane(workspace)
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                // What the tunnel watcher does when the SSH channel closes.
+                workspace.tunnel_died(0, "the channel closed".to_string(), cx);
+
+                // Both tabs stay: the layout is the user's, and a session dying
+                // must not rearrange their window.
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    ["PUBLIC.ORDERS", "Query 1"]
+                );
                 let query = workspace
                     .active_query()
-                    .expect("the query tab survived the connection")
+                    .expect("the query tab survived the death")
                     .read(cx);
                 assert!(!query.is_attached(), "the session was not let go of");
                 assert_eq!(query.status_cells().0, ts!("statusbar.disconnected"));
+
+                // The tab and its area are still reachable, and the strip says
+                // what happened.
+                let connection = workspace
+                    .active_connection()
+                    .expect("the tab is still open");
+                assert!(matches!(connection.state, ConnectionState::Dead(_)));
+                assert_eq!(connection.state.tab_status(), TabStatus::Error);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// The whole point of the design: the connection tab selects the window.
+    ///
+    /// Tabs opened under one connection are not visible under another, the
+    /// explorer's root follows the same switch, and coming back finds the area
+    /// exactly as it was left — same tabs, same one on top.
+    #[gpui::test]
+    fn switching_the_connection_tab_switches_the_work_area(cx: &mut gpui::TestAppContext) {
+        let (window, first) = workspace_over_h2("switch-a", cx);
+        let (profile, connected) = h2_connection("switch-b");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane_a = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_object(object(first, "ORDERS"), window, cx);
+                workspace.open_query("SELECT 1", window, cx);
+                let pane = active_pane(workspace);
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    ["PUBLIC.ORDERS", "Query 1"]
+                );
+                assert_eq!(active_tab(workspace, pane), 1);
+                assert_eq!(workspace.explorer.read(cx).visible_roots(cx), [first]);
+                pane
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        let second = window
+            .update(&mut cx, |workspace, window, cx| {
+                let second = push_connection(workspace, profile, connected, window, cx);
+
+                // A work area of its own: nothing of the first connection is in
+                // it, and its numbering starts again at one.
+                let pane = active_pane(workspace);
+                assert_ne!(pane, pane_a, "the second tab brought its own pane tree");
+                assert!(tab_titles(workspace, pane, cx).is_empty());
+                workspace.open_query("SELECT 2", window, cx);
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    ["Query 1"],
+                    "query numbering is per connection"
+                );
+                assert_eq!(workspace.explorer.read(cx).visible_roots(cx), [second]);
+                second
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.select_connection(0, window, cx);
+
+                // Back where the first connection was left, tab on top and all.
+                assert_eq!(active_pane(workspace), pane_a);
+                assert_eq!(
+                    tab_titles(workspace, pane_a, cx),
+                    ["PUBLIC.ORDERS", "Query 1"]
+                );
+                assert_eq!(active_tab(workspace, pane_a), 1);
+                assert_eq!(workspace.explorer.read(cx).visible_roots(cx), [first]);
+                assert_ne!(first, second);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// Switching the connection tab takes the outgoing area off screen, editors
+    /// and all, which is the hazard [`Workspace::reclaim_focus`] describes one
+    /// level up. The keyboard has to land on something the next frame renders.
+    #[gpui::test]
+    fn switching_the_connection_tab_does_not_strand_the_keyboard(cx: &mut gpui::TestAppContext) {
+        let (window, _first) = workspace_over_h2("focus-a", cx);
+        let (profile, connected) = h2_connection("focus-b");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_query("SELECT 1", window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        let editor = window
+            .update(&mut cx, |workspace, window, cx| {
+                let editor = workspace
+                    .active_query()
+                    .expect("the editor is the tab on top")
+                    .read(cx)
+                    .focus_handle(cx);
+                assert!(editor.is_focused(window), "the editor did not take focus");
+
+                push_connection(workspace, profile, connected, window, cx);
+                assert!(
+                    !editor.is_focused(window),
+                    "the keyboard stayed on an editor the new tab does not render"
+                );
+                assert!(
+                    workspace.focus_handle.is_focused(window),
+                    "the incoming area holds nothing typeable, so the shell takes over"
+                );
+                editor
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // The other direction, where the incoming area *does* have something to
+        // type into: an editor going off screen hands the caret to the editor
+        // coming on, so a user switching between two connections keeps typing.
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_query("SELECT 2", window, cx);
+                let second = workspace
+                    .active_query()
+                    .expect("the new tab is the editor")
+                    .read(cx)
+                    .focus_handle(cx);
+                assert!(second.is_focused(window), "the editor did not take focus");
+
+                workspace.select_connection(0, window, cx);
+                assert!(
+                    !second.is_focused(window),
+                    "the keyboard stayed on the editor of the tab switched away from"
+                );
+                assert!(
+                    editor.is_focused(window),
+                    "the editor coming back on screen did not take the caret"
+                );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // The regression the rule exists for: with the focus stranded, this
+        // dispatch would never arrive.
+        let showing = window
+            .update(&mut cx, |workspace, _window, _cx| {
+                workspace.explorer_visible
+            })
+            .expect("the window is open");
+        cx.dispatch_action(ToggleExplorer);
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                assert_ne!(
+                    workspace.explorer_visible, showing,
+                    "the action was dropped: the focus is on something unrendered"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// A split is part of a work area, so it belongs to one connection: the tab
+    /// beside it keeps the single pane it started with.
+    #[gpui::test]
+    fn the_split_layout_is_per_connection(cx: &mut gpui::TestAppContext) {
+        let (window, _first) = workspace_over_h2("split-a", cx);
+        let (profile, connected) = h2_connection("split-b");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let (left, right) = window
+            .update(&mut cx, |workspace, window, cx| {
+                let left = active_pane(workspace);
+                workspace.split_active(Axis::Horizontal, cx);
+                let right = active_pane(workspace);
+                // A marker in the new pane, so that coming back can be told from
+                // a layout that merely happens to have two panes.
+                workspace.open_query("SELECT 1", window, cx);
+                assert_eq!(area(workspace).panes.leaf_count(), 2);
+                (left, right)
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                push_connection(workspace, profile, connected, window, cx);
+                assert_eq!(
+                    area(workspace).panes.leaf_count(),
+                    1,
+                    "the new connection inherited a split it never asked for"
+                );
+
+                workspace.select_connection(0, window, cx);
+                let area = area(workspace);
+                assert_eq!(area.panes.leaf_count(), 2);
+                assert_eq!(area.panes.leaf_ids(), vec![left, right]);
+                assert_eq!(area.active(), right, "the marker moved while away");
+                assert_eq!(tab_titles(workspace, right, cx), ["Query 1"]);
             })
             .expect("the window is open");
         cx.run_until_parked();

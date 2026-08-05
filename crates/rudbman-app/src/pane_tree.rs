@@ -1,6 +1,7 @@
-//! How the work area is divided into panes.
+//! How a work area is divided into panes.
 //!
-//! The body of the window shows a binary tree: every leaf is one [`Pane`] — a
+//! The body of the window shows one binary tree — the active connection's; the
+//! shell keeps a tree per connection tab — where every leaf is one [`Pane`] — a
 //! strip of tabs and the one of them on top — and every interior node divides
 //! its area in two along an [`Axis`]. Splitting a pane replaces its leaf with a
 //! split; closing a pane collapses the split it sat in and promotes its sibling
@@ -132,8 +133,9 @@ impl PaneItem {
 
     /// The connection this tab belongs to, which is the colour its dot takes.
     ///
-    /// Every pane shows every tab, whichever connection tab is on top, so the
-    /// dot is the only thing saying which database a tab is about.
+    /// One tree belongs to one connection, so every tab of a strip answers the
+    /// same — which is what makes the dot readable as "this pane is on staging"
+    /// rather than as a per-tab tag.
     pub fn connection(&self, cx: &App) -> ConnectionId {
         match self {
             PaneItem::TableDetail(panel) => panel.read(cx).target().connection,
