@@ -5,9 +5,11 @@
 //! ([`theme`], [`editor_theme`]), text entry ([`text_input`]), buttons
 //! ([`button`]), session tabs ([`tab_bar`]), dropdown menus ([`menu`]), hover
 //! tooltips ([`tooltip`]), dialogs ([`modal`]), overlay scroll indicators
-//! ([`scrollbar`]) and the caption buttons of a self-drawn title bar
-//! ([`window_controls`]). A widget that would need a result set to draw itself
-//! belongs a layer up, not here.
+//! ([`scrollbar`]), lazily filled trees ([`tree`]) and the caption buttons of a
+//! self-drawn title bar ([`window_controls`]). A widget that would need a result
+//! set to draw itself belongs a layer up, not here — the tree included: it
+//! knows about ids the host invents and rows the host draws, and nothing about
+//! what a catalogue or a schema is.
 //!
 //! Two palettes live side by side and are chosen independently: [`theme`] is
 //! the chrome, the result grid included, and [`editor_theme`] is the SQL editor
@@ -33,6 +35,7 @@ pub mod text_input;
 pub mod theme;
 pub mod theme_store;
 pub mod tooltip;
+pub mod tree;
 pub mod window_controls;
 
 pub use button::{Button, ButtonVariant};
@@ -56,6 +59,7 @@ pub use theme::{
     theme, to_hex,
 };
 pub use tooltip::tooltip_label;
+pub use tree::{ChildState, TreeEvent, TreeRow, TreeRowInfo, TreeSource, TreeView};
 pub use window_controls::{WindowControlIcons, WindowControls};
 
 use gpui::App;
@@ -71,4 +75,5 @@ pub fn init(cx: &mut App) {
     set_theme(Theme::dark(), cx);
     set_editor_theme(EditorTheme::default(), cx);
     TextInput::init(cx);
+    tree::init(cx);
 }
