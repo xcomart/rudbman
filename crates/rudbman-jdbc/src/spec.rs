@@ -1,5 +1,5 @@
-//! Request bodies: what a session is opened with, and what a statement is
-//! executed with.
+//! Request bodies: what a session is opened with, what a statement is executed
+//! with, and what a job is started with.
 //!
 //! These are the Rust side of the JSON documented in `bridge/README.md`. They
 //! serialise field for field; nothing here is renamed on the way out, so a
@@ -453,6 +453,359 @@ impl ProbeRequest {
     }
 }
 
+/// A script extraction: the request body of `JOB_START` with `kind: "extract"`
+/// (architecture document, §6).
+///
+/// The job writes a file — `CREATE` statements, `INSERT` statements, CSV or
+/// whatever a template makes of the rows — **inside the JVM**. No row of it
+/// crosses the JNI boundary; what crosses is a handle and, every couple of
+/// hundred milliseconds, a [`JobProgress`](crate::JobProgress). That is the
+/// whole point of the data plane: the rows are already on the side that has the
+/// file system.
+///
+/// Nothing here is validated in Rust. The bridge is the single authority on
+/// what a malformed request is, and it answers one synchronously —
+/// [`Session::start_job`](crate::Session::start_job) fails rather than handing
+/// back a job that would fail on the first poll. In particular the bridge
+/// rejects a spec that includes neither [`ddl`](ExtractSpec::ddl) nor
+/// [`data`](ExtractSpec::data), which is what [`ExtractSpec::new`] alone
+/// produces.
+///
+/// ```
+/// use rudbman_jdbc::{DataMode, DataOptions, DdlOptions, ExtractSpec, ObjectRef};
+///
+/// let spec = ExtractSpec::new("/tmp/app.sql")
+///     .with_object(ObjectRef::new("ORDERS").with_schema("APP"))
+///     .with_ddl(DdlOptions::included())
+///     .with_data(DataOptions::included(DataMode::Insert));
+/// ```
+#[derive(Clone, Debug, Serialize)]
+pub struct ExtractSpec {
+    /// Always `"extract"`. The bridge dispatches the job kinds on this member,
+    /// and the other two — `backup` and `transfer` — are separate types when
+    /// they arrive, not a mode of this one.
+    kind: &'static str,
+    /// The objects to extract, in the order they should appear in the file.
+    ///
+    /// Order is the caller's responsibility and it matters: `CREATE`s are
+    /// written in this order, `DROP`s in the reverse of it. Foreign keys move
+    /// to trailing `ALTER`s under [`Constraints::Alter`], so a dependency
+    /// cycle needs no ordering at all.
+    pub objects: Vec<ObjectRef>,
+    /// Where the file goes and how it is encoded.
+    pub output: OutputSpec,
+    /// Whether and how the schema is written.
+    pub ddl: DdlOptions,
+    /// Whether and how the rows are written.
+    pub data: DataOptions,
+}
+
+impl ExtractSpec {
+    /// A spec that writes to `path` and, until something is added to it,
+    /// extracts nothing at all.
+    ///
+    /// The path is resolved **by the JVM, on the machine the JVM runs on**, and
+    /// its parent directories are created. A relative path is therefore
+    /// relative to the process's working directory, which is rarely what a user
+    /// picking a file in a dialogue means: pass an absolute one.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        ExtractSpec {
+            kind: "extract",
+            objects: Vec::new(),
+            output: OutputSpec::new(path),
+            ddl: DdlOptions::default(),
+            data: DataOptions::default(),
+        }
+    }
+
+    /// Adds one object to the list.
+    pub fn with_object(mut self, object: ObjectRef) -> Self {
+        self.objects.push(object);
+        self
+    }
+
+    /// Sets the whole object list, replacing whatever was there.
+    pub fn with_objects(mut self, objects: impl IntoIterator<Item = ObjectRef>) -> Self {
+        self.objects = objects.into_iter().collect();
+        self
+    }
+
+    /// Sets the output encoding and record separator.
+    pub fn with_output(mut self, output: OutputSpec) -> Self {
+        self.output = output;
+        self
+    }
+
+    /// Sets the DDL options.
+    pub fn with_ddl(mut self, ddl: DdlOptions) -> Self {
+        self.ddl = ddl;
+        self
+    }
+
+    /// Sets the data options.
+    pub fn with_data(mut self, data: DataOptions) -> Self {
+        self.data = data;
+        self
+    }
+}
+
+/// One database object named for extraction.
+///
+/// The names are exact, never patterns: this is a list of objects the user
+/// picked, not a query. `None` for catalog or schema means "wherever the
+/// connection is pointed", the same reading [`DescribeRequest`] gives them.
+#[derive(Clone, Debug, Serialize)]
+pub struct ObjectRef {
+    /// Exact catalog name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<String>,
+    /// Exact schema name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// Exact object name. Required.
+    pub name: String,
+}
+
+impl ObjectRef {
+    /// An object named only by its own name.
+    pub fn new(name: impl Into<String>) -> Self {
+        ObjectRef {
+            catalog: None,
+            schema: None,
+            name: name.into(),
+        }
+    }
+
+    /// Sets the exact catalog name.
+    pub fn with_catalog(mut self, catalog: impl Into<String>) -> Self {
+        self.catalog = Some(catalog.into());
+        self
+    }
+
+    /// Sets the exact schema name.
+    pub fn with_schema(mut self, schema: impl Into<String>) -> Self {
+        self.schema = Some(schema.into());
+        self
+    }
+}
+
+/// Where an extraction writes, and in what encoding.
+#[derive(Clone, Debug, Serialize)]
+pub struct OutputSpec {
+    /// The file to write, interpreted by the JVM.
+    ///
+    /// A path that is not valid UTF-8 fails to serialise — the request body is
+    /// JSON, and there is no lossless way to put such a path in it.
+    pub path: PathBuf,
+    /// The charset name, as `java.nio.charset.Charset.forName` reads it.
+    ///
+    /// A name the JVM does not know is a `protocol` error from `JOB_START`, not
+    /// a silent fallback: a script written in the wrong encoding is a file that
+    /// looks fine until someone replays it.
+    pub charset: String,
+    /// The record separator.
+    pub newline: Newline,
+}
+
+impl OutputSpec {
+    /// UTF-8 with Unix line endings, which is what a SQL script should be
+    /// unless the user says otherwise.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        OutputSpec {
+            path: path.into(),
+            charset: "UTF-8".to_string(),
+            newline: Newline::Lf,
+        }
+    }
+
+    /// Sets the charset.
+    pub fn with_charset(mut self, charset: impl Into<String>) -> Self {
+        self.charset = charset.into();
+        self
+    }
+
+    /// Sets the record separator.
+    pub fn with_newline(mut self, newline: Newline) -> Self {
+        self.newline = newline;
+        self
+    }
+}
+
+/// The record separator of an extracted file.
+///
+/// It terminates records only. A line break *inside* a value is data and is
+/// written through untouched, so a CSV file really can hold both spellings —
+/// rewriting the one in the data would be data loss.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum Newline {
+    /// `\n`. The default, and the only sensible one for a file that will be
+    /// read back by a SQL client.
+    #[default]
+    #[serde(rename = "\n")]
+    Lf,
+    /// `\r\n`, for a file destined for a Windows editor that has not caught up.
+    #[serde(rename = "\r\n")]
+    Crlf,
+}
+
+/// Whether and how an extraction writes the schema.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct DdlOptions {
+    /// Whether to write DDL at all. Off by default.
+    pub include: bool,
+    /// Whether to precede the `CREATE`s with `DROP`s, in reverse object order.
+    ///
+    /// `IF EXISTS` is used on the products that have it; Oracle and Db2 do not,
+    /// so there the statement fails on a missing table and the script has to be
+    /// run past that error. Constraints are not dropped, so a cyclic schema
+    /// still needs a hand.
+    pub include_drop: bool,
+    /// Where foreign keys go.
+    pub constraints: Constraints,
+}
+
+impl DdlOptions {
+    /// DDL included, with the defaults: no `DROP`s, foreign keys moved to
+    /// trailing `ALTER`s.
+    pub fn included() -> Self {
+        DdlOptions {
+            include: true,
+            ..DdlOptions::default()
+        }
+    }
+
+    /// Sets whether `DROP` statements precede the `CREATE`s.
+    pub fn with_drop(mut self, include_drop: bool) -> Self {
+        self.include_drop = include_drop;
+        self
+    }
+
+    /// Sets where foreign keys go.
+    pub fn with_constraints(mut self, constraints: Constraints) -> Self {
+        self.constraints = constraints;
+        self
+    }
+}
+
+/// Where an extraction puts foreign keys — and, as a consequence, which DDL
+/// layer it uses.
+///
+/// The two are one decision, not two, and that is worth knowing before
+/// choosing: pulling a foreign key out of a server's own `CREATE` text (MySQL's
+/// `SHOW CREATE TABLE`) would mean parsing vendor SQL, so
+/// [`Constraints::Alter`] forces the reconstructed path
+/// ([`DdlSource::Metadata`]) instead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Constraints {
+    /// Every `CREATE` first, then every foreign key as `ALTER TABLE … ADD
+    /// CONSTRAINT`. The default, because two tables that reference each other
+    /// cannot be created in any order at all and such schemas exist.
+    ///
+    /// The price is the reconstructed DDL's known blind spots — `CHECK`
+    /// constraints, storage clauses, triggers, partitioning — which is the
+    /// trade a replayable script makes.
+    #[default]
+    Alter,
+    /// Keys inline, native DDL first, like the DDL an explorer pane shows.
+    /// Faithful to the server, and not replayable against a cycle.
+    Inline,
+}
+
+/// Whether and how an extraction writes the rows.
+#[derive(Clone, Debug, Serialize)]
+pub struct DataOptions {
+    /// Whether to write rows at all. Off by default.
+    pub include: bool,
+    /// The row format.
+    pub mode: DataMode,
+    /// [`DataMode::Template`] only: the template file, resolved by the JVM.
+    ///
+    /// The bridge has no idea where a configuration directory is, so the caller
+    /// resolves `templates/<name>` before asking. Required by that mode and
+    /// ignored by the others.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_path: Option<PathBuf>,
+    /// How many rows one `INSERT` carries.
+    ///
+    /// `1` is the default and the only portable value: Oracle has no multi-row
+    /// `VALUES` clause, so the bridge clamps this to `1` there rather than
+    /// writing a file that cannot run.
+    pub insert_batch_rows: u32,
+    /// A `WHERE` clause, without the keyword.
+    ///
+    /// Valid only when [`ExtractSpec::objects`] holds exactly one entry — a
+    /// predicate names columns, and columns belong to one table. The bridge
+    /// rejects it otherwise instead of quietly emptying the other tables.
+    #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
+    pub where_clause: Option<String>,
+}
+
+impl Default for DataOptions {
+    /// No rows, and the batch size the bridge would have used anyway.
+    ///
+    /// Written by hand rather than derived: a derived `0` would travel on the
+    /// wire as a row count nobody meant, and the bridge would silently clamp it
+    /// back to one.
+    fn default() -> Self {
+        DataOptions {
+            include: false,
+            mode: DataMode::Insert,
+            template_path: None,
+            insert_batch_rows: 1,
+            where_clause: None,
+        }
+    }
+}
+
+impl DataOptions {
+    /// Rows included, in the given format, one row per statement.
+    pub fn included(mode: DataMode) -> Self {
+        DataOptions {
+            include: true,
+            mode,
+            ..DataOptions::default()
+        }
+    }
+
+    /// Sets the template file. Only [`DataMode::Template`] reads it.
+    pub fn with_template_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.template_path = Some(path.into());
+        self
+    }
+
+    /// Sets how many rows one `INSERT` carries.
+    pub fn with_insert_batch_rows(mut self, rows: u32) -> Self {
+        self.insert_batch_rows = rows;
+        self
+    }
+
+    /// Sets the `WHERE` clause, without the keyword.
+    pub fn with_where(mut self, predicate: impl Into<String>) -> Self {
+        self.where_clause = Some(predicate.into());
+        self
+    }
+}
+
+/// The row format of an extraction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataMode {
+    /// `INSERT` statements, quoted and escaped for the product the rows came
+    /// from. The default.
+    #[default]
+    Insert,
+    /// RFC 4180 CSV with a header row.
+    ///
+    /// NULL is an empty unquoted field and the empty string is `""` — the
+    /// `COPY … CSV` convention, and the only way plain CSV can tell the two
+    /// apart.
+    Csv,
+    /// One rendering of [`DataOptions::template_path`] per row, through the
+    /// engine inherited from jdbgen.
+    Template,
+}
+
 /// Placeholder rendered in place of a secret.
 struct Redacted;
 
@@ -588,6 +941,68 @@ mod tests {
         let json = serde_json::to_string(&DescribeRequest::new("tables").with_schema("APP"))
             .expect("serialises");
         assert_eq!(json, r#"{"kind":"tables","schema":"APP"}"#);
+    }
+
+    #[test]
+    fn an_extract_spec_serialises_to_the_documented_wire_shape() {
+        // The wire pin for architecture document §6. Every name here is read by
+        // `ExtractJob`'s constructor by hand, so a rename on either side is a
+        // protocol break that only a comparison like this one catches.
+        let spec = ExtractSpec::new("/tmp/out.sql")
+            .with_object(ObjectRef::new("T").with_schema("PUBLIC"))
+            .with_ddl(DdlOptions::included())
+            .with_data(DataOptions::included(DataMode::Insert));
+        assert_eq!(
+            serde_json::to_string(&spec).expect("serialises"),
+            r#"{"kind":"extract","objects":[{"schema":"PUBLIC","name":"T"}],"#.to_string()
+                + r#""output":{"path":"/tmp/out.sql","charset":"UTF-8","newline":"\n"},"#
+                + r#""ddl":{"include":true,"include_drop":false,"constraints":"alter"},"#
+                // No `template_path` and no `where`: absent leaves the bridge's
+                // own defaults in place, and a null would not.
+                + r#""data":{"include":true,"mode":"insert","insert_batch_rows":1}}"#
+        );
+    }
+
+    #[test]
+    fn the_optional_members_of_an_extract_spec_appear_only_once_set() {
+        let spec = ExtractSpec::new("/tmp/out.csv")
+            .with_object(ObjectRef::new("T").with_catalog("APP").with_schema("S"))
+            .with_output(
+                OutputSpec::new("/tmp/out.csv")
+                    .with_charset("EUC-KR")
+                    .with_newline(Newline::Crlf),
+            )
+            .with_ddl(
+                DdlOptions::included()
+                    .with_drop(true)
+                    .with_constraints(Constraints::Inline),
+            )
+            .with_data(
+                DataOptions::included(DataMode::Template)
+                    .with_template_path("/etc/rudbman/templates/model.tpl")
+                    .with_insert_batch_rows(50)
+                    .with_where("id > 10"),
+            );
+        let json = serde_json::to_string(&spec).expect("serialises");
+        assert!(
+            json.contains(r#""catalog":"APP","schema":"S","name":"T""#),
+            "{json}"
+        );
+        assert!(json.contains(r#""charset":"EUC-KR""#), "{json}");
+        // The record separator travels as the characters themselves, not as a
+        // name: the bridge compares against "\n" and "\r\n" and takes nothing
+        // else.
+        assert!(json.contains(r#""newline":"\r\n""#), "{json}");
+        assert!(json.contains(r#""constraints":"inline""#), "{json}");
+        assert!(json.contains(r#""include_drop":true"#), "{json}");
+        assert!(json.contains(r#""mode":"template""#), "{json}");
+        assert!(
+            json.contains(r#""template_path":"/etc/rudbman/templates/model.tpl""#),
+            "{json}"
+        );
+        assert!(json.contains(r#""insert_batch_rows":50"#), "{json}");
+        // `where` is a Rust keyword and the wire name all the same.
+        assert!(json.contains(r#""where":"id > 10""#), "{json}");
     }
 
     #[test]
