@@ -47,7 +47,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 use gpui::{
     AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
-    KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, ScrollHandle,
+    Focusable, KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, ScrollHandle,
     SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div,
     prelude::*, px, relative, size,
@@ -579,7 +579,7 @@ impl Workspace {
     }
 
     /// Opens a detail panel for `target` in the active pane.
-    fn open_object(&mut self, target: ObjectTarget, _window: &mut Window, cx: &mut Context<Self>) {
+    fn open_object(&mut self, target: ObjectTarget, window: &mut Window, cx: &mut Context<Self>) {
         let panel = cx.new(|cx| TableDetail::new(target, cx));
         // Subscribe first, *then* ask. A panel that requested its own metadata
         // from its constructor would emit into an empty room and sit at
@@ -592,6 +592,11 @@ impl Workspace {
         panel.update(cx, |panel, cx| panel.refresh(cx));
 
         let pane = self.active_pane();
+        // Whatever was in the pane is about to stop being rendered, and it may
+        // be holding the keyboard; see [`Workspace::reclaim_focus`].
+        if let Some(focus) = self.pane_focus(pane, cx) {
+            self.reclaim_focus(&focus, window, cx);
+        }
         if let Some(content) = self.panes.get_mut(pane) {
             *content = PaneContent::TableDetail(panel);
         }
@@ -727,8 +732,15 @@ impl Workspace {
     }
 
     /// Shows or hides the sidebar, and remembers which.
-    fn toggle_explorer(&mut self, cx: &mut Context<Self>) {
+    fn toggle_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.explorer_visible = !self.explorer_visible;
+        if !self.explorer_visible {
+            // The tree takes the focus when a row is clicked, and hiding the
+            // sidebar leaves it holding a focus nothing renders any more; see
+            // [`Workspace::reclaim_focus`].
+            let explorer = self.explorer.read(cx).focus_handle(cx);
+            self.reclaim_focus(&explorer, window, cx);
+        }
         let mut settings = app_settings::current(cx);
         settings.explorer_visible = self.explorer_visible;
         app_settings::replace(settings, cx);
@@ -798,7 +810,7 @@ impl Workspace {
     }
 
     /// Closes one connection tab, ending its session.
-    fn close_connection(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn close_connection(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.connections.len() {
             return;
         }
@@ -807,7 +819,7 @@ impl Workspace {
         self.explorer.update(cx, |explorer, cx| {
             explorer.update_source(cx, |source| source.remove_root(closed));
         });
-        self.abandon_panes_of(closed, cx);
+        self.abandon_panes_of(closed, window, cx);
         if let ConnectionState::Open(connected) = connection.state {
             // CLOSE_SESSION and then the tunnel, in that order, and off the UI
             // thread because both of them talk to a socket.
@@ -835,7 +847,12 @@ impl Workspace {
     ///
     /// The pane is emptied rather than removed: the layout the user arranged is
     /// theirs, and a tab closing should not rearrange the window.
-    fn abandon_panes_of(&mut self, closed: ConnectionId, cx: &mut Context<Self>) {
+    fn abandon_panes_of(
+        &mut self,
+        closed: ConnectionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let stale: Vec<PaneId> = self
             .panes
             .leaves()
@@ -846,6 +863,12 @@ impl Workspace {
             })
             .collect();
         for id in stale {
+            // The editor of an emptied pane may be where the keyboard is, and
+            // a placeholder renders none of it; see
+            // [`Workspace::reclaim_focus`].
+            if let Some(focus) = self.pane_focus(id, cx) {
+                self.reclaim_focus(&focus, window, cx);
+            }
             if let Some(content) = self.panes.get_mut(id) {
                 *content = PaneContent::Placeholder;
             }
@@ -895,11 +918,17 @@ impl Workspace {
     ///
     /// The marker moves to the pane that follows the closed one in layout order,
     /// which is the neighbour that grew into the freed space.
-    fn close_active_pane(&mut self, cx: &mut Context<Self>) {
+    fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let target = self.active_pane();
         let next = self.panes.next_leaf(target).unwrap_or(target);
+        // Read before the pane goes, because afterwards there is nothing left
+        // to ask which handle its editor or its detail panel was focusing.
+        let focus = self.pane_focus(target, cx);
         if self.panes.remove(target).is_none() {
             return;
+        }
+        if let Some(focus) = focus {
+            self.reclaim_focus(&focus, window, cx);
         }
         self.active_pane = if self.panes.contains(next) {
             next
@@ -927,6 +956,40 @@ impl Workspace {
     fn focus_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_handle);
         cx.notify();
+    }
+
+    /// Takes the keyboard back from `subtree`, which is about to stop being
+    /// rendered, if the focus is anywhere inside it.
+    ///
+    /// gpui never clears the window focus when the focused element leaves the
+    /// tree, and it resolves both dispatched actions and key bindings against
+    /// the focused element *of the frame that was last drawn*; an element that
+    /// is no longer in it resolves to the window root, which the workspace's
+    /// `on_action` handlers do not sit on. A focus left behind on a hidden
+    /// sidebar or a closed pane therefore swallows every menu row and every
+    /// shortcut, silently and for good.
+    ///
+    /// This has to run in the same update that removes the subtree, and reads
+    /// the *previous* frame — the one that still holds it — which is exactly
+    /// what [`FocusHandle::contains_focused`] answers from.
+    fn reclaim_focus(
+        &mut self,
+        subtree: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if subtree.contains_focused(window, cx) {
+            self.focus_shell(window, cx);
+        }
+    }
+
+    /// The handle the focus of one pane's contents hangs from, if it has one.
+    fn pane_focus(&self, pane: PaneId, cx: &App) -> Option<FocusHandle> {
+        match self.panes.get(pane)? {
+            PaneContent::Query(pane) => Some(pane.read(cx).focus_handle(cx)),
+            PaneContent::TableDetail(panel) => Some(panel.read(cx).focus_handle(cx)),
+            PaneContent::Placeholder => None,
+        }
     }
 
     /// Closes every dialog and the dropdown menu.
@@ -1093,11 +1156,11 @@ impl Workspace {
     fn toggle_explorer_action(
         &mut self,
         _: &ToggleExplorer,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        self.toggle_explorer(cx);
+        self.toggle_explorer(window, cx);
     }
 
     /// Opens an empty query pane on the connection whose tab is showing.
@@ -1124,8 +1187,8 @@ impl Workspace {
     }
 
     /// Closes the active pane.
-    fn close_pane_action(&mut self, _: &ClosePane, _window: &mut Window, cx: &mut Context<Self>) {
-        self.close_active_pane(cx);
+    fn close_pane_action(&mut self, _: &ClosePane, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active_pane(window, cx);
     }
 
     /// Moves the pane marker forwards.
@@ -1404,8 +1467,10 @@ impl Workspace {
             })
             .on_close({
                 let this = this.clone();
-                move |index, _window, cx| {
-                    this.update(cx, |workspace, cx| workspace.close_connection(index, cx));
+                move |index, window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.close_connection(index, window, cx)
+                    });
                 }
             })
             .scroll_handle(&self.tab_scroll)
@@ -2817,7 +2882,7 @@ mod tests {
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
 
         window
-            .update(cx, |workspace, _window, cx| {
+            .update(cx, |workspace, window, cx| {
                 // Nothing open yet: both cells say so.
                 let (name, state) = workspace.status_cells();
                 assert_eq!(name, ts!("statusbar.no_connection"));
@@ -2841,7 +2906,7 @@ mod tests {
 
                 // Closing the tab hands the session to a background task that
                 // closes it; the tab is gone either way.
-                workspace.close_connection(0, cx);
+                workspace.close_connection(0, window, cx);
                 assert!(workspace.connections.is_empty());
                 let (name, state) = workspace.status_cells();
                 assert_eq!(name, ts!("statusbar.no_connection"));
@@ -2909,6 +2974,123 @@ mod tests {
             .expect("the window is open");
 
         created.close().expect("close");
+        cx.run_until_parked();
+    }
+
+    /// Hiding the sidebar has to bring the keyboard back with it.
+    ///
+    /// The explorer's tree focuses itself when a row is clicked, and gpui never
+    /// clears the window focus when the focused element stops being rendered:
+    /// it resolves a dispatched action against the focused element of the last
+    /// drawn frame and falls back to the window root, which carries none of the
+    /// workspace's handlers, when that element has gone. So without
+    /// [`Workspace::reclaim_focus`] the first `ToggleExplorer` hides the panel
+    /// and every action after it — the menu rows and the shortcuts alike — is
+    /// dropped without a trace. The second dispatch below is that bug.
+    #[gpui::test]
+    fn hiding_the_explorer_takes_the_focus_back(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+        // The setting on disk decides how the sidebar starts, and this is about
+        // hiding one that is showing.
+        window
+            .update(cx, |workspace, _window, cx| {
+                workspace.explorer_visible = true;
+                cx.notify();
+            })
+            .expect("the window is open");
+
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        // What clicking a row in the tree amounts to, without the mouse.
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.explorer.read(cx).focus_handle(cx).focus(window);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // Through `Window::dispatch_action`, which is the path both the menu row
+        // and the keyboard shortcut take.
+        cx.dispatch_action(ToggleExplorer);
+        window
+            .update(&mut cx, |workspace, window, _cx| {
+                assert!(!workspace.explorer_visible, "the sidebar is still showing");
+                assert!(
+                    workspace.focus_handle.is_focused(window),
+                    "the focus is still on the hidden sidebar"
+                );
+            })
+            .expect("the window is open");
+
+        // The regression: with the focus stranded, this one never arrives.
+        cx.dispatch_action(ToggleExplorer);
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                assert!(
+                    workspace.explorer_visible,
+                    "the second toggle was dropped: the sidebar cannot be brought back"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// The same hazard one pane down: closing a pane whose editor has the
+    /// keyboard must not leave the focus on an editor nothing renders.
+    #[gpui::test]
+    fn closing_a_focused_pane_takes_the_focus_back(cx: &mut gpui::TestAppContext) {
+        let profile = connection::h2::profile("panes");
+        let connected = connection::connect(
+            &profile,
+            &connection::h2::driver(),
+            &connection::Credentials::typed(Some(String::new()), None),
+            &AppSettings::default(),
+        )
+        .expect("H2 opens an in-memory database without a server");
+
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+            rudbman_editor::init(cx);
+        });
+        let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.connections.push(Connection {
+                    id: next_connection_id(),
+                    profile: profile.clone(),
+                    state: ConnectionState::Open(Box::new(connected)),
+                });
+                workspace.active_connection = 0;
+                // Two panes, because the last one is never closed.
+                workspace.split_active(Axis::Horizontal, cx);
+                // Opens in the new pane and puts the caret in its editor.
+                workspace.open_query("SELECT 1", window, cx);
+            })
+            .expect("the window is open");
+
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                let editor = workspace
+                    .active_query()
+                    .expect("the new pane holds the editor")
+                    .read(cx)
+                    .focus_handle(cx);
+                assert!(editor.is_focused(window), "the editor did not take focus");
+                workspace.close_active_pane(window, cx);
+                assert!(
+                    workspace.focus_handle.is_focused(window),
+                    "the focus stayed on the editor of the closed pane"
+                );
+            })
+            .expect("the window is open");
         cx.run_until_parked();
     }
 
