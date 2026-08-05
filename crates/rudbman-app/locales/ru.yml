@@ -18,6 +18,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Запросить выбранный объект
+  open_sql_file: Открыть файл SQL…
+  extract_script: Извлечь скрипт…
   about: О программе rudbman
   quit: Выход
   connection: Подключение
@@ -375,3 +377,31 @@ query:
   hint_auth: У этого соединения нет прав на такое действие.
   hint_network: Соединение с базой данных потеряно.
   hint_cancelled: Выполнение инструкции отменено.
+  open_file_select: Выберите файл SQL
+
+extract:
+  title: Извлечение скрипта
+  object: Объект
+  output: Файл вывода
+  output_none: Файл не выбран
+  browse: Обзор…
+  template_select: Выберите файл шаблона
+  ddl: Включить схему
+  drop: Предварять инструкциями DROP
+  data: Включить строки
+  mode: Формат строк
+  mode_insert: Инструкции INSERT
+  mode_csv: CSV
+  mode_template: Шаблон
+  batch_rows: Строк на INSERT
+  template: Файл шаблона
+  template_none: Шаблон не выбран
+  where: Предложение WHERE
+  start: Извлечь
+  starting: запуск…
+  counters: "%{rows} строк, %{bytes}"
+  cancelling: Отмена…
+  done: "%{rows} строк (%{bytes}) записано в %{path}."
+  cancelled: "Отменено. Частично записанный файл остался в %{path}."
+  failed: "Извлечение не удалось: %{error}"
+  failed_unknown: Извлечение не удалось, но мост не сообщил причину.

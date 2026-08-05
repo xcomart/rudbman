@@ -41,6 +41,10 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Query the selected object
+  # Reads a .sql file into a new query pane on the connection showing.
+  open_sql_file: Open SQL file…
+  # Opens the extraction dialog over the object selected in the explorer.
+  extract_script: Extract script…
   about: About rudbman
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
@@ -542,3 +546,50 @@ query:
   hint_auth: This connection is not allowed to do that.
   hint_network: The connection to the database was lost.
   hint_cancelled: The statement was cancelled.
+  # Title of the file picker the "Open SQL file…" row opens.
+  open_file_select: Choose a SQL file
+
+# The script extraction dialog: one explorer object written out to a file. The
+# form half describes the job; the card that replaces it reports the job.
+extract:
+  title: Extract script
+  # The object the dialog was opened over, qualified by its schema. Read-only:
+  # what is extracted is what was selected.
+  object: Object
+  output: Output file
+  output_none: No file chosen
+  # Both "Browse…" buttons, and the titles of the two dialogs they open.
+  browse: Browse…
+  template_select: Choose a template file
+  # The two halves of a script, each with its own sub-option below it.
+  ddl: Include the schema
+  drop: Precede it with DROP statements
+  data: Include the rows
+  mode: Row format
+  # The three row formats. INSERT and CSV are format names and stay as they are.
+  mode_insert: INSERT statements
+  mode_csv: CSV
+  mode_template: Template
+  batch_rows: Rows per INSERT
+  template: Template file
+  template_none: No template chosen
+  # A predicate, without the WHERE keyword; the field's own placeholder is a
+  # sample and is not translated.
+  where: WHERE clause
+  start: Extract
+  # The progress card, before the bridge has named a phase of its own. The
+  # phases after it — "ddl", "data:<schema>.<table>" — are the bridge's own
+  # words and are shown as they arrive.
+  starting: starting…
+  # The counters under the phase. `bytes` arrives already formatted with its
+  # unit symbol.
+  counters: "%{rows} rows, %{bytes}"
+  # The cancel has been issued and the job has not stopped yet.
+  cancelling: Cancelling…
+  # The three endings. A cancelled job leaves its partial file on disk on
+  # purpose, so the message says where it is.
+  done: "Wrote %{rows} rows (%{bytes}) to %{path}."
+  cancelled: "Cancelled. The partial file was left at %{path}."
+  failed: "The extraction failed: %{error}"
+  # A failure the bridge reported without saying why, which is a bug in it.
+  failed_unknown: The extraction failed for a reason the bridge did not give.

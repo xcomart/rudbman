@@ -18,6 +18,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Consultar el objeto seleccionado
+  open_sql_file: Abrir archivo SQL…
+  extract_script: Extraer script…
   about: Acerca de rudbman
   quit: Salir
   connection: Conexión
@@ -375,3 +377,31 @@ query:
   hint_auth: Esta conexión no tiene permiso para hacerlo.
   hint_network: Se perdió la conexión con la base de datos.
   hint_cancelled: La sentencia se canceló.
+  open_file_select: Elija un archivo SQL
+
+extract:
+  title: Extraer script
+  object: Objeto
+  output: Archivo de salida
+  output_none: Ningún archivo elegido
+  browse: Examinar…
+  template_select: Elija un archivo de plantilla
+  ddl: Incluir el esquema
+  drop: Anteponer sentencias DROP
+  data: Incluir las filas
+  mode: Formato de fila
+  mode_insert: Sentencias INSERT
+  mode_csv: CSV
+  mode_template: Plantilla
+  batch_rows: Filas por INSERT
+  template: Archivo de plantilla
+  template_none: Ninguna plantilla elegida
+  where: Cláusula WHERE
+  start: Extraer
+  starting: iniciando…
+  counters: "%{rows} filas, %{bytes}"
+  cancelling: Cancelando…
+  done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
+  cancelled: "Cancelado. El archivo parcial quedó en %{path}."
+  failed: "La extracción falló: %{error}"
+  failed_unknown: La extracción falló y el puente no dijo por qué.

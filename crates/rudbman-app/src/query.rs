@@ -597,6 +597,17 @@ impl QueryPane {
         self.session.is_some()
     }
 
+    /// What is in the editor, for the shell's tests.
+    ///
+    /// The editor is the pane's own field and the workspace's tests are in
+    /// another module, so opening a file into a pane can only be asserted
+    /// through an accessor. Test-only: nothing on screen reads the buffer this
+    /// way — the run pipeline goes through the editor's own events.
+    #[cfg(test)]
+    pub fn editor_text(&self, cx: &App) -> String {
+        self.editor.read(cx).text()
+    }
+
     /// Puts the keyboard in the editor.
     pub fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
         let handle = self.editor.read(cx).focus_handle(cx);
