@@ -53,13 +53,7 @@ use rudbman_jdbc::{
     BridgeError, BridgeErrorKind, ConnectionSpec, Error as JdbcError, Jvm, JvmConfig,
     KeepAliveSpec, Session, SessionInfo, default_bridge_jar,
 };
-use rudbman_ssh::{HostKeyVerifier, SshTunnel, TunnelEvent, TunnelSpec};
-// `rudbman-ssh` puts the host key policy in the caller's hands but does not
-// re-export the key type its trait method takes, so the one place in rudbman
-// that implements [`HostKeyVerifier`] has to name `russh`'s own. Declared with
-// the same pinned features as `rudbman-ssh` does, or the feature union would
-// pull in `aws-lc-rs` and with it a NASM build requirement on Windows.
-use russh::keys::PublicKey;
+use rudbman_ssh::{HostKeyVerifier, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
 /// Placeholders that name the catalogue rather than the server.
 ///

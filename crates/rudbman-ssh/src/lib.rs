@@ -75,3 +75,9 @@ pub use tunnel::SshTunnel;
 pub use verify::{
     AcceptAllVerifier, HostKeyVerifier, RejectAllVerifier, algorithm_name, fingerprint,
 };
+
+// `HostKeyVerifier::verify` takes this type, so an implementor outside the
+// crate needs its name; re-exported so that naming it does not require a
+// direct dependency on `russh` — which would also mean restating the crate's
+// non-default feature set, a second place for the `ring` pin to rot.
+pub use russh::keys::PublicKey;

@@ -646,6 +646,141 @@ fn cancel_reaches_a_statement_the_worker_is_blocked_in() {
     );
 }
 
+// --- driver probing, before any session exists -----------------------------
+
+/// Writes a throwaway file under the temp directory and hands back its path.
+///
+/// Named after the test that made it so a failure says which one left it
+/// behind, and removed by [`TempFile`]'s `Drop`.
+struct TempFile(PathBuf);
+
+impl TempFile {
+    fn new(name: &str, contents: &[u8]) -> TempFile {
+        let path = std::env::temp_dir().join(format!("rudbman-probe-{name}"));
+        std::fs::write(&path, contents).expect("the temp directory is writable");
+        TempFile(path)
+    }
+
+    fn path(&self) -> &PathBuf {
+        &self.0
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// The 22 bytes of an archive with no entries: end-of-central-directory and
+/// nothing else. A valid JAR that contains no driver — which is what a sources
+/// or javadoc archive looks like to this operation.
+const EMPTY_ZIP: [u8; 22] = [
+    0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
+
+#[test]
+fn probing_a_driver_jar_names_its_driver_class() {
+    // No session anywhere in this test: probing is what happens *before* one
+    // exists, which is the whole reason it lives on the JVM.
+    let probe = jvm()
+        .probe_drivers(&[h2_jar()])
+        .expect("the H2 jar is readable");
+
+    assert!(
+        probe.classes.iter().any(|class| class == "org.h2.Driver"),
+        "the scan should have found the driver: {:?}",
+        probe.classes
+    );
+    assert!(
+        probe.services.iter().any(|class| class == "org.h2.Driver"),
+        "H2 declares itself in META-INF/services: {:?}",
+        probe.services
+    );
+    assert_eq!(
+        probe.recommended(),
+        Some("org.h2.Driver"),
+        "the declared service is the one to offer first"
+    );
+    assert!(!probe.is_empty());
+
+    // The end-to-end shape of driver registration: what was probed can then be
+    // connected with.
+    let spec = ConnectionSpec::new(fresh_url(), probe.recommended().expect("a driver"))
+        .with_credentials("sa", "")
+        .with_jars([h2_jar()]);
+    let session = Session::open(jvm(), &spec).expect("the probed class connects");
+    assert!(session.ping().expect("pings").ok);
+}
+
+#[test]
+fn probing_an_archive_with_no_driver_is_an_empty_answer_not_an_error() {
+    let jar = TempFile::new("empty.jar", &EMPTY_ZIP);
+    let probe = jvm()
+        .probe_drivers(&[jar.path().clone()])
+        .expect("an archive without a driver is not a failure");
+    assert!(probe.is_empty(), "expected nothing to be found: {probe:?}");
+    assert_eq!(probe.recommended(), None);
+}
+
+#[test]
+fn probing_a_file_that_is_not_an_archive_finds_nothing_and_says_so_quietly() {
+    // Documented in `Jvm::probe_drivers`: the entry stream simply yields no
+    // entries, so there is nothing to report and nothing to fail about.
+    let jar = TempFile::new("garbage.jar", b"this is not a zip archive at all");
+    let probe = jvm()
+        .probe_drivers(&[jar.path().clone()])
+        .expect("a file that is not an archive is not an error");
+    assert!(probe.is_empty(), "{probe:?}");
+}
+
+#[test]
+fn probing_a_damaged_archive_is_an_io_error() {
+    // Half of a real jar: enough of a zip header to start reading entries, not
+    // enough to finish one. Unlike the garbage file above, this one fails part
+    // way through, and the two cases are worth telling apart in the UI —
+    // "nothing in it" is a wrong file, "cannot read it" is a broken download.
+    let whole = std::fs::read(h2_jar()).expect("the H2 jar is readable");
+    let jar = TempFile::new("truncated.jar", &whole[..whole.len() / 2]);
+
+    let error = jvm()
+        .probe_drivers(&[jar.path().clone()])
+        .expect_err("a half-written jar cannot be scanned");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Io, "{error:?}");
+}
+
+#[test]
+fn probing_a_path_that_does_not_exist_is_a_driver_error() {
+    let missing = PathBuf::from("/nonexistent/rudbman/nope.jar");
+    let error = jvm()
+        .probe_drivers(&[missing])
+        .expect_err("there is no such file");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Driver);
+    assert!(
+        error.message.contains("nope.jar"),
+        "the message must name the file: {}",
+        error.message
+    );
+}
+
+#[test]
+fn probing_nothing_at_all_is_a_protocol_error() {
+    // Not short-circuited on the Rust side: the bridge is the single authority
+    // on what a malformed request is.
+    let error = jvm().probe_drivers(&[]).expect_err("no jars, no answer");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Protocol);
+    assert!(!error.is_not_implemented(), "{error:?}");
+}
+
 // --- corruption, on bytes Java really wrote --------------------------------
 
 #[test]

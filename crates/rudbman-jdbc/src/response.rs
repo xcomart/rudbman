@@ -124,6 +124,55 @@ pub struct Cancelled {
     pub cancelled: u32,
 }
 
+/// `PROBE_DRIVER` (`0x50`): the JDBC drivers a set of JARs offers.
+///
+/// Answers the one question a driver manager has when the user picks a JAR —
+/// "what is the class name?" — without making them open the archive.
+///
+/// Two lists, because they come from two different places and disagree in
+/// useful ways:
+///
+/// * `services` is what the JAR *declares* through
+///   `META-INF/services/java.sql.Driver`. When it is there it is authoritative:
+///   the vendor named its own entry point.
+/// * `classes` is what a scan of the archive *found* — every non-inner class
+///   that implements `java.sql.Driver`. It is a superset, and it routinely
+///   includes internal or deprecated drivers a vendor would not want picked.
+///
+/// [`DriverProbe::recommended`] applies that preference.
+///
+/// The scan never runs a static initialiser (`Class.forName(…, false, …)`): a
+/// driver's can open sockets or load native libraries, and looking at a file
+/// must not do either.
+#[derive(Clone, Debug, Deserialize)]
+pub struct DriverProbe {
+    /// Every `java.sql.Driver` implementation found by scanning the archives,
+    /// in the order they were encountered.
+    pub classes: Vec<String>,
+    /// The classes declared in `META-INF/services/java.sql.Driver`.
+    pub services: Vec<String>,
+}
+
+impl DriverProbe {
+    /// The class to offer the user first: the declared service if there is one,
+    /// otherwise the first class the scan found.
+    ///
+    /// `None` means the JARs contain no driver at all — which is not an error
+    /// and is worth saying out loud in the UI, because the usual cause is a
+    /// sources or javadoc archive picked by mistake.
+    pub fn recommended(&self) -> Option<&str> {
+        self.services
+            .first()
+            .or_else(|| self.classes.first())
+            .map(String::as_str)
+    }
+
+    /// Whether nothing was found, by either route.
+    pub fn is_empty(&self) -> bool {
+        self.classes.is_empty() && self.services.is_empty()
+    }
+}
+
 /// One result column's logical type, from the `EXECUTE` response.
 ///
 /// This — not the batch's [`ColumnKind`] — is what presentation follows from.

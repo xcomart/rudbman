@@ -357,6 +357,27 @@ impl DescribeRequest {
     }
 }
 
+/// The request body of `PROBE_DRIVER`: which archives to look inside.
+///
+/// Built for you by [`Jvm::probe_drivers`](crate::Jvm::probe_drivers); public
+/// because a caller may want to inspect or log exactly what was asked.
+#[derive(Clone, Debug, Serialize)]
+pub struct ProbeRequest {
+    /// The JARs to scan. Every path must exist — see
+    /// [`Jvm::probe_drivers`](crate::Jvm::probe_drivers) for what happens when
+    /// one does not.
+    pub jars: Vec<PathBuf>,
+}
+
+impl ProbeRequest {
+    /// A request for a set of JARs.
+    pub fn new(jars: impl IntoIterator<Item = PathBuf>) -> Self {
+        ProbeRequest {
+            jars: jars.into_iter().collect(),
+        }
+    }
+}
+
 /// Placeholder rendered in place of a secret.
 struct Redacted;
 

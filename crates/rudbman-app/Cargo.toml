@@ -42,10 +42,6 @@ futures.workspace = true
 async-trait.workspace = true
 # Guards the tunnel pool, which is reached from every connect thread at once.
 parking_lot.workspace = true
-# Only for `russh::keys::PublicKey`, which `rudbman-ssh`'s `HostKeyVerifier`
-# takes and does not re-export. Pinned to the same features as `rudbman-ssh`
-# declares, so the union stays on the `ring` backend.
-russh.workspace = true
 # Profile and driver identifiers.
 uuid.workspace = true
 # The driver downloader; see the note beside it in the workspace manifest.

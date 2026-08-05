@@ -5586,7 +5586,6 @@ dependencies = [
  "rudbman-jdbc",
  "rudbman-ssh",
  "rudbman-ui",
- "russh",
  "rust-i18n",
  "serde_json",
  "sys-locale",

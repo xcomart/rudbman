@@ -39,7 +39,9 @@ use parking_lot::Mutex;
 use rudbman_core::AppSettings;
 
 use crate::error::{Error, Result};
-use crate::protocol::Op;
+use crate::protocol::{Op, parse_json, take_payload};
+use crate::response::DriverProbe;
+use crate::spec::ProbeRequest;
 
 /// The class holding the single entry point.
 const BRIDGE_CLASS: &str = "comart/rudbman/bridge/Bridge";
@@ -263,6 +265,37 @@ impl Jvm {
     /// The running JVM, if one has been started.
     pub fn get() -> Option<&'static Jvm> {
         JVM.get()
+    }
+
+    /// Lists the JDBC drivers a set of JARs offers, without loading any of them.
+    ///
+    /// This is the one operation that belongs on the JVM rather than on a
+    /// [`Session`](crate::Session): it is what the driver manager asks *before*
+    /// any connection exists — the user has just picked a file and wants to be
+    /// told the class name instead of having to find it. It runs on the calling
+    /// thread (attach, call, detach), which is safe because the bridge answers
+    /// it from a throwaway class loader that it closes again, holding no state
+    /// and pinning no file. Expect it to block for as long as it takes to read
+    /// the archives.
+    ///
+    /// # What comes back
+    ///
+    /// | Input | Result |
+    /// |---|---|
+    /// | A driver JAR | [`DriverProbe`] with the classes found and, usually, the `META-INF/services` declaration |
+    /// | A JAR with no `java.sql.Driver` in it | `Ok` with **both lists empty** — not an error. See [`DriverProbe::is_empty`] |
+    /// | A file that is not an archive at all | `Ok` with both lists empty: nothing that reads as a zip entry is found, and there is nothing to report |
+    /// | A path that does not exist | `Err` with [`BridgeErrorKind::Driver`](crate::BridgeErrorKind::Driver) and the absolute path in the message |
+    /// | A damaged archive | `Err` with [`BridgeErrorKind::Io`](crate::BridgeErrorKind::Io) when the entry stream fails part way through |
+    /// | An empty `jars` slice | `Err` with [`BridgeErrorKind::Protocol`](crate::BridgeErrorKind::Protocol). Passed through to the bridge rather than short-circuited here, so there is one answer to this question and not two |
+    ///
+    /// A class that fails to resolve — half the classes in a driver JAR
+    /// reference optional dependencies that were not shipped — is skipped
+    /// silently. That is the normal case, not a failure.
+    pub fn probe_drivers(&self, jars: &[PathBuf]) -> Result<DriverProbe> {
+        let request = serde_json::to_vec(&ProbeRequest::new(jars.to_vec()))?;
+        let response = self.call_detached(Op::ProbeDriver, 0, 0, Some(&request))?;
+        parse_json(&take_payload(response)?)
     }
 
     /// The underlying VM handle, for attaching threads.
