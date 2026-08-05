@@ -1,0 +1,78 @@
+[package]
+name = "rudbman-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "rudbman"
+path = "src/main.rs"
+
+# Embeds assets/icon.ico into the Windows executable. gpui loads icon
+# resource ID 1 for the window class, so one embedded icon covers Explorer,
+# the taskbar and the window itself. That file is generated from
+# `assets/icon.svg`; see `assets/README.md`.
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
+
+# Used only by `src/caption.rs`, to colour the DWM title bar from the app theme.
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+raw-window-handle.workspace = true
+
+# Used only by `src/caption.rs`, to pin the AppKit title bar to the app theme.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc.workspace = true
+raw-window-handle.workspace = true
+
+[dependencies]
+rudbman-core.workspace = true
+rudbman-editor.workspace = true
+rudbman-grid.workspace = true
+rudbman-jdbc.workspace = true
+rudbman-sql.workspace = true
+rudbman-ssh.workspace = true
+rudbman-ui.workspace = true
+
+# The explorer and the detail panel read `DESCRIBE` items, which the JNI layer
+# hands over as JSON maps: the bridge's key names are fixed and stable across
+# drivers, so a map is the right shape and a struct per metadata kind would be
+# thirteen of them.
+serde_json.workspace = true
+# The connection orchestrator runs on a background thread and reports back to
+# the window through a one-shot channel, which is what lets a tunnel that dies
+# under a live session reach the tab that has to be marked dead.
+futures.workspace = true
+# The host key verifier the tunnel calls back into is an async trait object.
+async-trait.workspace = true
+# Guards the tunnel pool, which is reached from every connect thread at once.
+parking_lot.workspace = true
+# Profile and driver identifiers.
+uuid.workspace = true
+# The driver downloader; see the note beside it in the workspace manifest.
+ureq.workspace = true
+
+# The theme editor's catalogue hands file writes and deletions straight back
+# from `rudbman-ui::theme_store`, which reports them as `anyhow::Result`.
+anyhow.workspace = true
+# The export save dialog falls back to the user's home directory when the
+# catalogue's own directory does not exist yet; `rudbman-core` resolves the
+# configuration directory but has no reason to expose the home one.
+directories.workspace = true
+gpui.workspace = true
+log.workspace = true
+env_logger.workspace = true
+rust-i18n.workspace = true
+sys-locale.workspace = true
+
+[dev-dependencies]
+# gpui's headless test platform, for the behaviour that only exists once an
+# element tree has been laid out. Test-only: the binary links gpui without it.
+gpui = { workspace = true, features = ["test-support"] }
+# The window-geometry round trip writes a real `settings.json` and reads it
+# back, rather than mocking the configuration directory out.
+tempfile.workspace = true
+

@@ -1,0 +1,32 @@
+[package]
+name = "rudbman-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Reusable gpui widgets and the theme layer shared by every rudbman view"
+
+[dependencies]
+# Only for the two theme directories: the widget layer reads the user's own
+# themes from disk, and `rudbman-core` is what knows where the configuration
+# lives. Nothing else of the core is used here.
+rudbman-core.workspace = true
+
+anyhow.workspace = true
+gpui.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The text input measures and moves by grapheme cluster rather than by `char`,
+# so that a combining sequence or an emoji with a modifier is one cursor step.
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+# The theme store walks real directories rather than mocking the filesystem out.
+tempfile.workspace = true
+# gpui's headless test platform, for the widget behaviour that only exists once
+# an element tree is laid out and hit-tested -- hover-revealed controls, and
+# which of two stacked hitboxes answers a press. Test-only: the library links
+# gpui without it.
+gpui = { workspace = true, features = ["test-support"] }

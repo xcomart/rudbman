@@ -1,0 +1,377 @@
+# 简体中文翻译。键结构与 en.yml 完全一致。
+_version: 1
+
+language:
+  name: 简体中文
+
+common:
+  cancel: 取消
+  save: 保存
+  close: 关闭
+
+menu:
+  new_connection: 新建连接…
+  settings: 设置…
+  toggle_explorer: 资源管理器
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: 新建查询
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: 查询所选对象
+  about: 关于 rudbman
+  quit: 退出
+  connection: 连接
+  view: 视图
+  tip_menu: 菜单
+  mac:
+    new_connection: 新建连接…
+    quit: 退出 rudbman
+
+tab:
+  close: 关闭连接
+  tip_list: 所有连接
+  tip_new: "新建连接 (%{shortcut})"
+
+empty:
+  title: 暂无连接
+  hint: 添加一个连接，即可浏览数据库并执行 SQL。
+  connected_title: 没有打开的内容
+  connected_hint: 连接是活动的。浏览数据库和执行 SQL 将随资源管理器和编辑器一起提供。
+
+statusbar:
+  no_connection: 无连接
+  idle: 空闲
+  connecting: 正在连接…
+  connected: 已连接
+  disconnected: 已断开
+  failed: "失败：%{error}"
+  tunnel_lost: "SSH 隧道已关闭：%{reason}"
+
+about:
+  title: 关于 rudbman
+  version: "版本 %{version}"
+  tagline: 一款用 JNI 封装 JDBC 驱动、并以 gpui 绘制界面的数据库工具。
+  license: "以 %{license} 许可证发布。"
+  credits: 基于 gpui 0.2.2（已内置并打补丁）构建。
+
+# 设置对话框及其中的主题编辑器。
+settings:
+  title: 设置
+  system_default: 跟随系统设置
+  save_failed: "无法保存设置：%{error}"
+
+  section:
+    appearance: 外观
+    window: 窗口
+    language: 语言
+    database: 数据库
+    jvm: Java 虚拟机
+
+  ui_theme: 界面主题
+  editor_theme: 编辑器主题
+  editor_follows_ui: 让编辑器主题跟随界面主题
+  ui_font_size: 界面字号
+  editor_font: 编辑器字体
+  editor_font_size: 编辑器字号
+  font_size_hint: 6 – 32 pt
+
+  opacity: 不透明度
+  opacity_hint: "% — 低于 100 时可以透出桌面"
+  blur: 模糊窗口背后的桌面
+  titlebar: 标题栏
+  titlebar_custom: 由 rudbman 绘制
+  titlebar_system: 由系统绘制
+
+  language: 界面语言
+  language_hint: 保存设置后，菜单和对话框会用所选语言重新绘制。
+
+  fetch_batch_rows: 每批行数
+  fetch_batch_rows_hint: 滚动结果网格时每次取回的行数
+  query_timeout: 语句超时
+  query_timeout_hint: 秒 — 0 表示不限制
+  confirm_writes_default: 新建连接在执行写入语句前先确认
+
+  jvm_heap: Java 堆
+  jvm_heap_hint: MB — 驱动运行时的 -Xmx
+  jvm_args: 附加参数
+  jvm_hint: 取回大结果集时，数据先占满 Java 堆才会到达 rudbman，因此因内存不足而失败的查询通常需要在这里加大堆。两项设置都在 rudbman 下次启动时生效。附加参数以空格分隔。
+
+  manage:
+    duplicate: 复制…
+    edit: 编辑…
+    delete: 删除
+    import: 导入…
+    export: 导出…
+    import_select: 导入
+    import_unreadable: "无法读取“%{file}”：%{error}"
+    import_not_a_theme: "“%{file}”是编辑器主题。请在“编辑器主题”中导入。"
+    import_not_an_editor_theme: "“%{file}”是界面主题。请在“界面主题”中导入。"
+    import_bad_color: "“%{file}”中%{slot}的颜色无法使用。"
+    import_skipped: "已跳过 %{count} 个文件。"
+    copy_name: "%{name}（副本）"
+    delete_theme_confirm: "要删除主题“%{name}”吗？"
+    delete_editor_theme_confirm: "要删除编辑器主题“%{name}”吗？"
+    write_failed: "无法写入文件：%{error}"
+    delete_failed: "无法删除文件：%{error}"
+
+  editor:
+    theme_title: 编辑界面主题
+    editor_theme_title: 编辑编辑器主题
+    name: 名称
+    dark: 这是一套深色配色
+    invalid: 每种颜色都必须写成 #RRGGBB。
+    grid_group: 结果网格 — 未指定颜色时不会写入文件
+    automatic: 自动
+    automatic_slot: "%{name}（自动）"
+
+    slot:
+      background: 窗口
+      surface: 面板
+      surface_hover: 悬停
+      surface_active: 按下
+      border: 分隔线
+      text: 文字
+      text_muted: 次要文字
+      accent: 强调色
+      danger: 错误
+      success: 成功
+      overlay: 对话框背景
+      grid_header: 网格表头
+      grid_row_alt: 交替行
+      grid_selection: 网格选区
+      grid_null: NULL 标记
+      grid_pk: 主键
+
+    code:
+      foreground: 文字
+      cursor: 光标
+      selection: 选区
+      line_highlight: 当前行
+      gutter: 行号
+      gutter_active: 当前行号
+      keyword: 关键字
+      string: 字符串
+      number: 数字
+      comment: 注释
+      function: 函数
+      type: 类型名
+      operator: 运算符
+      identifier: 标识符
+      punctuation: 标点
+      bracket_match: 匹配括号
+      error: 错误
+      warning: 警告
+
+# 连接对话框。
+connect:
+  title: 连接
+  new: 新建
+  new_name: 新建连接
+  duplicate: 复制
+  delete: 删除
+  delete_confirm: "删除连接“%{name}”及其保存的密码？"
+  unnamed: "(未命名)"
+  copy_name: "%{name}（副本）"
+
+  name: 名称
+  folder: 文件夹
+  color: 标记
+  driver: 驱动
+  pick_driver: 选择驱动
+  manage_drivers: 驱动…
+  driver_has_no_jar: 该驱动还没有 JAR。请在驱动界面添加或下载一个。
+
+  host: 主机
+  port: 端口
+  database: 数据库
+  url: URL
+  url_hint: 由上面的字段拼装而成。直接编辑将保留你输入的内容。
+  url_overridden: 手动输入的 URL；上面的字段不再改动它。
+  url_reset: 重新拼装
+
+  username: 用户
+  password: 密码
+  props: 驱动属性
+  prop_key: 属性
+  prop_value: 值
+  add_prop: 添加属性
+
+  section:
+    behaviour: 行为
+    tunnel: SSH 隧道
+
+  read_only: 以只读方式打开连接
+  auto_commit: 每条语句执行后立即提交
+  confirm_writes: 执行写入语句前先确认
+  keep_alive: 用定期查询保持连接
+
+  tunnel_enabled: 通过 SSH 堡垒机连接
+  tunnel_host: 堡垒机
+  tunnel_user: 堡垒机用户
+  tunnel_auth: 认证
+  tunnel_auth_agent: SSH 代理
+  tunnel_auth_key: 私钥
+  tunnel_auth_password: 密码
+  tunnel_key: 密钥文件
+  tunnel_password: 堡垒机密码
+  tunnel_passphrase: 密钥口令
+  tunnel_remote: 数据库
+  tunnel_hint: 数据库地址填堡垒机所看到的名字。rudbman 会绑定一个空闲的本地端口，并把驱动接到该端口。
+
+  test: 测试
+  testing: 正在连接…
+  test_ok: "已连接到 %{product}。"
+  test_ok_unnamed: 连接可用。
+  test_failed: "无法连接：%{error}"
+  test_failed_hint: "无法连接：%{error} — %{hint}"
+  connect: 连接
+  saved: 已保存。
+
+  name_required: 请为该连接取个名字。
+  url_required: 该连接没有 URL。
+  no_driver: "没有名为“%{driver}”的驱动定义。"
+  load_failed: "无法读取已保存的连接：%{error}"
+  save_failed: "无法保存连接：%{error}"
+  keychain_failed: "无法把密码保存到密钥链：%{error}"
+
+  hint_auth: 请检查用户名和密码
+  hint_driver: 请检查驱动 JAR 和驱动类
+  hint_jvm: rudbman 需要一个 Java 运行时；请设置 RUDBMAN_JAVA_HOME 或 JAVA_HOME
+  hint_network: 请检查主机、端口以及数据库是否可达
+  hint_host_key: 堡垒机的主机密钥尚未受信任
+
+  host_key_question: "%{host} 出示了未知的 %{algorithm} 密钥：%{fingerprint}"
+  trust_host_key: 信任该密钥
+  host_key_trusted: 主机密钥已加入信任列表。请再试一次。
+
+# 驱动管理器。
+driver:
+  title: 驱动
+  name: 名称
+  class: 驱动类
+  class_hint: 驱动文档中给出的完全限定类名，例如 org.postgresql.Driver。
+  detect: 自动检测
+  detecting: 正在查看 JAR 文件…
+  probe_found: "找到了 %{class}。"
+  probe_choose: 该驱动包含多个类。请选择用于连接的那一个。
+  probe_recommended: 推荐
+  probe_none: 这些文件里没有 JDBC 驱动。源码包或 javadoc 包就是这样；请确认选对了文件。
+  probe_damaged: "文件已损坏，无法读完；请重新下载。（%{error}）"
+  probe_missing: "找不到 JAR 文件：%{error}"
+  probe_jvm_failed: "无法启动 Java 运行时：%{error}"
+  probe_failed: "无法检查 JAR 文件：%{error}"
+  url_template: URL 模板
+  default_port: 默认端口
+  dialect: 方言
+  maven: Maven 坐标
+  jars: JAR 文件
+  add_jar: 添加 JAR…
+  add_jar_select: 添加
+  remove_jar: 移除
+  jar_missing: 缺失
+  no_jar: 无 JAR
+  no_jar_hint: 驱动至少要有一个 JAR，连接才能使用它。
+  jar_count: "%{count} 个 JAR"
+  download: 下载
+  downloading: "正在下载 %{file}…"
+  downloading_percent: "正在下载 %{file} — %{percent}%"
+  downloaded: "已下载并添加 %{file}。"
+  download_cancelled: 下载已取消。
+  bad_coordinate: "“%{coordinate}”不是 group:artifact:version 形式的坐标。"
+  not_found: "Maven Central 的 %{url} 上没有这个文件。"
+  network_failed: "下载失败：%{error}"
+  checksum_failed: "下载的文件已损坏：SHA-1 应为 %{expected}，实际为 %{actual}。"
+  load_failed: "无法读取驱动定义：%{error}"
+  save_failed: "无法保存驱动定义：%{error}"
+  new: 新建
+  new_name: 新建驱动
+  delete: 删除
+  delete_confirm: "删除驱动定义“%{name}”？"
+  none_selected: 请选择一个驱动，或新建一个。
+
+# 资源管理器侧边栏。
+explorer:
+  title: 资源管理器
+  empty: 打开一个连接即可浏览。
+  loading: 正在加载…
+  disconnected: 连接已关闭。
+  unknown_connection: "(连接)"
+  load_failed_unknown: 无法加载。
+
+  tables: 表
+  views: 视图
+  procedures: 存储过程
+  functions: 函数
+  sequences: 序列
+
+# 对象详情面板。
+detail:
+  tab_columns: 列
+  tab_keys: 键
+  tab_references: 引用
+  tab_ddl: DDL
+  tab_properties: 属性
+
+  loading: 正在加载…
+  refresh: 刷新
+  copy: 复制
+  empty: 无
+  no_ddl: 该对象没有可显示的 CREATE 语句。
+  ddl_reconstructed: 由元数据重建，仅供参考。其中不含 CHECK 约束、触发器、分区和排序规则。
+
+  column: 列
+  type: 类型
+  nullable: 可空
+  default: 默认值
+  key: 键
+  comment: 注释
+  name: 名称
+  value: 值
+  seq: 位置
+  unique: 唯一
+  order: 排序
+  target: 引用目标
+  source: 引用来源
+  on_update: 更新时
+  on_delete: 删除时
+
+  primary_key: 主键
+  indexes: 索引
+  references_out: 该对象的外键
+  references_in: 指向该对象的外键
+
+  schema: 模式
+  start_value: 起始值
+  increment: 步长
+  min_value: 最小值
+  max_value: 最大值
+  current_value: 当前值
+  cycle: 循环
+  cache: 缓存
+
+query:
+  run: 执行
+  cancel: 取消
+  cancelling: 正在取消…
+  result: "结果 %{index}"
+  tab: "查询 %{index}"
+  empty: 写一条语句然后执行。
+  no_results: 该语句没有产生任何结果。
+  running: 执行中…
+  rows_affected: "影响 %{count} 行"
+  executed: 语句已执行。
+  row_count: "%{count} 行"
+  elapsed: "%{seconds} 秒"
+  busy: 此窗格中已有语句在执行。
+  no_statement: 没有可执行的语句。
+  read_only: 此连接为只读，语句未发送。
+  confirm_title: 执行这条语句吗？
+  confirm_body: "会修改数据的语句：%{count} 条"
+  confirm_run: 执行
+  lob_unsupported: LOB 查看器尚未实现。
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: 请检查语句的语法，以及对其所引用对象的读取权限。
+  hint_constraint: 语句违反了表上声明的约束。
+  hint_auth: 此连接没有这样做的权限。
+  hint_network: 与数据库的连接已断开。
+  hint_cancelled: 语句已被取消。

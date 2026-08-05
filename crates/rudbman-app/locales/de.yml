@@ -1,0 +1,377 @@
+# Deutsche Übersetzung. Die Schlüsselstruktur entspricht der von en.yml.
+_version: 1
+
+language:
+  name: Deutsch
+
+common:
+  cancel: Abbrechen
+  save: Speichern
+  close: Schließen
+
+menu:
+  new_connection: Neue Verbindung…
+  settings: Einstellungen…
+  toggle_explorer: Explorer
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: Neue Abfrage
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: Ausgewähltes Objekt abfragen
+  about: Über rudbman
+  quit: Beenden
+  connection: Verbindung
+  view: Ansicht
+  tip_menu: Menü
+  mac:
+    new_connection: Neue Verbindung…
+    quit: rudbman beenden
+
+tab:
+  close: Verbindung schließen
+  tip_list: Alle Verbindungen
+  tip_new: "Neue Verbindung (%{shortcut})"
+
+empty:
+  title: Keine Verbindungen
+  hint: Legen Sie eine Verbindung an, um eine Datenbank zu durchsuchen und SQL auszuführen.
+  connected_title: Nichts geöffnet
+  connected_hint: Die Verbindung steht. Sie zu durchsuchen und SQL darauf auszuführen kommt mit dem Explorer und dem Editor.
+
+statusbar:
+  no_connection: keine Verbindung
+  idle: bereit
+  connecting: verbinde …
+  connected: verbunden
+  disconnected: getrennt
+  failed: "fehlgeschlagen: %{error}"
+  tunnel_lost: "Der SSH-Tunnel wurde geschlossen: %{reason}"
+
+about:
+  title: Über rudbman
+  version: "Version %{version}"
+  tagline: Ein Datenbankwerkzeug, das JDBC-Treiber über JNI einbindet und seine Oberfläche mit gpui zeichnet.
+  license: "Lizenziert unter %{license}."
+  credits: Erstellt mit gpui 0.2.2 (eingebunden und gepatcht).
+
+# Der Einstellungsdialog und der Themen-Editor darin.
+settings:
+  title: Einstellungen
+  system_default: Systemeinstellung verwenden
+  save_failed: "Die Einstellungen konnten nicht gespeichert werden: %{error}"
+
+  section:
+    appearance: Darstellung
+    window: Fenster
+    language: Sprache
+    database: Datenbank
+    jvm: Java-VM
+
+  ui_theme: Oberflächen-Thema
+  editor_theme: Editor-Thema
+  editor_follows_ui: Editor-Thema an das Oberflächen-Thema anpassen
+  ui_font_size: Schriftgröße der Oberfläche
+  editor_font: Editor-Schriftart
+  editor_font_size: Schriftgröße im Editor
+  font_size_hint: 6 – 32 pt
+
+  opacity: Deckkraft
+  opacity_hint: "% — unter 100 scheint der Schreibtisch durch"
+  blur: Hintergrund hinter dem Fenster weichzeichnen
+  titlebar: Titelleiste
+  titlebar_custom: Von rudbman gezeichnet
+  titlebar_system: Vom System gezeichnet
+
+  language: Sprache der Oberfläche
+  language_hint: Menüs und Dialoge werden in der gewählten Sprache neu gezeichnet, sobald die Einstellungen gespeichert sind.
+
+  fetch_batch_rows: Zeilen pro Stapel
+  fetch_batch_rows_hint: Zeilen, die beim Blättern jeweils geholt werden
+  query_timeout: Zeitlimit je Anweisung
+  query_timeout_hint: Sekunden — 0 bedeutet kein Limit
+  confirm_writes_default: Bei neuen Verbindungen vor schreibenden Anweisungen nachfragen
+
+  jvm_heap: Java-Heap
+  jvm_heap_hint: MB — das -Xmx, unter dem ein Treiber läuft
+  jvm_args: Zusätzliche Argumente
+  jvm_hint: Große Ergebnismengen füllen den Java-Heap, bevor sie rudbman erreichen; einer Abfrage, der der Speicher ausgeht, fehlt meist Heap. Beide Einstellungen greifen beim nächsten Start von rudbman. Zusätzliche Argumente werden durch Leerzeichen getrennt.
+
+  manage:
+    duplicate: Duplizieren…
+    edit: Bearbeiten…
+    delete: Löschen
+    import: Importieren…
+    export: Exportieren…
+    import_select: Importieren
+    import_unreadable: "„%{file}“ konnte nicht gelesen werden: %{error}"
+    import_not_a_theme: "„%{file}“ ist ein Editor-Thema. Importieren Sie es unter „Editor-Thema“."
+    import_not_an_editor_theme: "„%{file}“ ist ein Oberflächen-Thema. Importieren Sie es unter „Oberflächen-Thema“."
+    import_bad_color: "„%{file}“ hat keine brauchbare Farbe für %{slot}."
+    import_skipped: "%{count} Dateien wurden übersprungen."
+    copy_name: "%{name} (Kopie)"
+    delete_theme_confirm: "Thema „%{name}“ löschen?"
+    delete_editor_theme_confirm: "Editor-Thema „%{name}“ löschen?"
+    write_failed: "Die Datei konnte nicht geschrieben werden: %{error}"
+    delete_failed: "Die Datei konnte nicht entfernt werden: %{error}"
+
+  editor:
+    theme_title: Oberflächen-Thema bearbeiten
+    editor_theme_title: Editor-Thema bearbeiten
+    name: Name
+    dark: Dies ist eine dunkle Palette
+    invalid: Jede Farbe muss als #RRGGBB geschrieben werden.
+    grid_group: Ergebnisraster — ohne angegebene Farbe bleibt es aus der Datei heraus
+    automatic: Automatisch
+    automatic_slot: "%{name} (automatisch)"
+
+    slot:
+      background: Fenster
+      surface: Bereiche
+      surface_hover: Überfahren
+      surface_active: Gedrückt
+      border: Trennlinien
+      text: Text
+      text_muted: Gedämpfter Text
+      accent: Akzent
+      danger: Fehler
+      success: Erfolg
+      overlay: Dialoghintergrund
+      grid_header: Rasterkopf
+      grid_row_alt: Wechselnde Zeile
+      grid_selection: Rasterauswahl
+      grid_null: NULL-Kennzeichnung
+      grid_pk: Primärschlüssel
+
+    code:
+      foreground: Text
+      cursor: Schreibmarke
+      selection: Auswahl
+      line_highlight: Aktuelle Zeile
+      gutter: Zeilennummern
+      gutter_active: Aktuelle Zeilennummer
+      keyword: Schlüsselwörter
+      string: Zeichenketten
+      number: Zahlen
+      comment: Kommentare
+      function: Funktionen
+      type: Typnamen
+      operator: Operatoren
+      identifier: Bezeichner
+      punctuation: Satzzeichen
+      bracket_match: Passende Klammer
+      error: Fehler
+      warning: Warnungen
+
+# Der Verbindungsdialog.
+connect:
+  title: Verbindungen
+  new: Neu
+  new_name: Neue Verbindung
+  duplicate: Duplizieren
+  delete: Löschen
+  delete_confirm: "Die Verbindung „%{name}“ und ihr gespeichertes Passwort löschen?"
+  unnamed: "(ohne Namen)"
+  copy_name: "%{name} (Kopie)"
+
+  name: Name
+  folder: Ordner
+  color: Markierung
+  driver: Treiber
+  pick_driver: Treiber wählen
+  manage_drivers: Treiber…
+  driver_has_no_jar: Dieser Treiber hat noch kein JAR. Unter „Treiber“ eines hinzufügen oder herunterladen.
+
+  host: Host
+  port: Port
+  database: Datenbank
+  url: URL
+  url_hint: Wird aus den Feldern darüber zusammengesetzt. Wer sie direkt bearbeitet, behält das Getippte.
+  url_overridden: Von Hand eingetragen; die Felder darüber ändern sie nicht mehr.
+  url_reset: Neu aufbauen
+
+  username: Benutzer
+  password: Passwort
+  props: Treibereigenschaften
+  prop_key: Eigenschaft
+  prop_value: Wert
+  add_prop: Eigenschaft hinzufügen
+
+  section:
+    behaviour: Verhalten
+    tunnel: SSH-Tunnel
+
+  read_only: Verbindung schreibgeschützt öffnen
+  auto_commit: Jede Anweisung sofort bestätigen
+  confirm_writes: Vor schreibenden Anweisungen nachfragen
+  keep_alive: Verbindung mit einer regelmäßigen Abfrage offen halten
+
+  tunnel_enabled: Über einen SSH-Bastion-Host verbinden
+  tunnel_host: Bastion
+  tunnel_user: Bastion-Benutzer
+  tunnel_auth: Authentifizierung
+  tunnel_auth_agent: SSH-Agent
+  tunnel_auth_key: Privater Schlüssel
+  tunnel_auth_password: Passwort
+  tunnel_key: Schlüsseldatei
+  tunnel_password: Bastion-Passwort
+  tunnel_passphrase: Passphrase des Schlüssels
+  tunnel_remote: Datenbank
+  tunnel_hint: Die Datenbank wird so benannt, wie der Bastion-Host sie sieht. rudbman bindet einen freien lokalen Port und verbindet den Treiber damit.
+
+  test: Testen
+  testing: Verbinde …
+  test_ok: "Mit %{product} verbunden."
+  test_ok_unnamed: Die Verbindung funktioniert.
+  test_failed: "Verbindung nicht möglich: %{error}"
+  test_failed_hint: "Verbindung nicht möglich: %{error} — %{hint}"
+  connect: Verbinden
+  saved: Gespeichert.
+
+  name_required: Der Verbindung einen Namen geben.
+  url_required: Die Verbindung hat keine URL.
+  no_driver: "Keine Treiberdefinition namens „%{driver}“."
+  load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden: %{error}"
+  save_failed: "Die Verbindungen konnten nicht gespeichert werden: %{error}"
+  keychain_failed: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden: %{error}"
+
+  hint_auth: Benutzername und Passwort prüfen
+  hint_driver: Treiber-JAR und Treiberklasse prüfen
+  hint_jvm: rudbman braucht eine Java-Laufzeitumgebung; RUDBMAN_JAVA_HOME oder JAVA_HOME setzen
+  hint_network: Host, Port und Erreichbarkeit der Datenbank prüfen
+  hint_host_key: Dem Hostschlüssel des Bastion-Hosts wird noch nicht vertraut
+
+  host_key_question: "%{host} hat einen unbekannten %{algorithm}-Schlüssel vorgelegt: %{fingerprint}"
+  trust_host_key: Diesem Schlüssel vertrauen
+  host_key_trusted: Der Hostschlüssel wurde als vertrauenswürdig eingetragen. Bitte erneut verbinden.
+
+# Die Treiberverwaltung.
+driver:
+  title: Treiber
+  name: Name
+  class: Treiberklasse
+  class_hint: Der voll qualifizierte Klassenname, wie ihn die Dokumentation des Treibers angibt — zum Beispiel org.postgresql.Driver.
+  detect: Ermitteln
+  detecting: Die JAR-Dateien werden durchgesehen …
+  probe_found: "%{class} gefunden."
+  probe_choose: Dieser Treiber bringt mehrere Klassen mit. Wählen Sie die aus, mit der verbunden werden soll.
+  probe_recommended: empfohlen
+  probe_none: In diesen Dateien steckt kein JDBC-Treiber. So sieht ein Quelltext- oder Javadoc-JAR aus; prüfen Sie, ob die richtige Datei gewählt wurde.
+  probe_damaged: "Die Datei ist beschädigt und ließ sich nicht bis zum Ende lesen; laden Sie sie erneut herunter. (%{error})"
+  probe_missing: "Die JAR-Datei wurde nicht gefunden: %{error}"
+  probe_jvm_failed: "Die Java-Laufzeitumgebung konnte nicht gestartet werden: %{error}"
+  probe_failed: "Die JAR-Dateien konnten nicht untersucht werden: %{error}"
+  url_template: URL-Vorlage
+  default_port: Standardport
+  dialect: Dialekt
+  maven: Maven-Koordinate
+  jars: JAR-Dateien
+  add_jar: JAR hinzufügen…
+  add_jar_select: Hinzufügen
+  remove_jar: Entfernen
+  jar_missing: fehlt
+  no_jar: kein JAR
+  no_jar_hint: Ein Treiber braucht mindestens ein JAR, bevor eine Verbindung ihn nutzen kann.
+  jar_count: "%{count} JAR(s)"
+  download: Herunterladen
+  downloading: "%{file} wird geladen …"
+  downloading_percent: "%{file} wird geladen — %{percent} %"
+  downloaded: "%{file} wurde geladen und hinzugefügt."
+  download_cancelled: Der Download wurde abgebrochen.
+  bad_coordinate: "„%{coordinate}“ ist keine Koordinate der Form group:artifact:version."
+  not_found: "Maven Central hat nichts unter %{url}."
+  network_failed: "Der Download ist fehlgeschlagen: %{error}"
+  checksum_failed: "Der Download ist beschädigt: erwartet wurde SHA-1 %{expected}, angekommen ist %{actual}."
+  load_failed: "Die Treiberdefinitionen konnten nicht gelesen werden: %{error}"
+  save_failed: "Die Treiberdefinitionen konnten nicht gespeichert werden: %{error}"
+  new: Neu
+  new_name: Neuer Treiber
+  delete: Löschen
+  delete_confirm: "Die Treiberdefinition „%{name}“ löschen?"
+  none_selected: Einen Treiber auswählen oder einen neuen anlegen.
+
+# Die Explorer-Seitenleiste.
+explorer:
+  title: Explorer
+  empty: Öffnen Sie eine Verbindung, um sie zu durchsuchen.
+  loading: wird geladen …
+  disconnected: Die Verbindung ist geschlossen.
+  unknown_connection: "(Verbindung)"
+  load_failed_unknown: Das konnte nicht geladen werden.
+
+  tables: Tabellen
+  views: Sichten
+  procedures: Prozeduren
+  functions: Funktionen
+  sequences: Sequenzen
+
+# Die Detailansicht eines Objekts.
+detail:
+  tab_columns: Spalten
+  tab_keys: Schlüssel
+  tab_references: Beziehungen
+  tab_ddl: DDL
+  tab_properties: Eigenschaften
+
+  loading: wird geladen …
+  refresh: Neu laden
+  copy: Kopieren
+  empty: nichts vorhanden
+  no_ddl: Für dieses Objekt gibt es keine CREATE-Anweisung zu zeigen.
+  ddl_reconstructed: Aus Metadaten rekonstruiert, als Anhaltspunkt. CHECK-Bedingungen, Trigger, Partitionierung und Sortierungen fehlen darin.
+
+  column: Spalte
+  type: Typ
+  nullable: "Null"
+  default: Vorgabe
+  key: Schlüssel
+  comment: Kommentar
+  name: Name
+  value: Wert
+  seq: Position
+  unique: Eindeutig
+  order: Reihenfolge
+  target: Verweist auf
+  source: Verwiesen von
+  on_update: Bei Änderung
+  on_delete: Bei Löschung
+
+  primary_key: Primärschlüssel
+  indexes: Indizes
+  references_out: Fremdschlüssel dieses Objekts
+  references_in: Fremdschlüssel auf dieses Objekt
+
+  schema: Schema
+  start_value: Start
+  increment: Schrittweite
+  min_value: Minimum
+  max_value: Maximum
+  current_value: Aktuell
+  cycle: Zyklus
+  cache: Cache
+
+query:
+  run: Ausführen
+  cancel: Abbrechen
+  cancelling: Wird abgebrochen…
+  result: "Ergebnis %{index}"
+  tab: "Abfrage %{index}"
+  empty: Schreiben Sie eine Anweisung und führen Sie sie aus.
+  no_results: Die Anweisung lieferte kein Ergebnis.
+  running: läuft…
+  rows_affected: "%{count} Zeilen geändert"
+  executed: Anweisung ausgeführt.
+  row_count: "%{count} Zeilen"
+  elapsed: "%{seconds} s"
+  busy: In diesem Bereich läuft bereits eine Anweisung.
+  no_statement: Es gibt keine Anweisung zum Ausführen.
+  read_only: Diese Verbindung ist schreibgeschützt; die Anweisung wurde nicht gesendet.
+  confirm_title: Diese Anweisung ausführen?
+  confirm_body: "Anweisungen, die Daten ändern: %{count}"
+  confirm_run: Ausführen
+  lob_unsupported: Der LOB-Betrachter existiert noch nicht.
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: Prüfen Sie die Syntax der Anweisung und Ihre Leserechte auf das Genannte.
+  hint_constraint: Die Anweisung verletzt eine Bedingung der Tabelle.
+  hint_auth: Diese Verbindung darf das nicht.
+  hint_network: Die Verbindung zur Datenbank ging verloren.
+  hint_cancelled: Die Anweisung wurde abgebrochen.

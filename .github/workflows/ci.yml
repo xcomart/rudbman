@@ -1,0 +1,99 @@
+# Build, lint and test on every platform rudbman ships on.
+#
+# Inherited from logman, whose notes still hold here — russh and ureq are
+# pinned to the `ring` backend so no NASM is needed anywhere, the OS-keychain
+# tests are `#[ignore]`d, and gpui is vendored so [patch.crates-io] resolves
+# from the checkout — plus one thing logman does not have: a JVM. The bridge
+# JAR is built and tested first, because rudbman-jdbc's build script refuses
+# to build without the JAR, and its integration tests then boot a real JVM
+# against a real H2. That H2 driver is handed to the tests explicitly through
+# RUDBMAN_TEST_H2_JAR rather than found by globbing the Gradle cache, so the
+# lookup cannot go wrong three different ways on three different runners.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Native libraries gpui links against on Linux. The crate graph binds
+      # xkbcommon (+ its X11 half), wayland-client and fontconfig; fontconfig's
+      # dev package pulls in the freetype headers that freetype-sys wants.
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev
+
+      # 17 is the floor the bridge compiles against (--release 17) and the JVM
+      # the JNI tests boot. Temurin because it exists for all three runners.
+      - name: Install JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: bridge/*.gradle
+
+      # The Java half first: rudbman-jdbc's build script only checks that the
+      # JAR exists, so it has to exist before anything Rust is compiled, and
+      # running the bridge's own suite here keeps the two halves of the wire
+      # contract tested in the same run that tests the Rust decoder.
+      - name: Build and test the bridge
+        working-directory: bridge
+        # bash on every runner: the Windows one has Git Bash, and this keeps
+        # `./gradlew` meaning the same file on all three.
+        shell: bash
+        run: ./gradlew build --no-daemon
+
+      # Tell the JNI tests where the driver landed instead of letting them
+      # search: Gradle has just downloaded it, and bash (which the Windows
+      # runner also has) can name it in one line.
+      - name: Locate the H2 driver
+        shell: bash
+        run: |
+          jar=$(find ~/.gradle/caches/modules-2/files-2.1/com.h2database -name 'h2-*.jar' | head -1)
+          test -f "$jar"
+          # Git Bash's find answers with a POSIX path (/c/Users/...), which the
+          # native-Windows test binary cannot open; hand it over in the OS's
+          # own spelling.
+          if [ "$RUNNER_OS" = "Windows" ]; then jar=$(cygpath -w "$jar"); fi
+          echo "RUDBMAN_TEST_H2_JAR=$jar" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Formatting is platform-independent; checking it once is enough.
+      - name: rustfmt
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: test
+        run: cargo test --workspace --locked

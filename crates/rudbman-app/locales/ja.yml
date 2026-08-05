@@ -1,0 +1,377 @@
+# 日本語訳。キー構成は en.yml と同じ。
+_version: 1
+
+language:
+  name: 日本語
+
+common:
+  cancel: キャンセル
+  save: 保存
+  close: 閉じる
+
+menu:
+  new_connection: 新規接続…
+  settings: 設定…
+  toggle_explorer: エクスプローラー
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: 新しいクエリ
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: 選択したオブジェクトを照会
+  about: rudbman について
+  quit: 終了
+  connection: 接続
+  view: 表示
+  tip_menu: メニュー
+  mac:
+    new_connection: 新規接続…
+    quit: rudbman を終了
+
+tab:
+  close: 接続を閉じる
+  tip_list: すべての接続
+  tip_new: "新規接続 (%{shortcut})"
+
+empty:
+  title: 接続がありません
+  hint: 接続を追加すると、データベースの参照と SQL の実行ができます。
+  connected_title: 開いているものはありません
+  connected_hint: 接続は有効です。閲覧と SQL の実行はエクスプローラーとエディターが揃ってから使えます。
+
+statusbar:
+  no_connection: 接続なし
+  idle: 待機中
+  connecting: 接続中…
+  connected: 接続済み
+  disconnected: 切断
+  failed: "失敗: %{error}"
+  tunnel_lost: "SSH トンネルが閉じました: %{reason}"
+
+about:
+  title: rudbman について
+  version: "バージョン %{version}"
+  tagline: JDBC ドライバーを JNI で包み、gpui で画面を描くデータベース作業ツールです。
+  license: "%{license} ライセンスで配布されています。"
+  credits: gpui 0.2.2（ベンダリングとパッチ適用）で構築されています。
+
+# 設定ダイアログと、その中のテーマエディター。
+settings:
+  title: 設定
+  system_default: システムの設定に従う
+  save_failed: "設定を保存できませんでした: %{error}"
+
+  section:
+    appearance: 外観
+    window: ウィンドウ
+    language: 言語
+    database: データベース
+    jvm: Java 仮想マシン
+
+  ui_theme: インターフェイステーマ
+  editor_theme: エディターテーマ
+  editor_follows_ui: エディターテーマをインターフェイステーマに合わせる
+  ui_font_size: インターフェイスの文字サイズ
+  editor_font: エディターのフォント
+  editor_font_size: エディターの文字サイズ
+  font_size_hint: 6 – 32 pt
+
+  opacity: 不透明度
+  opacity_hint: "% — 100 未満にするとデスクトップが透けます"
+  blur: ウィンドウの背後をぼかす
+  titlebar: タイトルバー
+  titlebar_custom: rudbman が描画
+  titlebar_system: システムが描画
+
+  language: インターフェイスの言語
+  language_hint: 設定を保存すると、メニューとダイアログが選んだ言語で描き直されます。
+
+  fetch_batch_rows: バッチあたりの行数
+  fetch_batch_rows_hint: グリッドをスクロールしたときに一度に取得する行数
+  query_timeout: 文のタイムアウト
+  query_timeout_hint: 秒 — 0 は無制限
+  confirm_writes_default: 新しい接続では書き込み文の実行前に確認する
+
+  jvm_heap: Java ヒープ
+  jvm_heap_hint: MB — ドライバーが動作する -Xmx
+  jvm_args: 追加の引数
+  jvm_hint: 大きな結果セットの取得は rudbman に届く前に Java ヒープを消費します。メモリ不足で失敗するクエリは、たいていここでヒープを増やす必要があります。どちらの設定も rudbman を再起動すると有効になります。追加の引数は空白で区切ります。
+
+  manage:
+    duplicate: 複製…
+    edit: 編集…
+    delete: 削除
+    import: インポート…
+    export: エクスポート…
+    import_select: インポート
+    import_unreadable: "「%{file}」を読み込めませんでした: %{error}"
+    import_not_a_theme: "「%{file}」はエディターテーマです。エディターテーマからインポートしてください。"
+    import_not_an_editor_theme: "「%{file}」はインターフェイステーマです。インターフェイステーマからインポートしてください。"
+    import_bad_color: "「%{file}」の%{slot}に使える色がありません。"
+    import_skipped: "%{count}個のファイルをスキップしました。"
+    copy_name: "%{name}（コピー）"
+    delete_theme_confirm: "テーマ「%{name}」を削除しますか？"
+    delete_editor_theme_confirm: "エディターテーマ「%{name}」を削除しますか？"
+    write_failed: "ファイルを書き込めませんでした: %{error}"
+    delete_failed: "ファイルを削除できませんでした: %{error}"
+
+  editor:
+    theme_title: インターフェイステーマの編集
+    editor_theme_title: エディターテーマの編集
+    name: 名前
+    dark: ダークパレットです
+    invalid: すべての色は #RRGGBB 形式で指定してください。
+    grid_group: 結果グリッド — 色を指定しない限りファイルには書き出されません
+    automatic: 自動
+    automatic_slot: "%{name}（自動）"
+
+    slot:
+      background: ウィンドウ
+      surface: パネル
+      surface_hover: ホバー
+      surface_active: 押下
+      border: 区切り線
+      text: テキスト
+      text_muted: 淡いテキスト
+      accent: アクセント
+      danger: エラー
+      success: 成功
+      overlay: ダイアログの背景
+      grid_header: グリッドの見出し
+      grid_row_alt: 交互の行
+      grid_selection: グリッドの選択
+      grid_null: NULL の表示
+      grid_pk: 主キー
+
+    code:
+      foreground: テキスト
+      cursor: キャレット
+      selection: 選択範囲
+      line_highlight: 現在の行
+      gutter: 行番号
+      gutter_active: 現在の行番号
+      keyword: キーワード
+      string: 文字列
+      number: 数値
+      comment: コメント
+      function: 関数
+      type: 型名
+      operator: 演算子
+      identifier: 識別子
+      punctuation: 区切り記号
+      bracket_match: 対応する括弧
+      error: エラー
+      warning: 警告
+
+# 接続ダイアログ。
+connect:
+  title: 接続
+  new: 新規
+  new_name: 新しい接続
+  duplicate: 複製
+  delete: 削除
+  delete_confirm: "接続「%{name}」と保存されたパスワードを削除しますか？"
+  unnamed: "(名前なし)"
+  copy_name: "%{name}（コピー）"
+
+  name: 名前
+  folder: フォルダー
+  color: タグ
+  driver: ドライバー
+  pick_driver: ドライバーを選ぶ
+  manage_drivers: ドライバー…
+  driver_has_no_jar: このドライバーにはまだ JAR がありません。ドライバー画面で追加するかダウンロードしてください。
+
+  host: ホスト
+  port: ポート
+  database: データベース
+  url: URL
+  url_hint: 上の項目から組み立てられます。直接書き換えるとその内容が使われます。
+  url_overridden: 手入力された URL です。上の項目を変えても反映されません。
+  url_reset: 組み立て直す
+
+  username: ユーザー
+  password: パスワード
+  props: ドライバープロパティ
+  prop_key: プロパティ
+  prop_value: 値
+  add_prop: プロパティを追加
+
+  section:
+    behaviour: 動作
+    tunnel: SSH トンネル
+
+  read_only: 読み取り専用で接続する
+  auto_commit: 文を実行するたびにコミットする
+  confirm_writes: 書き込み文を実行する前に確認する
+  keep_alive: 定期的なクエリで接続を維持する
+
+  tunnel_enabled: SSH 踏み台を経由して接続する
+  tunnel_host: 踏み台
+  tunnel_user: 踏み台のユーザー
+  tunnel_auth: 認証
+  tunnel_auth_agent: SSH エージェント
+  tunnel_auth_key: 秘密鍵
+  tunnel_auth_password: パスワード
+  tunnel_key: 鍵ファイル
+  tunnel_password: 踏み台のパスワード
+  tunnel_passphrase: 鍵のパスフレーズ
+  tunnel_remote: データベース
+  tunnel_hint: データベースは踏み台から見える名前で指定します。rudbman が空いているローカルポートを確保し、ドライバーをそこへ接続します。
+
+  test: 接続テスト
+  testing: 接続しています…
+  test_ok: "%{product} に接続しました。"
+  test_ok_unnamed: 接続は正常です。
+  test_failed: "接続できませんでした: %{error}"
+  test_failed_hint: "接続できませんでした: %{error} — %{hint}"
+  connect: 接続
+  saved: 保存しました。
+
+  name_required: 接続の名前を入力してください。
+  url_required: 接続の URL が空です。
+  no_driver: "「%{driver}」というドライバー定義がありません。"
+  load_failed: "保存された接続を読み込めませんでした: %{error}"
+  save_failed: "接続を保存できませんでした: %{error}"
+  keychain_failed: "パスワードをキーチェーンに保存できませんでした: %{error}"
+
+  hint_auth: ユーザー名とパスワードを確認してください
+  hint_driver: ドライバー JAR とドライバークラスを確認してください
+  hint_jvm: Java ランタイムが必要です。RUDBMAN_JAVA_HOME か JAVA_HOME を設定してください
+  hint_network: ホストとポート、データベースに到達できるかを確認してください
+  hint_host_key: 踏み台のホスト鍵はまだ信頼されていません
+
+  host_key_question: "%{host} が未知の %{algorithm} 鍵を提示しました: %{fingerprint}"
+  trust_host_key: この鍵を信頼する
+  host_key_trusted: ホスト鍵を信頼済みに追加しました。もう一度接続してみてください。
+
+# ドライバーマネージャー。
+driver:
+  title: ドライバー
+  name: 名前
+  class: ドライバークラス
+  class_hint: ドライバーの資料に載っている完全修飾クラス名です。たとえば org.postgresql.Driver。
+  detect: 自動検出
+  detecting: JAR ファイルの中を調べています…
+  probe_found: "%{class} を見つけました。"
+  probe_choose: このドライバーには複数のクラスがあります。接続に使うものを選んでください。
+  probe_recommended: 推奨
+  probe_none: これらのファイルに JDBC ドライバーはありません。ソースや javadoc の JAR がこう見えます。正しいファイルを選んだか確認してください。
+  probe_damaged: "ファイルが壊れていて最後まで読めませんでした。ダウンロードし直してください。(%{error})"
+  probe_missing: "JAR ファイルが見つかりません: %{error}"
+  probe_jvm_failed: "Java ランタイムを起動できませんでした: %{error}"
+  probe_failed: "JAR ファイルを調べられませんでした: %{error}"
+  url_template: URL テンプレート
+  default_port: 既定のポート
+  dialect: 方言
+  maven: Maven 座標
+  jars: JAR ファイル
+  add_jar: JAR を追加…
+  add_jar_select: 追加
+  remove_jar: 削除
+  jar_missing: 見つかりません
+  no_jar: JAR なし
+  no_jar_hint: 接続に使うには、ドライバーに JAR が少なくとも一つ必要です。
+  jar_count: "JAR %{count} 個"
+  download: ダウンロード
+  downloading: "%{file} をダウンロードしています…"
+  downloading_percent: "%{file} をダウンロード中 — %{percent}%"
+  downloaded: "%{file} をダウンロードして追加しました。"
+  download_cancelled: ダウンロードを中止しました。
+  bad_coordinate: "「%{coordinate}」は group:artifact:version 形式の座標ではありません。"
+  not_found: "Maven Central の %{url} には何もありません。"
+  network_failed: "ダウンロードに失敗しました: %{error}"
+  checksum_failed: "ダウンロードしたファイルが壊れています。SHA-1 は %{expected} のはずが %{actual} でした。"
+  load_failed: "ドライバー定義を読み込めませんでした: %{error}"
+  save_failed: "ドライバー定義を保存できませんでした: %{error}"
+  new: 新規
+  new_name: 新しいドライバー
+  delete: 削除
+  delete_confirm: "ドライバー定義「%{name}」を削除しますか？"
+  none_selected: ドライバーを選ぶか、新しく追加してください。
+
+# エクスプローラーのサイドバー。
+explorer:
+  title: エクスプローラー
+  empty: 接続を開くと中身をたどれます。
+  loading: 読み込み中…
+  disconnected: 接続は閉じています。
+  unknown_connection: "(接続)"
+  load_failed_unknown: 読み込めませんでした。
+
+  tables: テーブル
+  views: ビュー
+  procedures: プロシージャー
+  functions: 関数
+  sequences: シーケンス
+
+# オブジェクトの詳細パネル。
+detail:
+  tab_columns: 列
+  tab_keys: キー
+  tab_references: 参照
+  tab_ddl: DDL
+  tab_properties: プロパティ
+
+  loading: 読み込み中…
+  refresh: 再読み込み
+  copy: コピー
+  empty: ありません
+  no_ddl: このオブジェクトに表示できる CREATE 文はありません。
+  ddl_reconstructed: メタデータから組み立てた参考用です。CHECK 制約・トリガー・パーティション・照合順序は含まれていません。
+
+  column: 列
+  type: 型
+  nullable: NULL 可
+  default: 既定値
+  key: キー
+  comment: コメント
+  name: 名前
+  value: 値
+  seq: 位置
+  unique: 一意
+  order: 並び
+  target: 参照先
+  source: 参照元
+  on_update: 更新時
+  on_delete: 削除時
+
+  primary_key: 主キー
+  indexes: インデックス
+  references_out: このオブジェクトの外部キー
+  references_in: このオブジェクトを参照する外部キー
+
+  schema: スキーマ
+  start_value: 開始値
+  increment: 増分
+  min_value: 最小値
+  max_value: 最大値
+  current_value: 現在値
+  cycle: 循環
+  cache: キャッシュ
+
+query:
+  run: 実行
+  cancel: キャンセル
+  cancelling: キャンセル中…
+  result: "結果 %{index}"
+  tab: "クエリ %{index}"
+  empty: 文を書いて実行してください。
+  no_results: 文は結果を返しませんでした。
+  running: 実行中…
+  rows_affected: "%{count} 行を更新しました"
+  executed: 文を実行しました。
+  row_count: "%{count} 行"
+  elapsed: "%{seconds} 秒"
+  busy: このペインでは既に文が実行中です。
+  no_statement: 実行する文がありません。
+  read_only: 読み取り専用の接続のため、文は送信されませんでした。
+  confirm_title: この文を実行しますか?
+  confirm_body: "データを変更する文: %{count} 件"
+  confirm_run: 実行する
+  lob_unsupported: LOB ビューアーはまだありません。
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: 文の構文と、対象を読む権限があるかを確認してください。
+  hint_constraint: テーブルが宣言している制約に違反しました。
+  hint_auth: この接続にはその権限がありません。
+  hint_network: データベースとの接続が失われました。
+  hint_cancelled: 文の実行はキャンセルされました。

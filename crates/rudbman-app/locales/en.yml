@@ -1,0 +1,544 @@
+# Interface strings, compiled into the binary by `rust_i18n::i18n!` in
+# `src/main.rs`. This file is the source of truth: every other locale mirrors
+# its keys, and a key missing from a translation falls back to the value here.
+#
+# Not translated anywhere, on purpose: the "rudbman" wordmark itself, element
+# ids, gpui key names, theme ids, the licence identifier, and the `Cmd`/`Ctrl`
+# modifier names.
+#
+# This is the M0 set: the application shell and nothing that is not on screen
+# yet. The connection dialog, the settings dialog, the explorer tree and the
+# result grid bring their own namespaces as they arrive.
+_version: 1
+
+# What this language calls itself, for the settings dialog's language list.
+# Written in the language of this file and never translated into another one:
+# a user who has landed in a language they cannot read has to be able to find
+# their own in the list. Every locale file must define it — the list of shipped
+# languages is derived from these files, and this key is what names each entry.
+language:
+  name: English
+
+# Shared by more than one dialog.
+common:
+  cancel: Cancel
+  save: Save
+  close: Close
+
+# The in-app dropdown menu, and the macOS menu bar below it. The two differ
+# only in capitalisation in English, but a translation may need to distinguish
+# them, so they are separate keys.
+#
+# An ellipsis marks a row that asks something before it acts, which is every
+# row here except "About" and "Quit".
+menu:
+  new_connection: New connection…
+  settings: Settings…
+  # Shows and hides the explorer sidebar.
+  toggle_explorer: Explorer
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: New query
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: Query the selected object
+  about: About rudbman
+  quit: Quit
+  # Name of the macOS menu bar's second menu, the one holding the commands that
+  # act on connections.
+  connection: Connection
+  # Name of its third, holding what changes the layout of the window.
+  view: View
+  # Hover label of the button that opens this menu. Named after the menu it
+  # opens rather than described, the way the tab strip's own buttons are.
+  tip_menu: Menu
+  mac:
+    new_connection: New Connection…
+    quit: Quit rudbman
+
+# The tab strip in the title bar. One tab per open connection.
+tab:
+  close: Close connection
+  # Hover labels for the two buttons at the end of the strip. The close button
+  # on each tab reuses `close` above: same command, same wording.
+  tip_list: All connections
+  tip_new: "New connection (%{shortcut})"
+
+# The placeholder shown in a pane that has nothing in it yet, which in M0 is
+# every pane: the shell opens with one empty pane and no way to fill it until
+# the connection dialog exists.
+empty:
+  title: No connections
+  hint: Add a connection to browse a database and run SQL against it.
+  # Shown in a pane once a connection is open. The tab is live; the pane is
+  # empty because the explorer tree and the SQL editor that would fill it are
+  # not written yet.
+  connected_title: Nothing open
+  connected_hint: The connection is live. Browsing it and running SQL against it arrive with the explorer and the editor.
+
+# The bar along the bottom of the window. It reports the connection, the
+# transaction state, the row count and the elapsed time of the last statement;
+# in M0 there is a connection cell and nothing to put in the others.
+statusbar:
+  no_connection: no connection
+  idle: idle
+  # What the first two cells say once a connection has been opened. The product
+  # name and its version are values and are never translated.
+  connecting: connecting…
+  connected: connected
+  disconnected: disconnected
+  # The session is gone and will not come back on its own: the tunnel under it
+  # died, or the connection failed. The reason comes from the driver or the
+  # transport and is not translated.
+  failed: "failed: %{error}"
+  tunnel_lost: "the SSH tunnel closed: %{reason}"
+
+# The about box. The version, the licence name and the names of the libraries
+# are values, not words, and are never translated.
+about:
+  title: About rudbman
+  version: "Version %{version}"
+  tagline: A database workbench that wraps JDBC drivers in JNI and draws its interface with gpui.
+  license: "Licensed under %{license}."
+  credits: Built with gpui 0.2.2 (vendored and patched).
+
+# The settings dialog and the theme editor inside it.
+#
+# Never translated: hex colour values, the `#RRGGBB` notation, JVM flags and
+# the slot keys of a theme file. The slot *labels* below are translated — they
+# name what a colour is for, not what the file calls it.
+settings:
+  title: Settings
+  # Heads both dropdowns, and doubles as their placeholder so a trigger reads
+  # the same whether or not its list is open.
+  system_default: Use the system setting
+  save_failed: "The settings could not be saved: %{error}"
+
+  section:
+    appearance: Appearance
+    window: Window
+    language: Language
+    database: Database
+    jvm: Java virtual machine
+
+  ui_theme: Interface theme
+  editor_theme: Editor theme
+  editor_follows_ui: Match the editor theme to the interface theme
+  ui_font_size: Interface size
+  editor_font: Editor font
+  editor_font_size: Editor size
+  # Unit hint after a narrow field. A range, so it reads the same everywhere.
+  font_size_hint: 6 – 32 pt
+
+  opacity: Opacity
+  opacity_hint: "% — below 100 lets the desktop show through"
+  blur: Blur the desktop behind the window
+  titlebar: Title bar
+  titlebar_custom: Drawn by rudbman
+  titlebar_system: Drawn by the system
+
+  language: Interface language
+  language_hint: Menus and dialogs are re-drawn in the chosen language as soon as the settings are saved.
+
+  fetch_batch_rows: Rows per batch
+  fetch_batch_rows_hint: rows fetched at a time as the grid is scrolled
+  query_timeout: Statement timeout
+  query_timeout_hint: seconds — 0 means no limit
+  confirm_writes_default: Ask before running a write statement on a new connection
+
+  jvm_heap: Java heap
+  jvm_heap_hint: MB — the -Xmx a driver runs under
+  jvm_args: Extra arguments
+  jvm_hint: Fetching a large result set fills the Java heap before it reaches rudbman, so a query that runs out of memory usually wants a larger heap here. Both settings take effect the next time rudbman starts. Extra arguments are separated by spaces.
+
+  # The row of buttons under each theme picker.
+  manage:
+    duplicate: Duplicate…
+    edit: Edit…
+    delete: Delete
+    # Both open a platform file dialog, hence the ellipsis.
+    import: Import…
+    export: Export…
+    # Confirmation button of the file dialog the import opens.
+    import_select: Import
+    # Nothing could be read: the file is missing, unreadable, or not JSON at
+    # all. The error comes from the reader and is not translated.
+    import_unreadable: "“%{file}” could not be read: %{error}"
+    # It is a theme file — of the other kind. The two formats look alike enough
+    # that picking the wrong row is the mistake most easily made, so the message
+    # says which row would have taken it.
+    import_not_a_theme: "“%{file}” is an editor theme. Import it under Editor theme."
+    import_not_an_editor_theme: "“%{file}” is an interface theme. Import it under Interface theme."
+    # The right kind of file, with a colour in it that is not #RRGGBB.
+    import_bad_color: "“%{file}” has no usable colour for %{slot}."
+    # Some of the chosen files were installed and some were not. Only the ones
+    # that failed are counted; the ones that worked are already in the picker.
+    import_skipped: "%{count} files were skipped."
+    # Name given to the copy. Has to carry the original's name, or duplicating
+    # twice would produce two entries that read identically.
+    copy_name: "%{name} (copy)"
+    delete_theme_confirm: "Delete the theme “%{name}”?"
+    delete_editor_theme_confirm: "Delete the editor theme “%{name}”?"
+    write_failed: "The file could not be written: %{error}"
+    delete_failed: "The file could not be removed: %{error}"
+
+  # The colour editor the management row opens.
+  editor:
+    theme_title: Edit interface theme
+    editor_theme_title: Edit editor theme
+    name: Name
+    dark: This is a dark palette
+    invalid: Every colour has to be written as #RRGGBB.
+    # The five grid colours a theme file may leave out.
+    grid_group: Result grid — left out of the file unless a colour is given
+    automatic: Automatic
+    # How an automatic slot's own label reads while it is being derived.
+    automatic_slot: "%{name} (automatic)"
+
+    # The eleven required slots of an interface theme, plus the five grid ones.
+    slot:
+      background: Window
+      surface: Panels
+      surface_hover: Hovered
+      surface_active: Pressed
+      border: Separators
+      text: Text
+      text_muted: Muted text
+      accent: Accent
+      danger: Errors
+      success: Success
+      overlay: Dialog backdrop
+      grid_header: Grid header
+      grid_row_alt: Alternate row
+      grid_selection: Grid selection
+      grid_null: NULL marker
+      grid_pk: Primary key
+
+    # The nineteen slots of an editor theme. `background` is shared with the
+    # list above; the rest name what a SQL lexer hands out.
+    code:
+      foreground: Text
+      cursor: Caret
+      selection: Selection
+      line_highlight: Current line
+      gutter: Line numbers
+      gutter_active: Current line number
+      keyword: Keywords
+      string: Strings
+      number: Numbers
+      comment: Comments
+      function: Functions
+      type: Type names
+      operator: Operators
+      identifier: Identifiers
+      punctuation: Punctuation
+      bracket_match: Matching bracket
+      error: Errors
+      warning: Warnings
+
+# The connection dialog: saved profiles on the left, one profile's form on the
+# right.
+#
+# Never translated: JDBC URLs and the `{host}` / `{port}` / `{database}` holes
+# in a driver's URL template, driver class names, Maven coordinates, and the
+# names of the products themselves.
+connect:
+  title: Connections
+  # The list, and the profile being edited.
+  new: New
+  # Name a profile is created under. Replaced as soon as the user types.
+  new_name: New connection
+  duplicate: Duplicate
+  delete: Delete
+  delete_confirm: "Delete the connection “%{name}” and its saved password?"
+  # Shown in the list for a profile the user has not named yet.
+  unnamed: "(unnamed)"
+  copy_name: "%{name} (copy)"
+
+  name: Name
+  folder: Folder
+  color: Tag
+  driver: Driver
+  pick_driver: Choose a driver
+  manage_drivers: Drivers…
+  driver_has_no_jar: This driver has no JAR yet. Add or download one under Drivers.
+
+  # The fields a driver's URL template is broken into. `database` heads whatever
+  # the template calls it — a database, a service, a SID or a file — because the
+  # question is the same one whatever the product names it.
+  host: Host
+  port: Port
+  database: Database
+  url: URL
+  url_hint: Assembled from the fields above. Editing it directly keeps what you type.
+  url_overridden: Typed by hand; the fields above no longer change it.
+  url_reset: Rebuild
+
+  username: User
+  password: Password
+  props: Driver properties
+  prop_key: property
+  prop_value: value
+  add_prop: Add a property
+
+  section:
+    behaviour: Behaviour
+    tunnel: SSH tunnel
+
+  read_only: Open the connection read-only
+  auto_commit: Commit each statement as it runs
+  confirm_writes: Ask before running a write statement
+  keep_alive: Keep the connection alive with a periodic query
+
+  # The tunnel block. A production database usually sits behind a bastion host;
+  # rudbman forwards a local port through it and points JDBC at that port.
+  tunnel_enabled: Connect through an SSH bastion
+  tunnel_host: Bastion
+  tunnel_user: Bastion user
+  tunnel_auth: Authentication
+  tunnel_auth_agent: SSH agent
+  tunnel_auth_key: Private key
+  tunnel_auth_password: Password
+  tunnel_key: Key file
+  tunnel_password: Bastion password
+  tunnel_passphrase: Key passphrase
+  tunnel_remote: Database
+  tunnel_hint: The database is named as the bastion sees it. rudbman binds a free local port and connects the driver to that.
+
+  # The buttons along the bottom, and what they report.
+  test: Test
+  testing: Connecting…
+  test_ok: "Connected to %{product}."
+  # The driver answered nothing useful about the product, but the session opened
+  # and answered a PING.
+  test_ok_unnamed: The connection works.
+  test_failed: "Could not connect: %{error}"
+  test_failed_hint: "Could not connect: %{error} — %{hint}"
+  connect: Connect
+  saved: Saved.
+
+  name_required: Give the connection a name.
+  url_required: The connection has no URL.
+  no_driver: "No driver definition named “%{driver}”."
+  load_failed: "The saved connections could not be read: %{error}"
+  save_failed: "The connections could not be saved: %{error}"
+  keychain_failed: "The password could not be saved to the keychain: %{error}"
+
+  # One-line suggestions attached to a failure whose SQLSTATE class says what
+  # kind it is.
+  hint_auth: check the user name and password
+  hint_driver: check the driver JAR and the driver class
+  hint_jvm: rudbman needs a Java runtime; set RUDBMAN_JAVA_HOME or JAVA_HOME
+  hint_network: check the host, the port and whether the database is reachable
+  hint_host_key: the bastion's host key is not trusted yet
+
+  # Trust on first use. The fingerprint is shown in full because comparing it
+  # against what the machine's administrator published is the whole point;
+  # neither it nor the algorithm name is translated.
+  host_key_question: "%{host} presented an unknown %{algorithm} key: %{fingerprint}"
+  trust_host_key: Trust this key
+  host_key_trusted: The host key was added to the trusted list. Try connecting again.
+
+# The driver manager, opened from the connection dialog.
+#
+# Never translated: driver class names, URL templates, Maven coordinates, file
+# paths and dialect ids.
+driver:
+  title: Drivers
+  name: Name
+  class: Driver class
+  class_hint: The fully qualified class name, as the driver's own documentation gives it — for example org.postgresql.Driver.
+  # Reads the class out of the registered JARs instead of making the user find
+  # it. The first probe of a session starts the Java runtime, so it can take a
+  # few seconds.
+  detect: Detect
+  detecting: Looking inside the JAR files…
+  probe_found: "Found %{class}."
+  # More than one java.sql.Driver in the archive. The vendor's own
+  # META-INF/services declaration is marked and preselected; the rest are
+  # usually internal or deprecated drivers.
+  probe_choose: This driver offers several classes. Pick the one to connect with.
+  probe_recommended: recommended
+  # A perfectly good archive with no driver in it, which is what a sources or
+  # javadoc JAR looks like — the mistake that is actually made.
+  probe_none: These files hold no JDBC driver. A sources or javadoc JAR looks like this; check that the right file was picked.
+  # The archive started reading and then failed, which means the bytes are bad
+  # rather than the file being the wrong one.
+  probe_damaged: "The file is damaged and could not be read to the end; download it again. (%{error})"
+  probe_missing: "The JAR file could not be found: %{error}"
+  probe_jvm_failed: "The Java runtime could not be started: %{error}"
+  probe_failed: "The JAR files could not be examined: %{error}"
+  url_template: URL template
+  default_port: Default port
+  dialect: Dialect
+  maven: Maven coordinate
+  jars: JAR files
+  add_jar: Add a JAR…
+  # Confirmation button of the file dialog the button above opens.
+  add_jar_select: Add
+  remove_jar: Remove
+  jar_missing: missing
+  no_jar: no JAR
+  no_jar_hint: A driver needs at least one JAR before a connection can use it.
+  jar_count: "%{count} JAR(s)"
+  download: Download
+  downloading: "Downloading %{file}…"
+  downloading_percent: "Downloading %{file} — %{percent}%"
+  downloaded: "%{file} was downloaded and added."
+  download_cancelled: The download was cancelled.
+  bad_coordinate: "“%{coordinate}” is not a group:artifact:version coordinate."
+  not_found: "Maven Central has nothing at %{url}."
+  network_failed: "The download failed: %{error}"
+  # The bytes that arrived do not hash to what Maven Central published beside
+  # them, which means the transfer was corrupted.
+  checksum_failed: "The download is corrupted: expected SHA-1 %{expected}, got %{actual}."
+  load_failed: "The driver definitions could not be read: %{error}"
+  save_failed: "The driver definitions could not be saved: %{error}"
+  new: New
+  new_name: New driver
+  delete: Delete
+  delete_confirm: "Delete the driver definition “%{name}”?"
+  none_selected: Select a driver, or add one.
+
+# The explorer sidebar: one tree over every open connection.
+#
+# Never translated: catalogue, schema, table, routine and sequence names, which
+# are the database's own.
+explorer:
+  title: Explorer
+  # Shown in place of the tree when nothing is open.
+  empty: Open a connection to browse it.
+  # The placeholder row under a node whose children are still on their way.
+  loading: loading…
+  # A node was asked for after its connection had gone — the tab was closed, or
+  # the session died, while the request was in flight.
+  disconnected: The connection is closed.
+  # A root whose profile the shell can no longer name. Only reachable through a
+  # bug, but a blank row would be worse than a word.
+  unknown_connection: "(connection)"
+  # An error row whose message went missing, for the same reason.
+  load_failed_unknown: This could not be loaded.
+
+  # The five folders under a schema.
+  tables: Tables
+  views: Views
+  procedures: Procedures
+  functions: Functions
+  sequences: Sequences
+
+# The object detail panel: what one table, view or routine is made of.
+#
+# Never translated: SQL keywords and clause names — NULL, NOT NULL, PK, UNIQUE,
+# ASC, DESC, CASCADE, RESTRICT, SET NULL, NO ACTION, SET DEFAULT — nor type
+# names, which are the driver's own words and what the DDL says.
+detail:
+  tab_columns: Columns
+  tab_keys: Keys
+  tab_references: References
+  tab_ddl: DDL
+  # The only tab a procedure, a function or a sequence gets: they have no
+  # columns to lay out.
+  tab_properties: Properties
+
+  loading: loading…
+  refresh: Refresh
+  copy: Copy
+  # A table that has none of whatever the tab lists — no indexes, no foreign
+  # keys — as against one that could not be read.
+  empty: nothing here
+  no_ddl: This object has no CREATE statement to show.
+  # The bridge reassembled the statement from JDBC metadata because the server
+  # has no way to quote its own back. JDBC metadata carries none of the things
+  # listed here, so the text is for reading rather than for restoring from.
+  ddl_reconstructed: Rebuilt from metadata, for reference. CHECK constraints, triggers, partitioning and collations are not in it.
+
+  # Column headings.
+  column: Column
+  type: Type
+  # Quoted: bare `Null` is YAML's null literal and would load as an empty
+  # heading. The word is the SQL keyword and is not translated.
+  nullable: "Null"
+  default: Default
+  key: Key
+  comment: Comment
+  name: Name
+  value: Value
+  seq: Position
+  unique: Unique
+  order: Order
+  target: References
+  source: Referenced by
+  on_update: On update
+  on_delete: On delete
+
+  # Section headings inside a tab.
+  primary_key: Primary key
+  indexes: Indexes
+  # Both directions of a foreign key, named by what they mean rather than by
+  # JDBC's "imported" and "exported", which do not say which way it points.
+  references_out: Foreign keys of this object
+  references_in: Foreign keys pointing at this object
+
+  # Rows of a sequence's properties.
+  schema: Schema
+  start_value: Start
+  increment: Increment
+  min_value: Minimum
+  max_value: Maximum
+  current_value: Current
+  cycle: Cycle
+  cache: Cache
+
+# The query pane: a SQL editor over the results of what it ran. Opened with the
+# menu row or its shortcut, and over the object selected in the explorer with
+# the second row.
+query:
+  # The two buttons of the run toolbar.
+  run: Run
+  cancel: Cancel
+  # The cancel button once the cancel has been issued and the driver has not
+  # answered yet. A word of its own rather than a disabled "Cancel", because
+  # what is happening is not what the button offered.
+  cancelling: Cancelling…
+  # One tab per result of the run. `index` counts from one.
+  result: "Result %{index}"
+  # The title of a query pane's tab in the pane it sits in. `index` counts
+  # from one and is never reused, so two open tabs never share a title.
+  tab: "Query %{index}"
+  # The result area before anything has been run, and after a run that produced
+  # nothing at all.
+  empty: Write a statement and run it.
+  no_results: The statement produced no result.
+  # While a statement is in flight. Also the status bar's row cell then, which
+  # is why it is a state rather than a sentence.
+  running: running…
+  # A statement that changed rows, and one that changed none — a CREATE TABLE,
+  # say. Each is a result tab of its own.
+  rows_affected: "%{count} rows affected"
+  executed: Statement executed.
+  # The status bar's row and elapsed cells. `seconds` arrives already rounded.
+  row_count: "%{count} rows"
+  elapsed: "%{seconds} s"
+  # Refused rather than queued: a second statement would wait behind the first
+  # on the session's own worker thread and look like a hang.
+  busy: A statement is already running in this pane.
+  # Nothing to send — an empty buffer, or one holding only comments.
+  no_statement: There is no statement to run.
+  # The profile is marked read-only, so a write is refused rather than asked
+  # about: asking would offer something the connection will not do.
+  read_only: This connection is read-only; the statement was not sent.
+  # The write confirmation, shown when the profile asks before a write.
+  confirm_title: Run this statement?
+  confirm_body: "Statements that change data: %{count}"
+  confirm_run: Run it
+  # A LOB cell that was opened. Only its size travelled with the row, and
+  # reading the body needs a bridge operation that is not implemented yet.
+  lob_unsupported: The LOB viewer is not built yet.
+  # The error envelope, under the driver's own message.
+  sql_state: "SQLSTATE %{state}"
+  # One-line suggestions, chosen by the leading two characters of the SQLSTATE,
+  # which is the only part drivers agree on.
+  hint_syntax: Check the statement's syntax, and that you may read what it names.
+  hint_constraint: The statement broke a constraint the table declares.
+  hint_auth: This connection is not allowed to do that.
+  hint_network: The connection to the database was lost.
+  hint_cancelled: The statement was cancelled.

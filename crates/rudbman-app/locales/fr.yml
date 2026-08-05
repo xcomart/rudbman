@@ -1,0 +1,377 @@
+# Traduction française. La structure des clés est identique à celle de en.yml.
+_version: 1
+
+language:
+  name: Français
+
+common:
+  cancel: Annuler
+  save: Enregistrer
+  close: Fermer
+
+menu:
+  new_connection: Nouvelle connexion…
+  settings: Préférences…
+  toggle_explorer: Explorateur
+  # Opens an empty query pane on the connection whose tab is showing.
+  new_query: Nouvelle requête
+  # Opens one over the object selected in the explorer, pre-filled with a
+  # SELECT against it.
+  query_object: Interroger l'objet sélectionné
+  about: À propos de rudbman
+  quit: Quitter
+  connection: Connexion
+  view: Affichage
+  tip_menu: Menu
+  mac:
+    new_connection: Nouvelle connexion…
+    quit: Quitter rudbman
+
+tab:
+  close: Fermer la connexion
+  tip_list: Toutes les connexions
+  tip_new: "Nouvelle connexion (%{shortcut})"
+
+empty:
+  title: Aucune connexion
+  hint: Ajoutez une connexion pour explorer une base de données et y exécuter du SQL.
+  connected_title: Rien d'ouvert
+  connected_hint: La connexion est active. La parcourir et y exécuter du SQL arrivent avec l'explorateur et l'éditeur.
+
+statusbar:
+  no_connection: aucune connexion
+  idle: inactif
+  connecting: connexion…
+  connected: connecté
+  disconnected: déconnecté
+  failed: "échec : %{error}"
+  tunnel_lost: "Le tunnel SSH s'est fermé : %{reason}"
+
+about:
+  title: À propos de rudbman
+  version: "Version %{version}"
+  tagline: Un outil de bases de données qui enveloppe les pilotes JDBC via JNI et dessine son interface avec gpui.
+  license: "Distribué sous licence %{license}."
+  credits: Construit avec gpui 0.2.2 (intégré et corrigé).
+
+# La boîte de dialogue des réglages et l’éditeur de thèmes qu’elle contient.
+settings:
+  title: Réglages
+  system_default: Suivre le réglage du système
+  save_failed: "Les réglages n’ont pas pu être enregistrés : %{error}"
+
+  section:
+    appearance: Apparence
+    window: Fenêtre
+    language: Langue
+    database: Base de données
+    jvm: Machine virtuelle Java
+
+  ui_theme: Thème de l’interface
+  editor_theme: Thème de l’éditeur
+  editor_follows_ui: Accorder le thème de l’éditeur à celui de l’interface
+  ui_font_size: Taille de l’interface
+  editor_font: Police de l’éditeur
+  editor_font_size: Taille de l’éditeur
+  font_size_hint: 6 – 32 pt
+
+  opacity: Opacité
+  opacity_hint: "% — en dessous de 100, le bureau transparaît"
+  blur: Flouter le bureau derrière la fenêtre
+  titlebar: Barre de titre
+  titlebar_custom: Dessinée par rudbman
+  titlebar_system: Dessinée par le système
+
+  language: Langue de l’interface
+  language_hint: Les menus et les boîtes de dialogue sont redessinés dans la langue choisie dès que les réglages sont enregistrés.
+
+  fetch_batch_rows: Lignes par lot
+  fetch_batch_rows_hint: lignes récupérées à chaque fois pendant le défilement
+  query_timeout: Délai par instruction
+  query_timeout_hint: secondes — 0 signifie aucune limite
+  confirm_writes_default: Demander confirmation avant une instruction d’écriture sur une nouvelle connexion
+
+  jvm_heap: Tas Java
+  jvm_heap_hint: Mo — le -Xmx sous lequel tourne un pilote
+  jvm_args: Arguments supplémentaires
+  jvm_hint: Récupérer un grand jeu de résultats remplit le tas Java avant d’atteindre rudbman ; une requête à court de mémoire réclame donc en général un tas plus grand ici. Les deux réglages prennent effet au prochain démarrage de rudbman. Les arguments supplémentaires sont séparés par des espaces.
+
+  manage:
+    duplicate: Dupliquer…
+    edit: Modifier…
+    delete: Supprimer
+    import: Importer…
+    export: Exporter…
+    import_select: Importer
+    import_unreadable: "« %{file} » n’a pas pu être lu : %{error}"
+    import_not_a_theme: "« %{file} » est un thème d’éditeur. Importez-le sous « Thème de l’éditeur »."
+    import_not_an_editor_theme: "« %{file} » est un thème d’interface. Importez-le sous « Thème de l’interface »."
+    import_bad_color: "« %{file} » n’a pas de couleur utilisable pour %{slot}."
+    import_skipped: "%{count} fichiers ont été ignorés."
+    copy_name: "%{name} (copie)"
+    delete_theme_confirm: "Supprimer le thème « %{name} » ?"
+    delete_editor_theme_confirm: "Supprimer le thème d’éditeur « %{name} » ?"
+    write_failed: "Le fichier n’a pas pu être écrit : %{error}"
+    delete_failed: "Le fichier n’a pas pu être supprimé : %{error}"
+
+  editor:
+    theme_title: Modifier le thème de l’interface
+    editor_theme_title: Modifier le thème de l’éditeur
+    name: Nom
+    dark: Il s’agit d’une palette sombre
+    invalid: Chaque couleur doit être écrite sous la forme #RRGGBB.
+    grid_group: Grille de résultats — sans couleur indiquée, elle reste absente du fichier
+    automatic: Automatique
+    automatic_slot: "%{name} (automatique)"
+
+    slot:
+      background: Fenêtre
+      surface: Panneaux
+      surface_hover: Survolé
+      surface_active: Enfoncé
+      border: Séparateurs
+      text: Texte
+      text_muted: Texte atténué
+      accent: Accent
+      danger: Erreurs
+      success: Réussite
+      overlay: Fond de la boîte de dialogue
+      grid_header: En-tête de la grille
+      grid_row_alt: Ligne alternée
+      grid_selection: Sélection dans la grille
+      grid_null: Marque NULL
+      grid_pk: Clé primaire
+
+    code:
+      foreground: Texte
+      cursor: Curseur
+      selection: Sélection
+      line_highlight: Ligne courante
+      gutter: Numéros de ligne
+      gutter_active: Numéro de la ligne courante
+      keyword: Mots-clés
+      string: Chaînes
+      number: Nombres
+      comment: Commentaires
+      function: Fonctions
+      type: Noms de type
+      operator: Opérateurs
+      identifier: Identifiants
+      punctuation: Ponctuation
+      bracket_match: Parenthèse associée
+      error: Erreurs
+      warning: Avertissements
+
+# La boîte de dialogue des connexions.
+connect:
+  title: Connexions
+  new: Nouvelle
+  new_name: Nouvelle connexion
+  duplicate: Dupliquer
+  delete: Supprimer
+  delete_confirm: "Supprimer la connexion « %{name} » et le mot de passe enregistré ?"
+  unnamed: "(sans nom)"
+  copy_name: "%{name} (copie)"
+
+  name: Nom
+  folder: Dossier
+  color: Étiquette
+  driver: Pilote
+  pick_driver: Choisir un pilote
+  manage_drivers: Pilotes…
+  driver_has_no_jar: Ce pilote n'a pas encore de JAR. Ajoutez-en un ou téléchargez-le depuis Pilotes.
+
+  host: Hôte
+  port: Port
+  database: Base de données
+  url: URL
+  url_hint: Assemblée à partir des champs ci-dessus. La modifier directement conserve ce que vous tapez.
+  url_overridden: Saisie à la main ; les champs ci-dessus ne la modifient plus.
+  url_reset: Réassembler
+
+  username: Utilisateur
+  password: Mot de passe
+  props: Propriétés du pilote
+  prop_key: propriété
+  prop_value: valeur
+  add_prop: Ajouter une propriété
+
+  section:
+    behaviour: Comportement
+    tunnel: Tunnel SSH
+
+  read_only: Ouvrir la connexion en lecture seule
+  auto_commit: Valider chaque instruction à son exécution
+  confirm_writes: Demander avant d'exécuter une instruction d'écriture
+  keep_alive: Maintenir la connexion par une requête périodique
+
+  tunnel_enabled: Se connecter via un rebond SSH
+  tunnel_host: Rebond
+  tunnel_user: Utilisateur du rebond
+  tunnel_auth: Authentification
+  tunnel_auth_agent: Agent SSH
+  tunnel_auth_key: Clé privée
+  tunnel_auth_password: Mot de passe
+  tunnel_key: Fichier de clé
+  tunnel_password: Mot de passe du rebond
+  tunnel_passphrase: Phrase secrète de la clé
+  tunnel_remote: Base de données
+  tunnel_hint: La base de données est nommée telle que le rebond la voit. rudbman ouvre un port local libre et y branche le pilote.
+
+  test: Tester
+  testing: Connexion…
+  test_ok: "Connecté à %{product}."
+  test_ok_unnamed: La connexion fonctionne.
+  test_failed: "Connexion impossible : %{error}"
+  test_failed_hint: "Connexion impossible : %{error} — %{hint}"
+  connect: Se connecter
+  saved: Enregistré.
+
+  name_required: Donnez un nom à la connexion.
+  url_required: La connexion n'a pas d'URL.
+  no_driver: "Aucune définition de pilote nommée « %{driver} »."
+  load_failed: "Les connexions enregistrées n'ont pas pu être lues : %{error}"
+  save_failed: "Les connexions n'ont pas pu être enregistrées : %{error}"
+  keychain_failed: "Le mot de passe n'a pas pu être enregistré dans le trousseau : %{error}"
+
+  hint_auth: vérifiez le nom d'utilisateur et le mot de passe
+  hint_driver: vérifiez le JAR et la classe du pilote
+  hint_jvm: rudbman a besoin d'un environnement Java ; définissez RUDBMAN_JAVA_HOME ou JAVA_HOME
+  hint_network: vérifiez l'hôte, le port et l'accessibilité de la base de données
+  hint_host_key: la clé d'hôte du rebond n'est pas encore approuvée
+
+  host_key_question: "%{host} a présenté une clé %{algorithm} inconnue : %{fingerprint}"
+  trust_host_key: Approuver cette clé
+  host_key_trusted: La clé d'hôte a été ajoutée aux clés approuvées. Réessayez de vous connecter.
+
+# Le gestionnaire de pilotes.
+driver:
+  title: Pilotes
+  name: Nom
+  class: Classe du pilote
+  class_hint: Le nom de classe complet, tel que la documentation du pilote le donne — par exemple org.postgresql.Driver.
+  detect: Détecter
+  detecting: Examen des fichiers JAR…
+  probe_found: "%{class} trouvée."
+  probe_choose: Ce pilote propose plusieurs classes. Choisissez celle avec laquelle vous connecter.
+  probe_recommended: recommandée
+  probe_none: Ces fichiers ne contiennent aucun pilote JDBC. C'est à cela que ressemble un JAR de sources ou de javadoc ; vérifiez que le bon fichier a été choisi.
+  probe_damaged: "Le fichier est endommagé et n'a pas pu être lu jusqu'au bout ; téléchargez-le à nouveau. (%{error})"
+  probe_missing: "Le fichier JAR est introuvable : %{error}"
+  probe_jvm_failed: "L'environnement d'exécution Java n'a pas pu démarrer : %{error}"
+  probe_failed: "Les fichiers JAR n'ont pas pu être examinés : %{error}"
+  url_template: Modèle d'URL
+  default_port: Port par défaut
+  dialect: Dialecte
+  maven: Coordonnée Maven
+  jars: Fichiers JAR
+  add_jar: Ajouter un JAR…
+  add_jar_select: Ajouter
+  remove_jar: Retirer
+  jar_missing: absent
+  no_jar: aucun JAR
+  no_jar_hint: Un pilote a besoin d'au moins un JAR avant qu'une connexion puisse s'en servir.
+  jar_count: "%{count} JAR"
+  download: Télécharger
+  downloading: "Téléchargement de %{file}…"
+  downloading_percent: "Téléchargement de %{file} — %{percent} %"
+  downloaded: "%{file} a été téléchargé et ajouté."
+  download_cancelled: Le téléchargement a été annulé.
+  bad_coordinate: "« %{coordinate} » n'est pas une coordonnée group:artifact:version."
+  not_found: "Maven Central n'a rien à %{url}."
+  network_failed: "Le téléchargement a échoué : %{error}"
+  checksum_failed: "Le téléchargement est corrompu : SHA-1 attendu %{expected}, reçu %{actual}."
+  load_failed: "Les définitions de pilote n'ont pas pu être lues : %{error}"
+  save_failed: "Les définitions de pilote n'ont pas pu être enregistrées : %{error}"
+  new: Nouveau
+  new_name: Nouveau pilote
+  delete: Supprimer
+  delete_confirm: "Supprimer la définition de pilote « %{name} » ?"
+  none_selected: Choisissez un pilote, ou ajoutez-en un.
+
+# La barre latérale de l'explorateur.
+explorer:
+  title: Explorateur
+  empty: Ouvrez une connexion pour la parcourir.
+  loading: chargement…
+  disconnected: La connexion est fermée.
+  unknown_connection: "(connexion)"
+  load_failed_unknown: Impossible de charger ceci.
+
+  tables: Tables
+  views: Vues
+  procedures: Procédures
+  functions: Fonctions
+  sequences: Séquences
+
+# Le panneau de détail d'un objet.
+detail:
+  tab_columns: Colonnes
+  tab_keys: Clés
+  tab_references: Références
+  tab_ddl: DDL
+  tab_properties: Propriétés
+
+  loading: chargement…
+  refresh: Recharger
+  copy: Copier
+  empty: rien ici
+  no_ddl: Cet objet n'a aucune instruction CREATE à montrer.
+  ddl_reconstructed: Reconstruit à partir des métadonnées, à titre indicatif. Les contraintes CHECK, les déclencheurs, le partitionnement et les collations n'y figurent pas.
+
+  column: Colonne
+  type: Type
+  nullable: Nul
+  default: Défaut
+  key: Clé
+  comment: Commentaire
+  name: Nom
+  value: Valeur
+  seq: Position
+  unique: Unique
+  order: Ordre
+  target: Référence vers
+  source: Référencé par
+  on_update: À la mise à jour
+  on_delete: À la suppression
+
+  primary_key: Clé primaire
+  indexes: Index
+  references_out: Clés étrangères de cet objet
+  references_in: Clés étrangères pointant vers cet objet
+
+  schema: Schéma
+  start_value: Début
+  increment: Incrément
+  min_value: Minimum
+  max_value: Maximum
+  current_value: Courant
+  cycle: Cycle
+  cache: Cache
+
+query:
+  run: Exécuter
+  cancel: Annuler
+  cancelling: Annulation…
+  result: "Résultat %{index}"
+  tab: "Requête %{index}"
+  empty: Écrivez une instruction puis exécutez-la.
+  no_results: L'instruction n'a produit aucun résultat.
+  running: en cours…
+  rows_affected: "%{count} lignes modifiées"
+  executed: Instruction exécutée.
+  row_count: "%{count} lignes"
+  elapsed: "%{seconds} s"
+  busy: Une instruction est déjà en cours dans ce panneau.
+  no_statement: Il n'y a aucune instruction à exécuter.
+  read_only: Cette connexion est en lecture seule ; l'instruction n'a pas été envoyée.
+  confirm_title: Exécuter cette instruction ?
+  confirm_body: "Instructions qui modifient des données : %{count}"
+  confirm_run: Exécuter
+  lob_unsupported: La visionneuse de LOB n'existe pas encore.
+  sql_state: "SQLSTATE %{state}"
+  hint_syntax: Vérifiez la syntaxe de l'instruction et vos droits de lecture.
+  hint_constraint: L'instruction viole une contrainte de la table.
+  hint_auth: Cette connexion n'y est pas autorisée.
+  hint_network: La connexion à la base de données a été perdue.
+  hint_cancelled: L'instruction a été annulée.

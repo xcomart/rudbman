@@ -1,0 +1,29 @@
+[package]
+name = "rudbman-grid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The virtualised result grid: a widget over rows it never fetches itself"
+
+[dependencies]
+# The chrome palette and the overlay scrollbars, and nothing else. In
+# particular *not* `rudbman-jdbc` (architecture document, §3.1): the grid is
+# handed its rows through `GridSource`, so its tests need no JVM.
+rudbman-ui.workspace = true
+
+gpui.workspace = true
+
+# Auto-fitting a column to its contents needs the *display* width of a string
+# rather than its length in `char`s, so that a column of Korean names is not
+# fitted to half the width it needs. logman measures terminal columns with the
+# same crate.
+unicode-width.workspace = true
+
+[dev-dependencies]
+# gpui's headless test platform. The virtualisation, the key handling and the
+# clipboard only exist once there is a window and a laid-out element tree; the
+# selection model and the four copy formats are pure and are tested without
+# one.
+gpui = { workspace = true, features = ["test-support"] }
