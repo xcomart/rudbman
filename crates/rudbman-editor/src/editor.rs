@@ -219,6 +219,22 @@ pub enum EditorEvent {
     },
     /// Execute every statement in the buffer.
     RunAll,
+    /// The user right clicked, and wants the editor's menu.
+    ///
+    /// The editor detects the press, takes the focus and says where it was; the
+    /// host draws the menu, because this layer holds no strings (architecture
+    /// document, §7.8). Every command such a menu offers is already an action
+    /// on the editor — `Copy`, `Cut`, `Paste`, `Undo`, `Redo`, `SelectAll`,
+    /// `ToggleComment`, `Find`, `RunStatement`, `RunAll`, `RunSelection` — so
+    /// the host dispatches them into [`KEY_CONTEXT`] rather than calling
+    /// anything new, and greys them out with [`EditorView::has_selection`],
+    /// [`EditorView::can_undo`], [`EditorView::can_redo`] and
+    /// [`EditorView::is_read_only`].
+    ContextMenu {
+        /// Where the pointer was, in **window** coordinates, which is what the
+        /// menu anchors to.
+        position: Point<Pixels>,
+    },
 }
 
 /// How much a drag selects at a time.
@@ -503,6 +519,24 @@ impl EditorView {
     /// The selected byte range. Empty when there is only a caret.
     pub fn selection(&self) -> Range<usize> {
         self.selected_range.clone()
+    }
+
+    /// Whether anything is selected, as opposed to there being only a caret.
+    ///
+    /// What tells a host menu whether "copy", "cut" and "run selection" are
+    /// worth offering.
+    pub fn has_selection(&self) -> bool {
+        !self.selected_range.is_empty()
+    }
+
+    /// Whether there is a change to take back.
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    /// Whether there is a change to put back.
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
     }
 
     /// The caret's byte offset.
@@ -1226,6 +1260,9 @@ impl EditorView {
 
     fn close_find(&mut self, _: &CloseFind, window: &mut Window, cx: &mut Context<Self>) {
         if !self.find.open {
+            // With the find bar already shut there is nothing here for Escape
+            // to do; let it climb to whoever is listening above the editor.
+            cx.propagate();
             return;
         }
         self.find.open = false;
@@ -1388,6 +1425,29 @@ impl EditorView {
                 self.select_range(anchor, cx);
             }
         }
+    }
+
+    /// A right click: take the focus, say where it was, and touch nothing else.
+    ///
+    /// The caret and the selection stay exactly where they are, which is what
+    /// every editor does and the reason is the main use of the gesture: the
+    /// menu is nearly always raised *over* a selection in order to copy, cut or
+    /// run it, and a press that collapsed the selection first would leave every
+    /// one of those items either greyed out or acting on nothing. §7.8's "a
+    /// right click moves the selection" is about lists — a tree row, a grid
+    /// cell — where the press names one thing; here it would destroy the
+    /// argument the menu is about.
+    fn on_right_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.focus_handle.focus(window);
+        cx.emit(EditorEvent::ContextMenu {
+            position: event.position,
+        });
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1851,6 +1911,7 @@ impl Render for EditorView {
                     .on_action(cx.listener(Self::replace_all))
             })
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))

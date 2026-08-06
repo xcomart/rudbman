@@ -757,3 +757,72 @@ builder:
   no_sql: Add a table to build a statement.
   # Sends the statement to a new query pane, where it can be run.
   open_editor: Open in editor
+
+# The right-click menus, on every surface that has one: the explorer tree, the
+# connection and pane tab strips, the result grid, the SQL editor, the two
+# canvases and the welcome list (architecture document, §7.8).
+#
+# One namespace rather than one per surface, because the same verb is the same
+# row wherever it appears: "copy" is "copy" in the editor and in the grid.
+# Rows that already exist as a menu-bar command or a toolbar button reuse that
+# key instead of growing one here — `menu.*`, `tab.close`, `erd.*`.
+#
+# Every one of these is a command, so the imperative is the mood throughout,
+# and only a row that asks something before it acts takes an ellipsis.
+context:
+  # The result grid. `format` is TSV, CSV, JSON or INSERT and is never
+  # translated: they are the names of the formats, not words.
+  copy_as: "Copy as %{format}"
+  select_all: Select all
+  clear_selection: Clear selection
+  # A column heading. Sorting is a re-run of the statement, not a shuffle of
+  # what is on screen, because the grid holds only the first rows of the answer.
+  sort_asc: Sort ascending
+  sort_desc: Sort descending
+  sort_clear: Remove sorting
+  # Widens or narrows the column to fit what is in it.
+  autofit: Fit to contents
+  hide_column: Hide this column
+  # The only way back from hiding: a hidden column has no heading left to
+  # right-click.
+  show_columns: Show all columns
+  copy_column_name: Copy column name
+  # The SQL editor. Every one of these is also a keyboard chord; the menu and
+  # the chord run the same command.
+  cut: Cut
+  copy: Copy
+  paste: Paste
+  undo: Undo
+  redo: Redo
+  toggle_comment: Toggle comment
+  run_statement: Run statement
+  run_selection: Run selection
+  run_all: Run all
+  # Both open the find bar, which is a panel rather than a dialog, but it still
+  # asks before anything happens.
+  find: Find…
+  replace: Replace…
+  # A pane's tab strip, and the pane holding it. The first three act on tabs,
+  # the last three on the box they are in.
+  close_tab: Close tab
+  close_others: Close other tabs
+  close_right: Close tabs to the right
+  split_right: Split right
+  split_below: Split below
+  close_pane: Close pane
+  # The ERD canvas. Opens the right-clicked box as a detail panel, which is
+  # where its indexes and its DDL are.
+  open_detail: Open details
+  zoom_in: Zoom in
+  zoom_out: Zoom out
+  # Back to 1:1 and to the top-left corner of the diagram.
+  zoom_reset: Actual size
+  # The query builder canvas. Removing a table takes its joins and its picked
+  # columns with it; the conditions are left alone, since they are typed.
+  remove_table: Remove table
+  select_column: Add to the select list
+  clear_column: Remove from the select list
+  # The welcome screen's saved list. "Connect" is what clicking the row already
+  # does; the ellipsis on "edit" is the connection dialog it opens.
+  connect: Connect
+  edit: Edit…

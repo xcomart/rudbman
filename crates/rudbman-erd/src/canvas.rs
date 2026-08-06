@@ -959,6 +959,18 @@ pub(crate) mod test_support {
         cx.run_until_parked();
     }
 
+    /// Presses the right button at `at`.
+    pub(crate) fn right_press(cx: &mut VisualTestContext, at: Point<Pixels>) {
+        cx.simulate_event(MouseDownEvent {
+            position: at,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Right,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+    }
+
     /// Moves the pointer to `at` with the left button down.
     pub(crate) fn drag_to(cx: &mut VisualTestContext, at: Point<Pixels>) {
         cx.simulate_event(MouseMoveEvent {

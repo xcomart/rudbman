@@ -501,3 +501,41 @@ builder:
   sql: Запрос
   no_sql: Добавьте таблицу, чтобы получить запрос.
   open_editor: Открыть в редакторе
+
+context:
+  copy_as: "Копировать как %{format}"
+  select_all: Выделить всё
+  clear_selection: Снять выделение
+  sort_asc: Сортировать по возрастанию
+  sort_desc: Сортировать по убыванию
+  sort_clear: Убрать сортировку
+  autofit: Подогнать по содержимому
+  hide_column: Скрыть этот столбец
+  show_columns: Показать все столбцы
+  copy_column_name: Копировать имя столбца
+  cut: Вырезать
+  copy: Копировать
+  paste: Вставить
+  undo: Отменить
+  redo: Вернуть
+  toggle_comment: Закомментировать или раскомментировать
+  run_statement: Выполнить запрос
+  run_selection: Выполнить выделенное
+  run_all: Выполнить всё
+  find: Найти…
+  replace: Заменить…
+  close_tab: Закрыть вкладку
+  close_others: Закрыть другие вкладки
+  close_right: Закрыть вкладки справа
+  split_right: Разделить вправо
+  split_below: Разделить вниз
+  close_pane: Закрыть панель
+  open_detail: Открыть подробности
+  zoom_in: Увеличить
+  zoom_out: Уменьшить
+  zoom_reset: Реальный размер
+  remove_table: Убрать таблицу
+  select_column: Добавить в список выборки
+  clear_column: Убрать из списка выборки
+  connect: Подключиться
+  edit: Изменить…

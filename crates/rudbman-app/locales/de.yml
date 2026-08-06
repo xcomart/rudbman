@@ -501,3 +501,41 @@ builder:
   sql: Anweisung
   no_sql: Fügen Sie eine Tabelle hinzu, um eine Anweisung zu erzeugen.
   open_editor: Im Editor öffnen
+
+context:
+  copy_as: "Als %{format} kopieren"
+  select_all: Alles auswählen
+  clear_selection: Auswahl aufheben
+  sort_asc: Aufsteigend sortieren
+  sort_desc: Absteigend sortieren
+  sort_clear: Sortierung aufheben
+  autofit: An Inhalt anpassen
+  hide_column: Diese Spalte ausblenden
+  show_columns: Alle Spalten einblenden
+  copy_column_name: Spaltenname kopieren
+  cut: Ausschneiden
+  copy: Kopieren
+  paste: Einfügen
+  undo: Rückgängig
+  redo: Wiederholen
+  toggle_comment: Kommentar umschalten
+  run_statement: Anweisung ausführen
+  run_selection: Auswahl ausführen
+  run_all: Alles ausführen
+  find: Suchen…
+  replace: Ersetzen…
+  close_tab: Tab schließen
+  close_others: Andere Tabs schließen
+  close_right: Tabs rechts schließen
+  split_right: Rechts teilen
+  split_below: Unten teilen
+  close_pane: Bereich schließen
+  open_detail: Details öffnen
+  zoom_in: Vergrößern
+  zoom_out: Verkleinern
+  zoom_reset: Originalgröße
+  remove_table: Tabelle entfernen
+  select_column: Zur Auswahlliste hinzufügen
+  clear_column: Aus der Auswahlliste entfernen
+  connect: Verbinden
+  edit: Bearbeiten…

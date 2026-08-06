@@ -501,3 +501,41 @@ builder:
   sql: 문장
   no_sql: 테이블을 추가하면 문장이 만들어집니다.
   open_editor: 에디터에서 열기
+
+context:
+  copy_as: "%{format}(으)로 복사"
+  select_all: 모두 선택
+  clear_selection: 선택 해제
+  sort_asc: 오름차순 정렬
+  sort_desc: 내림차순 정렬
+  sort_clear: 정렬 해제
+  autofit: 내용에 맞추기
+  hide_column: 이 열 숨기기
+  show_columns: 숨긴 열 모두 표시
+  copy_column_name: 열 이름 복사
+  cut: 잘라내기
+  copy: 복사
+  paste: 붙여넣기
+  undo: 실행 취소
+  redo: 다시 실행
+  toggle_comment: 주석 토글
+  run_statement: 문장 실행
+  run_selection: 선택 영역 실행
+  run_all: 전체 실행
+  find: 찾기…
+  replace: 바꾸기…
+  close_tab: 탭 닫기
+  close_others: 다른 탭 모두 닫기
+  close_right: 오른쪽 탭 모두 닫기
+  split_right: 오른쪽으로 분할
+  split_below: 아래로 분할
+  close_pane: 팬 닫기
+  open_detail: 상세 열기
+  zoom_in: 확대
+  zoom_out: 축소
+  zoom_reset: 실제 크기
+  remove_table: 테이블 제거
+  select_column: 조회 목록에 추가
+  clear_column: 조회 목록에서 제거
+  connect: 연결
+  edit: 편집…

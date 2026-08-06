@@ -501,3 +501,41 @@ builder:
   sql: Instruction
   no_sql: Ajoutez une table pour générer une instruction.
   open_editor: Ouvrir dans l'éditeur
+
+context:
+  copy_as: "Copier en %{format}"
+  select_all: Tout sélectionner
+  clear_selection: Annuler la sélection
+  sort_asc: Trier par ordre croissant
+  sort_desc: Trier par ordre décroissant
+  sort_clear: Supprimer le tri
+  autofit: Ajuster au contenu
+  hide_column: Masquer cette colonne
+  show_columns: Afficher toutes les colonnes
+  copy_column_name: Copier le nom de la colonne
+  cut: Couper
+  copy: Copier
+  paste: Coller
+  undo: Annuler
+  redo: Rétablir
+  toggle_comment: Commenter ou décommenter
+  run_statement: Exécuter l'instruction
+  run_selection: Exécuter la sélection
+  run_all: Tout exécuter
+  find: Rechercher…
+  replace: Remplacer…
+  close_tab: Fermer l'onglet
+  close_others: Fermer les autres onglets
+  close_right: Fermer les onglets à droite
+  split_right: Diviser à droite
+  split_below: Diviser en dessous
+  close_pane: Fermer le panneau
+  open_detail: Ouvrir les détails
+  zoom_in: Zoom avant
+  zoom_out: Zoom arrière
+  zoom_reset: Taille réelle
+  remove_table: Retirer la table
+  select_column: Ajouter à la liste de sélection
+  clear_column: Retirer de la liste de sélection
+  connect: Se connecter
+  edit: Modifier…

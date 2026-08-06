@@ -37,16 +37,82 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render, SharedString,
-    Subscription, Window, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Pixels, Point, Render,
+    SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rudbman_erd::{ErdColumn, ErdEvent, ErdModel, ErdRelation, ErdTable, ErdView};
 use rudbman_jdbc::{DescribeRequest, Session};
-use rudbman_ui::{Button, ButtonVariant, Theme, theme};
+use rudbman_ui::{Button, ButtonVariant, ContextMenu, Theme, theme};
 
-use crate::explorer::{ConnectionId, Scope};
+use crate::SHORTCUT_MODIFIER;
+use crate::context_menu::{self, MenuRow};
+use crate::explorer::{ConnectionId, Folder, ObjectTarget, Scope};
 use crate::i18n::ts;
 use crate::table_detail::{flag, items, number, text, type_of};
+
+/// Registered names of the zoom actions both canvases answer to.
+///
+/// `rudbman-erd` binds these to `Ctrl`+`+`, `Ctrl`+`-` and `Ctrl`+`0` on the
+/// canvas key context but exports neither the types nor the module holding
+/// them, so a menu row that means the same thing as the chord has to name the
+/// action the way a keymap does. `every_canvas_action_is_registered` is what
+/// keeps these three strings honest.
+const ZOOM_ACTIONS: [(&str, &str); 3] = [
+    ("rudbman_erd::ZoomIn", "+"),
+    ("rudbman_erd::ZoomOut", "-"),
+    ("rudbman_erd::ZoomActual", "0"),
+];
+
+/// The labels of [`ZOOM_ACTIONS`], in the same order.
+fn zoom_labels() -> [SharedString; 3] {
+    [
+        ts!("context.zoom_in"),
+        ts!("context.zoom_out"),
+        ts!("context.zoom_reset"),
+    ]
+}
+
+/// The three zoom rows every canvas menu ends with.
+///
+/// Shared by the diagram and the query builder because the gesture is the
+/// canvas's rather than either panel's — the same reason `rudbman-erd` binds
+/// the chords once, on the context both widgets name.
+///
+/// The rows dispatch on the canvas's own focus handle rather than on the
+/// window's focused element: a right-click focuses the canvas, but the menu is
+/// drawn by the panel around it, and a row activated after the focus had moved
+/// on would otherwise reach whatever holds it now.
+pub(crate) fn canvas_zoom_rows(canvas: &FocusHandle) -> Vec<MenuRow> {
+    zoom_labels()
+        .into_iter()
+        .zip(ZOOM_ACTIONS)
+        .map(|(label, (action, key))| {
+            let canvas = canvas.clone();
+            MenuRow::new(label)
+                .shortcut(format!("{SHORTCUT_MODIFIER}+{key}"))
+                .on_activate(move |window, cx| match cx.build_action(action, None) {
+                    Ok(built) => canvas.dispatch_action(&*built, window, cx),
+                    // Only reachable if the widget renamed the action, which
+                    // `every_canvas_action_is_registered` guards; saying so
+                    // beats a menu row that silently does nothing.
+                    Err(error) => log::error!("the canvas action {action} is gone: {error}"),
+                })
+        })
+        .collect()
+}
+
+/// Puts a canvas menu away, and says whether there was one to put away.
+///
+/// Shared by both canvas panels: `Escape` arrives through the workspace, which
+/// has to know whether the key was spent here before it goes on to the dialogs
+/// under it (architecture document, §7.8).
+pub(crate) fn close_canvas_menu<T, V: 'static>(slot: &mut Option<T>, cx: &mut Context<V>) -> bool {
+    let had = slot.take().is_some();
+    if had {
+        cx.notify();
+    }
+    had
+}
 
 /// The one `TABLE_TYPE` a diagram is drawn from.
 ///
@@ -153,6 +219,23 @@ pub enum ErdPaneEvent {
     /// back through [`ErdPane::positions`] in the same update, and a message
     /// carrying a hundred entries per gesture would copy them for nothing.
     LayoutChanged(Box<ErdTarget>),
+    /// One of the boxes should be opened as a detail panel.
+    ///
+    /// The diagram draws a table's columns and its keys and stops there; its
+    /// indexes, its DDL and its data types are the detail panel's, and that
+    /// panel is opened by the workspace through the same `open_object` path
+    /// the explorer's own double click takes — so a table reached from a
+    /// diagram lands on the tab that is already open for it rather than on a
+    /// second copy.
+    OpenTable(Box<ObjectTarget>),
+}
+
+/// A right-click on the canvas, while the menu it asked for is open.
+struct CanvasMenu {
+    /// Which box was under the pointer, or `None` for the background.
+    table: Option<usize>,
+    /// Where the pointer was, in window coordinates.
+    position: Point<Pixels>,
 }
 
 /// The panel.
@@ -163,9 +246,17 @@ pub struct ErdPane {
     load: Load,
     /// The canvas.
     view: Entity<ErdView>,
+    /// The table names, in the order the canvas indexes them by.
+    ///
+    /// Kept here because the widget answers a right-click with an *index* and
+    /// the workspace opens a panel by *name*: the model itself belongs to the
+    /// canvas, and a diagram of forty tables is a list worth forty strings.
+    tables: Vec<String>,
     focus_handle: FocusHandle,
     /// What the last export said, until the next one.
     notice: Option<Notice>,
+    /// The canvas's right-click menu, while one is open.
+    context_menu: Option<CanvasMenu>,
     /// Keeps the canvas subscription alive.
     _events: Subscription,
 }
@@ -185,14 +276,25 @@ impl ErdPane {
             ErdEvent::LayoutChanged => {
                 cx.emit(ErdPaneEvent::LayoutChanged(Box::new(pane.target.clone())));
             }
+            // The canvas holds no strings, so the menu is drawn here
+            // (architecture document, §7.8).
+            ErdEvent::ContextMenu { table, position } => {
+                pane.context_menu = Some(CanvasMenu {
+                    table: *table,
+                    position: *position,
+                });
+                cx.notify();
+            }
         });
 
         Self {
             target,
             load: Load::Running,
             view,
+            tables: Vec::new(),
             focus_handle: cx.focus_handle(),
             notice: None,
+            context_menu: None,
             _events: events,
         }
     }
@@ -211,6 +313,9 @@ impl ErdPane {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.load = Load::Running;
         self.notice = None;
+        // A menu naming a box of the diagram being replaced would act on
+        // whatever took that index in the new one.
+        self.context_menu = None;
         cx.emit(ErdPaneEvent::Load(Box::new(self.target.clone())));
         cx.notify();
     }
@@ -220,11 +325,20 @@ impl ErdPane {
         match outcome {
             Ok(diagram) => {
                 self.load = Load::Ready(diagram.model.tables.len());
+                self.tables = diagram
+                    .model
+                    .tables
+                    .iter()
+                    .map(|table| table.name.clone())
+                    .collect();
                 self.view.update(cx, |view, cx| {
                     view.set_model(diagram.model, diagram.saved, cx);
                 });
             }
-            Err(message) => self.load = Load::Failed(message),
+            Err(message) => {
+                self.load = Load::Failed(message);
+                self.tables.clear();
+            }
         }
         cx.notify();
     }
@@ -344,6 +458,107 @@ impl ErdPane {
         cx.notify();
     }
 
+    /// Puts the canvas's right-click menu away, and says whether there was one.
+    ///
+    /// What `Escape` reaches through the workspace, which closes the menu on
+    /// top of everything before it closes anything else (architecture document,
+    /// §7.8). The answer is what tells the workspace the key was spent here.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        close_canvas_menu(&mut self.context_menu, cx)
+    }
+
+    /// What one box names, for the panel that opens it.
+    ///
+    /// Always [`Folder::Tables`]: a diagram is drawn from `TABLE` rows alone
+    /// (see [`TABLE_TYPE`]), so a box is never a view or a routine.
+    fn table_target(&self, table: usize) -> Option<ObjectTarget> {
+        Some(ObjectTarget {
+            connection: self.target.connection,
+            catalog: self.target.scope.catalog.clone(),
+            schema: self.target.scope.schema.clone(),
+            folder: Folder::Tables,
+            name: self.tables.get(table)?.clone(),
+        })
+    }
+
+    /// The canvas's right-click menu, while one is open.
+    ///
+    /// Everything the toolbar carries, plus the zoom the keyboard already has
+    /// and the one command that only makes sense over a box — which is put at
+    /// the top, because that is what the user aimed at. A right-click on the
+    /// background gets the same menu without it, rather than a shorter menu
+    /// that would make the two gestures look like two surfaces.
+    ///
+    /// The rows that need a loaded diagram are greyed rather than dropped, so
+    /// that a menu raised while the fetch is still out has the shape the same
+    /// menu will have a moment later.
+    fn canvas_rows(&self, table: Option<usize>, cx: &mut Context<Self>) -> Vec<MenuRow> {
+        let this = cx.entity();
+        let canvas = self.view.read(cx).focus_handle(cx);
+        let ready = matches!(self.load, Load::Ready(_));
+        let mut rows = Vec::new();
+
+        if let Some(target) = table.and_then(|table| self.table_target(table)) {
+            let this = this.clone();
+            rows.push(
+                MenuRow::new(ts!("context.open_detail")).on_activate(move |_window, cx| {
+                    let target = target.clone();
+                    this.update(cx, |_pane, cx| {
+                        cx.emit(ErdPaneEvent::OpenTable(Box::new(target)));
+                    });
+                }),
+            );
+            rows.push(MenuRow::separator());
+        }
+
+        rows.push({
+            let this = this.clone();
+            MenuRow::new(ts!("erd.auto_arrange"))
+                .enabled(ready)
+                .on_activate(move |_window, cx| {
+                    this.update(cx, |pane, cx| pane.auto_arrange(cx));
+                })
+        });
+        rows.extend(canvas_zoom_rows(&canvas));
+        rows.push(MenuRow::separator());
+        rows.push({
+            let this = this.clone();
+            MenuRow::new(ts!("erd.export_svg"))
+                .enabled(ready)
+                .on_activate(move |_window, cx| {
+                    this.update(cx, |pane, cx| pane.export(cx));
+                })
+        });
+        rows.push({
+            let this = this.clone();
+            MenuRow::new(ts!("erd.refresh"))
+                .enabled(!self.is_loading())
+                .on_activate(move |_window, cx| {
+                    this.update(cx, |pane, cx| pane.refresh(cx));
+                })
+        });
+
+        rows
+    }
+
+    /// The canvas's right-click menu, drawn.
+    fn render_context_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let position = self.context_menu.as_ref()?.position;
+        let rows = self.canvas_rows(self.context_menu.as_ref()?.table, cx);
+        let this = cx.entity();
+
+        Some(
+            ContextMenu::new("erd-context")
+                .position(position)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.close_context_menu(cx);
+                    });
+                }),
+        )
+    }
+
     /// The toolbar: what is being drawn, what it reports, and the three
     /// buttons.
     fn render_toolbar(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -449,6 +664,7 @@ impl Render for ErdPane {
         let chrome = theme(cx);
         let toolbar = self.render_toolbar(&chrome, cx);
         let body = self.render_body(&chrome);
+        let context_menu = self.render_context_menu(cx);
 
         div()
             .id("erd-pane")
@@ -460,6 +676,10 @@ impl Render for ErdPane {
             .min_h_0()
             .child(toolbar)
             .child(div().flex().flex_1().min_w_0().min_h_0().child(body))
+            // Takes no room in the column above it — the element is an empty
+            // absolute box whose two halves are anchored to the window — so it
+            // can simply be the last child.
+            .children(context_menu)
     }
 }
 
@@ -1017,6 +1237,200 @@ mod tests {
                 Some("permission denied")
             );
         });
+    }
+
+    /// A two-table diagram already delivered, which is what a menu is raised
+    /// over.
+    fn loaded(cx: &mut gpui::TestAppContext) -> gpui::WindowHandle<ErdPane> {
+        cx.update(rudbman_ui::init);
+        let window = cx.add_window(|_window, cx| ErdPane::new(target("APP"), cx));
+        window
+            .update(cx, |panel, _window, cx| {
+                panel.deliver(
+                    Ok(ErdDiagram {
+                        model: ErdModel {
+                            tables: vec![
+                                ErdTable::new("PERSON")
+                                    .column(ErdColumn::new("ID", "INTEGER").primary_key()),
+                                ErdTable::new("TEAM")
+                                    .column(ErdColumn::new("ID", "INTEGER").primary_key()),
+                            ],
+                            relations: Vec::new(),
+                        },
+                        saved: HashMap::new(),
+                    }),
+                    cx,
+                );
+            })
+            .expect("the window is open");
+        window
+    }
+
+    /// The three zoom rows name actions `rudbman-erd` registers but does not
+    /// export, so they are built the way a keymap builds one — by name. This is
+    /// what turns a rename in that crate into a failing test rather than into
+    /// three menu rows that quietly do nothing.
+    #[gpui::test]
+    fn every_canvas_action_is_registered(cx: &mut gpui::TestAppContext) {
+        cx.update(rudbman_erd::init);
+        cx.update(|cx| {
+            for (name, _) in ZOOM_ACTIONS {
+                assert!(
+                    cx.build_action(name, None).is_ok(),
+                    "{name} is not a registered action"
+                );
+            }
+        });
+    }
+
+    /// The canvas menu carries everything the toolbar does plus the zoom, and
+    /// a right-click on a box puts the one command that is only about a box at
+    /// the top — where the user was aiming.
+    #[gpui::test]
+    fn the_canvas_menu_puts_the_boxs_own_command_first(cx: &mut gpui::TestAppContext) {
+        let window = loaded(cx);
+        let canvas = [
+            ts!("erd.auto_arrange").to_string(),
+            ts!("context.zoom_in").to_string(),
+            ts!("context.zoom_out").to_string(),
+            ts!("context.zoom_reset").to_string(),
+            String::new(),
+            ts!("erd.export_svg").to_string(),
+            ts!("erd.refresh").to_string(),
+        ];
+
+        window
+            .update(cx, |panel, _window, cx| {
+                assert_eq!(
+                    crate::context_menu::labels(&panel.canvas_rows(None, cx)),
+                    canvas
+                );
+
+                let over_a_box = panel.canvas_rows(Some(1), cx);
+                let labels = crate::context_menu::labels(&over_a_box);
+                assert_eq!(labels[0], ts!("context.open_detail").to_string());
+                assert_eq!(labels[1], "");
+                assert_eq!(labels[2..], canvas[..]);
+                assert!(crate::context_menu::greyed(&over_a_box).is_empty());
+
+                // And it names the box that was pressed, by the connection and
+                // scope the panel was opened over.
+                let target = panel.table_target(1).expect("the box is in the model");
+                assert_eq!(target.name, "TEAM");
+                assert_eq!(target.schema.as_deref(), Some("APP"));
+                assert_eq!(target.folder, crate::explorer::Folder::Tables);
+                assert!(panel.table_target(9).is_none());
+            })
+            .expect("the window is open");
+    }
+
+    /// Raised while the fetch is still out, the rows that need a diagram are
+    /// greyed rather than dropped, so the menu keeps its shape.
+    #[gpui::test]
+    fn a_menu_over_a_loading_diagram_greys_what_needs_one(cx: &mut gpui::TestAppContext) {
+        cx.update(rudbman_ui::init);
+        let window = cx.add_window(|_window, cx| ErdPane::new(target("APP"), cx));
+        window
+            .update(cx, |panel, _window, cx| {
+                let rows = panel.canvas_rows(None, cx);
+                for label in [ts!("erd.auto_arrange"), ts!("erd.export_svg")] {
+                    assert!(
+                        !crate::context_menu::row(&rows, &label).is_enabled(),
+                        "{label} was offered over a diagram that has not arrived"
+                    );
+                }
+                assert!(
+                    crate::context_menu::row(&rows, &ts!("context.zoom_in")).is_enabled(),
+                    "the canvas can always be zoomed"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// Opening a box's details is the workspace's job — it owns the pane tree
+    /// and the navigation rule that finds the tab already showing that table —
+    /// so the panel asks rather than opens.
+    #[gpui::test]
+    fn the_detail_row_asks_the_workspace_to_open_the_table(cx: &mut gpui::TestAppContext) {
+        let window = loaded(cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+
+        let panel = window.root(&mut vcx).expect("the window is open");
+        let recorder = std::rc::Rc::clone(&seen);
+        let _subscription = vcx.update(|_window, cx| {
+            cx.subscribe(&panel, move |_panel, event, _cx| {
+                if let ErdPaneEvent::OpenTable(target) = event {
+                    recorder.borrow_mut().push(target.qualified());
+                }
+            })
+        });
+
+        let rows = window
+            .update(&mut vcx, |panel, _window, cx| {
+                panel.canvas_rows(Some(0), cx)
+            })
+            .expect("the window is open");
+        vcx.update(|window, cx| {
+            crate::context_menu::row(&rows, &ts!("context.open_detail")).activate(window, cx);
+        });
+        vcx.run_until_parked();
+
+        assert_eq!(seen.borrow().as_slice(), ["APP.PERSON".to_string()]);
+    }
+
+    /// The canvas asks for a menu, the panel keeps it and draws it, and
+    /// `Escape` — which reaches here through the workspace — puts it away and
+    /// says it did. A refresh drops it too: it names a box of a diagram that is
+    /// being replaced.
+    #[gpui::test]
+    fn a_canvas_menu_is_closed_by_the_workspace_and_by_a_refresh(cx: &mut gpui::TestAppContext) {
+        let window = loaded(cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut vcx, |panel, _window, cx| {
+                assert!(
+                    !panel.close_context_menu(cx),
+                    "a panel with no menu open claimed the key"
+                );
+                panel.context_menu = Some(CanvasMenu {
+                    table: Some(0),
+                    position: gpui::point(px(40.), px(40.)),
+                });
+                cx.notify();
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        window
+            .update(&mut vcx, |panel, _window, cx| {
+                assert!(panel.close_context_menu(cx), "the key was not taken");
+                panel.context_menu = Some(CanvasMenu {
+                    table: Some(0),
+                    position: gpui::point(px(40.), px(40.)),
+                });
+                panel.refresh(cx);
+                assert!(
+                    panel.context_menu.is_none(),
+                    "a menu about a box of the diagram being replaced survived"
+                );
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+    }
+
+    #[test]
+    fn every_label_the_canvas_menu_draws_has_a_translation() {
+        for label in [
+            ts!("context.open_detail"),
+            ts!("context.zoom_in"),
+            ts!("context.zoom_out"),
+            ts!("context.zoom_reset"),
+        ] {
+            assert!(!label.is_empty(), "empty label");
+            assert!(!label.starts_with("context."), "untranslated {label:?}");
+        }
     }
 
     #[test]

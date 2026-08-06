@@ -55,20 +55,29 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Hsla, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Window, div, prelude::*, px, relative,
+    Action, AnyElement, App, ClipboardItem, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Hsla, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
+    Styled, Subscription, Window, div, prelude::*, px, relative,
 };
 use rudbman_core::{AppSettings, ConnectionProfile};
+use rudbman_editor::editor::{
+    Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
+    ToggleComment, Undo,
+};
 use rudbman_editor::{EditorEvent, EditorView};
-use rudbman_grid::{GridCell, GridEvent, GridSource, GridSourceState, GridView, SortDirection};
+use rudbman_grid::{
+    CopyFormat, GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget,
+    SortDirection,
+};
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
 use rudbman_sql::{Dialect, TokenKind, lex, split_statements};
-use rudbman_ui::{Button, ButtonVariant, Theme, theme};
+use rudbman_ui::{Button, ButtonVariant, ContextMenu, Theme, theme};
 
+use crate::SHORTCUT_MODIFIER;
 use crate::connection::{ConnectError, SessionHandle};
+use crate::context_menu::{self, MenuRow};
 use crate::explorer::ConnectionId;
 use crate::i18n::ts;
 use crate::query_source::{RenderedBatch, ResultSource, render_batch};
@@ -435,6 +444,33 @@ pub struct ConfirmRequest {
     pub preview: SharedString,
 }
 
+/// A right-click inside the pane, while the menu it asked for is open.
+///
+/// One field for both halves of the pane, which is what keeps them mutually
+/// exclusive: a right-click in the grid puts away a menu the editor had open,
+/// the way the backdrop under either of them would have.
+enum PaneMenu {
+    /// In the SQL editor. The caret and the selection are wherever they were —
+    /// the menu is nearly always raised *over* a selection in order to copy or
+    /// run it — so the rows read the editor rather than the press.
+    Editor {
+        /// Where the pointer was, in window coordinates.
+        position: Point<Pixels>,
+    },
+    /// In the grid of one result tab.
+    Grid {
+        /// The tab, by [`ResultTab::id`] rather than by position: a menu is
+        /// open across at most one frame, but the id is what every other path
+        /// into a result already names, and a tab index is not stable under a
+        /// re-run.
+        id: u64,
+        /// A cell or a heading, as the grid read the press.
+        target: MenuTarget,
+        /// Where the pointer was, in window coordinates.
+        position: Point<Pixels>,
+    },
+}
+
 /// The editor, the results, and the pipeline between them.
 pub struct QueryPane {
     editor: Entity<EditorView>,
@@ -477,8 +513,18 @@ pub struct QueryPane {
     /// wrapper around what the user wrote. Without it every sort would wrap the
     /// last wrapper.
     sort_base: Option<String>,
+    /// The marker the grid of the run in flight should wear when it arrives.
+    ///
+    /// A sort is a re-run, and a re-run replaces the grid — so the marker the
+    /// header click moved would be thrown away with the grid that carried it,
+    /// leaving the rows ordered and nothing saying so. Set by
+    /// [`QueryPane::reorder`], taken by [`QueryPane::push_rows`], and cleared
+    /// by any run that is not a sort.
+    pending_sort: Option<(usize, SortDirection)>,
     /// Mints [`ResultTab::id`].
     next_tab_id: u64,
+    /// The right-click menu of one half of the pane, while one is open.
+    context_menu: Option<PaneMenu>,
     _editor_events: Subscription,
 }
 
@@ -533,6 +579,14 @@ impl QueryPane {
                     .collect();
                 pane.request(statements, cx);
             }
+            // The editor holds no strings, so its menu is drawn here
+            // (architecture document, §7.8).
+            EditorEvent::ContextMenu { position } => {
+                pane.context_menu = Some(PaneMenu::Editor {
+                    position: *position,
+                });
+                cx.notify();
+            }
             EditorEvent::Changed | EditorEvent::SelectionChanged => {}
         });
 
@@ -555,7 +609,9 @@ impl QueryPane {
             finished: None,
             pending: None,
             sort_base: None,
+            pending_sort: None,
             next_tab_id: 1,
+            context_menu: None,
             _editor_events: editor_events,
         }
     }
@@ -778,6 +834,14 @@ impl QueryPane {
         self.notice = None;
         self.finished = None;
         self.ran = true;
+        // A menu naming a result tab that is about to be dropped would act on
+        // whichever tab took its place, or on none at all.
+        self.context_menu = None;
+        if sort_base.is_none() {
+            // Not a sort round trip, so whatever order the last one left is
+            // not the order this one comes back in.
+            self.pending_sort = None;
+        }
         self.sort_base = sort_base;
         self.run = RunState::Running(Box::new(Running {
             generation,
@@ -957,12 +1021,27 @@ impl QueryPane {
         source.set_state(state);
 
         let grid = cx.new(|cx| GridView::new(source, cx));
+        // The marker the sort that asked for this run was for, if it was one:
+        // the grid it was set on has just been replaced by this one.
+        if let Some(sort) = self.pending_sort.take() {
+            grid.update(cx, |grid, cx| grid.set_sort(Some(sort), cx));
+        }
         let events = cx.subscribe(&grid, move |pane, _grid, event, cx| match event {
             GridEvent::NearEnd => pane.fetch_more(id, cx),
             GridEvent::SortRequested { column, direction } => {
                 pane.reorder(id, *column, *direction, cx);
             }
             GridEvent::CellActivated { row, column } => pane.open_cell(id, *row, *column, cx),
+            // The grid holds no strings, so its menu is drawn here
+            // (architecture document, §7.8).
+            GridEvent::ContextMenu { target, position } => {
+                pane.context_menu = Some(PaneMenu::Grid {
+                    id,
+                    target: *target,
+                    position: *position,
+                });
+                cx.notify();
+            }
         });
 
         let label = ts!("query.result", index = self.results.len() + 1);
@@ -1147,6 +1226,10 @@ impl QueryPane {
             // The third click drops the ordering, which is the original query.
             None => base.clone(),
         };
+        // Carried across the re-run, so the grid that comes back wears the
+        // marker for the order it is actually in; see
+        // [`QueryPane::pending_sort`].
+        self.pending_sort = direction.map(|direction| (column, direction));
         self.start(vec![sql], Some(base), cx);
     }
 
@@ -1349,6 +1432,301 @@ impl QueryPane {
         }
     }
 
+    /// The grid of result tab `id`, if that tab is still open and holds rows.
+    fn grid_of(&self, id: u64) -> Option<&Entity<GridView<ResultSource>>> {
+        self.results
+            .iter()
+            .find(|tab| tab.id == id)
+            .and_then(|tab| match &tab.body {
+                ResultBody::Rows(rows) => Some(&rows.grid),
+                ResultBody::Message(_) => None,
+            })
+    }
+
+    /// Whether a menu is open in either half of the pane, for the shell's own
+    /// tests.
+    ///
+    /// The workspace reaches every pane on `Escape` — a right click moves no
+    /// pane marker, so the pane holding a menu is not necessarily the active
+    /// one — and asserting that it did needs a way through.
+    #[cfg(test)]
+    pub(crate) fn has_context_menu(&self) -> bool {
+        self.context_menu.is_some()
+    }
+
+    /// Opens the editor's menu, as a right click in it would.
+    ///
+    /// Test-only: the widget's own gesture is covered in `rudbman-editor`, and
+    /// what the shell's tests need is a pane with a menu open on it.
+    #[cfg(test)]
+    pub(crate) fn open_editor_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.context_menu = Some(PaneMenu::Editor { position });
+        cx.notify();
+    }
+
+    /// Puts the pane's right-click menu away, and says whether there was one.
+    ///
+    /// What `Escape` reaches through the workspace, which closes the menu on
+    /// top of everything before it closes anything else (architecture document,
+    /// §7.8). The answer is what tells the workspace the key was spent here.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        let had = self.context_menu.take().is_some();
+        if had {
+            cx.notify();
+        }
+        had
+    }
+
+    /// The editor's right-click menu: everything a SQL buffer can be asked to
+    /// do, in the order the keyboard already offers it.
+    ///
+    /// Every row is one of the editor's own actions, dispatched on the editor's
+    /// focus handle — not called, because the editor exposes no method for any
+    /// of them and should not have to: the menu and the chord are the same
+    /// command reaching the same handler.
+    ///
+    /// What is greyed and why: the three clipboard rows follow the selection
+    /// and whether the buffer may be written to, `Undo` and `Redo` follow the
+    /// history, and the three run rows follow the session — a pane whose
+    /// connection tab has been closed keeps its text and its rows and can run
+    /// nothing (see [`QueryPane::detach`]).
+    fn editor_rows(&self, cx: &App) -> Vec<MenuRow> {
+        let editor = self.editor.read(cx);
+        let handle = editor.focus_handle(cx);
+        let selected = editor.has_selection();
+        let writable = !editor.is_read_only();
+        let attached = self.session.is_some();
+        let row =
+            |label: SharedString, shortcut: String, enabled: bool, action: Box<dyn Action>| {
+                let handle = handle.clone();
+                MenuRow::new(label)
+                    .shortcut(shortcut)
+                    .enabled(enabled)
+                    .on_activate(move |window, cx| handle.dispatch_action(&*action, window, cx))
+            };
+        let modifier = SHORTCUT_MODIFIER;
+
+        vec![
+            row(
+                ts!("context.cut"),
+                format!("{modifier}+X"),
+                selected && writable,
+                Box::new(Cut),
+            ),
+            row(
+                ts!("context.copy"),
+                format!("{modifier}+C"),
+                selected,
+                Box::new(Copy),
+            ),
+            row(
+                ts!("context.paste"),
+                format!("{modifier}+V"),
+                writable,
+                Box::new(Paste),
+            ),
+            MenuRow::separator(),
+            row(
+                ts!("context.select_all"),
+                format!("{modifier}+A"),
+                true,
+                Box::new(SelectAll),
+            ),
+            MenuRow::separator(),
+            row(
+                ts!("context.undo"),
+                format!("{modifier}+Z"),
+                editor.can_undo(),
+                Box::new(Undo),
+            ),
+            row(
+                ts!("context.redo"),
+                format!("{modifier}+Shift+Z"),
+                editor.can_redo(),
+                Box::new(Redo),
+            ),
+            MenuRow::separator(),
+            row(
+                ts!("context.toggle_comment"),
+                format!("{modifier}+/"),
+                writable,
+                Box::new(ToggleComment),
+            ),
+            MenuRow::separator(),
+            row(
+                ts!("context.run_statement"),
+                format!("{modifier}+Enter"),
+                attached,
+                Box::new(RunStatement),
+            ),
+            row(
+                ts!("context.run_selection"),
+                format!("{modifier}+Alt+Enter"),
+                attached && selected,
+                Box::new(RunSelection),
+            ),
+            row(
+                ts!("context.run_all"),
+                format!("{modifier}+Shift+Enter"),
+                attached,
+                Box::new(RunAll),
+            ),
+            MenuRow::separator(),
+            row(
+                ts!("context.find"),
+                format!("{modifier}+F"),
+                true,
+                Box::new(Find),
+            ),
+            row(
+                ts!("context.replace"),
+                format!("{modifier}+H"),
+                writable,
+                Box::new(Replace),
+            ),
+        ]
+    }
+
+    /// A result grid's right-click menu: the cell menu, or the heading one.
+    ///
+    /// The cell menu is about the *selection*, not about the cell that was
+    /// pressed — the grid has already moved the selection onto it unless the
+    /// press landed inside one — so the four copy formats and "clear" all read
+    /// the same block the user can see.
+    ///
+    /// The heading menu is about one column, and its sort rows go through
+    /// [`QueryPane::reorder`] rather than through the grid: the grid holds only
+    /// the first n rows of an answer the server has all of, so ordering it is a
+    /// re-run and not a shuffle. "Show every column" is the one row here that
+    /// no other gesture offers — a hidden column has no heading left to
+    /// right-click.
+    fn grid_rows(&self, id: u64, target: MenuTarget, cx: &mut Context<Self>) -> Vec<MenuRow> {
+        let Some(grid) = self.grid_of(id) else {
+            return Vec::new();
+        };
+        let this = cx.entity();
+        let grid = grid.clone();
+
+        match target {
+            MenuTarget::Cell => {
+                let empty = grid.read(cx).selection().is_empty();
+                let mut rows: Vec<MenuRow> = CopyFormat::ALL
+                    .into_iter()
+                    .map(|format| {
+                        let grid = grid.clone();
+                        let row = MenuRow::new(ts!("context.copy_as", format = format.label()))
+                            .enabled(!empty)
+                            .on_activate(move |_window, cx| {
+                                grid.update(cx, |grid, cx| grid.copy(format, cx));
+                            });
+                        // Only the default format carries the hint: `Ctrl+C` is
+                        // one chord and copies TSV, and repeating it on four
+                        // rows would say it does all four.
+                        if format == CopyFormat::default() {
+                            row.shortcut(format!("{SHORTCUT_MODIFIER}+C"))
+                        } else {
+                            row
+                        }
+                    })
+                    .collect();
+                rows.push(MenuRow::separator());
+                rows.push({
+                    let grid = grid.clone();
+                    MenuRow::new(ts!("context.select_all"))
+                        .shortcut(format!("{SHORTCUT_MODIFIER}+A"))
+                        .on_activate(move |_window, cx| {
+                            grid.update(cx, |grid, cx| grid.select_all(cx));
+                        })
+                });
+                rows.push(
+                    MenuRow::new(ts!("context.clear_selection"))
+                        .enabled(!empty)
+                        .on_activate(move |_window, cx| {
+                            grid.update(cx, |grid, cx| grid.clear_selection(cx));
+                        }),
+                );
+                rows
+            }
+            MenuTarget::Header { column } => {
+                let sort = grid.read(cx).sort();
+                let nothing_hidden = grid.read(cx).hidden_column_count() == 0;
+                let name = grid.read(cx).column_name(column).map(str::to_owned);
+                let sorted = |direction: SortDirection| sort == Some((column, direction));
+                let order = |direction: Option<SortDirection>| {
+                    let this = this.clone();
+                    move |_window: &mut Window, cx: &mut App| {
+                        this.update(cx, |pane, cx| pane.reorder(id, column, direction, cx));
+                    }
+                };
+
+                vec![
+                    MenuRow::new(ts!("context.sort_asc"))
+                        .checked(sorted(SortDirection::Ascending))
+                        .on_activate(order(Some(SortDirection::Ascending))),
+                    MenuRow::new(ts!("context.sort_desc"))
+                        .checked(sorted(SortDirection::Descending))
+                        .on_activate(order(Some(SortDirection::Descending))),
+                    MenuRow::new(ts!("context.sort_clear"))
+                        .enabled(sort.is_some())
+                        .on_activate(order(None)),
+                    MenuRow::separator(),
+                    MenuRow::new(ts!("context.autofit")).on_activate({
+                        let grid = grid.clone();
+                        move |_window, cx| {
+                            grid.update(cx, |grid, cx| grid.autofit_column(column, cx));
+                        }
+                    }),
+                    MenuRow::new(ts!("context.hide_column")).on_activate({
+                        let grid = grid.clone();
+                        move |_window, cx| {
+                            grid.update(cx, |grid, cx| grid.set_column_hidden(column, true, cx));
+                        }
+                    }),
+                    MenuRow::new(ts!("context.show_columns"))
+                        .enabled(!nothing_hidden)
+                        .on_activate({
+                            let grid = grid.clone();
+                            move |_window, cx| {
+                                grid.update(cx, |grid, cx| grid.show_all_columns(cx));
+                            }
+                        }),
+                    MenuRow::separator(),
+                    MenuRow::new(ts!("context.copy_column_name"))
+                        .enabled(name.is_some())
+                        .on_activate(move |_window, cx| {
+                            if let Some(name) = name.clone() {
+                                cx.write_to_clipboard(ClipboardItem::new_string(name));
+                            }
+                        }),
+                ]
+            }
+        }
+    }
+
+    /// The pane's right-click menu, while one is open.
+    fn render_context_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let (position, rows) = match self.context_menu.as_ref()? {
+            PaneMenu::Editor { position } => (*position, self.editor_rows(cx)),
+            PaneMenu::Grid {
+                id,
+                target,
+                position,
+            } => (*position, self.grid_rows(*id, *target, cx)),
+        };
+        let this = cx.entity();
+
+        Some(
+            ContextMenu::new("query-context")
+                .position(position)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.close_context_menu(cx);
+                    });
+                }),
+        )
+    }
+
     /// The result area's body: a grid, a message, a failure, or an empty state.
     fn render_results(&self, chrome: &Theme) -> AnyElement {
         if let Some(error) = &self.error {
@@ -1470,6 +1848,7 @@ impl Render for QueryPane {
         let id = cx.entity_id();
         let toolbar = self.render_toolbar(&chrome, cx);
         let results = self.render_results(&chrome);
+        let context_menu = self.render_context_menu(cx);
 
         div()
             .flex()
@@ -1550,6 +1929,10 @@ impl Render for QueryPane {
                         cx.new(|_| gpui::Empty)
                     }),
             )
+            // Takes no room in the column — the element is an empty absolute
+            // box whose two halves are anchored to the window — so it can
+            // simply be the last child, above the divider it may cover.
+            .children(context_menu)
     }
 }
 
@@ -2128,5 +2511,349 @@ mod tests {
         // The rows are still the ones the live run produced.
         assert_eq!(column_zero(&window, 0, cx), ["1", "2", "3"]);
         connected.close().expect("close");
+    }
+
+    /// The rows of one menu, taken out of the pane so that a row which acts on
+    /// the pane can be run without re-entering the update it was built in.
+    fn menu_rows(
+        window: &WindowHandle<QueryPane>,
+        menu: PaneMenu,
+        cx: &mut TestAppContext,
+    ) -> Vec<MenuRow> {
+        window
+            .update(cx, |pane, _window, cx| match menu {
+                PaneMenu::Editor { .. } => pane.editor_rows(cx),
+                PaneMenu::Grid { id, target, .. } => pane.grid_rows(id, target, cx),
+            })
+            .expect("the window is open")
+    }
+
+    /// A window position no menu is really raised at: the rows a menu carries
+    /// do not depend on where the pointer was.
+    fn anywhere() -> Point<Pixels> {
+        gpui::point(px(0.), px(0.))
+    }
+
+    /// The id of the pane's first result tab.
+    fn first_result(window: &WindowHandle<QueryPane>, cx: &mut TestAppContext) -> u64 {
+        window
+            .update(cx, |pane, _window, _cx| pane.results[0].id)
+            .expect("the window is open")
+    }
+
+    /// What one column of the clipboard test wants back.
+    fn clipboard(cx: &mut gpui::VisualTestContext) -> String {
+        cx.update(|_window, cx| {
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .unwrap_or_default()
+        })
+    }
+
+    /// Hiding a column and putting every one of them back, through the header
+    /// menu — which is the only route to the second half of that: a hidden
+    /// column has no heading left to right-click.
+    #[gpui::test]
+    fn a_header_menu_hides_a_column_and_puts_them_all_back(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "grid-menu",
+            &[
+                "create table G (A int, B int, C int)",
+                "insert into G values (1, 2, 3)",
+            ],
+        );
+        let window = pane(&connected, &profile, 500, cx);
+        run(&window, "select A, B, C from G", cx);
+        let id = first_result(&window, cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let header = |column| PaneMenu::Grid {
+            id,
+            target: MenuTarget::Header { column },
+            position: anywhere(),
+        };
+        let rows = menu_rows(&window, header(1), &mut vcx);
+        assert_eq!(
+            context_menu::labels(&rows),
+            [
+                ts!("context.sort_asc").to_string(),
+                ts!("context.sort_desc").to_string(),
+                ts!("context.sort_clear").to_string(),
+                String::new(),
+                ts!("context.autofit").to_string(),
+                ts!("context.hide_column").to_string(),
+                ts!("context.show_columns").to_string(),
+                String::new(),
+                ts!("context.copy_column_name").to_string(),
+            ]
+        );
+        assert!(
+            !context_menu::row(&rows, &ts!("context.show_columns")).is_enabled(),
+            "the way back was offered with nothing to come back from"
+        );
+        assert!(
+            !context_menu::row(&rows, &ts!("context.sort_clear")).is_enabled(),
+            "an unsorted result offered to unsort itself"
+        );
+
+        vcx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.hide_column")).activate(window, cx);
+        });
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                let grid = pane.grid_at(0).read(cx);
+                assert!(grid.is_column_hidden(1));
+                assert_eq!(grid.visible_column_indices(), vec![0, 2]);
+            })
+            .expect("the window is open");
+
+        // The way back lives on the menu of a heading that is still there, and
+        // it is live now that something is hidden.
+        let rows = menu_rows(&window, header(0), &mut vcx);
+        let show = context_menu::row(&rows, &ts!("context.show_columns"));
+        assert!(show.is_enabled());
+        vcx.update(|window, cx| show.activate(window, cx));
+
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                let grid = pane.grid_at(0).read(cx);
+                assert_eq!(grid.hidden_column_count(), 0);
+                assert_eq!(grid.visible_column_indices(), vec![0, 1, 2]);
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The editor menu's copy row writes the selection to the real clipboard,
+    /// through the editor's own action rather than through anything invented
+    /// here — and it is greyed out when there is nothing selected to copy.
+    #[gpui::test]
+    fn the_editor_menu_copies_the_selection(cx: &mut TestAppContext) {
+        let (connected, profile) = h2("editor-menu", &[]);
+        let window = pane(&connected, &profile, 500, cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut vcx, |pane, window, cx| {
+                pane.editor.update(cx, |editor, cx| {
+                    editor.set_text("select 1 from dual", cx);
+                });
+                pane.focus_editor(window, cx);
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        // With only a caret there is nothing to cut or copy, and the two rows
+        // say so rather than quietly copying nothing.
+        let editor_menu = || PaneMenu::Editor {
+            position: anywhere(),
+        };
+        let rows = menu_rows(&window, editor_menu(), &mut vcx);
+        assert!(!context_menu::row(&rows, &ts!("context.copy")).is_enabled());
+        assert!(!context_menu::row(&rows, &ts!("context.cut")).is_enabled());
+        assert!(
+            context_menu::row(&rows, &ts!("context.run_all")).is_enabled(),
+            "the pane still has its session"
+        );
+
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.editor
+                    .update(cx, |editor, cx| editor.select_range(0..8, cx));
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        let rows = menu_rows(&window, editor_menu(), &mut vcx);
+        let copy = context_menu::row(&rows, &ts!("context.copy"));
+        assert!(copy.is_enabled());
+        vcx.update(|window, cx| copy.activate(window, cx));
+
+        assert_eq!(
+            clipboard(&mut vcx),
+            "select 1",
+            "the menu row did not reach the editor"
+        );
+        connected.close().expect("close");
+    }
+
+    /// A detached pane keeps its editor and refuses to run from the menu too:
+    /// the three run rows are greyed, and the rows that only touch text are
+    /// not.
+    #[gpui::test]
+    fn a_detached_pane_greys_the_menus_run_rows(cx: &mut TestAppContext) {
+        let (connected, profile) = h2("editor-menu-detached", &[]);
+        let window = pane(&connected, &profile, 500, cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                pane.editor
+                    .update(cx, |editor, cx| editor.set_text("select 1", cx));
+                pane.detach(cx);
+            })
+            .expect("the window is open");
+
+        let rows = menu_rows(
+            &window,
+            PaneMenu::Editor {
+                position: anywhere(),
+            },
+            cx,
+        );
+        for label in [
+            ts!("context.run_statement"),
+            ts!("context.run_selection"),
+            ts!("context.run_all"),
+        ] {
+            assert!(
+                !context_menu::row(&rows, &label).is_enabled(),
+                "{label} was offered on a pane with no session"
+            );
+        }
+        assert!(context_menu::row(&rows, &ts!("context.select_all")).is_enabled());
+        assert!(context_menu::row(&rows, &ts!("context.paste")).is_enabled());
+        connected.close().expect("close");
+    }
+
+    /// A sort is a re-run, so the grid whose marker was moved is thrown away —
+    /// and the one that replaces it has to come back wearing the order it is
+    /// actually in, or both the header and the menu would call it unsorted.
+    #[gpui::test]
+    fn a_sort_from_the_header_menu_marks_the_grid_it_comes_back_in(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "grid-menu-sort",
+            &[
+                "create table S (N int)",
+                "insert into S values (2), (3), (1)",
+            ],
+        );
+        let window = pane(&connected, &profile, 500, cx);
+        run(&window, "select N from S", cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let id = first_result(&window, &mut vcx);
+        let rows = menu_rows(
+            &window,
+            PaneMenu::Grid {
+                id,
+                target: MenuTarget::Header { column: 0 },
+                position: anywhere(),
+            },
+            &mut vcx,
+        );
+        assert!(
+            rows.iter().all(|row| !row.is_checked()),
+            "an unsorted result had a direction ticked"
+        );
+        vcx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.sort_desc")).activate(window, cx);
+        });
+        vcx.run_until_parked();
+        assert_eq!(column_zero(&window, 0, &mut vcx), ["3", "2", "1"]);
+
+        // The menu of that column now says which direction is in effect, and
+        // offers the way out of it.
+        let id = first_result(&window, &mut vcx);
+        let rows = menu_rows(
+            &window,
+            PaneMenu::Grid {
+                id,
+                target: MenuTarget::Header { column: 0 },
+                position: anywhere(),
+            },
+            &mut vcx,
+        );
+        assert!(context_menu::row(&rows, &ts!("context.sort_desc")).is_checked());
+        assert!(!context_menu::row(&rows, &ts!("context.sort_asc")).is_checked());
+        assert!(context_menu::row(&rows, &ts!("context.sort_clear")).is_enabled());
+
+        vcx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.sort_clear")).activate(window, cx);
+        });
+        vcx.run_until_parked();
+        assert_eq!(column_zero(&window, 0, &mut vcx), ["2", "3", "1"]);
+        connected.close().expect("close");
+    }
+
+    /// A cell menu is about the selection rather than about the cell that was
+    /// pressed, and says so by greying every row that would act on nothing.
+    #[gpui::test]
+    fn a_cell_menu_follows_the_selection(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "grid-menu-cells",
+            &["create table C (N int)", "insert into C values (7)"],
+        );
+        let window = pane(&connected, &profile, 500, cx);
+        run(&window, "select N from C", cx);
+        let id = first_result(&window, cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let cells = || PaneMenu::Grid {
+            id,
+            target: MenuTarget::Cell,
+            position: anywhere(),
+        };
+        let rows = menu_rows(&window, cells(), &mut vcx);
+        assert_eq!(
+            context_menu::labels(&rows),
+            [
+                ts!("context.copy_as", format = "TSV").to_string(),
+                ts!("context.copy_as", format = "CSV").to_string(),
+                ts!("context.copy_as", format = "JSON").to_string(),
+                ts!("context.copy_as", format = "INSERT").to_string(),
+                String::new(),
+                ts!("context.select_all").to_string(),
+                ts!("context.clear_selection").to_string(),
+            ]
+        );
+        for label in [
+            ts!("context.copy_as", format = "TSV"),
+            ts!("context.clear_selection"),
+        ] {
+            assert!(
+                !context_menu::row(&rows, &label).is_enabled(),
+                "{label} was offered over an empty selection"
+            );
+        }
+
+        vcx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.select_all")).activate(window, cx);
+        });
+        let rows = menu_rows(&window, cells(), &mut vcx);
+        vcx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.copy_as", format = "CSV")).activate(window, cx);
+        });
+        assert_eq!(clipboard(&mut vcx).trim(), "7");
+        connected.close().expect("close");
+    }
+
+    #[test]
+    fn every_label_the_pane_menus_draw_has_a_translation() {
+        for label in [
+            ts!("context.copy_as", format = "TSV"),
+            ts!("context.select_all"),
+            ts!("context.clear_selection"),
+            ts!("context.sort_asc"),
+            ts!("context.sort_desc"),
+            ts!("context.sort_clear"),
+            ts!("context.autofit"),
+            ts!("context.hide_column"),
+            ts!("context.show_columns"),
+            ts!("context.copy_column_name"),
+            ts!("context.cut"),
+            ts!("context.copy"),
+            ts!("context.paste"),
+            ts!("context.undo"),
+            ts!("context.redo"),
+            ts!("context.toggle_comment"),
+            ts!("context.run_statement"),
+            ts!("context.run_selection"),
+            ts!("context.run_all"),
+            ts!("context.find"),
+            ts!("context.replace"),
+        ] {
+            assert!(!label.is_empty(), "empty label");
+            assert!(!label.starts_with("context."), "untranslated {label:?}");
+        }
     }
 }

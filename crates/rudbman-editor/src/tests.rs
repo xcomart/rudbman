@@ -837,3 +837,55 @@ fn a_double_click_selects_a_word_and_a_triple_click_a_line(cx: &mut TestAppConte
         "a triple click takes the whole line"
     );
 }
+
+/// A right click asks the host for a menu and leaves the selection alone —
+/// which is the whole point, since the menu is usually raised over a selection
+/// in order to copy or run it.
+#[gpui::test]
+fn a_right_click_asks_for_a_menu_without_moving_the_caret(cx: &mut TestAppContext) {
+    use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Point, px};
+
+    let (editor, mut cx) = open("select count from t\nsecond line", cx);
+    draw(&mut cx);
+
+    editor.update(&mut cx, |editor, cx| editor.select_range(7..12, cx));
+    assert!(editor.read(&mut cx, EditorView::has_selection));
+    editor.drain_events();
+
+    // On the second line, well outside the selection.
+    let line_height = editor.read(&mut cx, |editor| editor.layout.line_height);
+    let gutter = editor.read(&mut cx, |editor| editor.layout.gutter);
+    let position = Point {
+        x: gutter + px(30.),
+        y: line_height * 1.5,
+    };
+    cx.simulate_event(MouseDownEvent {
+        position,
+        modifiers: Modifiers::none(),
+        button: MouseButton::Right,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position,
+        modifiers: Modifiers::none(),
+        button: MouseButton::Right,
+        click_count: 1,
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        editor.drain_events(),
+        vec![EditorEvent::ContextMenu { position }],
+        "the press was not reported in window coordinates"
+    );
+    assert_eq!(
+        editor.read(&mut cx, EditorView::selection),
+        7..12,
+        "a right click moved the selection"
+    );
+    assert!(
+        editor.with_window(&mut cx, |editor, window, _| editor.is_focused(window)),
+        "a right click did not take the focus"
+    );
+}

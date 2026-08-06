@@ -42,17 +42,19 @@
 use std::collections::HashSet;
 
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render, ScrollHandle,
-    SharedString, Subscription, Window, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Pixels, Point, Render,
+    ScrollHandle, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rudbman_erd::{BuilderEdge, BuilderEvent, BuilderView, ErdColumn, ErdTable};
 use rudbman_jdbc::{DescribeRequest, Session};
 use rudbman_sql::Dialect;
-use rudbman_ui::{Button, ButtonVariant, Checkbox, Select, TextInput, Theme, theme};
+use rudbman_ui::{Button, ButtonVariant, Checkbox, ContextMenu, Select, TextInput, Theme, theme};
 
 use crate::builder_sql::{
     BuilderQuery, BuilderTable, Join, JoinKind, SortDir, generate, unique_alias,
 };
+use crate::context_menu::{self, MenuRow};
+use crate::erd_pane::{canvas_zoom_rows, close_canvas_menu};
 use crate::explorer::{ConnectionId, DraggedObject, ObjectTarget};
 use crate::i18n::ts;
 use crate::table_detail::{items, number, text, type_of};
@@ -81,6 +83,15 @@ pub enum BuilderPaneEvent {
     /// *which* builder the table belongs on — the one the pointer was over,
     /// which is this one.
     TableDropped(ObjectTarget),
+}
+
+/// A right-click on the canvas, while the menu it asked for is open.
+struct CanvasMenu {
+    /// What was under the pointer: the table, with one of its columns when the
+    /// press landed on a column row, and `None` for the background.
+    hit: Option<(usize, Option<usize>)>,
+    /// Where the pointer was, in window coordinates.
+    position: Point<Pixels>,
 }
 
 /// The panel.
@@ -114,6 +125,8 @@ pub struct BuilderPane {
     open_order: Option<usize>,
     /// Vertical scroll of the form.
     body_scroll: ScrollHandle,
+    /// The canvas's right-click menu, while one is open.
+    context_menu: Option<CanvasMenu>,
     focus_handle: FocusHandle,
     /// Keeps the canvas subscription alive.
     _events: Subscription,
@@ -137,6 +150,15 @@ impl BuilderPane {
             // A box that moved changes the picture and not the statement, and
             // the picture is not saved.
             BuilderEvent::LayoutChanged => {}
+            // The canvas holds no strings, so the menu is drawn here
+            // (architecture document, §7.8).
+            BuilderEvent::ContextMenu { hit, position } => {
+                pane.context_menu = Some(CanvasMenu {
+                    hit: *hit,
+                    position: *position,
+                });
+                cx.notify();
+            }
         });
 
         Self {
@@ -153,6 +175,7 @@ impl BuilderPane {
             open_join: None,
             open_order: None,
             body_scroll: ScrollHandle::new(),
+            context_menu: None,
             focus_handle: cx.focus_handle(),
             _events: events,
             condition_events: Vec::new(),
@@ -206,6 +229,65 @@ impl BuilderPane {
         // The canvas remaps its own selection and edges by name when the table
         // list is replaced; handing both back keeps its view of them the same
         // as this panel's rather than merely equivalent.
+        self.sync_selection(cx);
+        self.sync_edges(cx);
+        cx.notify();
+    }
+
+    /// Takes one table off the canvas, and everything that named it with it.
+    ///
+    /// The only way back from adding a table, and reachable from nowhere but
+    /// the canvas menu: a box has no close button, because a diagram of ten
+    /// tables would then carry ten of them (architecture document, §7.8).
+    ///
+    /// Every part of the query is written in `(table, column)` pairs whose
+    /// first half is an index into [`BuilderPane::tables`], so removing an
+    /// entry from the middle would silently re-point every term above it at its
+    /// neighbour. Each of them is therefore filtered for the table that is
+    /// going and then shifted down — the joins, the select list, the grouping
+    /// and the sorting alike. The `WHERE` rows are free text and are left
+    /// exactly as they are: they are the user's own words, and a condition that
+    /// no longer resolves is something they can see and edit, which a condition
+    /// silently deleted is not.
+    ///
+    /// The canvas re-maps its boxes by *name* when it is handed a new table
+    /// list, so the tables that stay keep the positions they were dragged to.
+    pub fn remove_table(&mut self, table: usize, cx: &mut Context<Self>) {
+        if table >= self.tables.len() {
+            return;
+        }
+        self.tables.remove(table);
+        self.boxes.remove(table);
+
+        // One rule for every `(table, column)` pair: gone with the table, or
+        // shifted down by the one that went.
+        let survives = |at: &(usize, usize)| at.0 != table;
+        let shift = move |at: (usize, usize)| (at.0 - usize::from(at.0 > table), at.1);
+
+        self.joins
+            .retain(|join| survives(&join.from) && survives(&join.to));
+        for join in &mut self.joins {
+            join.from = shift(join.from);
+            join.to = shift(join.to);
+        }
+        self.selected.retain(survives);
+        for at in &mut self.selected {
+            *at = shift(*at);
+        }
+        self.group_by.retain(survives);
+        for at in &mut self.group_by {
+            *at = shift(*at);
+        }
+        self.order_by.retain(|(at, _)| survives(at));
+        for (at, _) in &mut self.order_by {
+            *at = shift(*at);
+        }
+        // Both lists are shorter and both dropdowns are indexed into them.
+        self.open_join = None;
+        self.open_order = None;
+
+        let boxes = self.boxes.clone();
+        self.view.update(cx, |view, cx| view.set_tables(boxes, cx));
         self.sync_selection(cx);
         self.sync_edges(cx);
         cx.notify();
@@ -381,6 +463,82 @@ impl BuilderPane {
             self.view.read(cx).focus_handle(cx)
         };
         handle.focus(window);
+    }
+
+    /// Puts the canvas's right-click menu away, and says whether there was one.
+    ///
+    /// What `Escape` reaches through the workspace, which closes the menu on
+    /// top of everything before it closes anything else (architecture document,
+    /// §7.8). The answer is what tells the workspace the key was spent here.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        close_canvas_menu(&mut self.context_menu, cx)
+    }
+
+    /// The canvas's right-click menu, while one is open.
+    ///
+    /// Three menus in one, and which of them is drawn is what was under the
+    /// pointer. The background gets the canvas's own commands — the zoom, which
+    /// is all a canvas as such can do. A box adds the one command a box has and
+    /// no gesture offers, since a box carries no close button: take this table
+    /// off. A column row adds the toggle the left button already does, worded
+    /// for the state the column is actually in, so that the menu says what will
+    /// happen rather than naming a switch.
+    ///
+    /// The join list is deliberately not here. Editing a join is the form's,
+    /// which draws every join with its type and its delete button (architecture
+    /// document, §7.7), and a line is a poor right-click target besides.
+    fn canvas_rows(
+        &self,
+        hit: Option<(usize, Option<usize>)>,
+        cx: &mut Context<Self>,
+    ) -> Vec<MenuRow> {
+        let this = cx.entity();
+        let canvas = self.view.read(cx).focus_handle(cx);
+        let mut rows = Vec::new();
+
+        if let Some((table, column)) = hit {
+            rows.push({
+                let this = this.clone();
+                MenuRow::new(ts!("context.remove_table")).on_activate(move |_window, cx| {
+                    this.update(cx, |pane, cx| pane.remove_table(table, cx));
+                })
+            });
+            if let Some(column) = column {
+                let picked = self.selected.contains(&(table, column));
+                let this = this.clone();
+                rows.push(
+                    MenuRow::new(if picked {
+                        ts!("context.clear_column")
+                    } else {
+                        ts!("context.select_column")
+                    })
+                    .on_activate(move |_window, cx| {
+                        this.update(cx, |pane, cx| pane.toggle_column(table, column, cx));
+                    }),
+                );
+            }
+            rows.push(MenuRow::separator());
+        }
+        rows.extend(canvas_zoom_rows(&canvas));
+        rows
+    }
+
+    /// The canvas's right-click menu, drawn.
+    fn render_context_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let position = self.context_menu.as_ref()?.position;
+        let rows = self.canvas_rows(self.context_menu.as_ref()?.hit, cx);
+        let this = cx.entity();
+
+        Some(
+            ContextMenu::new("builder-context")
+                .position(position)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.close_context_menu(cx);
+                    });
+                }),
+        )
     }
 
     /// The state as the generator wants it.
@@ -723,6 +881,7 @@ impl Render for BuilderPane {
         let conditions = self.render_conditions(&chrome, cx);
         let columns = self.render_columns(&chrome, cx);
         let preview = self.render_preview(&chrome, cx);
+        let context_menu = self.render_context_menu(cx);
 
         div()
             .id("builder-pane")
@@ -752,6 +911,10 @@ impl Render for BuilderPane {
                     .children(columns)
                     .child(preview),
             )
+            // Takes no room in the column above it — the element is an empty
+            // absolute box whose two halves are anchored to the window — so it
+            // can simply be the last child.
+            .children(context_menu)
     }
 }
 
@@ -1122,6 +1285,152 @@ mod tests {
         assert_eq!(columns[3].type_name, "NUMERIC(12,2)");
     }
 
+    /// Removing the middle table takes everything that named it with it and
+    /// re-points everything above it, so the statement stays the one the
+    /// picture describes.
+    ///
+    /// The whole of the risk is in the indices: every part of the query is a
+    /// `(table, column)` pair whose first half is a position in the table list,
+    /// so a removal that only deleted the entry would silently re-point every
+    /// term above it at its neighbour.
+    #[gpui::test]
+    fn removing_a_table_takes_its_joins_and_its_picks_with_it(cx: &mut TestAppContext) {
+        let window = open(cx);
+        window
+            .update(cx, |pane, _window, cx| {
+                pane.add_table(&target("PERSON"), columns(&["ID", "TEAM_ID"]), cx);
+                pane.add_table(&target("TEAM"), columns(&["ID", "OFFICE_ID"]), cx);
+                pane.add_table(&target("OFFICE"), columns(&["ID", "CITY"]), cx);
+
+                pane.add_join((0, 1), (1, 0), cx);
+                pane.add_join((1, 1), (2, 0), cx);
+                pane.toggle_column(0, 0, cx);
+                pane.toggle_column(1, 0, cx);
+                pane.toggle_column(2, 1, cx);
+                pane.toggle_group_by((2, 1), cx);
+                pane.set_order_by((2, 1), Some(SortDir::Desc), cx);
+                pane.set_order_by((0, 0), Some(SortDir::Asc), cx);
+                pane.add_condition(cx);
+                pane.set_condition(0, "OFFICE.CITY = 'Seoul'", cx);
+
+                pane.remove_table(1, cx);
+
+                // The middle table is gone, and the ones on either side keep
+                // their own identity rather than shuffling into its place.
+                let aliases: Vec<&str> = pane
+                    .tables
+                    .iter()
+                    .map(|table| table.alias.as_str())
+                    .collect();
+                assert_eq!(aliases, ["PERSON", "OFFICE"]);
+
+                // Both joins named it, so both are gone — the statement has no
+                // way left to relate what is on either end of them.
+                assert!(pane.joins.is_empty(), "a join to a table that is gone");
+
+                // Its picked column is gone; the two that survive are pointing
+                // at the same columns they were, which for OFFICE means index 2
+                // has become index 1.
+                assert_eq!(pane.selected, vec![(0, 0), (1, 1)]);
+                assert_eq!(pane.group_by, vec![(1, 1)]);
+                assert_eq!(
+                    pane.order_by,
+                    vec![((1, 1), SortDir::Desc), ((0, 0), SortDir::Asc)]
+                );
+                assert_eq!(pane.label_of((1, 1)), "OFFICE.CITY");
+
+                // The condition is the user's own words and is left alone.
+                assert_eq!(pane.where_rows.len(), 1);
+
+                let sql = pane.sql(cx);
+                assert!(
+                    !sql.contains("TEAM"),
+                    "the removed table is still named: {sql}"
+                );
+                assert!(sql.contains("OFFICE.CITY"), "{sql}");
+                assert!(sql.contains("PERSON.ID"), "{sql}");
+
+                // An index no table answers to changes nothing at all.
+                let before = pane.sql(cx);
+                pane.remove_table(9, cx);
+                assert_eq!(pane.sql(cx), before);
+                assert_eq!(pane.table_count(), 2);
+            })
+            .expect("the window is open");
+    }
+
+    /// What the canvas menu offers depends on what was under the pointer: the
+    /// background gets the canvas's own commands, a title band adds the one
+    /// command a box has and no gesture offers, and a column row adds the
+    /// toggle — worded for the state the column is actually in.
+    #[gpui::test]
+    fn the_canvas_menu_says_what_was_under_the_pointer(cx: &mut TestAppContext) {
+        let window = open(cx);
+        let mut vcx = VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.add_table(&target("PERSON"), columns(&["ID", "NAME"]), cx);
+
+                let background = context_menu::labels(&pane.canvas_rows(None, cx));
+                assert_eq!(
+                    background,
+                    [
+                        ts!("context.zoom_in").to_string(),
+                        ts!("context.zoom_out").to_string(),
+                        ts!("context.zoom_reset").to_string(),
+                    ]
+                );
+
+                let band = context_menu::labels(&pane.canvas_rows(Some((0, None)), cx));
+                assert_eq!(band[0], ts!("context.remove_table").to_string());
+                assert_eq!(band[1], "", "the box's own command is a group of its own");
+                assert_eq!(band[2..], background[..]);
+
+                // A column not yet picked is offered the way in…
+                let row = context_menu::labels(&pane.canvas_rows(Some((0, Some(1))), cx));
+                assert_eq!(row[1], ts!("context.select_column").to_string());
+                pane.toggle_column(0, 1, cx);
+                // …and once it is picked, the way out.
+                let row = context_menu::labels(&pane.canvas_rows(Some((0, Some(1))), cx));
+                assert_eq!(row[1], ts!("context.clear_column").to_string());
+            })
+            .expect("the window is open");
+    }
+
+    /// The canvas asks for a menu, the panel keeps it, and `Escape` — which
+    /// reaches here through the workspace — puts it away and says it did.
+    #[gpui::test]
+    fn a_right_click_on_the_canvas_leaves_a_menu_the_workspace_can_close(cx: &mut TestAppContext) {
+        let window = open(cx);
+        let mut vcx = VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.add_table(&target("PERSON"), columns(&["ID", "NAME"]), cx);
+                assert!(
+                    !pane.close_context_menu(cx),
+                    "a panel with no menu open claimed the key"
+                );
+                pane.context_menu = Some(CanvasMenu {
+                    hit: Some((0, Some(1))),
+                    position: point(px(40.), px(40.)),
+                });
+                cx.notify();
+            })
+            .expect("the window is open");
+        // Drawn, because a menu the panel cannot render is not a menu.
+        vcx.run_until_parked();
+
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                assert!(pane.close_context_menu(cx), "the key was not taken");
+                assert!(pane.context_menu.is_none());
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+    }
+
     #[test]
     fn every_label_the_panel_draws_has_a_translation() {
         for label in [
@@ -1145,10 +1454,17 @@ mod tests {
             ts!("builder.open_editor"),
             ts!("menu.add_to_builder"),
             ts!("menu.new_builder"),
+            ts!("context.remove_table"),
+            ts!("context.select_column"),
+            ts!("context.clear_column"),
+            ts!("context.zoom_in"),
+            ts!("context.zoom_out"),
+            ts!("context.zoom_reset"),
         ] {
             assert!(!label.is_empty(), "empty label");
             assert!(!label.starts_with("builder."), "untranslated {label:?}");
             assert!(!label.starts_with("menu."), "untranslated {label:?}");
+            assert!(!label.starts_with("context."), "untranslated {label:?}");
         }
     }
 }

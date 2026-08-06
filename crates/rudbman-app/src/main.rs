@@ -39,6 +39,7 @@ mod builder_sql;
 mod caption;
 mod connection;
 mod connection_dialog;
+mod context_menu;
 mod driver_manager;
 mod erd_layout;
 mod erd_pane;
@@ -95,6 +96,7 @@ use builder_pane::{BuilderPane, BuilderPaneEvent};
 use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent, profile_rows};
+use context_menu::MenuRow;
 use erd_layout::ErdLayouts;
 use erd_pane::{ErdDiagram, ErdPane, ErdPaneEvent, ErdTarget};
 use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
@@ -199,7 +201,7 @@ const APP_ID: &str = "com.aihouse.rudbman";
 ///
 /// Never translated: it is the name printed on the key. It follows
 /// [`bind_shortcuts`] on every platform so the two never drift.
-const SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
+pub(crate) const SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
     "Cmd"
 } else {
     "Ctrl"
@@ -217,6 +219,17 @@ const PANE_SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
     "cmd"
 } else {
     "alt"
+};
+
+/// [`PANE_SHORTCUT_MODIFIER`] as a menu hint writes it.
+///
+/// The same key, capitalised: gpui's binding syntax is lower case and the name
+/// printed on the key is not. Never translated, for [`SHORTCUT_MODIFIER`]'s
+/// reason.
+const PANE_SHORTCUT_LABEL: &str = if cfg!(target_os = "macos") {
+    "Cmd"
+} else {
+    "Alt"
 };
 
 /// Smallest share of a split either of its children may be given.
@@ -461,6 +474,43 @@ enum FocusTarget {
     Shell,
 }
 
+/// What a right-click on one of the shell's own surfaces landed on.
+///
+/// Four surfaces, one field, and that is the point: the shell can only ever
+/// have one context menu open, and a single slot makes opening the second one
+/// close the first without anybody having to remember to.
+///
+/// The panes' own surfaces — the SQL editor, the result grid, the two canvases
+/// — are *not* here. Their menus are drawn by the views that own them, because
+/// every command in them acts on state the shell does not have (architecture
+/// document, §7.8).
+enum ContextTarget {
+    /// A row of the explorer tree. The tree has already moved the selection
+    /// onto it, so the menu and the highlight name the same node.
+    Explorer(Box<NodeId>),
+    /// A connection tab, by index. Right-clicking a tab does not select it —
+    /// the menu of the tab on top and of any other differ — so the index is
+    /// the whole of what says which connection is meant.
+    Connection(usize),
+    /// A tab of one pane's strip.
+    PaneTab {
+        /// The pane whose strip was right-clicked.
+        pane: PaneId,
+        /// The tab in it.
+        index: usize,
+    },
+    /// A row of the welcome screen's saved-connection list.
+    Profile(Uuid),
+}
+
+/// A right-click on one of the shell's surfaces, while its menu is open.
+struct OpenContextMenu {
+    /// What was under the pointer.
+    target: ContextTarget,
+    /// Where the pointer was, in window coordinates.
+    position: Point<Pixels>,
+}
+
 /// A query pane's write confirmation, waiting for an answer.
 struct PendingConfirm {
     /// The pane that asked, and that the answer goes back to.
@@ -518,6 +568,12 @@ struct Workspace {
     backup: Entity<BackupDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
+    /// The shell's own right-click menu, while one is open.
+    ///
+    /// Mutually exclusive with [`Workspace::menu_open`]: the dropdown and a
+    /// context menu each lay a full-window backdrop, so two of them at once
+    /// would be two sheets fighting over the same press.
+    context_menu: Option<OpenContextMenu>,
     /// The write confirmation, while a query pane is waiting on it.
     ///
     /// Held here rather than in the pane because a modal centres itself in its
@@ -603,6 +659,23 @@ impl Workspace {
                 ExplorerEvent::Load(node) => this.load_node(node.clone(), cx),
                 ExplorerEvent::Activated(target) => {
                     this.open_object((**target).clone(), window, cx);
+                }
+                // The tree holds no strings and none of the five object
+                // commands, so its menu is drawn here (architecture document,
+                // §7.8).
+                //
+                // An error row is the one node with no menu at all: it names
+                // nothing — it is the sentence saying why its parent could not
+                // be read — so every command would be greyed, and a panel of
+                // nothing but greyed rows says less than no panel.
+                ExplorerEvent::ContextMenu { node, position } => {
+                    if !matches!(node, NodeId::Error(_)) {
+                        this.open_context_menu(
+                            ContextTarget::Explorer(Box::new(node.clone())),
+                            *position,
+                            cx,
+                        );
+                    }
                 }
             },
         );
@@ -699,6 +772,7 @@ impl Workspace {
             transfer,
             backup,
             menu_open: false,
+            context_menu: None,
             confirm: None,
             titlebar,
             _about_events: about_events,
@@ -930,13 +1004,21 @@ impl Workspace {
         let panel = cx.new(|cx| ErdPane::new(target, cx));
         // Subscribe first, *then* ask, for the reason `ErdPane::new` does not
         // emit: a request from a constructor reaches nobody.
-        cx.subscribe(&panel, |workspace, panel, event, cx| match event {
-            ErdPaneEvent::Load(target) => {
-                workspace.load_erd(panel.clone(), (**target).clone(), cx);
-            }
-            ErdPaneEvent::LayoutChanged(target) => {
-                let positions = panel.read(cx).positions(cx);
-                workspace.save_erd_layout(target, positions, cx);
+        cx.subscribe_in(&panel, window, |workspace, panel, event, window, cx| {
+            match event {
+                ErdPaneEvent::Load(target) => {
+                    workspace.load_erd(panel.clone(), (**target).clone(), cx);
+                }
+                ErdPaneEvent::LayoutChanged(target) => {
+                    let positions = panel.read(cx).positions(cx);
+                    workspace.save_erd_layout(target, positions, cx);
+                }
+                // Through the same gate the explorer's own double click goes
+                // through, so a table reached from a diagram lands on the tab
+                // that is already open for it.
+                ErdPaneEvent::OpenTable(target) => {
+                    workspace.open_object((**target).clone(), window, cx);
+                }
             }
         })
         .detach();
@@ -1417,6 +1499,91 @@ impl Workspace {
         }
         self.drop_stale_confirm(cx);
         cx.notify();
+    }
+
+    /// Closes several tabs of `pane` at once.
+    ///
+    /// `victims` are tab indices into the strip as it stands, in any order.
+    /// They are removed from the highest down so that the ones still to go do
+    /// not shift out from under the list — which is the whole reason this is
+    /// not a loop over [`Workspace::close_tab`].
+    ///
+    /// The keyboard follows the same rule one close does, and is asked about
+    /// once rather than once per tab: only the active tab is rendered, so only
+    /// it can be holding the focus, and whatever is left on top afterwards
+    /// takes it. That is what makes "close the other tabs" leave the user
+    /// typing in the tab they kept.
+    fn close_tabs(
+        &mut self,
+        pane: PaneId,
+        victims: &[usize],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if victims.is_empty() {
+            return;
+        }
+        let held = self.pane_holds_focus(pane, window, cx);
+        let Some(target) = self
+            .work_area_mut()
+            .and_then(|area| area.panes.get_mut(pane))
+        else {
+            return;
+        };
+
+        let mut order = victims.to_vec();
+        order.sort_unstable();
+        order.dedup();
+        // Dropping the tabs drops the views in them, and with those whatever
+        // cursor or fetch each was holding.
+        let mut closed = Vec::new();
+        for index in order.into_iter().rev() {
+            closed.extend(target.close(index));
+        }
+        drop(closed);
+
+        if held {
+            self.focus_active_tab(pane, window, cx);
+        }
+        self.drop_stale_confirm(cx);
+        cx.notify();
+    }
+
+    /// Splits `pane` along `axis`, whether or not the marker was on it.
+    ///
+    /// The menu row acts on the pane that was right-clicked, which is not
+    /// necessarily the active one — a right-click moves no marker — so the
+    /// marker is moved there first and the ordinary command run from where it
+    /// then stands.
+    fn split_pane(&mut self, pane: PaneId, axis: Axis, cx: &mut Context<Self>) {
+        if !self.mark_pane(pane) {
+            return;
+        }
+        self.split_active(axis, cx);
+    }
+
+    /// Closes `pane`, whether or not the marker was on it.
+    ///
+    /// The marker is moved for the reason [`Workspace::split_pane`] moves it,
+    /// and moved *before* the pane goes so that the focus question
+    /// [`Workspace::close_active_pane`] asks is asked about the right one.
+    fn close_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.mark_pane(pane) {
+            return;
+        }
+        self.close_active_pane(window, cx);
+    }
+
+    /// Puts the pane marker on `pane`, and says whether that pane exists.
+    fn mark_pane(&mut self, pane: PaneId) -> bool {
+        let Some(area) = self.work_area_mut() else {
+            return false;
+        };
+        if !area.panes.contains(pane) {
+            return false;
+        }
+        area.active_pane = pane;
+        true
     }
 
     /// Puts the keyboard on the active tab of `pane`, or on the shell when that
@@ -1924,6 +2091,7 @@ impl Workspace {
     /// theme that nothing in the settings names any more.
     fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_open = false;
+        self.close_context_menus(cx);
         if self.confirm.is_some() {
             // Declining is the only safe reading of "the dialog went away".
             self.answer_confirm(false, window, cx);
@@ -1957,11 +2125,92 @@ impl Workspace {
     }
 
     /// Shows or hides the application dropdown menu.
+    ///
+    /// Opening it puts every context menu away first. Both lay a full-window
+    /// backdrop that dismisses on any press, so two of them on screen at once
+    /// would be two sheets arguing over one click.
     fn set_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if open {
+            self.close_context_menus(cx);
+        }
         if self.menu_open != open {
             self.menu_open = open;
             cx.notify();
         }
+    }
+
+    /// Opens the shell's own context menu over `target`.
+    ///
+    /// The application dropdown goes away for the reason
+    /// [`Workspace::set_menu_open`] gives, and the one slot means the menu that
+    /// was open — whichever surface it belonged to — goes with it.
+    fn open_context_menu(
+        &mut self,
+        target: ContextTarget,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.menu_open = false;
+        self.close_pane_context_menus(cx);
+        self.context_menu = Some(OpenContextMenu { target, position });
+        cx.notify();
+    }
+
+    /// Puts away every context menu anywhere in the window, and says whether
+    /// there was one.
+    ///
+    /// Both halves: the shell's own, and the ones the panes draw for their
+    /// editor, grid and canvases. What `Escape` runs first of all, and what the
+    /// application dropdown runs before it opens.
+    fn close_context_menus(&mut self, cx: &mut Context<Self>) -> bool {
+        let mine = self.context_menu.take().is_some();
+        if mine {
+            cx.notify();
+        }
+        // Both halves, always: `|` rather than `||`, because a pane menu left
+        // open behind a dismissed shell menu is exactly the state this exists
+        // to prevent.
+        self.close_pane_context_menus(cx) | mine
+    }
+
+    /// Puts away the context menu of every pane of the work area on screen.
+    ///
+    /// Every leaf and every tab of each, rather than the active pane alone:
+    /// only the active tab is rendered, so only it can have a menu open — but
+    /// a right-click does not move the pane marker, so the pane holding one is
+    /// not necessarily the active one, and asking them all costs a walk of a
+    /// tree with a handful of leaves in it.
+    fn close_pane_context_menus(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(area) = self.work_area() else {
+            return false;
+        };
+        // Gathered before anything is updated: reading the tree borrows the
+        // application immutably and closing a menu borrows it mutably.
+        let mut queries = Vec::new();
+        let mut diagrams = Vec::new();
+        let mut builders = Vec::new();
+        for (_, pane) in area.panes.leaves() {
+            for item in pane.items() {
+                match item {
+                    PaneItem::Query { pane, .. } => queries.push(pane.clone()),
+                    PaneItem::Erd(panel) => diagrams.push(panel.clone()),
+                    PaneItem::QueryBuilder { pane, .. } => builders.push(pane.clone()),
+                    PaneItem::TableDetail(_) => {}
+                }
+            }
+        }
+
+        let mut closed = false;
+        for pane in queries {
+            closed |= pane.update(cx, |pane, cx| pane.close_context_menu(cx));
+        }
+        for panel in diagrams {
+            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+        }
+        for panel in builders {
+            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+        }
+        closed
     }
 
     /// Opens the about dialog, closing whatever else was showing.
@@ -2231,6 +2480,288 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens the connection dialog on one saved profile.
+    ///
+    /// What the welcome list's "edit…" row does, as against its "connect" row:
+    /// the same dialog the button beside the list opens, showing the profile
+    /// that was right-clicked rather than the first one saved.
+    fn edit_profile(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_overlays(window, cx);
+        self.connect.update(cx, |dialog, cx| dialog.open_at(id, cx));
+        cx.notify();
+    }
+
+    /// The shell's own context menu, while one is open.
+    ///
+    /// One element for four surfaces; which rows it carries is
+    /// [`ContextTarget`]. It is rendered from the workspace root rather than
+    /// from the surface each menu belongs to because the tab strips and the
+    /// welcome rows are built by free functions and `RenderOnce` widgets that
+    /// have nowhere to keep the state — and because the root is the one box
+    /// every one of those surfaces is inside of.
+    fn render_context_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let menu = self.context_menu.as_ref()?;
+        let this = cx.entity();
+        let rows = match &menu.target {
+            ContextTarget::Explorer(node) => self.explorer_rows(node, cx),
+            ContextTarget::Connection(index) => self.connection_rows(*index, cx),
+            ContextTarget::PaneTab { pane, index } => self.pane_tab_rows(*pane, *index, cx),
+            ContextTarget::Profile(id) => self.profile_rows(*id, cx),
+        };
+
+        Some(
+            rudbman_ui::ContextMenu::new("workspace-context")
+                .position(menu.position)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.context_menu = None;
+                        cx.notify();
+                    });
+                })
+                .into_any_element(),
+        )
+    }
+
+    /// The menu of one explorer row.
+    ///
+    /// Node-kind driven, and the rows a kind cannot answer are left *out*
+    /// rather than greyed: a schema has no "extract script" the way a table
+    /// with no rows selected has no "copy", and offering one greyed for ever
+    /// would be describing a command that never applies here. What *is* greyed
+    /// is everything on a connection that is not open — the tree can still be
+    /// read after a session dies, and none of these commands can run without
+    /// one.
+    ///
+    /// The commands are the workspace's own methods rather than dispatched
+    /// actions, and they are handed the node the menu was opened over rather
+    /// than reading the selection: the two are the same thing today, because
+    /// the tree moves the selection before it asks for a menu, and a row that
+    /// acted on the selection would be one refactor away from acting on
+    /// something else.
+    fn explorer_rows(&self, node: &NodeId, cx: &mut Context<Self>) -> Vec<MenuRow> {
+        let this = cx.entity();
+        let connection = node.connection();
+        let live = self
+            .connections
+            .iter()
+            .any(|open| open.id == connection && matches!(open.state, ConnectionState::Open(_)));
+        let relation = node
+            .as_target()
+            .filter(|target| target.folder.is_relation());
+        let scope = node.as_scope();
+        let mut rows = Vec::new();
+
+        if let Some(target) = relation {
+            let object =
+                |run: fn(&mut Workspace, ObjectTarget, &mut Window, &mut Context<Self>)| {
+                    let this = this.clone();
+                    let target = target.clone();
+                    move |window: &mut Window, cx: &mut App| {
+                        let target = target.clone();
+                        this.update(cx, |workspace, cx| run(workspace, target, window, cx));
+                    }
+                };
+            rows.push(
+                MenuRow::new(ts!("menu.query_object"))
+                    .shortcut(format!("{SHORTCUT_MODIFIER}+Enter"))
+                    .enabled(live)
+                    .on_activate(object(|workspace, target, window, cx| {
+                        workspace.open_query_for(&target, window, cx);
+                    })),
+            );
+            rows.push(
+                MenuRow::new(ts!("menu.add_to_builder"))
+                    .enabled(live)
+                    .on_activate(object(Workspace::add_to_builder)),
+            );
+            rows.push(
+                MenuRow::new(ts!("menu.extract_script"))
+                    .enabled(live)
+                    .on_activate(object(Workspace::open_extract)),
+            );
+            rows.push(
+                MenuRow::new(ts!("menu.transfer_table"))
+                    .enabled(live)
+                    .on_activate(object(Workspace::open_transfer)),
+            );
+            rows.push(MenuRow::separator());
+        }
+
+        // The connection root names no scope — a diagram of every catalogue at
+        // once is not a diagram — so its rows are drawn and greyed: the menu of
+        // a row that offered nothing at all would read as a broken right-click.
+        let scoped = |run: fn(
+            &mut Workspace,
+            ConnectionId,
+            explorer::Scope,
+            &mut Window,
+            &mut Context<Self>,
+        )| {
+            let this = this.clone();
+            let scope = scope.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let Some(scope) = scope.clone() else {
+                    return;
+                };
+                this.update(cx, |workspace, cx| {
+                    run(workspace, connection, scope, window, cx)
+                });
+            }
+        };
+        rows.push(
+            MenuRow::new(ts!("menu.erd"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+E"))
+                .enabled(live && scope.is_some())
+                .on_activate(scoped(|workspace, connection, scope, window, cx| {
+                    workspace.open_erd(ErdTarget { connection, scope }, window, cx);
+                })),
+        );
+        rows.push(
+            MenuRow::new(ts!("menu.backup_schema"))
+                .enabled(live && scope.is_some())
+                .on_activate(scoped(Workspace::open_backup)),
+        );
+        rows
+    }
+
+    /// The menu of one connection tab.
+    ///
+    /// A right-click does not select the tab (see
+    /// [`TabBar::on_context_menu`]), so every row here names the tab that was
+    /// pressed rather than the one on screen. The two commands that open
+    /// something into a work area bring that tab to the front first: they act
+    /// on "the connection showing", and the alternative would be a new query
+    /// pane appearing in a work area the user is not looking at.
+    fn connection_rows(&self, index: usize, cx: &mut Context<Self>) -> Vec<MenuRow> {
+        let this = cx.entity();
+        let live = self
+            .connections
+            .get(index)
+            .is_some_and(|open| matches!(open.state, ConnectionState::Open(_)));
+        let on_tab = |run: fn(&mut Workspace, &mut Window, &mut Context<Self>)| {
+            let this = this.clone();
+            move |window: &mut Window, cx: &mut App| {
+                this.update(cx, |workspace, cx| {
+                    workspace.select_connection(index, window, cx);
+                    run(workspace, window, cx);
+                });
+            }
+        };
+
+        vec![
+            MenuRow::new(ts!("menu.new_query"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+T"))
+                .enabled(live)
+                .on_activate(on_tab(|workspace, window, cx| {
+                    workspace.open_query("", window, cx);
+                })),
+            MenuRow::new(ts!("menu.new_builder"))
+                .enabled(live)
+                .on_activate(on_tab(|workspace, window, cx| {
+                    workspace.open_builder(window, cx);
+                })),
+            MenuRow::separator(),
+            MenuRow::new(ts!("tab.close")).on_activate({
+                let this = this.clone();
+                move |window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.close_connection(index, window, cx);
+                    });
+                }
+            }),
+        ]
+    }
+
+    /// The menu of one tab of one pane's strip.
+    ///
+    /// The three closes are the strip's, the three pane commands are the
+    /// layout's, and the split between them is the separator: above it the
+    /// rows act on tabs, below it on the box holding them. "Close the other
+    /// tabs" and "close the tabs to the right" exist nowhere else in the
+    /// program — there is no gesture for them — which is exactly the case §7.8
+    /// says a menu should grow an API for.
+    fn pane_tab_rows(&self, pane: PaneId, index: usize, cx: &mut Context<Self>) -> Vec<MenuRow> {
+        let this = cx.entity();
+        let Some(area) = self.work_area() else {
+            return Vec::new();
+        };
+        let count = area.panes.get(pane).map_or(0, |pane| pane.items().len());
+        let lone_pane = area.panes.leaf_count() <= 1;
+        let close = |victims: Vec<usize>| {
+            let this = this.clone();
+            move |window: &mut Window, cx: &mut App| {
+                this.update(cx, |workspace, cx| {
+                    workspace.close_tabs(pane, &victims, window, cx);
+                });
+            }
+        };
+        let others: Vec<usize> = (0..count).filter(|other| *other != index).collect();
+        let to_the_right: Vec<usize> = (index + 1..count).collect();
+
+        vec![
+            MenuRow::new(ts!("context.close_tab")).on_activate(close(vec![index])),
+            MenuRow::new(ts!("context.close_others"))
+                .enabled(!others.is_empty())
+                .on_activate(close(others)),
+            MenuRow::new(ts!("context.close_right"))
+                .enabled(!to_the_right.is_empty())
+                .on_activate(close(to_the_right)),
+            MenuRow::separator(),
+            MenuRow::new(ts!("context.split_right"))
+                .shortcut(format!("{PANE_SHORTCUT_LABEL}+Shift+D"))
+                .on_activate({
+                    let this = this.clone();
+                    move |_window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            workspace.split_pane(pane, Axis::Horizontal, cx);
+                        });
+                    }
+                }),
+            MenuRow::new(ts!("context.split_below"))
+                .shortcut(format!("{PANE_SHORTCUT_LABEL}+Shift+S"))
+                .on_activate({
+                    let this = this.clone();
+                    move |_window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            workspace.split_pane(pane, Axis::Vertical, cx);
+                        });
+                    }
+                }),
+            MenuRow::new(ts!("context.close_pane"))
+                .shortcut(format!("{PANE_SHORTCUT_LABEL}+W"))
+                .enabled(!lone_pane)
+                .on_activate({
+                    let this = this.clone();
+                    move |window, cx| {
+                        this.update(cx, |workspace, cx| workspace.close_pane(pane, window, cx));
+                    }
+                }),
+        ]
+    }
+
+    /// The menu of one row of the welcome screen's saved list.
+    ///
+    /// The two things there are to do with a saved connection: open it, which
+    /// is what clicking the row already does, and change it — which otherwise
+    /// means opening the dialog from the button above and finding the profile
+    /// again in a second copy of the same list.
+    fn profile_rows(&self, id: Uuid, cx: &mut Context<Self>) -> Vec<MenuRow> {
+        let this = cx.entity();
+        vec![
+            MenuRow::new(ts!("context.connect")).on_activate({
+                let this = this.clone();
+                move |window, cx| {
+                    this.update(cx, |workspace, cx| workspace.open_profile(id, window, cx));
+                }
+            }),
+            MenuRow::separator(),
+            MenuRow::new(ts!("context.edit")).on_activate(move |window, cx| {
+                this.update(cx, |workspace, cx| workspace.edit_profile(id, window, cx));
+            }),
+        ]
+    }
+
     /// Opens the connection dialog.
     fn new_connection_action(
         &mut self,
@@ -2439,7 +2970,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The dropdown menu paints above everything else, so it goes first.
+        // A context menu paints above even the dropdown, and is the most
+        // transient thing on screen, so it goes first of all — the shell's own
+        // and the panes' alike (architecture document, §7.8).
+        if self.close_context_menus(cx) {
+            return;
+        }
+        // The dropdown menu paints above everything else, so it goes next.
         if self.menu_open {
             self.set_menu_open(false, cx);
             return;
@@ -2725,6 +3262,14 @@ impl Workspace {
                     });
                 }
             })
+            .on_context_menu({
+                let this = this.clone();
+                move |index, position, _window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.open_context_menu(ContextTarget::Connection(index), position, cx);
+                    });
+                }
+            })
             .scroll_handle(&self.tab_scroll)
             .scrollbar(self.tab_scrollbar())
             .menu_icon(icons::TAB_LIST)
@@ -2837,9 +3382,22 @@ impl Workspace {
     fn render_welcome(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity();
         let profiles = self.profiles.connections();
-        let rows = profile_rows(profiles, None, theme, move |id, window, cx| {
-            this.update(cx, |workspace, cx| workspace.open_profile(id, window, cx));
-        });
+        let rows = profile_rows(
+            profiles,
+            None,
+            theme,
+            {
+                let this = this.clone();
+                move |id, window, cx| {
+                    this.update(cx, |workspace, cx| workspace.open_profile(id, window, cx));
+                }
+            },
+            Some(std::rc::Rc::new(move |id, position, _window, cx| {
+                this.update(cx, |workspace, cx| {
+                    workspace.open_context_menu(ContextTarget::Profile(id), position, cx);
+                });
+            })),
+        );
 
         // With nothing saved there is no list to head, and the words that stand
         // in for it are the empty state's own: there are no connections, and the
@@ -3311,9 +3869,25 @@ fn render_tab_strip(
                 });
             }
         })
-        .on_close(move |index, window, cx| {
+        .on_close({
+            let this = this.clone();
+            move |index, window, cx| {
+                this.update(cx, |workspace, cx| {
+                    workspace.close_tab(id, index, window, cx);
+                });
+            }
+        })
+        // Only over a tab. The empty stretch of a strip is where a title bar
+        // gesture would otherwise be — on Linux a right-click there is the
+        // window menu — and the widget answers for tabs alone for exactly that
+        // reason.
+        .on_context_menu(move |index, position, _window, cx| {
             this.update(cx, |workspace, cx| {
-                workspace.close_tab(id, index, window, cx);
+                workspace.open_context_menu(
+                    ContextTarget::PaneTab { pane: id, index },
+                    position,
+                    cx,
+                );
             });
         })
 }
@@ -3540,6 +4114,7 @@ impl Render for Workspace {
             .is_open()
             .then(|| div().absolute().inset_0().child(self.backup.clone()));
         let confirm = self.render_confirm(cx);
+        let context_menu = self.render_context_menu(cx);
 
         // With client-side decorations the compositor stops drawing the drop
         // shadow along with the frame, so the window has to bring its own: the
@@ -3623,7 +4198,11 @@ impl Render for Workspace {
             .children(extract)
             .children(transfer)
             .children(backup)
-            .children(confirm);
+            .children(confirm)
+            // Last: it paints above the dialogs, as its own backdrop already
+            // implies, and it takes no room in the column — the element is an
+            // empty absolute box whose two halves are anchored to the window.
+            .children(context_menu);
 
         let Some(tiling) = tiling else {
             // A server-decorated window: the compositor frames and shadows it,
@@ -6052,6 +6631,490 @@ mod tests {
                 assert!(workspace.active_query().is_none());
             })
             .expect("the window is open");
+    }
+
+    /// The scope every explorer node in these tests sits in.
+    fn public() -> explorer::Scope {
+        explorer::Scope {
+            catalog: None,
+            schema: Some("PUBLIC".to_string()),
+        }
+    }
+
+    /// The two rows every explorer node offers, whatever kind it is.
+    fn scope_labels() -> Vec<String> {
+        vec![
+            ts!("menu.erd").to_string(),
+            ts!("menu.backup_schema").to_string(),
+        ]
+    }
+
+    /// The four rows only a table or a view offers, and the rule under them.
+    fn relation_labels() -> Vec<String> {
+        vec![
+            ts!("menu.query_object").to_string(),
+            ts!("menu.add_to_builder").to_string(),
+            ts!("menu.extract_script").to_string(),
+            ts!("menu.transfer_table").to_string(),
+            String::new(),
+        ]
+    }
+
+    /// A right-click on a tree row asks the shell for a menu, and what that
+    /// menu carries follows the kind of node it was raised over: a command a
+    /// node cannot answer is left out rather than greyed for ever, and the
+    /// commands that need a scope are greyed on the one node that names none.
+    #[gpui::test]
+    fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
+        let (window, connection) = workspace_over_h2("tree-menu", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let table = NodeId::Object {
+            connection,
+            scope: public(),
+            folder: explorer::Folder::Tables,
+            name: "PERSON".to_string(),
+        };
+        let routine = NodeId::Object {
+            connection,
+            scope: public(),
+            folder: explorer::Folder::Procedures,
+            name: "DO_IT".to_string(),
+        };
+        let folder = NodeId::Folder {
+            connection,
+            scope: public(),
+            folder: explorer::Folder::Tables,
+        };
+        let root = NodeId::Connection(connection);
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                // A relation answers everything.
+                let rows = workspace.explorer_rows(&table, cx);
+                let mut expected = relation_labels();
+                expected.extend(scope_labels());
+                assert_eq!(context_menu::labels(&rows), expected);
+                assert!(context_menu::greyed(&rows).is_empty());
+
+                // A routine is an object and not a relation: `SELECT * FROM` a
+                // procedure is not a statement, so those rows are absent rather
+                // than greyed.
+                assert_eq!(
+                    context_menu::labels(&workspace.explorer_rows(&routine, cx)),
+                    scope_labels()
+                );
+                assert_eq!(
+                    context_menu::labels(&workspace.explorer_rows(&folder, cx)),
+                    scope_labels()
+                );
+
+                // The connection root names no scope — a diagram of every
+                // catalogue at once is not a diagram — so it keeps the rows and
+                // greys them.
+                let rows = workspace.explorer_rows(&root, cx);
+                assert_eq!(context_menu::labels(&rows), scope_labels());
+                assert_eq!(context_menu::greyed(&rows), scope_labels());
+            })
+            .expect("the window is open");
+
+        // A connection that never opened greys everything: the tree can still
+        // be read, and none of these commands can run without a session.
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                let id = next_connection_id();
+                workspace.connections.push(Connection {
+                    id,
+                    profile: unopenable_profile("dead"),
+                    state: ConnectionState::Failed(SharedString::new_static("refused")),
+                    work: WorkArea::new(),
+                });
+                let node = NodeId::Object {
+                    connection: id,
+                    scope: public(),
+                    folder: explorer::Folder::Tables,
+                    name: "PERSON".to_string(),
+                };
+                let rows = workspace.explorer_rows(&node, cx);
+                let mut expected = relation_labels();
+                expected.pop();
+                expected.extend(scope_labels());
+                assert_eq!(
+                    context_menu::greyed(&rows),
+                    expected,
+                    "a dead connection offered a live command"
+                );
+            })
+            .expect("the window is open");
+
+        // The whole path, from the widget's event to a menu on screen: the
+        // explorer promotes it, the shell keeps it, and the frame draws.
+        let at = gpui::point(px(120.), px(90.));
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.explorer.update(cx, |_explorer, cx| {
+                    cx.emit(ExplorerEvent::ContextMenu {
+                        node: table.clone(),
+                        position: at,
+                    });
+                });
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                let menu = workspace.context_menu.as_ref().expect("a menu is open");
+                assert_eq!(menu.position, at);
+                assert!(matches!(&menu.target, ContextTarget::Explorer(node) if **node == table));
+            })
+            .expect("the window is open");
+
+        // An error row names nothing — it is the sentence saying why its parent
+        // could not be read — so it gets no menu at all, and the one that was
+        // open is left where it is rather than replaced by an empty panel.
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.context_menu = None;
+                workspace.explorer.update(cx, |_explorer, cx| {
+                    cx.emit(ExplorerEvent::ContextMenu {
+                        node: NodeId::Error(Box::new(table.clone())),
+                        position: at,
+                    });
+                });
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                assert!(
+                    workspace.context_menu.is_none(),
+                    "an error row was given a menu of greyed rows"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// "Close the other tabs" is a command with no gesture behind it, and the
+    /// keyboard has to end up in the tab that stays: the strip is a place a
+    /// user closes several tabs in a row from, and a focus that fell back to
+    /// the shell would swallow the editor shortcuts in between.
+    #[gpui::test]
+    fn closing_the_other_tabs_leaves_the_keyboard_in_the_one_that_stays(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (window, _connection) = workspace_over_h2("tab-menu", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                for sql in ["select 1", "select 2", "select 3"] {
+                    workspace.open_query(sql, window, cx);
+                }
+                workspace.active_pane().expect("a work area is open")
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert_eq!(tab_titles(workspace, pane, cx).len(), 3);
+                assert_eq!(active_tab(workspace, pane), 2);
+            })
+            .expect("the window is open");
+
+        // Raised over the *first* tab, which is not the one on top: a right
+        // click selects no tab, so the menu has to act on what was pressed.
+        let rows = window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.pane_tab_rows(pane, 0, cx)
+            })
+            .expect("the window is open");
+        assert_eq!(
+            context_menu::labels(&rows),
+            [
+                ts!("context.close_tab").to_string(),
+                ts!("context.close_others").to_string(),
+                ts!("context.close_right").to_string(),
+                String::new(),
+                ts!("context.split_right").to_string(),
+                ts!("context.split_below").to_string(),
+                ts!("context.close_pane").to_string(),
+            ]
+        );
+        assert!(
+            !context_menu::row(&rows, &ts!("context.close_pane")).is_enabled(),
+            "the last pane of a work area was offered for closing"
+        );
+
+        cx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.close_others")).activate(window, cx);
+        });
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                assert_eq!(tab_titles(workspace, pane, cx).len(), 1);
+                assert_eq!(active_tab(workspace, pane), 0);
+                let editor = workspace
+                    .active_query()
+                    .expect("the tab that stayed is the query pane")
+                    .read(cx)
+                    .focus_handle(cx);
+                assert!(
+                    editor.is_focused(window),
+                    "the keyboard was left on an editor nothing renders"
+                );
+
+                // And with one tab left, both of the multi-tab rows say so.
+                let rows = workspace.pane_tab_rows(pane, 0, cx);
+                assert!(!context_menu::row(&rows, &ts!("context.close_others")).is_enabled());
+                assert!(!context_menu::row(&rows, &ts!("context.close_right")).is_enabled());
+            })
+            .expect("the window is open");
+    }
+
+    /// The tabs to the right go and the ones to the left stay, whichever tab is
+    /// on top.
+    #[gpui::test]
+    fn closing_the_tabs_to_the_right_keeps_the_ones_before_them(cx: &mut gpui::TestAppContext) {
+        let (window, _connection) = workspace_over_h2("tab-menu-right", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                for sql in ["select 1", "select 2", "select 3"] {
+                    workspace.open_query(sql, window, cx);
+                }
+                workspace.active_pane().expect("a work area is open")
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        let before = window
+            .update(&mut cx, |workspace, _window, cx| {
+                tab_titles(workspace, pane, cx)
+            })
+            .expect("the window is open");
+
+        let rows = window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.pane_tab_rows(pane, 1, cx)
+            })
+            .expect("the window is open");
+        cx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.close_right")).activate(window, cx);
+        });
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert_eq!(tab_titles(workspace, pane, cx), before[..2]);
+                assert_eq!(
+                    active_tab(workspace, pane),
+                    1,
+                    "the last tab left is on top"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// A connection tab's menu acts on the tab that was pressed rather than on
+    /// the one showing, and greys what needs a session.
+    #[gpui::test]
+    fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestAppContext) {
+        let (window, _connection) = workspace_over_h2("conn-menu", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.connections.push(Connection {
+                    id: next_connection_id(),
+                    profile: unopenable_profile("refused"),
+                    state: ConnectionState::Failed(SharedString::new_static("no driver")),
+                    work: WorkArea::new(),
+                });
+
+                let live = workspace.connection_rows(0, cx);
+                assert_eq!(
+                    context_menu::labels(&live),
+                    [
+                        ts!("menu.new_query").to_string(),
+                        ts!("menu.new_builder").to_string(),
+                        String::new(),
+                        ts!("tab.close").to_string(),
+                    ]
+                );
+                assert!(context_menu::greyed(&live).is_empty());
+
+                let dead = workspace.connection_rows(1, cx);
+                assert!(!context_menu::row(&dead, &ts!("menu.new_query")).is_enabled());
+                assert!(!context_menu::row(&dead, &ts!("menu.new_builder")).is_enabled());
+                assert!(
+                    context_menu::row(&dead, &ts!("tab.close")).is_enabled(),
+                    "a tab that failed to open still has to be closable"
+                );
+            })
+            .expect("the window is open");
+
+        // Closing acts on the pressed tab, not on the one on screen.
+        let rows = window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.connection_rows(1, cx)
+            })
+            .expect("the window is open");
+        cx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("tab.close")).activate(window, cx);
+        });
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                assert_eq!(workspace.connections.len(), 1);
+                assert_eq!(workspace.active_connection, 0);
+            })
+            .expect("the window is open");
+    }
+
+    /// The welcome list's menu offers the two things there are to do with a
+    /// saved connection, and "edit…" opens the dialog rather than a session.
+    #[gpui::test]
+    fn the_welcome_menu_opens_the_dialog_over_the_row(cx: &mut gpui::TestAppContext) {
+        let saved = unopenable_profile("saved");
+        let window = workspace_over_welcome(std::slice::from_ref(&saved), cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let at = gpui::point(px(60.), px(200.));
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.open_context_menu(ContextTarget::Profile(saved.id), at, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        let rows = window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.profile_rows(saved.id, cx)
+            })
+            .expect("the window is open");
+        assert_eq!(
+            context_menu::labels(&rows),
+            [
+                ts!("context.connect").to_string(),
+                String::new(),
+                ts!("context.edit").to_string(),
+            ]
+        );
+
+        cx.update(|window, cx| {
+            context_menu::row(&rows, &ts!("context.edit")).activate(window, cx);
+        });
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(
+                    workspace.connect.read(cx).is_open(),
+                    "the row did not open the dialog"
+                );
+                assert!(
+                    workspace.connections.is_empty(),
+                    "editing a profile opened a session"
+                );
+                // Opening a dialog closes the menu that led to it, the way
+                // every other overlay does.
+                assert!(workspace.context_menu.is_none());
+            })
+            .expect("the window is open");
+    }
+
+    /// `Escape` closes the context menu before it closes anything else — the
+    /// shell's own and the panes' alike — and leaves the dialog stack exactly
+    /// as it was, so the next press finds it.
+    #[gpui::test]
+    fn escape_closes_the_context_menu_before_the_dialog_under_it(cx: &mut gpui::TestAppContext) {
+        let (window, connection) = workspace_over_h2("escape-menu", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let query = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_query("select 1", window, cx);
+                workspace.open_about(window, cx);
+                workspace.open_context_menu(
+                    ContextTarget::Connection(0),
+                    gpui::point(px(30.), px(10.)),
+                    cx,
+                );
+                workspace.active_query().expect("the pane is open").clone()
+            })
+            .expect("the window is open");
+        // A pane menu of its own, which the shell has to reach as well: a right
+        // click moves no pane marker, so the pane holding one is not
+        // necessarily the active one.
+        window
+            .update(&mut cx, |_workspace, _window, cx| {
+                query.update(cx, |pane, cx| {
+                    pane.open_editor_menu(gpui::point(px(40.), px(80.)), cx);
+                });
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        cx.dispatch_action(DismissDialog);
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(workspace.context_menu.is_none(), "the shell menu stayed");
+                assert!(
+                    !query.read(cx).has_context_menu(),
+                    "the pane's own menu was left behind the one the shell owns"
+                );
+                assert!(
+                    workspace.about.read(cx).is_open(),
+                    "the dialog under the menu went with it"
+                );
+            })
+            .expect("the window is open");
+
+        // And the next press finds the dialog, which is the whole point of the
+        // menu going first rather than instead.
+        cx.dispatch_action(DismissDialog);
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(!workspace.about.read(cx).is_open());
+            })
+            .expect("the window is open");
+
+        // Opening the application dropdown puts a context menu away, because
+        // both of them lay a full-window backdrop.
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                workspace.open_context_menu(
+                    ContextTarget::Explorer(Box::new(NodeId::Connection(connection))),
+                    gpui::point(px(30.), px(10.)),
+                    cx,
+                );
+                workspace.set_menu_open(true, cx);
+                assert!(workspace.context_menu.is_none());
+                assert!(workspace.menu_open);
+            })
+            .expect("the window is open");
+    }
+
+    #[test]
+    fn every_label_the_shell_menus_draw_has_a_translation() {
+        for label in [
+            ts!("context.close_tab"),
+            ts!("context.close_others"),
+            ts!("context.close_right"),
+            ts!("context.split_right"),
+            ts!("context.split_below"),
+            ts!("context.close_pane"),
+            ts!("context.connect"),
+            ts!("context.edit"),
+        ] {
+            assert!(!label.is_empty(), "empty label");
+            assert!(!label.starts_with("context."), "untranslated {label:?}");
+        }
     }
 
     #[test]

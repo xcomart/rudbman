@@ -92,6 +92,24 @@ pub enum BuilderEvent {
     /// [`LayoutChanged`](crate::ErdEvent::LayoutChanged) is, so that a host
     /// which reacts to it is not asked to react sixty times a second.
     LayoutChanged,
+    /// The user right clicked, and wants the menu for what is under the
+    /// pointer.
+    ///
+    /// The canvas has already taken the focus and outlined the box if it had
+    /// to; which items exist, what they are called and what they do is the
+    /// host's, because this layer holds no strings (architecture document,
+    /// §7.8).
+    ContextMenu {
+        /// What was under the pointer: `None` for the background, the table
+        /// alone for its title band, and the table with one of its columns for
+        /// a column row — the same three cases a press is read as, so that the
+        /// host can offer "remove this table" and "add this column" from the
+        /// one event.
+        hit: Option<(usize, Option<usize>)>,
+        /// Where the pointer was, in **window** coordinates, which is what the
+        /// menu anchors to.
+        position: Point<Pixels>,
+    },
 }
 
 /// One join, as the canvas draws it.
@@ -130,6 +148,7 @@ struct JoinDrag {
 ///     BuilderEvent::ColumnToggled { table, column } => pane.toggle(*table, *column, cx),
 ///     BuilderEvent::JoinDrawn { from, to } => pane.add_join(*from, *to, cx),
 ///     BuilderEvent::LayoutChanged => {}
+///     BuilderEvent::ContextMenu { hit, position } => pane.open_menu(*hit, *position, cx),
 /// })
 /// .detach();
 /// ```
@@ -390,6 +409,35 @@ impl BuilderView {
         cx.notify();
     }
 
+    /// A right click: outline the box, then hand the gesture to the host.
+    ///
+    /// The same three differences from [`Self::on_mouse_down`] the diagram's
+    /// right click has — it moves the outline, it does not clear it on the
+    /// background, and it starts nothing — plus one this canvas needs on its
+    /// own: a right click on a *column row* does not toggle that column. The
+    /// row is named in the event so that the menu can be about it, but a right
+    /// click that had also added the column to the select list would have
+    /// edited the query before the user chose anything from the menu.
+    fn on_right_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.focus_handle.focus(window);
+
+        let hit = self.viewport.hit_row(&self.rects, event.position);
+        if let Some((node, _)) = hit {
+            self.picked = Some(node);
+        }
+        cx.emit(BuilderEvent::ContextMenu {
+            hit,
+            position: event.position,
+        });
+        cx.notify();
+    }
+
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if event.pressed_button != Some(MouseButton::Left) {
             return;
@@ -553,6 +601,7 @@ impl Render for BuilderView {
             .on_action(cx.listener(Self::zoom_out))
             .on_action(cx.listener(Self::zoom_actual))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -614,7 +663,9 @@ fn free_slot(taken: &[NodeRect], w: f32, h: f32) -> (f32, f32) {
 mod tests {
     use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
-    use crate::canvas::test_support::{self, drag_to, press, release, wheel, window_point};
+    use crate::canvas::test_support::{
+        self, drag_to, press, release, right_press, wheel, window_point,
+    };
     use crate::layout::{HEADER_HEIGHT, ROW_HEIGHT, row_top};
     use crate::model::ErdColumn;
 
@@ -909,6 +960,86 @@ mod tests {
         );
         let zoomed = builder.read(&mut cx, |builder| builder.zoom());
         assert!(zoomed < 1., "the scale stayed at {zoomed}");
+    }
+
+    #[gpui::test]
+    fn right_clicking_asks_for_a_menu_and_names_what_was_under_it(cx: &mut TestAppContext) {
+        let (builder, mut cx) = open(tables(), cx);
+
+        // A column row: the row is named so the menu can be about it, and the
+        // column is not toggled on the way.
+        let at = row_point(&builder, &mut cx, 0, 1);
+        right_press(&mut cx, at);
+        assert_eq!(
+            builder.drain(),
+            vec![BuilderEvent::ContextMenu {
+                hit: Some((0, Some(1))),
+                position: at,
+            }]
+        );
+        assert_eq!(builder.read(&mut cx, |builder| builder.picked), Some(0));
+
+        // A title band: the table alone, and the outline follows.
+        let at = header_point(&builder, &mut cx, 1);
+        right_press(&mut cx, at);
+        assert_eq!(
+            builder.drain(),
+            vec![BuilderEvent::ContextMenu {
+                hit: Some((1, None)),
+                position: at,
+            }]
+        );
+        assert_eq!(builder.read(&mut cx, |builder| builder.picked), Some(1));
+
+        // The background: the canvas's own menu, with the outline left alone.
+        let empty = window_point(1400., 800.);
+        right_press(&mut cx, empty);
+        assert_eq!(
+            builder.drain(),
+            vec![BuilderEvent::ContextMenu {
+                hit: None,
+                position: empty,
+            }]
+        );
+        assert_eq!(builder.read(&mut cx, |builder| builder.picked), Some(1));
+    }
+
+    #[gpui::test]
+    fn a_right_click_draws_no_join_moves_no_box_and_pans_nothing(cx: &mut TestAppContext) {
+        let (builder, mut cx) = open(tables(), cx);
+        let positions = builder.read(&mut cx, |builder| builder.positions());
+        let pan = builder.read(&mut cx, |builder| builder.viewport.pan);
+
+        // From one table's row to another's, which pressed with the left
+        // button would have drawn a join.
+        let from = row_point(&builder, &mut cx, 0, 1);
+        let to = row_point(&builder, &mut cx, 1, 0);
+        right_press(&mut cx, from);
+        builder.drain();
+        drag_to(&mut cx, to);
+        release(&mut cx, to);
+        assert_eq!(builder.drain(), Vec::new());
+
+        // From a title band, which would have moved the box.
+        let at = header_point(&builder, &mut cx, 0);
+        let moved = gpui::point(at.x + gpui::px(120.), at.y + gpui::px(60.));
+        right_press(&mut cx, at);
+        builder.drain();
+        drag_to(&mut cx, moved);
+        release(&mut cx, moved);
+        assert_eq!(
+            builder.read(&mut cx, |builder| builder.positions()),
+            positions
+        );
+        assert_eq!(builder.drain(), Vec::new());
+
+        // And from the background, which would have panned.
+        right_press(&mut cx, window_point(1400., 800.));
+        builder.drain();
+        drag_to(&mut cx, window_point(1300., 700.));
+        release(&mut cx, window_point(1300., 700.));
+        assert_eq!(builder.read(&mut cx, |builder| builder.viewport.pan), pan);
+        assert_eq!(builder.drain(), Vec::new());
     }
 
     #[test]
