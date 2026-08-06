@@ -428,21 +428,98 @@ comart.rudbman.bridge/
 가장 중요한 설계 결정이다. **행 데이터가 JNI 경계를 넘지 않는다.**
 
 ```
-JOB_START { kind: "transfer", source_cursor_sql, target_session, target_table,
-            mode: "insert|upsert|truncate_insert", batch_size, commit_every,
-            column_map[], on_error: "abort|skip|log" }
+JOB_START { kind: "transfer", ... }   (핸들 = 소스 세션)
    ↓
 Java: source ResultSet → target PreparedStatement.addBatch → executeBatch
       전 과정이 JVM 안에서 완결. 별도 작업 스레드에서 실행
    ↓
-JOB_POLL → { state, rows_done, rows_total, bytes, phase, errors[], eta_s }
+JOB_POLL → { state, rows_done, rows_skipped, rows_total, bytes, phase,
+             errors[], eta_s }
 ```
 
 Rust는 `JOB_POLL`을 주기적으로(200ms 정도) 호출해 진행률 바를 그린다. 취소는
 `JOB_CANCEL`이 작업 스레드의 인터럽트 플래그를 세우고 `Statement.cancel()`을 부른다.
 
-백업도 같은 틀이다. `kind: "backup"`은 결과를 타겟 커넥션 대신 파일로 쓴다
-(SQL INSERT 스크립트 / CSV / 압축). 파일 I/O도 Java가 한다 — 데이터가 있는 쪽에서.
+전송 명세(M6 확정 — `JOB_START`는 소스 세션 핸들로 호출한다):
+
+```
+JOB_START { kind: "transfer",
+            source_sql: "SELECT …",            // 소스 세션에서 실행할 조회
+            target_session: <i64>,             // OPEN_SESSION이 발급한 핸들
+            target_table: {catalog?, schema?, name},
+            mode: "insert|upsert|truncate_insert",
+            batch_size: 500,                   // addBatch → executeBatch 단위
+            commit_every: 10000,               // 타깃 커밋 주기(행). 0 = 마지막 1회
+            column_map: [{from, to}],          // 생략 = 소스 결과 열 이름 그대로
+            on_error: "abort|skip|log" }
+```
+
+전송 의미론(M6 확정):
+
+- **락**: 소스·타깃 세션 락을 **`Session.handle()` 오름차순으로** 잡고 스트림
+  전체 동안 유지한다. 중간에 놓으면 소스 ResultSet과 타깃 트랜잭션이 깨진다.
+  같은 세션(자기 자신으로의 전송)은 ReentrantLock 재진입으로 안전하다. 전송
+  중 그 세션들의 `EXECUTE`는 대기하므로, UI는 추출과 같은 규칙으로 두 번째
+  세션을 연다. `CLOSE_SESSION`은 **그 세션을 어느 쪽으로든 쓰는** 작업을 먼저
+  취소한다 — job은 "이 세션을 쓰는가"를 답해야 한다(소스만 보면 타깃 세션
+  닫기가 영구 대기한다).
+- **취소 대상은 둘이다**: 소스 SELECT 문장과 타깃 배치 문장이 동시에 살아
+  있다. 취소는 둘 모두에 `Statement.cancel()`을 건다.
+- **트랜잭션**: 타깃의 auto-commit을 끄고 `commit_every` 행마다, 그리고 정상
+  종료 시 커밋한다. 원래 auto-commit 상태는 종료 시 복원한다. 실패·취소 시
+  커밋되지 않은 꼬리는 롤백하고, **이미 커밋된 행은 남는다** — `rows_done`이
+  그 사실을 보여 준다.
+- **`truncate_insert`는 `DELETE FROM`으로 비운다.** TRUNCATE는 방언·권한·
+  트랜잭션성 지뢰밭이다. DELETE는 어디서나 같은 뜻이고 같은 트랜잭션에서
+  롤백된다.
+- **upsert**: 충돌 키는 타깃 테이블의 PK 메타데이터에서 읽는다. PK가 없으면
+  `JOB_START`가 동기 거절한다. 방언 분기 — PostgreSQL/SQLite는
+  `ON CONFLICT … DO UPDATE`, MySQL/MariaDB는 `ON DUPLICATE KEY UPDATE`,
+  H2/Oracle/SQL Server/DB2는 `MERGE`. 그 밖의(OTHER) 방언은 이식성 있는
+  upsert가 없으므로 동기 거절한다 — 조용히 틀린 문장을 만드는 것보다 낫다.
+- **`column_map`**: 생략하면 소스 결과 집합의 열 이름을 타깃 열 이름으로
+  그대로 쓴다(타깃 방언 규칙으로 인용). 명세 형태 오류는 동기 거절이지만,
+  **소스 결과 구조에 의존하는 오류**(map의 `from`이 결과에 없음 등)는 소스
+  조회를 실행해야 알 수 있으므로 실행 초기의 `failed`로 보고된다.
+- **`on_error`**: `abort`(기본)는 첫 행 오류로 작업이 실패한다. `skip`은 행을
+  버리고 세되 기록하지 않는다. `log`는 버린 행의 오류를 `errors[]`에 남긴다 —
+  단 **100개 상한**(그 뒤는 세기만 한다. 100만 행이 전부 실패하는 작업의
+  errors[]가 JNI를 건너올 수는 없다). 어느 쪽이든 버린 행 수는 진행률의
+  `rows_skipped`로 보고된다(추출·백업은 항상 0).
+- **바인딩은 `getObject`/`setObject`**다. 타입 강제는 타깃 드라이버의 몫이고,
+  이국적 타입(배열, 벤더 구조체)이 안 건너가는 것은 알려진 모서리다 — 그 행은
+  `on_error` 정책을 탄다.
+- **phase**: `"starting"` → `"transfer"` → `"done"`. `bytes`는 파일이 없으므로
+  0에 머문다. `rows_total`은 추출과 같은 이유로 `null`.
+
+백업도 같은 틀이다. `kind: "backup"`은 스코프의 테이블 전부를 파일로 쓴다.
+파일 I/O도 Java가 한다 — 데이터가 있는 쪽에서. 백업 명세(M6 확정):
+
+```
+JOB_START { kind: "backup",
+            scope:    {catalog?, schema?},     // TABLE 타입 전부, 이름 정렬
+            output:   {path, charset, newline},
+            compress: "none|gzip",
+            ddl:      {include, include_drop, constraints},
+            data:     {include, insert_batch_rows} }
+```
+
+- 백업은 **객체 열거가 없는 추출**이다: 스코프의 `TABLE` 타입 테이블을 이름
+  정렬로 열거해 추출과 같은 코어(CREATE 전부 → FK ALTER 전부, INSERT 스크립트)
+  로 쓴다. 뷰·프로시저는 쓰지 않는다 — 재생 가능한 데이터 백업이 목적이다.
+- 단, **INSERT 구간만은 FK 위상 정렬**이다(순환은 이름순 폴백). DDL과 달리
+  데이터는 ALTER로 뒤로 미룰 수 없다 — 이름순으로 `CHILD`가 `PARENT`보다
+  먼저 오면 키가 이미 걸려 있어 재생이 거부된다. 열거와 DDL 순서는 이름순
+  그대로다.
+- 스크립트에 기록하는 카탈로그는 드라이버가 보고한 것이 아니라 **요청의
+  `scope.catalog`다.** H2는 라이브 데이터베이스 이름을 답하는데, 그것을 쓰면
+  스크립트가 그 이름의 DB에 못박혀 복원을 방해한다.
+- 데이터 모드는 **INSERT 전용**이다. 여러 테이블이 한 파일로 가는데 CSV에는
+  테이블 경계가 없고, 템플릿은 테이블마다 의미가 달라진다. 그 용도는 추출이
+  이미 한다.
+- `compress: "gzip"`이면 출력 스트림을 gzip으로 감싼다. 진행률의 `bytes`는
+  **압축 후 파일에 쓴 바이트**다(파일 크기와 일치해야 한다).
+- phase·취소·부분 파일 유지 규칙은 추출과 동일하다.
 
 **스크립트 추출(M4)도 같은 틀의 첫 입주자다.** 행 데이터가 파일로 흘러가는
 작업이므로 §12.3의 결론대로 템플릿 엔진과 함께 JVM 쪽에 산다:
