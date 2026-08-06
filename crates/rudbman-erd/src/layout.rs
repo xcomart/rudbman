@@ -239,6 +239,75 @@ pub fn measure(table: &ErdTable) -> (f32, f32) {
     (width, height)
 }
 
+/// How far below a box's top edge its `row`th column row begins.
+///
+/// Split from [`row_top`] because the canvas has the box's top corner in
+/// *screen* pixels already and adding `rect.y` back only to subtract it again
+/// would round twice; the SVG writer, which works in logical units throughout,
+/// wants [`row_top`].
+pub fn row_offset(row: usize) -> f32 {
+    HEADER_HEIGHT + row as f32 * ROW_HEIGHT
+}
+
+/// The top edge of `rect`'s `row`th column row, in logical units.
+///
+/// One arithmetic for three pictures: the canvas draws its rows here, the SVG
+/// writer puts its baselines here, and [`row_at`] answers with the row this
+/// puts under a `y`. A row drawn in one picture is the row hit in the other
+/// because there is only one expression to be wrong.
+pub fn row_top(rect: &NodeRect, row: usize) -> f32 {
+    rect.y + row_offset(row)
+}
+
+/// How many column rows `rect` was measured to hold.
+///
+/// Read back out of the height rather than carried alongside it: a rect is the
+/// only thing a gesture has, and [`measure`] made its height exactly a title
+/// band plus a whole number of rows.
+fn row_count(rect: &NodeRect) -> usize {
+    let rows = (rect.h - HEADER_HEIGHT) / ROW_HEIGHT;
+    if rows <= 0. {
+        return 0;
+    }
+    rows.round() as usize
+}
+
+/// Which column row of `rect` the logical `y` falls in.
+///
+/// [`None`] for the title band, for anything above or below the box, and for
+/// the bottom edge — which [`NodeRect::contains`] includes and which is the
+/// border rather than a row, so that a press there moves the box rather than
+/// picking its last column.
+pub fn row_at(rect: &NodeRect, y: f32) -> Option<usize> {
+    let rows = row_count(rect);
+    if rows == 0 {
+        return None;
+    }
+    let offset = y - (rect.y + HEADER_HEIGHT);
+    if offset < 0. {
+        return None;
+    }
+    let row = (offset / ROW_HEIGHT).floor();
+    if row >= rows as f32 {
+        return None;
+    }
+    Some(row as usize)
+}
+
+/// The point on `rect`'s left or right edge that a line to `row` attaches at.
+///
+/// The middle of the row, so that a join drawn between two columns arrives at
+/// the height of the column rather than at the height of the table. A row the
+/// box does not have — an edge left over from a table that lost a column — is
+/// pulled back onto the box rather than drawn hanging below it.
+pub fn row_anchor(rect: &NodeRect, row: usize, rightwards: bool) -> (f32, f32) {
+    let x = if rightwards { rect.right() } else { rect.x };
+    (
+        x,
+        (row_top(rect, row) + ROW_HEIGHT / 2.).clamp(rect.y, rect.bottom()),
+    )
+}
+
 /// Every table's box in a square of slots, in table order.
 ///
 /// `ceil(sqrt(n))` columns, each as wide as its widest box and each row as tall
@@ -767,9 +836,30 @@ fn normalise(rects: &mut [NodeRect]) {
 /// A relation from a table to itself — `from` and `to` being the same box — is
 /// drawn as a small loop off the right-hand edge instead.
 pub fn route(from: &NodeRect, to: &NodeRect) -> Vec<(f32, f32)> {
+    route_between(from, from.center_y(), to, to.center_y())
+}
+
+/// [`route`], but leaving and arriving at heights of the caller's choosing.
+///
+/// A foreign key belongs to two *tables* and leaves from the middle of each
+/// box, which is what [`route`] asks for. A join belongs to two *columns*, so
+/// the query builder asks for the same polyline at two row anchors
+/// ([`row_anchor`]) instead. One router, because a diagram in which the two
+/// kinds of line turn differently reads as two diagrams.
+///
+/// The heights only choose where the line meets each box: which edge it leaves
+/// by is still judged from the two centres, so a line does not flip sides when
+/// a join is drawn from a lower row.
+pub fn route_between(from: &NodeRect, from_y: f32, to: &NodeRect, to_y: f32) -> Vec<(f32, f32)> {
     if from == to {
-        let top = from.y + from.h * 0.35;
-        let bottom = from.y + from.h * 0.65;
+        // A loop needs two different heights to have a shape at all, so a
+        // relation to the same box — which arrives with one — is given the
+        // thirds it has always been drawn with.
+        let (top, bottom) = if from_y == to_y {
+            (from.y + from.h * 0.35, from.y + from.h * 0.65)
+        } else {
+            (from_y, to_y)
+        };
         let out = from.right() + SELF_LOOP;
         return vec![
             (from.right(), top),
@@ -784,9 +874,9 @@ pub fn route(from: &NodeRect, to: &NodeRect) -> Vec<(f32, f32)> {
     // them as it is dragged.
     let rightwards = to.center_x() >= from.center_x();
     let (start, end, direction) = if rightwards {
-        ((from.right(), from.center_y()), (to.x, to.center_y()), 1.)
+        ((from.right(), from_y), (to.x, to_y), 1.)
     } else {
-        ((from.x, from.center_y()), (to.right(), to.center_y()), -1.)
+        ((from.x, from_y), (to.right(), to_y), -1.)
     };
 
     let gap = (end.0 - start.0) * direction;
@@ -1162,6 +1252,133 @@ mod tests {
         assert_eq!(points.len(), 4);
         assert_eq!(points[0].0, rect.right());
         assert_eq!(points[3].0, rect.right());
+        assert!(points[1].0 > rect.right());
+    }
+
+    /// A box with three rows, away from the origin so that a bug that forgets
+    /// to add `rect.y` shows up.
+    fn rows_rect() -> NodeRect {
+        NodeRect {
+            x: 100.,
+            y: 200.,
+            w: 160.,
+            h: HEADER_HEIGHT + 3. * ROW_HEIGHT,
+        }
+    }
+
+    #[test]
+    fn a_row_is_found_where_it_was_drawn() {
+        let rect = rows_rect();
+        for row in 0..3 {
+            let top = row_top(&rect, row);
+            assert_eq!(top, rect.y + row_offset(row));
+            assert_eq!(row_at(&rect, top), Some(row));
+            assert_eq!(row_at(&rect, top + ROW_HEIGHT / 2.), Some(row));
+            assert_eq!(row_at(&rect, top + ROW_HEIGHT - 0.01), Some(row));
+        }
+    }
+
+    #[test]
+    fn the_title_band_and_everything_past_the_last_row_belong_to_no_row() {
+        let rect = rows_rect();
+        assert_eq!(row_at(&rect, rect.y), None);
+        assert_eq!(row_at(&rect, rect.y + HEADER_HEIGHT - 0.01), None);
+        // The bottom edge, which `contains` includes, is the border rather than
+        // the last row: a press there moves the box instead.
+        assert_eq!(row_at(&rect, rect.bottom()), None);
+        assert_eq!(row_at(&rect, rect.bottom() + 40.), None);
+        assert_eq!(row_at(&rect, rect.y - 40.), None);
+
+        // A box with no columns is a title band and nothing else.
+        let empty = NodeRect {
+            h: HEADER_HEIGHT,
+            ..rect
+        };
+        assert_eq!(row_at(&empty, empty.y + HEADER_HEIGHT), None);
+    }
+
+    #[test]
+    fn an_anchor_sits_on_an_edge_at_the_middle_of_its_row() {
+        let rect = rows_rect();
+        let right = row_anchor(&rect, 1, true);
+        let left = row_anchor(&rect, 1, false);
+        assert_eq!(right.0, rect.right());
+        assert_eq!(left.0, rect.x);
+        assert_eq!(right.1, left.1);
+        assert_eq!(right.1, row_top(&rect, 1) + ROW_HEIGHT / 2.);
+        // Round trip: the anchor of a row is in that row.
+        assert_eq!(row_at(&rect, right.1), Some(1));
+
+        // A row the box does not have — an edge left over from a table that
+        // lost a column — is pulled back onto the box rather than drawn below
+        // it.
+        let past = row_anchor(&rect, 99, true);
+        assert!(past.1 <= rect.bottom() && past.1 >= rect.y, "{past:?}");
+    }
+
+    #[test]
+    fn a_route_is_the_generalised_route_at_the_two_centres() {
+        let from = rows_rect();
+        let elsewhere = [
+            (400., 0.),
+            (-400., 0.),
+            (400., -300.),
+            (-400., 300.),
+            (110., 0.),
+            (40., 200.),
+        ];
+        for (x, y) in elsewhere {
+            let to = NodeRect {
+                x,
+                y,
+                w: 120.,
+                h: 80.,
+            };
+            assert_eq!(
+                route(&from, &to),
+                route_between(&from, from.center_y(), &to, to.center_y())
+            );
+        }
+        // Including the self-reference, whose loop the generalisation must not
+        // have moved.
+        assert_eq!(
+            route(&from, &from),
+            route_between(&from, from.center_y(), &from, from.center_y())
+        );
+    }
+
+    #[test]
+    fn a_row_route_leaves_and_arrives_at_the_rows_it_was_given() {
+        let from = rows_rect();
+        let to = NodeRect {
+            x: 600.,
+            y: 40.,
+            w: 120.,
+            h: HEADER_HEIGHT + 2. * ROW_HEIGHT,
+        };
+        let start = row_anchor(&from, 2, true);
+        let end = row_anchor(&to, 1, false);
+        let points = route_between(&from, start.1, &to, end.1);
+
+        assert_eq!(points[0], start);
+        assert_eq!(points[points.len() - 1], end);
+        for pair in points.windows(2) {
+            assert!(
+                pair[0].0 == pair[1].0 || pair[0].1 == pair[1].1,
+                "{pair:?} is neither horizontal nor vertical"
+            );
+        }
+    }
+
+    #[test]
+    fn a_self_route_between_two_rows_loops_at_their_heights() {
+        let rect = rows_rect();
+        let top = row_anchor(&rect, 0, true);
+        let bottom = row_anchor(&rect, 2, true);
+        let points = route_between(&rect, top.1, &rect, bottom.1);
+        assert_eq!(points.len(), 4);
+        assert_eq!(points[0], top);
+        assert_eq!(points[3], bottom);
         assert!(points[1].0 > rect.right());
     }
 

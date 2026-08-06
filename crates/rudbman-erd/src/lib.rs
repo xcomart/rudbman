@@ -1,19 +1,29 @@
-//! The entity-relationship diagram: a model, two layouts, a router, an SVG
-//! writer, and the canvas that draws them.
+//! Diagrams on a canvas: a model, two layouts, a router, an SVG writer, and the
+//! two widgets that draw on them.
 //!
-//! One widget, [`ErdView`], over three pure modules. [`model`] is what a
-//! diagram *is*, [`layout`] is where the boxes go and how the lines get between
-//! them, and [`svg`] is how the picture leaves for a file. All three are pure —
-//! no window, no gpui state, no clock — which is why the hard half of a diagram
-//! is tested without one.
+//! Two widgets over four modules. [`ErdView`] draws a *schema* — boxes, the
+//! foreign keys between them, and a file to export it to — and [`BuilderView`]
+//! draws a *query*: the same boxes, with the columns picked out and the joins
+//! drawn between them by hand. What they have in common is [`canvas`], the
+//! viewport, the gestures and the frame assembly neither of them owns
+//! (architecture document, §7.7), so that panning, zooming, dragging and
+//! virtualising are one implementation rather than two that drift.
+//!
+//! Under both of them are three pure modules. [`model`] is what a diagram *is*,
+//! [`layout`] is where the boxes go and how the lines get between them, and
+//! [`svg`] is how the picture leaves for a file. All three are pure — no
+//! window, no gpui state, no clock — which is why the hard half of a diagram is
+//! tested without one.
 //!
 //! ## What this crate knows
 //!
 //! `rudbman-ui` and gpui, and nothing else (architecture document, §3.1). In
 //! particular it does **not** know `rudbman-jdbc`: an [`ErdModel`] is assembled
 //! by the host from the `imported_keys` and column metadata it has already
-//! fetched, so this crate's tests need no JVM and no driver. The same boundary
-//! is what will let the query builder (§7.7) put its own nodes on this canvas.
+//! fetched, so this crate's tests need no JVM and no driver. The query builder
+//! keeps the same boundary from the other side: it is handed [`ErdTable`]s and
+//! answers with [`BuilderEvent`]s, and the query itself — the select list, the
+//! join types, the SQL — stays with the host pane that owns the form.
 //!
 //! ## What it holds to
 //!
@@ -30,7 +40,9 @@
 //!   canvas draws with, rather than a second guess at them.
 //! * **The widget does not save anything.** It raises
 //!   [`ErdEvent::LayoutChanged`] once per gesture and the host writes the file,
-//!   exactly as the grid asks its host to fetch and to sort.
+//!   exactly as the grid asks its host to fetch and to sort. The builder goes
+//!   further and holds no query at all: it is a projection of the host's state
+//!   and a source of events, and nothing else.
 //!
 //! Call [`init`] once during application start-up so the key bindings are
 //! registered.
@@ -46,11 +58,15 @@
 
 #![warn(missing_docs)]
 
+pub mod builder;
+mod canvas;
 pub mod layout;
 pub mod model;
 pub mod svg;
 pub mod view;
 
+pub use builder::{BUILDER_KEY_CONTEXT, BuilderEdge, BuilderEvent, BuilderView};
+pub use canvas::CANVAS_KEY_CONTEXT;
 pub use layout::{HEADER_HEIGHT, NodeRect, ROW_HEIGHT, auto_layout, grid_layout, measure, route};
 pub use model::{ErdColumn, ErdModel, ErdRelation, ErdTable};
 pub use svg::{SvgPalette, to_svg};
@@ -58,10 +74,11 @@ pub use view::{ErdEvent, ErdView, KEY_CONTEXT};
 
 use gpui::App;
 
-/// Registers everything the diagram needs before the first window opens.
+/// Registers everything the two canvases need before the first window opens.
 ///
 /// Only key bindings, for now; [`rudbman_ui::init`] still has to be called for
-/// the palette the canvas draws with.
+/// the palette they draw with.
 pub fn init(cx: &mut App) {
+    canvas::init(cx);
     view::init(cx);
 }

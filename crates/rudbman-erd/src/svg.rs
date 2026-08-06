@@ -31,7 +31,7 @@ use std::fmt::Write as _;
 
 use crate::layout::{
     BOX_PADDING, HEADER_HEIGHT, NodeRect, ROW_HEIGHT, crow_foot, elide, extent, head_direction,
-    key_bar, route, split_row, tail_direction,
+    key_bar, route, row_top, split_row, tail_direction,
 };
 use crate::model::ErdModel;
 
@@ -218,7 +218,7 @@ fn write_table(
     );
 
     for (index, column) in table.columns.iter().enumerate() {
-        let baseline = rect.y + HEADER_HEIGHT + index as f32 * ROW_HEIGHT + ROW_HEIGHT * BASELINE;
+        let baseline = row_top(rect, index) + ROW_HEIGHT * BASELINE;
         let (name_text, type_text) = split_row(&column.name, &column.type_name, room);
         let name_colour = if column.primary_key {
             &palette.pk
