@@ -43,11 +43,16 @@ tab:
   tip_list: 모든 연결
   tip_new: "새 연결 (%{shortcut})"
 
+welcome:
+  title: 연결 열기
+  new_connection: 새 연결…
+  saved: 저장된 연결
+
 empty:
   title: 연결이 없습니다
   hint: 연결을 추가하면 데이터베이스를 탐색하고 SQL을 실행할 수 있습니다.
   connected_title: 열린 것이 없습니다
-  connected_hint: 연결은 살아 있습니다. 탐색과 SQL 실행은 탐색기와 에디터가 준비되면 쓸 수 있습니다.
+  connected_hint: 탐색기에서 테이블을 고르거나, 쿼리를 열어 이 연결에 SQL을 실행하세요.
 
 statusbar:
   no_connection: 연결 없음

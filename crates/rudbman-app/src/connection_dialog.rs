@@ -73,6 +73,17 @@ const LIST_WIDTH: f32 = 220.;
 /// Height at which the form body starts scrolling.
 const BODY_MAX_HEIGHT: f32 = 480.;
 
+/// Prefix of the debug selector every saved-profile row carries, followed by
+/// the profile's id.
+///
+/// The id and not the row's position: a test that seeds its own profiles is
+/// then asserting about its own rows, and gpui never clears the debug bounds of
+/// a frame it has drawn, so a selector two lists could share would answer with
+/// whichever drew last.
+///
+/// Compiled away outside a test build; see [`profile_rows`].
+pub(crate) const ROW_SELECTOR: &str = "profile-row:";
+
 /// The dialog's two scrolling surfaces and the id of each one's overlay bar.
 const SCROLLBARS: [(&str, Surface); 2] = [
     ("connect-list-scrollbar", Surface::List),
@@ -1084,85 +1095,14 @@ impl ConnectionDialog {
     /// The saved profile list, grouped by folder.
     fn render_list(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
-        let mut groups: Vec<(Option<String>, Vec<&ConnectionProfile>)> = Vec::new();
-        for profile in self.store.connections() {
-            let folder = profile.folder.clone().filter(|folder| !folder.is_empty());
-            match groups.iter_mut().find(|(name, _)| *name == folder) {
-                Some((_, members)) => members.push(profile),
-                None => groups.push((folder, vec![profile])),
-            }
-        }
-
-        let mut index = 0usize;
-        let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        for (folder, members) in groups {
-            if let Some(folder) = folder {
-                rows.push(
-                    div()
-                        .px(px(6.))
-                        .pt(px(6.))
-                        .text_size(px(10.))
-                        .text_color(chrome.text_muted)
-                        .truncate()
-                        .child(SharedString::from(folder))
-                        .into_any_element(),
-                );
-            }
-            for profile in members {
-                let id = profile.id;
-                let selected = self.selected == Some(id);
-                let name = if profile.name.trim().is_empty() {
-                    ts!("connect.unnamed")
-                } else {
-                    SharedString::from(profile.name.clone())
-                };
-                let tag = profile
-                    .color
-                    .as_deref()
-                    .and_then(rudbman_ui::parse_hex)
-                    .map(|color| {
-                        div()
-                            .flex_none()
-                            .w(px(3.))
-                            .h(px(16.))
-                            .rounded_full()
-                            .bg(color)
-                    });
-                let this = this.clone();
-                rows.push(
-                    div()
-                        .id(("profile-row", index))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.))
-                        .px(px(6.))
-                        .py(px(5.))
-                        .rounded_md()
-                        .cursor_pointer()
-                        .tab_index((tab::LIST + index as isize).min(tab::LIST_LIMIT))
-                        .when(selected, |row| row.bg(chrome.surface_active))
-                        .when(!selected, |row| {
-                            row.hover(|row| row.bg(chrome.surface_hover))
-                        })
-                        .children(tag)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(12.))
-                                .text_color(chrome.text)
-                                .child(name),
-                        )
-                        .on_click(move |_, _window, cx| {
-                            this.update(cx, |dialog, cx| dialog.select(id, cx));
-                        })
-                        .into_any_element(),
-                );
-                index += 1;
-            }
-        }
+        let rows = profile_rows(
+            self.store.connections(),
+            self.selected,
+            chrome,
+            move |id, _window, cx| {
+                this.update(cx, |dialog, cx| dialog.select(id, cx));
+            },
+        );
 
         div()
             .relative()
@@ -1985,6 +1925,116 @@ impl Render for ConnectionDialog {
                 on_dismiss,
             ))
     }
+}
+
+/// The saved profiles as rows, grouped under the folder each is filed in.
+///
+/// Shared by this dialog's list and the welcome screen the shell draws while no
+/// connection is open, so a profile is recognised the same way wherever it is
+/// offered: filed under its folder, marked with its colour, named by its name.
+/// Groups keep the order the folders first appear in, which is the order the
+/// user arranged the profiles in — sorting them would move a row the moment it
+/// is renamed.
+///
+/// Only the rows. The box they scroll inside belongs to whoever draws them: the
+/// dialog gives them a fixed column beside the form, the welcome screen a
+/// centred one under a button, and neither shape suits the other.
+///
+/// `selected` marks the row the dialog is editing; a list with no selection to
+/// show — the welcome screen's — passes `None`. `on_click` is handed the
+/// profile's id, which is all either caller needs: the dialog selects it, the
+/// shell opens a connection on it.
+pub(crate) fn profile_rows(
+    profiles: &[ConnectionProfile],
+    selected: Option<Uuid>,
+    chrome: &Theme,
+    on_click: impl Fn(Uuid, &mut Window, &mut App) + Clone + 'static,
+) -> Vec<gpui::AnyElement> {
+    let mut groups: Vec<(Option<String>, Vec<&ConnectionProfile>)> = Vec::new();
+    for profile in profiles {
+        let folder = profile.folder.clone().filter(|folder| !folder.is_empty());
+        match groups.iter_mut().find(|(name, _)| *name == folder) {
+            Some((_, members)) => members.push(profile),
+            None => groups.push((folder, vec![profile])),
+        }
+    }
+
+    let mut index = 0usize;
+    let mut rows: Vec<gpui::AnyElement> = Vec::new();
+    for (folder, members) in groups {
+        if let Some(folder) = folder {
+            rows.push(
+                div()
+                    .px(px(6.))
+                    .pt(px(6.))
+                    .text_size(px(10.))
+                    .text_color(chrome.text_muted)
+                    .truncate()
+                    .child(SharedString::from(folder))
+                    .into_any_element(),
+            );
+        }
+        for profile in members {
+            let id = profile.id;
+            let selected = selected == Some(id);
+            let name = if profile.name.trim().is_empty() {
+                ts!("connect.unnamed")
+            } else {
+                SharedString::from(profile.name.clone())
+            };
+            let tag = profile
+                .color
+                .as_deref()
+                .and_then(rudbman_ui::parse_hex)
+                .map(|color| {
+                    div()
+                        .flex_none()
+                        .w(px(3.))
+                        .h(px(16.))
+                        .rounded_full()
+                        .bg(color)
+                });
+            let on_click = on_click.clone();
+            rows.push(
+                div()
+                    .id(("profile-row", index))
+                    // Compiled away outside a test build. The row is the whole
+                    // hit area, so this is the one box a test has to press on,
+                    // and it saves working the position out from the row height
+                    // and however many folder headings sit above it.
+                    .debug_selector(move || format!("{ROW_SELECTOR}{id}"))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .px(px(6.))
+                    .py(px(5.))
+                    .rounded_md()
+                    .cursor_pointer()
+                    // The same range in both lists, because neither puts
+                    // anything else between the tab ring's start and the rows.
+                    .tab_index((tab::LIST + index as isize).min(tab::LIST_LIMIT))
+                    .when(selected, |row| row.bg(chrome.surface_active))
+                    .when(!selected, |row| {
+                        row.hover(|row| row.bg(chrome.surface_hover))
+                    })
+                    .children(tag)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(12.))
+                            .text_color(chrome.text)
+                            .child(name),
+                    )
+                    .on_click(move |_, window, cx| on_click(id, window, cx))
+                    .into_any_element(),
+            );
+            index += 1;
+        }
+    }
+    rows
 }
 
 /// Wraps `body` in a titled card.

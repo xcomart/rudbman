@@ -43,11 +43,16 @@ tab:
   tip_list: すべての接続
   tip_new: "新規接続 (%{shortcut})"
 
+welcome:
+  title: 接続を開く
+  new_connection: 新規接続…
+  saved: 保存した接続
+
 empty:
   title: 接続がありません
   hint: 接続を追加すると、データベースの参照と SQL の実行ができます。
   connected_title: 開いているものはありません
-  connected_hint: 接続は有効です。閲覧と SQL の実行はエクスプローラーとエディターが揃ってから使えます。
+  connected_hint: エクスプローラーでテーブルを選ぶか、クエリを開いてこの接続に SQL を実行してください。
 
 statusbar:
   no_connection: 接続なし

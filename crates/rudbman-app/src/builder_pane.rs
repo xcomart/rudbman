@@ -3,10 +3,16 @@
 //!
 //! Opened per connection and numbered like a query pane, because several of
 //! them at once is the ordinary case: one builder per question being asked.
-//! Tables arrive from the explorer through "add to builder", which is the only
-//! way onto the canvas — there is no reverse direction, and §7.7 says there
-//! never will be: parsing SQL back into a picture is a larger program than this
-//! whole tool.
+//! Tables arrive from the explorer, either through "add to builder" or by
+//! dragging the row onto the canvas — two gestures, one path: both end in the
+//! workspace reading the column list and calling [`BuilderPane::add_table`].
+//! There is no reverse direction, and §7.7 says there never will be: parsing
+//! SQL back into a picture is a larger program than this whole tool.
+//!
+//! A drop says only *what* was dropped ([`BuilderPaneEvent::TableDropped`]) and
+//! on which panel, because the session that would answer for the columns is the
+//! workspace's; what a drop settles that the action cannot is which builder the
+//! table belongs on, since the pointer named one.
 //!
 //! # The widget draws; the panel owns the query
 //!
@@ -47,7 +53,7 @@ use rudbman_ui::{Button, ButtonVariant, Checkbox, Select, TextInput, Theme, them
 use crate::builder_sql::{
     BuilderQuery, BuilderTable, Join, JoinKind, SortDir, generate, unique_alias,
 };
-use crate::explorer::{ConnectionId, ObjectTarget};
+use crate::explorer::{ConnectionId, DraggedObject, ObjectTarget};
 use crate::i18n::ts;
 use crate::table_detail::{items, number, text, type_of};
 
@@ -68,6 +74,13 @@ const WHERE_PLACEHOLDER: &str = "id > 1000";
 pub enum BuilderPaneEvent {
     /// Put this statement in a new query pane.
     OpenSql(String),
+    /// An explorer row was dropped on this panel's canvas.
+    ///
+    /// The panel asks rather than loads: reading the column list needs the
+    /// session, and the session belongs to the workspace. What it does say is
+    /// *which* builder the table belongs on — the one the pointer was over,
+    /// which is this one.
+    TableDropped(ObjectTarget),
 }
 
 /// The panel.
@@ -669,25 +682,42 @@ impl Render for BuilderPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
 
-        let canvas = if self.tables.is_empty() {
-            div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .p(px(10.))
-                .text_size(px(12.))
-                .text_color(chrome.text_muted)
-                .child(ts!("builder.canvas_hint"))
-                .into_any_element()
-        } else {
-            div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .child(self.view.clone())
-                .into_any_element()
-        };
+        // One element in both states, because an explorer row is dropped on
+        // both: the empty canvas is a drop target above all, since the hint it
+        // draws is what the *first* table lands on. `on_drop` asks for no id —
+        // gpui gives any element with a drop listener a hitbox — and the
+        // canvas widget's own mouse handling is undisturbed, because the
+        // release that ends a drag has no press of its own behind it.
+        //
+        // The resting border is the window's own background rather than no
+        // border at all, so that lighting it up while something is held over
+        // the canvas moves no pixel of what is inside.
+        let empty = self.tables.is_empty();
+        let accent = chrome.accent;
+        let canvas = div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .border_1()
+            .border_color(chrome.background)
+            .on_drop::<DraggedObject>(cx.listener(|_pane, dragged: &DraggedObject, _window, cx| {
+                cx.emit(BuilderPaneEvent::TableDropped(dragged.0.clone()));
+            }))
+            .drag_over::<DraggedObject>(move |style, _dragged, _window, _cx| {
+                style.border_color(accent)
+            })
+            .map(|canvas| {
+                if empty {
+                    canvas
+                        .p(px(10.))
+                        .text_size(px(12.))
+                        .text_color(chrome.text_muted)
+                        .child(ts!("builder.canvas_hint"))
+                } else {
+                    canvas.child(self.view.clone())
+                }
+            });
 
         let joins = self.render_joins(&chrome, cx);
         let conditions = self.render_conditions(&chrome, cx);
@@ -793,7 +823,10 @@ pub fn load_columns(session: &Session, target: &ObjectTarget) -> Result<Vec<ErdC
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    use gpui::{
+        Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+        TestAppContext, VisualTestContext, point,
+    };
 
     use super::*;
     use crate::explorer::Folder;
@@ -940,8 +973,9 @@ mod tests {
         let recorder = std::rc::Rc::clone(&seen);
         let _subscription = cx.update(|cx| {
             cx.subscribe(&pane, move |_pane, event, _cx| {
-                let BuilderPaneEvent::OpenSql(sql) = event;
-                recorder.borrow_mut().push(sql.clone());
+                if let BuilderPaneEvent::OpenSql(sql) = event {
+                    recorder.borrow_mut().push(sql.clone());
+                }
             })
         });
 
@@ -958,6 +992,120 @@ mod tests {
             seen.borrow().as_slice(),
             ["SELECT PERSON.ID\nFROM APP.PERSON".to_string()]
         );
+    }
+
+    /// Height of the strip a drag starts on in [`DropHarness`], in logical
+    /// pixels. Everything below it is the panel.
+    const STRIP: f32 = 20.;
+
+    /// Stands in for the chip the explorer draws under the pointer. What it
+    /// looks like is the explorer's business; that a drag *has* one is gpui's
+    /// requirement.
+    struct Ghost;
+
+    impl Render for Ghost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// The panel with something draggable above it, which is what the shell is
+    /// to it: a sidebar row that carries a [`DraggedObject`], and a canvas
+    /// underneath to let go of it over.
+    struct DropHarness {
+        /// The panel under test.
+        pane: Entity<BuilderPane>,
+        /// What the strip drags.
+        dragged: ObjectTarget,
+    }
+
+    impl Render for DropHarness {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(div().id("row").flex_none().h(px(STRIP)).w_full().on_drag(
+                    DraggedObject(self.dragged.clone()),
+                    |_dragged, _at, _window, cx| cx.new(|_cx| Ghost),
+                ))
+                .child(div().flex().flex_1().min_h_0().child(self.pane.clone()))
+        }
+    }
+
+    /// Presses the left button at `at`.
+    fn press(cx: &mut VisualTestContext, at: Point<Pixels>) {
+        cx.simulate_event(MouseDownEvent {
+            position: at,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+    }
+
+    /// Moves the pointer to `at` with the left button down.
+    fn drag_to(cx: &mut VisualTestContext, at: Point<Pixels>) {
+        cx.simulate_event(MouseMoveEvent {
+            position: at,
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::none(),
+        });
+        cx.run_until_parked();
+    }
+
+    /// Releases the left button at `at`.
+    fn release(cx: &mut VisualTestContext, at: Point<Pixels>) {
+        cx.simulate_event(MouseUpEvent {
+            position: at,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 1,
+        });
+        cx.run_until_parked();
+    }
+
+    /// A real pointer drag onto the canvas: press, past the threshold, over the
+    /// canvas, let go. The panel asks the workspace for the table rather than
+    /// loading it, because the session is not its to hold.
+    #[gpui::test]
+    fn a_table_dropped_on_the_canvas_is_asked_for(cx: &mut TestAppContext) {
+        cx.update(rudbman_ui::init);
+        let dropped = std::rc::Rc::new(std::cell::RefCell::new(Vec::<ObjectTarget>::new()));
+
+        let pane = cx.new(|cx| BuilderPane::new(ConnectionId(1), "h2", cx));
+        let recorder = std::rc::Rc::clone(&dropped);
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&pane, move |_pane, event, _cx| {
+                if let BuilderPaneEvent::TableDropped(target) = event {
+                    recorder.borrow_mut().push(target.clone());
+                }
+            })
+        });
+
+        let window = cx.add_window({
+            let pane = pane.clone();
+            move |_window, _cx| DropHarness {
+                pane,
+                dragged: target("PERSON"),
+            }
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        // On the strip, then well past the 2 px gpui asks for before a press
+        // counts as a drag, then over the empty canvas — which is the state the
+        // *first* table is always dropped onto.
+        press(&mut cx, point(px(100.), px(10.)));
+        drag_to(&mut cx, point(px(140.), px(60.)));
+        drag_to(&mut cx, point(px(400.), px(300.)));
+        release(&mut cx, point(px(400.), px(300.)));
+
+        assert_eq!(dropped.borrow().as_slice(), [target("PERSON")]);
+        // And nothing was added behind the workspace's back: the columns are
+        // still unread, so the canvas is still empty.
+        cx.update(|_window, cx| assert_eq!(pane.read(cx).table_count(), 0));
     }
 
     /// The loader against a real product: the column list comes back in

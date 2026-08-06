@@ -43,11 +43,16 @@ tab:
   tip_list: Alle Verbindungen
   tip_new: "Neue Verbindung (%{shortcut})"
 
+welcome:
+  title: Verbindung öffnen
+  new_connection: Neue Verbindung…
+  saved: Gespeicherte Verbindungen
+
 empty:
   title: Keine Verbindungen
   hint: Legen Sie eine Verbindung an, um eine Datenbank zu durchsuchen und SQL auszuführen.
   connected_title: Nichts geöffnet
-  connected_hint: Die Verbindung steht. Sie zu durchsuchen und SQL darauf auszuführen kommt mit dem Explorer und dem Editor.
+  connected_hint: Wählen Sie im Explorer eine Tabelle, oder öffnen Sie eine Abfrage und führen Sie SQL auf dieser Verbindung aus.
 
 statusbar:
   no_connection: keine Verbindung

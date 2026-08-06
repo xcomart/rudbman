@@ -158,6 +158,15 @@ pub enum ChildState<Id> {
 /// The state of the row a source is drawing into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TreeRowInfo {
+    /// Where the row sits in the flattened list, counting from zero.
+    ///
+    /// Not a node identity — it moves whenever a node above is opened or
+    /// closed — but an *element* identity: gpui asks for a stable
+    /// [`ElementId`] before it will let anything stateful hang off an element,
+    /// and a drag is stateful. The tree already keys its own row container by
+    /// this index, so a host that wants to make its row draggable can key
+    /// alongside it rather than invent a second numbering.
+    pub index: usize,
     /// How deep the row sits, counting the outermost level as zero.
     pub depth: usize,
     /// Whether the node is open.
@@ -753,6 +762,7 @@ impl<S: TreeSource> TreeView<S> {
         let expanded = self.expanded.contains(&id);
         let selected = self.selected.as_ref() == Some(&id);
         let info = TreeRowInfo {
+            index: ix,
             depth,
             expanded,
             selected,

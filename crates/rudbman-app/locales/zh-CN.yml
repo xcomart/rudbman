@@ -43,11 +43,16 @@ tab:
   tip_list: 所有连接
   tip_new: "新建连接 (%{shortcut})"
 
+welcome:
+  title: 打开连接
+  new_connection: 新建连接…
+  saved: 已保存的连接
+
 empty:
   title: 暂无连接
   hint: 添加一个连接，即可浏览数据库并执行 SQL。
   connected_title: 没有打开的内容
-  connected_hint: 连接是活动的。浏览数据库和执行 SQL 将随资源管理器和编辑器一起提供。
+  connected_hint: 在资源管理器中选择一张表，或打开查询窗口对该连接执行 SQL。
 
 statusbar:
   no_connection: 无连接

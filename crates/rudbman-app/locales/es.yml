@@ -43,11 +43,16 @@ tab:
   tip_list: Todas las conexiones
   tip_new: "Nueva conexión (%{shortcut})"
 
+welcome:
+  title: Abrir una conexión
+  new_connection: Nueva conexión…
+  saved: Conexiones guardadas
+
 empty:
   title: No hay conexiones
   hint: Añade una conexión para explorar una base de datos y ejecutar SQL en ella.
   connected_title: No hay nada abierto
-  connected_hint: La conexión está activa. Explorarla y ejecutar SQL sobre ella llegan con el explorador y el editor.
+  connected_hint: Elige una tabla en el explorador, o abre una consulta y ejecuta SQL en esta conexión.
 
 statusbar:
   no_connection: sin conexión

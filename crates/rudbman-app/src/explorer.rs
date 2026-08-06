@@ -47,6 +47,15 @@
 //! What is *never* skipped: the connection root. It is what tells two open
 //! connections apart, and it is where the status dot lives.
 //!
+//! # Dragging a row out of the tree
+//!
+//! A table or a view row can be picked up and let go of on a query builder's
+//! canvas, which carries a [`DraggedObject`] — the same [`ObjectTarget`] the
+//! "add to builder" action sends, so the two gestures meet in one place in the
+//! workspace. Only relations are draggable, because the canvas draws columns
+//! and a routine has none. The tree itself knows nothing about any of this: it
+//! hands each row its index, and the drag hangs off the row body drawn here.
+//!
 //! # A node that will not load
 //!
 //! A schema the user cannot read is one error row under that node
@@ -58,8 +67,8 @@
 use std::collections::HashMap;
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
-    SharedString, Subscription, Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Pixels,
+    Point, Render, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session};
 use rudbman_ui::{ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView, theme};
@@ -318,6 +327,57 @@ impl ObjectTarget {
     }
 }
 
+/// What a draggable row's test selector is prefixed with, ahead of the
+/// object's qualified name.
+const DRAG_SELECTOR: &str = "explorer-drag:";
+
+/// A relational object being dragged out of the tree.
+///
+/// A wrapper rather than the bare [`ObjectTarget`] because gpui routes a drop
+/// by the payload's `TypeId`: a type nothing else in the app drags means the
+/// query builder's drop listener can never be woken by the sidebar-resize drag
+/// or a split divider, and no listener has to check what it was handed. Only
+/// tables and views are ever put in one — the same gate the "add to builder"
+/// menu row uses, because a routine has no column list to draw.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraggedObject(pub ObjectTarget);
+
+/// The chip that follows the pointer while an object is being dragged.
+///
+/// Held at the cursor by padding, which is how gpui's own drag-and-drop
+/// example places a ghost: the view is laid out at the window's origin and the
+/// offset of the press inside the row is added as leading space.
+struct DragGhost {
+    /// Where in the row the press landed.
+    offset: Point<Pixels>,
+    /// The object's icon, by folder.
+    icon: &'static str,
+    /// What the chip reads: the schema-qualified name.
+    label: SharedString,
+}
+
+impl Render for DragGhost {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let chrome = theme(cx);
+        div().pl(self.offset.x).pt(self.offset.y).child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .px(px(8.))
+                .py(px(4.))
+                .bg(chrome.surface)
+                .border_1()
+                .border_color(chrome.border)
+                .text_size(px(11.))
+                .text_color(chrome.text)
+                .child(icons::icon(self.icon, px(12.), chrome.text_muted))
+                .child(self.label.clone()),
+        )
+    }
+}
+
 /// What the workspace has to tell the explorer about one open connection.
 #[derive(Clone, Debug)]
 pub struct RootInfo {
@@ -562,7 +622,7 @@ impl TreeSource for ExplorerSource {
                 .child(SharedString::from(count.to_string()))
         });
 
-        div()
+        let body = div()
             .flex()
             .flex_row()
             .items_center()
@@ -577,7 +637,37 @@ impl TreeSource for ExplorerSource {
                     .when(info.selected, |label| label.text_color(chrome.text))
                     .child(label),
             )
-            .children(badge)
+            .children(badge);
+
+        // Only a table or a view can be dragged onto a query builder, which is
+        // the gate the "add to builder" action applies too: the canvas is a
+        // picture of columns, and a routine has none to draw. A drag that gets
+        // going swallows the row's click, so the selection does not move under
+        // a table on its way to the canvas.
+        let Some(dragged) = id.as_target().filter(|target| target.folder.is_relation()) else {
+            return body.into_any_element();
+        };
+        let icon = dragged.folder.icon();
+        let label = SharedString::from(dragged.qualified());
+        body.id(("tree-drag", info.index))
+            // Compiled away outside a test build. It marks the element the
+            // drag hangs off, which is the one a test has to press on, and
+            // saves it working the row's position out from the indent, the row
+            // height and the panel's header.
+            .debug_selector({
+                let label = label.clone();
+                move || format!("{DRAG_SELECTOR}{label}")
+            })
+            .on_drag(
+                DraggedObject(dragged),
+                move |_dragged, offset, _window, cx| {
+                    cx.new(|_cx| DragGhost {
+                        offset,
+                        icon,
+                        label: label.clone(),
+                    })
+                },
+            )
             .into_any_element()
     }
 
@@ -972,6 +1062,155 @@ pub(crate) mod tests {
             catalog: None,
             schema: Some(schema.to_string()),
         }
+    }
+
+    /// An object node of `folder` under `APP`.
+    fn node(folder: Folder, name: &str) -> NodeId {
+        NodeId::Object {
+            connection: C,
+            scope: scope("APP"),
+            folder,
+            name: name.to_string(),
+        }
+    }
+
+    /// A tree with one open connection whose children are `children`, drawn in
+    /// the top half of a window with a drop target under it.
+    struct DragHarness {
+        /// The panel under test.
+        explorer: Entity<Explorer>,
+        /// What has been let go of over the target, in the order it arrived.
+        dropped: std::rc::Rc<std::cell::RefCell<Vec<ObjectTarget>>>,
+    }
+
+    impl Render for DragHarness {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let dropped = std::rc::Rc::clone(&self.dropped);
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(300.))
+                        .w(px(240.))
+                        .child(self.explorer.clone()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .debug_selector(|| "drop-target".to_string())
+                        .on_drop::<DraggedObject>(move |dragged: &DraggedObject, _window, _cx| {
+                            dropped.borrow_mut().push(dragged.0.clone());
+                        }),
+                )
+        }
+    }
+
+    /// A table row dragged out of the tree and let go of somewhere that takes
+    /// drops: the payload is the object the row names, and a row that is not a
+    /// relation carries no drag at all.
+    ///
+    /// The row is found by its test selector rather than by arithmetic over the
+    /// row height, so the test says nothing about how the panel is laid out.
+    #[gpui::test]
+    fn a_table_row_drags_the_object_it_names(cx: &mut gpui::TestAppContext) {
+        use gpui::{
+            Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+            VisualTestContext, point,
+        };
+
+        cx.update(rudbman_ui::init);
+        let dropped = std::rc::Rc::new(std::cell::RefCell::new(Vec::<ObjectTarget>::new()));
+        let explorer = cx.new(Explorer::new);
+
+        explorer.update(cx, |explorer, cx| {
+            explorer.update_source(cx, |source| {
+                source.upsert_root(
+                    C,
+                    RootInfo {
+                        name: "staging".into(),
+                        color: None,
+                        live: true,
+                    },
+                );
+                source.set_visible_root(Some(C));
+                // Straight under the root rather than through schemas and
+                // folders: what is being tested is the row, and every level
+                // between here and it is drawn by the same `render_row`.
+                source.set_children(
+                    NodeId::Connection(C),
+                    vec![
+                        node(Folder::Tables, "PERSON"),
+                        node(Folder::Procedures, "REBUILD"),
+                    ],
+                );
+            });
+            explorer
+                .tree
+                .update(cx, |tree, cx| tree.expand(&NodeId::Connection(C), cx));
+        });
+
+        let window = cx.add_window({
+            let explorer = explorer.clone();
+            let dropped = std::rc::Rc::clone(&dropped);
+            move |_window, _cx| DragHarness { explorer, dropped }
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        // A routine has no columns to draw, so its row is not draggable — and
+        // the selector sits on the very element the drag would hang off, so its
+        // absence is the absence of the drag.
+        assert!(
+            cx.debug_bounds("explorer-drag:APP.REBUILD").is_none(),
+            "a procedure row must not be draggable"
+        );
+        let row = cx
+            .debug_bounds("explorer-drag:APP.PERSON")
+            .expect("the table row is drawn and draggable");
+        let target = cx
+            .debug_bounds("drop-target")
+            .expect("the drop target is drawn");
+
+        cx.simulate_event(MouseDownEvent {
+            position: row.center(),
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+        // Two moves: the first takes the press past the 2 px gpui asks for
+        // before it is a drag, the second carries it over the target.
+        for position in [
+            row.center() + point(px(0.), px(20.)),
+            target.center(),
+            target.center(),
+        ] {
+            cx.simulate_event(MouseMoveEvent {
+                position,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            });
+            cx.run_until_parked();
+        }
+        cx.simulate_event(MouseUpEvent {
+            position: target.center(),
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 1,
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            dropped.borrow().as_slice(),
+            [node(Folder::Tables, "PERSON")
+                .as_target()
+                .expect("an object node names a target")]
+        );
     }
 
     /// A live H2 database with something of every kind in it.
