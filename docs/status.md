@@ -1,92 +1,116 @@
-# 진행 현황과 인수인계
+# Progress and handoff
 
-다른 세션(또는 다른 사람)이 이어받기 위한 문서다. 설계와 계약은 전부
-[architecture.md](architecture.md)에 있고, 여기는 **어디까지 왔고 무엇이
-남았는지, 그리고 이 저장소에서 일하는 방식**만 담는다. 마일스톤 하나가 끝날
-때마다 이 문서를 갱신한다.
+This document exists so that another session — or another person — can pick
+the work up. The design and the contracts all live in
+[architecture.md](architecture.md); what is kept here is only **how far the
+work has come, what is left, and how work is done in this repository**. It is
+updated whenever a milestone ends.
 
-최종 갱신: 2026-08-06 (M7 완료 직후 — **마일스톤 전부 완료**).
+Last updated: 2026-08-06 (just after the first release, **v0.1.0**).
 
-## 어디까지 왔나
+## Where things stand
 
-| 마일스톤 | 상태 | 들어간 것 |
+| Milestone | State | What went in |
 |---|---|---|
-| M0 | 완료 | 워크스페이스 셸, gpui 0.2.2 벤더링(logman 패치 6종, 바이트 동일 유지), rudbman-ui 위젯 16종, 테마/에디터 테마/설정/i18n 8개 언어, 고유 아이콘 |
-| M1 | 완료 | 브리지 JAR(단일 JNI 진입점 `Bridge.call`, 오류 봉투, Gson 병합), JVM 부트스트랩(-Xrs, 전용 스레드, DestroyJavaVM 금지), 세션 워커, 드라이버 관리자(메이븐 다운로드·클래스 자동 검출), 접속 다이얼로그, SSH 터널(russh, PTY 없는 배스천, 루프백 바인드), OS 키체인 비밀 관리, URL/속성 마스킹 |
-| M2 | 완료 | 탐색기 트리(멀티 루트, 레벨 스킵 규칙), DESCRIBE 전 종류, 테이블 상세 4탭(열·키·참조·DDL), DDL 역생성(native/metadata 이원) |
-| M3 | 완료 | rudbman-sql(증분 렉서, 방언 7종, 문장 분리), rudbman-editor(ropey, IME — gpui 예제의 조합 캐럿 버그 수정), rudbman-grid(양축 가상화, 100만 행), 쿼리 파이프라인(실행/취소/세대 가드/NearEnd 페이징/다중 결과/쓰기 확인), RDB1 코덱 양단 |
-| M4 | 완료 | 브리지 job 프레임(0x40~42) + ExtractJob(DDL은 CREATE 전부→FK ALTER 전부, insert/csv/template), jdbgen 템플릿 엔진 승계(자산 호환 카나리아 테스트), Rust Job API, 추출 다이얼로그, SQL 파일 열기(Ctrl+O) → 기존 실행 파이프라인 |
-| M5 | 완료 | rudbman-erd 크레이트(모델·격자/자체 Sugiyama 배치·직교 라우팅·SVG 내보내기·캔버스 위젯 — 순수/gpui 모듈 분리), `PaneItem::Erd`+`ErdPane`(로딩·툴바), FK 로더(테이블당 imported_keys, 결정적 정렬), 배치 저장 `erd/<uuid>.json`(제스처당 1회), 탐색기 `OpenErd`(Ctrl/Cmd+E, 스코프 단위) |
-| M6 | 완료 | 브리지 `TransferJob`(두 세션 락 핸들 오름차순, 취소 2슬롯, `uses(Session)` 훅, upsert 방언 3계열 + PK/OTHER 동기 거절, on_error abort/skip/log — savepoint로 배치 격리, errors 상한 100)·`BackupJob`(스코프 열거, INSERT만 FK 위상 정렬, gzip)·`meta/Upsert`, 진행률 `rows_skipped`, Rust `TransferSpec`/`BackupSpec`+`start_transfer`/`start_backup`, 전송·백업 다이얼로그(추출 폴링 패턴, 타깃 연결 셀렉트) |
-| M7 | 완료 | rudbman-erd 캔버스 공유화(`canvas` 모듈 — 뷰포트·제스처·열 단위 기하·4레이어 페인트, ERD SVG 바이트 불변 실증) + `BuilderView`(열 클릭 토글·열→열 조인 드래그, 상태는 호스트 소유), rudbman-sql `quote_ident`/`qualify`(필요할 때만 인용 — 키워드·비식별자 문자·방언별 케이스 접힘), `PaneItem::QueryBuilder`+`BuilderPane`(조인/WHERE/GROUP BY/ORDER BY 폼, SQL 미리보기, `open_query`로 에디터行), `open_query_for` 인용 결함 수정 |
-| 중간 UI 작업 | 완료 | 미니탭(팬마다 탭 목록, 중복 열기=이동), **연결별 작업 영역**(상단 탭 전환이 하단 전체를 전환 — 사용자 확정 설계), 포커스 회수 규율(아래 "함정"), 에디터 폰트 설정 배선 |
+| M0 | done | Workspace shell, gpui 0.2.2 vendored (six logman patches, kept byte-identical), 16 rudbman-ui widgets, theme/editor-theme/settings/i18n in eight languages, an icon of its own |
+| M1 | done | The bridge JAR (a single JNI entry point, `Bridge.call`, an error envelope, Gson merging), the JVM bootstrap (-Xrs, a dedicated thread, no DestroyJavaVM), the session worker, the driver manager (Maven download, class auto-detection), the connection dialog, SSH tunnels (russh, a bastion without a PTY, loopback binds), OS-keychain secret storage, URL/property masking |
+| M2 | done | The explorer tree (multiple roots, level-skipping rules), DESCRIBE for every kind, the four-tab table detail (columns, keys, references, DDL), DDL reconstruction (native and metadata, in that order) |
+| M3 | done | rudbman-sql (an incremental lexer, seven dialects, statement splitting), rudbman-editor (ropey, IME — with the composition-caret bug in the gpui example fixed), rudbman-grid (virtualized on both axes, a million rows), the query pipeline (run/cancel/generation guard/NearEnd paging/multiple results/write confirmation), the RDB1 codec on both ends |
+| M4 | done | Bridge job frames (0x40–42) and `ExtractJob` (DDL as every CREATE first, then every FK ALTER; insert/csv/template), the jdbgen template engine carried over (with an asset-compatibility canary test), the Rust job API, the extraction dialog, opening a SQL file (Ctrl+O) into the existing run pipeline |
+| M5 | done | The rudbman-erd crate (model, grid and hand-written Sugiyama layouts, orthogonal routing, SVG export, canvas widget — pure and gpui modules kept apart), `PaneItem::Erd` plus `ErdPane` (loading, toolbar), the FK loader (imported_keys per table, deterministic ordering), arrangements saved to `erd/<uuid>.json` (once per gesture), `OpenErd` from the explorer (Ctrl/Cmd+E, per scope) |
+| M6 | done | The bridge's `TransferJob` (two session locks taken in handle order, two cancel slots, a `uses(Session)` hook, three upsert dialect families with PK/OTHER sync refused, on_error abort/skip/log — batches isolated with savepoints, errors capped at 100), `BackupJob` (scope enumeration, INSERTs topologically sorted by FK, gzip) and `meta/Upsert`, `rows_skipped` in progress, the Rust `TransferSpec`/`BackupSpec` with `start_transfer`/`start_backup`, and the transfer and backup dialogs (the extraction polling pattern, a target-connection select) |
+| M7 | done | The rudbman-erd canvas made shareable (a `canvas` module — viewport, gestures, per-column geometry, four paint layers, with the ERD's SVG bytes demonstrably unchanged) plus `BuilderView` (column clicks toggle, column-to-column drags join, state owned by the host), rudbman-sql `quote_ident`/`qualify` (quoting only when it must — keywords, non-identifier characters, per-dialect case folding), `PaneItem::QueryBuilder` plus `BuilderPane` (join/WHERE/GROUP BY/ORDER BY forms, a SQL preview, `open_query` into an editor), and the quoting defect in `open_query_for` fixed |
+| Interim UI work | done | Mini-tabs (a tab list per pane, opening a duplicate moves to it), **per-connection work areas** (switching the top tab switches everything below it — the design the user settled), the focus-reclaim discipline (see "pitfalls" below), editor font settings wired through |
 
-- 저장소: <https://github.com/xcomart/rudbman> (public, MIT).
-- 브랜치 흐름은 logman과 동일: **dev에서 작업, main은 PR 머지 커밋만**. CI는
-  3플랫폼 매트릭스이고 브리지(Java) 스위트를 Rust보다 먼저 돌린다.
-- 테스트 규모(2026-08-06): Rust 약 780 + Java 141. 전부 실제 JVM/H2를 부팅하는
-  통합 테스트를 포함한다.
+### After the milestones
 
-## 다음 작업
+| Work | State | What went in |
+|---|---|---|
+| Builder drag-and-drop and a welcome screen (PR #6) | done | An explorer row naming a table or a view can be dragged onto a query builder canvas — the same gate and the same one-round-trip column load as the menu action, except the drop lands on the builder under the pointer. With no connections, the explorer sidebar stays out of the frame (without touching the saved preference) and a welcome screen offers the connection dialog and the saved connections, one click to connect |
+| Context menus (PR #7) | done | A right-click menu on every surface: the widgets learn only the gesture and emit an event, while the app owns the menu, the labels and the commands, because the widget layer carries no user-facing strings (§7.8). Rows that cannot run right now are drawn greyed rather than left out, so the menu doubles as the surface's documentation. Menus are described as MenuRow lists before they are drawn, and the tests read the description instead of clicking computed pixels. Escape closes a menu ahead of everything else — which uncovered and fixed the editor's find-bar binding swallowing the key with the bar shut |
+| Monospace font fix | done | The literal family `monospace` is a fontconfig generic that only Linux resolves; on Windows every surface asking for it logged an error and fell back to the proportional system font. The app now resolves the first installed candidate per OS (Windows: Cascadia Mono through Courier New) and falls back to the alias where nothing matches |
+| First release, v0.1.0 (PR #8) | done | `release.yml` (every build job runs Gradle, then jlink, then cargo — in that order, because rudbman-jdbc's build script refuses to compile without the bridge JAR — plus a smoke step over the staged tree before anything is published), `packaging/` (a Linux desktop entry and an `install.sh` that installs the whole tree and symlinks it, a macOS `Info.plist`), `<exe_dir>/runtime` added to the bundled-runtime search, `jdk.charsets` in the jlink module list (with `--compress=2`, the JDK 17 spelling), and a README brought fully up to date with three screenshots (captured through the temporary env-gated hook, reverted before the commit) |
 
-계획된 마일스톤(M0~M7)은 전부 끝났다. 남은 것은 순서 자유:
+- Repository: <https://github.com/xcomart/rudbman> (public, MIT).
+- The branch flow is logman's: **work on dev, main takes PR merge commits
+  only**. CI is a three-platform matrix and runs the bridge (Java) suite
+  before the Rust one.
+- Test count (2026-08-06): roughly 810 Rust plus 141 Java. That includes the
+  integration tests, which boot a real JVM and a real H2.
 
-1. **첫 릴리스**: release.yml 배선(§10.4), jlink 이미지에 `jdk.charsets` 포함
-   확인(§6 패키징 노트), 3플랫폼 아티팩트 스모크.
-2. **실물 DB 검증**: PostgreSQL/MySQL 컨테이너 선택 테스트(전송·백업 경로),
-   Oracle/SQL Server/DB2의 upsert MERGE 철자 확인(브리지 README 알려진 공백).
-3. **미결 기능**: 아래 목록(LOB 뷰어가 가장 큼 — §12.7 재읽기 전략 결정 필요).
+## What is next
 
-### 마일스톤에 안 걸린 미결
+The planned milestones (M0–M7) are all finished, and the first release is
+out. What remains can be taken in any order:
 
-- LOB_READ(0x25) 브리지 미구현 → LOB 뷰어 없음. 재읽기 전략 후보는 §12.7.
-- PL/SQL 블록·MySQL DELIMITER 문장 분리 미지원(rudbman-sql 테스트로 한계를
-  고정해 둠).
-- 파일 읽기 실패가 로그로만 남음 — 셸에 일시 메시지 스트립이 없다. 공용 알림
-  UI가 생기면 연결할 것.
-- 미니탭 다듬기: 활성 탭 스크롤 인뷰, 탭 컨텍스트 메뉴, 드래그 재배열.
-- 연결 A의 쓰기 확인 모달이 연결 B로 전환한 뒤에도 떠 있음(응답 가능하고
-  올바르나 시각적으로 어색 — 낮은 우선순위).
-- 스페인어/독일어 UI 격식 수준 통일(사용자 답변 대기), 기타 용어 플래그.
-- release.yml은 첫 릴리스 때. jlink 이미지에는 `jdk.charsets` 모듈이 필요하다
-  (템플릿 엔진의 EUC-KR 패딩 폭, §6 패키징 노트).
+1. **Verification against real databases**: opt-in PostgreSQL/MySQL container
+   tests (the transfer and backup paths), and confirmation of how
+   Oracle, SQL Server and DB2 spell the upsert MERGE (a known gap, named in
+   the bridge README).
+2. **Open features**: the list below (the LOB viewer is the largest — §12.7
+   needs a re-read strategy decided).
 
-## 이 저장소에서 일하는 방식
+### Open items not tied to a milestone
 
-- **문서 먼저.** 와이어 계약·설계 결정은 코드보다 architecture.md를 먼저
-  고친다. 브리지(Java)와 Rust 코덱/바인딩은 서로 다른 작업자가 문서만 보고
-  작성해도 맞물리는 것이 목표였고, 실제로 그렇게 만들어졌다.
-- **커밋 메시지는 영어 산문**으로 "왜"를 담는다. Co-authored-by 금지.
-- **머지는 CI 3플랫폼 green 확인 후 머지 커밋**(`gh pr merge --merge`).
-- vendor/gpui는 logman의 벤더 트리와 **바이트 동일**을 유지한다(패치 교환을
-  diff로 하기 위함). 수정 금지.
-- 검증 명령: `cargo test --workspace`, `cargo clippy --workspace --all-targets
-  -- -D warnings`, `cargo fmt --check`, `cd bridge && ./gradlew build`.
-  브리지 JAR 재생성은 `cd bridge && ./gradlew jar`.
-- JVM/H2 통합 테스트는 H2 드라이버 JAR을 Gradle 캐시에서 스스로 찾는다.
-  못 찾으면 `RUDBMAN_TEST_H2_JAR`로 지정(CI가 이 방식 — Windows에서는
-  `cygpath -w`로 네이티브 철자로 변환해야 한다는 것이 첫 CI 런의 교훈).
-  자동 탐색은 `HOME`(또는 `GRADLE_USER_HOME`)으로 Gradle 홈을 찾으므로
-  **Windows PowerShell에서는 실패한다**(`HOME`이 없다) — Git Bash에서는 그냥
-  되고, PowerShell에서는 `RUDBMAN_TEST_H2_JAR`를 지정하라.
+- LOB_READ(0x25) is not implemented in the bridge, so there is no LOB viewer.
+  Candidate re-read strategies are in §12.7.
+- PL/SQL blocks and MySQL DELIMITER are not handled by statement splitting
+  (the limit is pinned by rudbman-sql tests).
+- A failed file read only reaches the log — the shell has no transient
+  message strip. Wire it up once a shared notification UI exists.
+- Mini-tab polish: scrolling the active tab into view, drag to reorder.
+- Connection A's write-confirmation modal stays up after switching to
+  connection B (it still responds and it is still correct, but it looks
+  wrong — low priority).
+- Settling the level of formality in the Spanish and German UI (waiting on
+  the user's answer), plus other terminology flags.
 
-## 개발 환경 함정 (이 머신 한정 포함)
+## How work is done in this repository
 
-- **이 X 디스플레이에서 gpui 앱은 키보드·마우스 입력을 못 받는 경우가 있다**
-  (포인터 장치가 없어져 XInput2 초기화 실패). GUI 확인은 ① 환경변수로 게이트한
-  임시 훅(`RUDBMAN_DEV_AUTOCONNECT` — 인메모리 H2 자동 연결, 필요한 화면을
-  코드로 열기) + ② 스크린샷으로 한다. 훅은 **커밋 전 반드시 되돌리고 diff로
-  확인**한다. 실행 시 `XDG_CONFIG_HOME`을 격리해 실제 설정을 오염시키지
-  않는다.
-- 스크린샷: `xwd`는 이 디스플레이에서 X_QueryColors로 죽는다. XGetImage를
-  쓰는 작은 C 도구(스크래치패드의 xshot.c 참고 — libX11 링크)로 캡처한다.
-- **`pkill -f` 금지** — 자기 셸까지 죽인다(명령줄 매칭). 반드시 PID로 kill.
-- 개발 머신에서 사용자가 logman 등 다른 빌드를 병행할 수 있다 — cargo 락
-  경합으로 빌드가 느려질 수 있음.
+- **Documents first.** Wire contracts and design decisions are changed in
+  architecture.md before they are changed in code. The goal was for the
+  bridge (Java) and the Rust codec and bindings to fit together even when
+  written from the document alone by different hands, and that is how they
+  were built.
+- **Commit messages are English prose** that carry the "why". No
+  Co-authored-by.
+- **Merge with a merge commit once CI is green on all three platforms**
+  (`gh pr merge --merge`).
+- vendor/gpui stays **byte-identical** with logman's vendor tree, so patches
+  can be exchanged as diffs. Do not edit it.
+- Verification commands: `cargo test --workspace`, `cargo clippy --workspace
+  --all-targets -- -D warnings`, `cargo fmt --check`, `cd bridge &&
+  ./gradlew build`. The bridge JAR is regenerated with `cd bridge &&
+  ./gradlew jar`.
+- The JVM/H2 integration tests find the H2 driver JAR in the Gradle cache by
+  themselves. When they cannot, point `RUDBMAN_TEST_H2_JAR` at it (this is
+  what CI does — and the lesson of the first CI run was that on Windows the
+  path has to be converted to its native spelling with `cygpath -w`). The
+  automatic search locates the Gradle home through `HOME` (or
+  `GRADLE_USER_HOME`), so it **fails under Windows PowerShell**, where there
+  is no `HOME` — under Git Bash it simply works; under PowerShell, set
+  `RUDBMAN_TEST_H2_JAR`.
 
-## 작업 분담 (Advisor/Worker)
+## Development-environment pitfalls (machine-specific notes included)
 
-메인 세션은 설계·브리프 작성·검증(diff와 테스트를 직접 실행)·커밋만 하고,
-구현은 Opus 서브에이전트에게 위임한다. 브리프에는 파일 경로·컨벤션·함정·완료
-기준을 담아 재탐색을 없앤다. 완료 보고는 믿지 않고 diff·테스트로 검증 후
-승인한다. 독립 조각은 파일 범위를 겹치지 않게 잘라 병렬로 위임한다.
+- **A release build on Windows needs `fxc.exe` from the Windows SDK**, which
+  gpui invokes for its shaders. This development machine has no SDK, so
+  `cargo build --release` fails here; debug builds are unaffected, and the
+  release binaries are produced by CI.
+- **jlink `--compress`**: JDK 17 wants `--compress=2`. The `zip-N` syntax is
+  JDK 21 and newer, and 17 errors on it.
+- **On this X display a gpui app sometimes receives no keyboard or mouse
+  input** (the pointer device disappears and XInput2 initialization fails).
+  GUI checks are therefore done with (1) a temporary hook gated by an
+  environment variable (`RUDBMAN_DEV_AUTOCONNECT` — auto-connect to an
+  in-memory H2 and open the screens needed from code) and (2) screenshots.
+  The hook is **always reverted before a commit, and the revert confirmed in
+  the diff**. Runs isolate `XDG_CONFIG_HOME` so the real settings are not
+  polluted.
+- Screenshots: `xwd` dies on X_QueryColors on this display. Capture with a
+  small C tool that uses XGetImage instead (see xshot.c in the scratchpad —
+  link against libX11).
+- **Never `pkill -f`** — it matches command lines and kills your own shell
+  too. Always kill by PID.
+- The user may be building something else, such as logman, on this machine at
+  the same time — cargo lock contention can make a build slow.
