@@ -20,6 +20,8 @@ menu:
   query_object: Запросить выбранный объект
   open_sql_file: Открыть файл SQL…
   extract_script: Извлечь скрипт…
+  # Draws the ERD of the scope the explorer's selection sits in.
+  erd: ERD-диаграмма
   about: О программе rudbman
   quit: Выход
   connection: Подключение
@@ -405,3 +407,16 @@ extract:
   cancelled: "Отменено. Частично записанный файл остался в %{path}."
   failed: "Извлечение не удалось: %{error}"
   failed_unknown: Извлечение не удалось, но мост не сообщил причину.
+
+# The ERD panel: one schema's tables and the foreign keys between them.
+erd:
+  tab: "ERD — %{scope}"
+  tab_all: ERD
+  loading: загрузка…
+  load_failed: "Не удалось построить диаграмму: %{error}"
+  empty: В этой схеме нет таблиц.
+  auto_arrange: Расставить
+  export_svg: Экспорт в SVG…
+  export_done: "Записано в %{path}."
+  export_failed: "Не удалось записать диаграмму: %{error}"
+  refresh: Обновить

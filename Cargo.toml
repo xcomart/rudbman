@@ -152,6 +152,7 @@ rudbman-ui = { path = "crates/rudbman-ui" }
 rudbman-ssh = { path = "crates/rudbman-ssh" }
 rudbman-jdbc = { path = "crates/rudbman-jdbc" }
 rudbman-grid = { path = "crates/rudbman-grid" }
+rudbman-erd = { path = "crates/rudbman-erd" }
 rudbman-sql = { path = "crates/rudbman-sql" }
 rudbman-editor = { path = "crates/rudbman-editor" }
 rudbman-app = { path = "crates/rudbman-app" }

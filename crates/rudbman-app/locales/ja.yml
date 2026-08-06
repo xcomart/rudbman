@@ -20,6 +20,8 @@ menu:
   query_object: 選択したオブジェクトを照会
   open_sql_file: SQL ファイルを開く…
   extract_script: スクリプトを抽出…
+  # Draws the ERD of the scope the explorer's selection sits in.
+  erd: ER図
   about: rudbman について
   quit: 終了
   connection: 接続
@@ -405,3 +407,16 @@ extract:
   cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
+
+# The ERD panel: one schema's tables and the foreign keys between them.
+erd:
+  tab: "ER図 — %{scope}"
+  tab_all: ER図
+  loading: 読み込み中…
+  load_failed: "図を描画できませんでした: %{error}"
+  empty: このスキーマにはテーブルがありません。
+  auto_arrange: 自動整列
+  export_svg: SVG で書き出し…
+  export_done: "%{path} に書き出しました。"
+  export_failed: "図を書き出せませんでした: %{error}"
+  refresh: 再読み込み

@@ -20,6 +20,8 @@ menu:
   query_object: 查询所选对象
   open_sql_file: 打开 SQL 文件…
   extract_script: 提取脚本…
+  # Draws the ERD of the scope the explorer's selection sits in.
+  erd: ER 图
   about: 关于 rudbman
   quit: 退出
   connection: 连接
@@ -405,3 +407,16 @@ extract:
   cancelled: "已取消。写了一半的文件保留在 %{path}。"
   failed: "提取失败：%{error}"
   failed_unknown: 提取失败，桥接层没有给出原因。
+
+# The ERD panel: one schema's tables and the foreign keys between them.
+erd:
+  tab: "ER 图 — %{scope}"
+  tab_all: ER 图
+  loading: 加载中…
+  load_failed: "无法绘制图表：%{error}"
+  empty: 该模式中没有表。
+  auto_arrange: 自动布局
+  export_svg: 导出 SVG…
+  export_done: "已写入 %{path}。"
+  export_failed: "无法写入图表：%{error}"
+  refresh: 刷新

@@ -875,7 +875,13 @@ fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, 
 }
 
 /// Runs one `DESCRIBE` and hands back its items.
-fn items(
+///
+/// Shared with [`crate::erd_pane`], along with the four readers below and
+/// [`type_of`]: the ERD assembles its boxes from the same `columns`,
+/// `primary_keys` and `imported_keys` answers this panel lays out as rows, and
+/// a column typed `NUMERIC(12,2)` on one has to read `NUMERIC(12,2)` on the
+/// other.
+pub(crate) fn items(
     session: &Session,
     request: &DescribeRequest,
 ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, String> {
@@ -886,19 +892,22 @@ fn items(
 }
 
 /// A string member of one item, or `None` when it is absent or SQL NULL.
-fn text<'a>(item: &'a serde_json::Map<String, serde_json::Value>, key: &str) -> Option<&'a str> {
+pub(crate) fn text<'a>(
+    item: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a str> {
     item.get(key)
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.is_empty())
 }
 
 /// A numeric member of one item.
-fn number(item: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<i64> {
+pub(crate) fn number(item: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<i64> {
     item.get(key).and_then(serde_json::Value::as_i64)
 }
 
 /// A boolean member of one item.
-fn flag(item: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<bool> {
+pub(crate) fn flag(item: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<bool> {
     item.get(key).and_then(serde_json::Value::as_bool)
 }
 
@@ -928,7 +937,7 @@ fn cell(value: Option<&str>) -> SharedString {
 ///
 /// A driver that already spelled the size into the name, which several do, is
 /// left alone rather than doubled.
-fn type_of(item: &serde_json::Map<String, serde_json::Value>) -> String {
+pub(crate) fn type_of(item: &serde_json::Map<String, serde_json::Value>) -> String {
     /// `java.sql.Types` codes whose DDL carries a length.
     const SIZED: [i64; 9] = [
         1,   // CHAR

@@ -31,12 +31,19 @@ raw-window-handle.workspace = true
 [dependencies]
 rudbman-core.workspace = true
 rudbman-editor.workspace = true
+# The ERD canvas. The shell wraps it in `ErdPane`, which owns the loading
+# state, the toolbar, the translated strings and the saved layout — everything
+# the widget deliberately does not know (architecture document, §7.6).
+rudbman-erd.workspace = true
 rudbman-grid.workspace = true
 rudbman-jdbc.workspace = true
 rudbman-sql.workspace = true
 rudbman-ssh.workspace = true
 rudbman-ui.workspace = true
 
+# `erd/<profile-uuid>.json` is the one file the shell itself persists, so it is
+# also the one place here that derives a serializer.
+serde.workspace = true
 # The explorer and the detail panel read `DESCRIBE` items, which the JNI layer
 # hands over as JSON maps: the bridge's key names are fixed and stable across
 # drivers, so a map is the right shape and a struct per metadata kind would be

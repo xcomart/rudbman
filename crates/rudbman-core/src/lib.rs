@@ -44,8 +44,8 @@ pub mod settings;
 
 pub use known_hosts::{HostKeyStatus, KnownHosts};
 pub use paths::{
-    config_dir, connections_file, drivers_dir, drivers_file, editor_themes_dir, known_hosts_file,
-    settings_file, snippets_dir, ui_themes_dir,
+    config_dir, connections_file, drivers_dir, drivers_file, editor_themes_dir, erd_layouts_dir,
+    known_hosts_file, settings_file, snippets_dir, ui_themes_dir,
 };
 pub use profile::{
     ConnectionProfile, ConnectionStore, DriverDef, DriverStore, KeepAlive, TunnelAuth, TunnelConfig,

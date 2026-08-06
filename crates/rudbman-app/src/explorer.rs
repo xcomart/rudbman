@@ -247,6 +247,29 @@ impl NodeId {
         }
     }
 
+    /// Where in the database this node sits, for the panel that draws a whole
+    /// scope rather than one object.
+    ///
+    /// What the ERD is opened over. A catalogue answers with itself and no
+    /// schema, which is the right scope on a product whose schema level was
+    /// skipped; a folder and an object answer with the scope they were listed
+    /// in. The connection root answers `None` — a diagram of every catalogue at
+    /// once is not a diagram — and so does an error row, which names nothing.
+    pub fn as_scope(&self) -> Option<Scope> {
+        match self {
+            NodeId::Catalog { name, .. } => Some(Scope {
+                catalog: Some(name.clone()),
+                schema: None,
+            }),
+            NodeId::Schema { catalog, name, .. } => Some(Scope {
+                catalog: catalog.clone(),
+                schema: Some(name.clone()),
+            }),
+            NodeId::Folder { scope, .. } | NodeId::Object { scope, .. } => Some(scope.clone()),
+            NodeId::Connection(_) | NodeId::Error(_) => None,
+        }
+    }
+
     /// What an object node names, for the panel that opens it.
     pub fn as_target(&self) -> Option<ObjectTarget> {
         let NodeId::Object {
@@ -849,6 +872,27 @@ impl Explorer {
     pub fn selected_relation(&self, cx: &App) -> Option<ObjectTarget> {
         let target = self.tree.read(cx).selected()?.as_target()?;
         target.folder.is_relation().then_some(target)
+    }
+
+    /// The connection and scope the selected node sits in.
+    ///
+    /// What "draw the ERD of this" acts on. Anything below the connection root
+    /// answers — a schema, a folder, a table — because a diagram is of a
+    /// *scope*, and every one of those names one. The root itself does not; see
+    /// [`NodeId::as_scope`].
+    pub fn selected_scope(&self, cx: &App) -> Option<(ConnectionId, Scope)> {
+        let selected = self.tree.read(cx).selected()?;
+        Some((selected.connection(), selected.as_scope()?))
+    }
+
+    /// Moves the selection, for the shell's own tests.
+    ///
+    /// The tree is behind a widget nothing outside this module holds, and the
+    /// actions gated on a selection have no other way in without a mouse.
+    #[cfg(test)]
+    pub fn select(&mut self, node: NodeId, cx: &mut Context<Self>) {
+        self.tree
+            .update(cx, |tree, cx| tree.set_selected(Some(node), cx));
     }
 }
 
