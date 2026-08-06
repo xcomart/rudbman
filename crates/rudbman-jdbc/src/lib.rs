@@ -113,6 +113,8 @@ pub use response::{
 };
 pub use session::{Canceller, Cursor, Job, Session};
 pub use spec::{
-    ConnectionSpec, Constraints, DataMode, DataOptions, DdlOptions, DdlSource, DescribeRequest,
-    ExtractSpec, KeepAliveSpec, Newline, ObjectRef, OutputSpec, Param, ProbeRequest, StatementSpec,
+    BackupDataOptions, BackupSpec, ColumnMapping, Compression, ConnectionSpec, Constraints,
+    DataMode, DataOptions, DdlOptions, DdlSource, DescribeRequest, ExtractSpec, KeepAliveSpec,
+    Newline, ObjectRef, OnError, OutputSpec, Param, ProbeRequest, ScopeRef, StatementSpec,
+    TransferMode, TransferSpec,
 };

@@ -33,6 +33,7 @@
 
 mod about_dialog;
 mod app_settings;
+mod backup_dialog;
 mod caption;
 mod connection;
 mod connection_dialog;
@@ -56,6 +57,7 @@ mod settings_dialog;
 mod table_detail;
 mod theme_editor;
 mod theme_picker;
+mod transfer_dialog;
 
 // Compiles `locales/*.yml` into the binary and defines the machinery `t!`
 // expands to, which is why it has to sit in the crate root. `fallback = "en"`
@@ -83,6 +85,7 @@ use rudbman_ui::{
 
 use about_dialog::{AboutDialog, AboutDialogEvent};
 use app_settings::WindowGeometry;
+use backup_dialog::{BackupDialog, BackupDialogEvent};
 use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
@@ -96,6 +99,7 @@ use pane_tree::{Axis, Pane, PaneId, PaneItem, PaneNode, PaneTree, SplitId};
 use query::{ConfirmRequest, QueryPane, QueryPaneEvent};
 use settings_dialog::{SettingsDialog, SettingsDialogEvent};
 use table_detail::{TableDetail, TableDetailEvent};
+use transfer_dialog::{TransferDialog, TransferDialogEvent, TransferTarget};
 
 actions!(
     rudbman,
@@ -129,6 +133,11 @@ actions!(
         OpenSqlFile,
         /// Open the extraction dialog over the object selected in the explorer.
         ExtractScript,
+        /// Open the transfer dialog over the object selected in the explorer.
+        TransferTable,
+        /// Open the backup dialog over the scope the explorer's selection sits
+        /// in.
+        BackupSchema,
         /// Draw the ERD of the scope the explorer's selection sits in.
         OpenErd,
         /// Close the open dialog or dropdown menu, if there is one.
@@ -433,6 +442,10 @@ struct Workspace {
     settings: Entity<SettingsDialog>,
     /// The script extraction dialog, rendered only while it reports itself open.
     extract: Entity<ExtractDialog>,
+    /// The DB-to-DB transfer dialog, rendered only while it reports itself open.
+    transfer: Entity<TransferDialog>,
+    /// The schema backup dialog, rendered only while it reports itself open.
+    backup: Entity<BackupDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
     /// The write confirmation, while a query pane is waiting on it.
@@ -457,6 +470,10 @@ struct Workspace {
     _settings_events: Subscription,
     /// Keeps the extraction dialog subscription alive.
     _extract_events: Subscription,
+    /// Keeps the transfer dialog subscription alive.
+    _transfer_events: Subscription,
+    /// Keeps the backup dialog subscription alive.
+    _backup_events: Subscription,
     /// Records the window's placement as it is moved and resized.
     _bounds: Subscription,
 }
@@ -554,6 +571,31 @@ impl Workspace {
             },
         );
 
+        let transfer = cx.new(TransferDialog::new);
+        let transfer_events = cx.subscribe_in(
+            &transfer,
+            window,
+            |this, dialog, event, window, cx| match event {
+                TransferDialogEvent::Dismissed => {
+                    dialog.update(cx, |dialog, cx| dialog.close(cx));
+                    this.focus_shell(window, cx);
+                }
+            },
+        );
+
+        let backup = cx.new(BackupDialog::new);
+        let backup_events =
+            cx.subscribe_in(
+                &backup,
+                window,
+                |this, dialog, event, window, cx| match event {
+                    BackupDialogEvent::Dismissed => {
+                        dialog.update(cx, |dialog, cx| dialog.close(cx));
+                        this.focus_shell(window, cx);
+                    }
+                },
+            );
+
         // In memory only; the file is written once, when the window closes. See
         // [`app_settings::record_window_geometry`].
         let bounds = cx.observe_window_bounds(window, |_this, window, cx| {
@@ -575,6 +617,8 @@ impl Workspace {
             connect,
             settings,
             extract,
+            transfer,
+            backup,
             menu_open: false,
             confirm: None,
             titlebar,
@@ -583,6 +627,8 @@ impl Workspace {
             _explorer_events: explorer_events,
             _settings_events: settings_events,
             _extract_events: extract_events,
+            _transfer_events: transfer_events,
+            _backup_events: backup_events,
             _bounds: bounds,
         }
     }
@@ -1573,6 +1619,15 @@ impl Workspace {
             // nobody can stop either.
             self.extract.update(cx, |dialog, cx| dialog.close(cx));
         }
+        if self.transfer.read(cx).is_open() {
+            // Same reading, and the same drop chain — a transfer's cancel rolls
+            // back the uncommitted tail and leaves what was committed, which is
+            // §6's contract and not something closing a window can change.
+            self.transfer.update(cx, |dialog, cx| dialog.close(cx));
+        }
+        if self.backup.read(cx).is_open() {
+            self.backup.update(cx, |dialog, cx| dialog.close(cx));
+        }
     }
 
     /// Shows or hides the application dropdown menu.
@@ -1613,6 +1668,71 @@ impl Workspace {
         self.close_overlays(window, cx);
         self.extract
             .update(cx, |dialog, cx| dialog.open(target, session, cx));
+        cx.notify();
+    }
+
+    /// Opens the transfer dialog over `target`, closing whatever else was
+    /// showing.
+    ///
+    /// Nothing happens without a live session behind the object: the source
+    /// query runs on it. The dialog is handed every open connection as a
+    /// candidate target, the source's own included — a transfer into another
+    /// schema of the same database is a real one, and the bridge's lock is
+    /// reentrant — and it holds a [`connection::SessionHandle`] for whichever
+    /// it is pointed at, so that closing that tab mid-transfer leaves the
+    /// session standing until the job is done with it.
+    fn open_transfer(&mut self, target: ObjectTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.session_of(target.connection) else {
+            return;
+        };
+        let candidates = self.transfer_targets();
+        self.close_overlays(window, cx);
+        self.transfer.update(cx, |dialog, cx| {
+            dialog.open(target, session, candidates, cx)
+        });
+        cx.notify();
+    }
+
+    /// Every connection a transfer could write into: the open ones, in tab
+    /// order.
+    fn transfer_targets(&self) -> Vec<TransferTarget> {
+        self.connections
+            .iter()
+            .filter_map(|open| {
+                let ConnectionState::Open(connected) = &open.state else {
+                    return None;
+                };
+                Some(TransferTarget {
+                    connection: open.id,
+                    name: if open.profile.name.trim().is_empty() {
+                        ts!("connect.unnamed")
+                    } else {
+                        SharedString::from(open.profile.name.clone())
+                    },
+                    session: connected.handle(),
+                })
+            })
+            .collect()
+    }
+
+    /// Opens the backup dialog over `scope`, closing whatever else was showing.
+    ///
+    /// Gated on the session the same way, and holding its handle for the same
+    /// reason: the job writes a file for as long as it takes, and the tab it
+    /// was started from may be closed in the meantime.
+    fn open_backup(
+        &mut self,
+        connection: ConnectionId,
+        scope: explorer::Scope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session_of(connection) else {
+            return;
+        };
+        self.close_overlays(window, cx);
+        self.backup
+            .update(cx, |dialog, cx| dialog.open(scope, session, cx));
         cx.notify();
     }
 
@@ -1874,6 +1994,43 @@ impl Workspace {
         self.open_extract(target, window, cx);
     }
 
+    /// Opens the transfer dialog over the object selected in the explorer.
+    ///
+    /// Gated exactly as [`Workspace::extract_script_action`] is: a transfer
+    /// reads one relation's rows, so without one selected there is nothing to
+    /// copy.
+    fn transfer_table_action(
+        &mut self,
+        _: &TransferTable,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        let Some(target) = self.explorer.read(cx).selected_relation(cx) else {
+            return;
+        };
+        self.open_transfer(target, window, cx);
+    }
+
+    /// Opens the backup dialog over the scope the explorer's selection sits in.
+    ///
+    /// Gated one level wider than the transfer, exactly as
+    /// [`Workspace::open_erd_action`] is: a backup is of a *scope*, so a
+    /// schema, a folder and a table all name one and the connection root does
+    /// not.
+    fn backup_schema_action(
+        &mut self,
+        _: &BackupSchema,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        let Some((connection, scope)) = self.explorer.read(cx).selected_scope(cx) else {
+            return;
+        };
+        self.open_backup(connection, scope, window, cx);
+    }
+
     /// Draws the ERD of the scope the explorer's selection sits in.
     ///
     /// Wired exactly as [`Workspace::extract_script_action`] is, and gated one
@@ -1971,6 +2128,18 @@ impl Workspace {
             // dismissing the card would leave a job writing to a file with
             // nobody left to stop it.
             self.extract.update(cx, |dialog, cx| dialog.escape(cx));
+            return;
+        }
+        if self.transfer.read(cx).is_open() {
+            // Routed through the dialog for the extraction's reasons, and it
+            // stacks three dropdowns rather than one.
+            self.transfer.update(cx, |dialog, cx| dialog.escape(cx));
+            return;
+        }
+        if self.backup.read(cx).is_open() {
+            // No dropdown of its own, but a running job still has to take
+            // `Escape` as its cancel button rather than as a close.
+            self.backup.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }
         cx.propagate();
@@ -2128,6 +2297,10 @@ impl Workspace {
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSqlFile), cx)),
             MenuEntry::new(ts!("menu.extract_script"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ExtractScript), cx)),
+            MenuEntry::new(ts!("menu.transfer_table"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(TransferTable), cx)),
+            MenuEntry::new(ts!("menu.backup_schema"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(BackupSchema), cx)),
             MenuEntry::new(ts!("menu.erd"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+E"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenErd), cx)),
@@ -2899,6 +3072,16 @@ impl Render for Workspace {
             .read(cx)
             .is_open()
             .then(|| div().absolute().inset_0().child(self.extract.clone()));
+        let transfer = self
+            .transfer
+            .read(cx)
+            .is_open()
+            .then(|| div().absolute().inset_0().child(self.transfer.clone()));
+        let backup = self
+            .backup
+            .read(cx)
+            .is_open()
+            .then(|| div().absolute().inset_0().child(self.backup.clone()));
         let confirm = self.render_confirm(cx);
 
         // With client-side decorations the compositor stops drawing the drop
@@ -2963,6 +3146,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::query_object_action))
             .on_action(cx.listener(Self::open_sql_file_action))
             .on_action(cx.listener(Self::extract_script_action))
+            .on_action(cx.listener(Self::transfer_table_action))
+            .on_action(cx.listener(Self::backup_schema_action))
             .on_action(cx.listener(Self::open_erd_action))
             .on_action(cx.listener(Self::close_pane_action))
             .on_action(cx.listener(Self::focus_next_pane_action))
@@ -2977,6 +3162,8 @@ impl Render for Workspace {
             .children(connect)
             .children(settings)
             .children(extract)
+            .children(transfer)
+            .children(backup)
             .children(confirm);
 
         let Some(tiling) = tiling else {
@@ -3420,6 +3607,8 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.query_object"), QueryObject),
                 MenuItem::action(ts!("menu.open_sql_file"), OpenSqlFile),
                 MenuItem::action(ts!("menu.extract_script"), ExtractScript),
+                MenuItem::action(ts!("menu.transfer_table"), TransferTable),
+                MenuItem::action(ts!("menu.backup_schema"), BackupSchema),
                 MenuItem::action(ts!("menu.erd"), OpenErd),
             ],
         },

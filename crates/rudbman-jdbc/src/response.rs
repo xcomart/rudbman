@@ -362,6 +362,18 @@ pub struct JobProgress {
     pub state: JobState,
     /// Rows processed so far.
     pub rows_done: u64,
+    /// Rows a transfer dropped instead of writing.
+    ///
+    /// Counts what [`OnError::Skip`](crate::OnError::Skip) and
+    /// [`OnError::Log`](crate::OnError::Log) threw away — the count is the
+    /// complete tally either way, even though `log` stops recording the
+    /// individual errors at a hundred. Always `0` for an extraction or a
+    /// backup, which have no target to refuse a row.
+    ///
+    /// Defaulted rather than required, because a bridge older than this field
+    /// simply does not send it and `0` is the truthful reading of that.
+    #[serde(default)]
+    pub rows_skipped: u64,
     /// The total, when the caller asked for it to be counted up front.
     ///
     /// **Normally `None`**, because no `COUNT(*)` is run before the work: on a
@@ -371,10 +383,12 @@ pub struct JobProgress {
     /// Bytes written to the output file.
     ///
     /// Lags by up to one 64KB buffer while the job runs — the count is read
-    /// without flushing — and is exact once the state is terminal.
+    /// without flushing — and is exact once the state is terminal. A compressed
+    /// backup counts the bytes **after** compression, so it still matches the
+    /// file on disc. **A transfer leaves this at `0`**: there is no file.
     pub bytes: u64,
     /// What the job is working on: `starting`, `ddl`, `data:<schema>.<table>`,
-    /// then `done`.
+    /// then `done` — or, for a transfer, `starting`, `transfer`, `done`.
     ///
     /// Free text meant for a status line. Do not branch on it: the table part
     /// is a display name, not a parseable qualified identifier.
@@ -386,6 +400,11 @@ pub struct JobProgress {
     /// `failed` state always leaves one here; a `cancelled` one often does,
     /// carrying the driver's account of the statement being aborted, which is
     /// the cancel working rather than a fault.
+    ///
+    /// **Capped at a hundred entries.** A transfer under
+    /// [`OnError::Log`](crate::OnError::Log) stops recording after that and
+    /// only counts, in [`rows_skipped`](JobProgress::rows_skipped): a job where
+    /// a million rows fail cannot carry a million envelopes across JNI.
     pub errors: Vec<BridgeError>,
     /// Seconds remaining, when there is a row total to extrapolate from.
     ///
@@ -544,6 +563,24 @@ mod tests {
         // a progress bar has to be able to tell them apart.
         assert_eq!(progress.rows_total, None);
         assert_eq!(progress.eta_s, None);
+        // Absent, because an extraction has nothing to skip — and because a
+        // bridge older than the member does not send it at all.
+        assert_eq!(progress.rows_skipped, 0);
+    }
+
+    #[test]
+    fn a_transfer_reports_the_rows_it_threw_away() {
+        // No file, so no bytes; the dropped rows are counted separately from
+        // the ones that went in, or `rows_done` would claim work never done.
+        let progress: JobProgress = serde_json::from_str(
+            r#"{"state":"done","rows_done":998,"rows_skipped":2,"rows_total":null,"bytes":0,
+                "phase":"done","errors":[],"eta_s":null}"#,
+        )
+        .expect("parses");
+        assert_eq!(progress.state, JobState::Done);
+        assert_eq!(progress.rows_done, 998);
+        assert_eq!(progress.rows_skipped, 2);
+        assert_eq!(progress.bytes, 0);
     }
 
     #[test]

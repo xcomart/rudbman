@@ -20,6 +20,8 @@ menu:
   query_object: Interroger l'objet sélectionné
   open_sql_file: Ouvrir un fichier SQL…
   extract_script: Extraire un script…
+  transfer_table: Transférer les lignes…
+  backup_schema: Sauvegarder le schéma…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagramme ERD
   about: À propos de rudbman
@@ -407,6 +409,53 @@ extract:
   cancelled: "Annulé. Le fichier partiel est resté dans %{path}."
   failed: "L'extraction a échoué : %{error}"
   failed_unknown: L'extraction a échoué sans que le pont en donne la raison.
+
+transfer:
+  title: Transférer les lignes
+  object: Objet source
+  target_connection: Connexion cible
+  target_schema: Schéma cible
+  target_table: Table cible
+  mode: Mode d'écriture
+  mode_insert: Insérer chaque ligne
+  mode_upsert: Insérer, ou mettre à jour la ligne existante
+  mode_truncate: Vider d'abord la table cible
+  where: Clause WHERE
+  on_error: Pour une ligne qui ne passe pas
+  on_error_abort: Arrêter le transfert
+  on_error_skip: Ignorer la ligne
+  on_error_log: Ignorer la ligne et noter pourquoi
+  start: Transférer
+  starting: démarrage…
+  counters: "%{rows} lignes"
+  skipped: "%{skipped} ignorées"
+  cancelling: Annulation…
+  done: "%{rows} lignes transférées dans %{table}."
+  done_skipped: "%{skipped} lignes ne passaient pas et ont été ignorées."
+  cancelled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
+  failed: "Le transfert a échoué : %{error}"
+  failed_unknown: Le transfert a échoué sans que le pont en donne la raison.
+
+backup:
+  title: Sauvegarder le schéma
+  scope: Schéma
+  scope_all: Toute la base de données
+  output: Fichier de sortie
+  output_none: Aucun fichier choisi
+  browse: Parcourir…
+  compress: Compresser le fichier avec gzip
+  ddl: Inclure le schéma
+  drop: Faire précéder d'instructions DROP
+  data: Inclure les lignes
+  batch_rows: Lignes par INSERT
+  start: Sauvegarder
+  starting: démarrage…
+  counters: "%{rows} lignes, %{bytes}"
+  cancelling: Annulation…
+  done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
+  cancelled: "Annulé. Le fichier partiel est resté dans %{path}."
+  failed: "La sauvegarde a échoué : %{error}"
+  failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

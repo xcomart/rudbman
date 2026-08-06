@@ -482,8 +482,8 @@ impl ProbeRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct ExtractSpec {
     /// Always `"extract"`. The bridge dispatches the job kinds on this member,
-    /// and the other two — `backup` and `transfer` — are separate types when
-    /// they arrive, not a mode of this one.
+    /// and the other two — [`BackupSpec`] and [`TransferSpec`] — are separate
+    /// types rather than modes of this one.
     kind: &'static str,
     /// The objects to extract, in the order they should appear in the file.
     ///
@@ -806,6 +806,427 @@ pub enum DataMode {
     Template,
 }
 
+/// A DB-to-DB transfer: the request body of `JOB_START` with `kind:
+/// "transfer"` (architecture document, §6).
+///
+/// `JOB_START` is called **on the source session**; the target is named by
+/// handle in [`target_session`](TransferSpec::target_session). The rows go
+/// source `ResultSet` → target `PreparedStatement.addBatch` → `executeBatch`
+/// entirely inside the JVM, which is the whole point of the data plane: not one
+/// of them crosses the JNI boundary. Binding is `getObject`/`setObject`, so
+/// type coercion is the target driver's job, and an exotic value (an array, a
+/// vendor struct) that will not make the trip is a known edge — that row takes
+/// the [`on_error`](TransferSpec::on_error) policy.
+///
+/// **Both sessions are locked for the whole stream**, taken in ascending
+/// [`Session::handle`](crate::Session::handle) order so two transfers cannot
+/// deadlock against each other. A transfer into the session it reads from is
+/// safe — the bridge's lock is reentrant. An
+/// [`execute`](crate::Session::execute) on either session waits for the
+/// duration, which is why a UI that has to keep querying opens a third session,
+/// exactly as it does during an extraction.
+///
+/// Nothing here is validated in Rust. A malformed spec is rejected
+/// synchronously by [`Session::start_transfer`](crate::Session::start_transfer)
+/// — but only what can be judged without running anything. An error that
+/// depends on the shape of the source result set, such as a
+/// [`ColumnMapping::from`] naming a column the query does not return, is only
+/// knowable once the query runs and therefore arrives as an early
+/// [`failed`](crate::JobState::Failed) job rather than as a rejection.
+///
+/// # Progress
+///
+/// [`phase`](crate::JobProgress::phase) walks `"starting"` → `"transfer"` →
+/// `"done"`. [`bytes`](crate::JobProgress::bytes) stays `0`: there is no file.
+/// [`rows_total`](crate::JobProgress::rows_total) is `None` for the same reason
+/// an extraction's is — no `COUNT(*)` is run up front.
+///
+/// ```
+/// use rudbman_jdbc::{ObjectRef, TransferMode, TransferSpec};
+///
+/// # let target_handle = 1i64;
+/// let spec = TransferSpec::new(
+///     "select id, name from orders",
+///     target_handle,
+///     ObjectRef::new("ORDERS").with_schema("APP"),
+/// )
+/// .with_mode(TransferMode::TruncateInsert);
+/// ```
+#[derive(Clone, Debug, Serialize)]
+pub struct TransferSpec {
+    /// Always `"transfer"`.
+    kind: &'static str,
+    /// The query to run on the source session. Its result set is the input.
+    pub source_sql: String,
+    /// The target session's handle, as
+    /// [`Session::handle`](crate::Session::handle) reports it.
+    ///
+    /// A handle the bridge does not know is a synchronous rejection. The target
+    /// session must outlive the job: closing it cancels every job that uses it
+    /// from either end, source or target.
+    pub target_session: i64,
+    /// The table the rows are written into, on the target session.
+    pub target_table: ObjectRef,
+    /// What writing a row means.
+    pub mode: TransferMode,
+    /// How many rows one `addBatch` run carries before `executeBatch`.
+    pub batch_size: u32,
+    /// How many rows between commits on the target; `0` commits once at the
+    /// end.
+    ///
+    /// The target's auto-commit is turned off for the transfer and restored
+    /// afterwards. A failure or a cancel rolls back the uncommitted tail, and
+    /// **the rows committed before it stay** — [`rows_done`] says how many, so a
+    /// resume can be built on it.
+    ///
+    /// [`rows_done`]: crate::JobProgress::rows_done
+    pub commit_every: u64,
+    /// Which source column feeds which target column.
+    ///
+    /// Empty — and then absent from the wire — means the source result set's own
+    /// column names are used as the target column names, quoted by the target
+    /// dialect's rules.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub column_map: Vec<ColumnMapping>,
+    /// What a row that will not go in does to the job.
+    pub on_error: OnError,
+}
+
+impl TransferSpec {
+    /// A transfer of `source_sql`'s rows into `target_table` on
+    /// `target_session`, inserting, in batches of 500, committing every 10 000
+    /// rows, aborting on the first bad row.
+    pub fn new(
+        source_sql: impl Into<String>,
+        target_session: i64,
+        target_table: ObjectRef,
+    ) -> Self {
+        TransferSpec {
+            kind: "transfer",
+            source_sql: source_sql.into(),
+            target_session,
+            target_table,
+            mode: TransferMode::default(),
+            batch_size: 500,
+            commit_every: 10_000,
+            column_map: Vec::new(),
+            on_error: OnError::default(),
+        }
+    }
+
+    /// Sets what writing a row means.
+    pub fn with_mode(mut self, mode: TransferMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Sets how many rows one batch carries.
+    pub fn with_batch_size(mut self, rows: u32) -> Self {
+        self.batch_size = rows;
+        self
+    }
+
+    /// Sets how many rows pass between commits; `0` commits once at the end.
+    pub fn with_commit_every(mut self, rows: u64) -> Self {
+        self.commit_every = rows;
+        self
+    }
+
+    /// Adds one column mapping.
+    pub fn with_column(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
+        self.column_map.push(ColumnMapping::new(from, to));
+        self
+    }
+
+    /// Sets the whole column map, replacing whatever was there. Empty restores
+    /// "use the source's own column names".
+    pub fn with_column_map(mut self, map: impl IntoIterator<Item = ColumnMapping>) -> Self {
+        self.column_map = map.into_iter().collect();
+        self
+    }
+
+    /// Sets what a row that will not go in does to the job.
+    pub fn with_on_error(mut self, on_error: OnError) -> Self {
+        self.on_error = on_error;
+        self
+    }
+}
+
+/// What a transfer does with each row it has read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferMode {
+    /// Plain `INSERT`. The default, and the only mode that needs nothing of the
+    /// target beyond the columns.
+    #[default]
+    Insert,
+    /// Insert, or update the row already there.
+    ///
+    /// The conflict key comes from the target table's primary key metadata, so
+    /// **a target without a primary key is a synchronous rejection** rather
+    /// than a job that fails later. The statement is dialect-specific —
+    /// `ON CONFLICT … DO UPDATE` on PostgreSQL and SQLite, `ON DUPLICATE KEY
+    /// UPDATE` on MySQL and MariaDB, `MERGE` on H2, Oracle, SQL Server and Db2
+    /// — and a product the bridge does not recognise is rejected too: there is
+    /// no portable upsert, and a quietly wrong statement is worse than a
+    /// refusal.
+    Upsert,
+    /// Empty the target table, then insert.
+    ///
+    /// **The emptying is `DELETE FROM`, not `TRUNCATE`.** `TRUNCATE` differs
+    /// per product in syntax, privileges and whether it can be rolled back at
+    /// all; `DELETE` means the same thing everywhere and rolls back with the
+    /// rest of the transfer, so a failed run does not leave the target empty.
+    TruncateInsert,
+}
+
+/// One source column wired to one target column.
+#[derive(Clone, Debug, Serialize)]
+pub struct ColumnMapping {
+    /// The column name in the source result set.
+    ///
+    /// A name the query does not return cannot be caught before the query runs,
+    /// so it surfaces as a [`failed`](crate::JobState::Failed) job in the first
+    /// moments of the transfer, not as a rejected start.
+    pub from: String,
+    /// The column name in the target table.
+    pub to: String,
+}
+
+impl ColumnMapping {
+    /// A mapping from one name to another.
+    pub fn new(from: impl Into<String>, to: impl Into<String>) -> Self {
+        ColumnMapping {
+            from: from.into(),
+            to: to.into(),
+        }
+    }
+}
+
+/// What a transfer does about a row the target will not take.
+///
+/// Whichever policy drops the row, the count of dropped rows is reported as
+/// [`rows_skipped`](crate::JobProgress::rows_skipped).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnError {
+    /// The first bad row fails the job. The default: a half-copied table nobody
+    /// was told about is the worse outcome.
+    #[default]
+    Abort,
+    /// Drop the row and count it, silently.
+    Skip,
+    /// Drop the row, count it, and record why.
+    ///
+    /// The errors land in [`JobProgress::errors`](crate::JobProgress::errors),
+    /// **capped at 100**; beyond that they are only counted. A job where a
+    /// million rows fail cannot carry a million error envelopes across JNI.
+    Log,
+}
+
+/// A backup: the request body of `JOB_START` with `kind: "backup"`
+/// (architecture document, §6).
+///
+/// A backup is **an extraction with no object list**: the bridge enumerates the
+/// `TABLE`-typed tables of [`scope`](BackupSpec::scope), sorted by name, and
+/// writes them through the same core — every `CREATE`, then every foreign-key
+/// `ALTER`, then the rows. Views and routines are not written; the goal is a
+/// replayable data backup, and a scope of one schema is the unit a user
+/// actually restores.
+///
+/// The row format is `INSERT` only, with no choice to make. Several tables share
+/// one file: CSV has no table boundary in it, and a template means something
+/// different per table. That job is [`ExtractSpec`]'s.
+///
+/// Phases, cancellation and the partial file left behind by a cancel are an
+/// extraction's exactly.
+///
+/// ```
+/// use rudbman_jdbc::{BackupDataOptions, BackupSpec, Compression, DdlOptions};
+///
+/// let spec = BackupSpec::new("/tmp/app-backup.sql.gz")
+///     .with_schema("APP")
+///     .with_compress(Compression::Gzip)
+///     .with_ddl(DdlOptions::included())
+///     .with_data(BackupDataOptions::included());
+/// ```
+#[derive(Clone, Debug, Serialize)]
+pub struct BackupSpec {
+    /// Always `"backup"`.
+    kind: &'static str,
+    /// Which catalog and schema to enumerate.
+    pub scope: ScopeRef,
+    /// Where the file goes and how it is encoded.
+    ///
+    /// The charset applies to the text before compression, so a gzip backup is
+    /// still a file in the charset that was asked for once it is unpacked.
+    pub output: OutputSpec,
+    /// Whether the output stream is wrapped in gzip.
+    pub compress: Compression,
+    /// Whether and how the schema is written.
+    pub ddl: DdlOptions,
+    /// Whether and how the rows are written.
+    pub data: BackupDataOptions,
+}
+
+impl BackupSpec {
+    /// A backup of the connection's current catalog and schema, writing to
+    /// `path`, uncompressed and — until something is switched on — holding
+    /// neither schema nor rows.
+    ///
+    /// The path is resolved by the JVM, on the machine the JVM runs on. Pass an
+    /// absolute one.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        BackupSpec {
+            kind: "backup",
+            scope: ScopeRef::default(),
+            output: OutputSpec::new(path),
+            compress: Compression::default(),
+            ddl: DdlOptions::default(),
+            data: BackupDataOptions::default(),
+        }
+    }
+
+    /// Sets the whole scope, replacing whatever was there.
+    pub fn with_scope(mut self, scope: ScopeRef) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    /// Sets the exact catalog name of the scope.
+    pub fn with_catalog(mut self, catalog: impl Into<String>) -> Self {
+        self.scope.catalog = Some(catalog.into());
+        self
+    }
+
+    /// Sets the exact schema name of the scope.
+    pub fn with_schema(mut self, schema: impl Into<String>) -> Self {
+        self.scope.schema = Some(schema.into());
+        self
+    }
+
+    /// Sets the output path, encoding and record separator.
+    pub fn with_output(mut self, output: OutputSpec) -> Self {
+        self.output = output;
+        self
+    }
+
+    /// Sets the compression.
+    pub fn with_compress(mut self, compress: Compression) -> Self {
+        self.compress = compress;
+        self
+    }
+
+    /// Sets the DDL options.
+    pub fn with_ddl(mut self, ddl: DdlOptions) -> Self {
+        self.ddl = ddl;
+        self
+    }
+
+    /// Sets the data options.
+    pub fn with_data(mut self, data: BackupDataOptions) -> Self {
+        self.data = data;
+        self
+    }
+}
+
+/// The catalog and schema a backup enumerates.
+///
+/// `None` for either means "wherever the connection is pointed", the same
+/// reading [`ObjectRef`] and [`DescribeRequest`] give them — and, as there,
+/// absent and null are different things on the wire, so an unset member is not
+/// sent at all.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ScopeRef {
+    /// Exact catalog name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<String>,
+    /// Exact schema name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+}
+
+impl ScopeRef {
+    /// The connection's current catalog and schema.
+    pub fn new() -> Self {
+        ScopeRef::default()
+    }
+
+    /// Sets the exact catalog name.
+    pub fn with_catalog(mut self, catalog: impl Into<String>) -> Self {
+        self.catalog = Some(catalog.into());
+        self
+    }
+
+    /// Sets the exact schema name.
+    pub fn with_schema(mut self, schema: impl Into<String>) -> Self {
+        self.schema = Some(schema.into());
+        self
+    }
+}
+
+/// How a backup file is compressed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Compression {
+    /// Plain text. The default.
+    #[default]
+    None,
+    /// The output stream is wrapped in gzip.
+    ///
+    /// [`JobProgress::bytes`](crate::JobProgress::bytes) then counts the bytes
+    /// written to the file — **after** compression — so it still matches the
+    /// file's size on disc when the job ends.
+    Gzip,
+}
+
+/// Whether and how a backup writes the rows.
+///
+/// Deliberately not [`DataOptions`]: a backup has no `mode` to choose and no
+/// `where` to apply, because the file holds many tables. Sharing the type would
+/// mean two members that are silently ignored here.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct BackupDataOptions {
+    /// Whether to write rows at all. Off by default, which makes a
+    /// schema-only backup.
+    pub include: bool,
+    /// How many rows one `INSERT` carries.
+    ///
+    /// `1` is the default and the only portable value; Oracle has no multi-row
+    /// `VALUES` clause and the bridge clamps it back to `1` there.
+    pub insert_batch_rows: u32,
+}
+
+impl Default for BackupDataOptions {
+    /// No rows, and the batch size the bridge would have used anyway.
+    ///
+    /// Written by hand for [`DataOptions`]'s reason: a derived `0` would travel
+    /// as a row count nobody meant, and the bridge would silently clamp it back
+    /// to one.
+    fn default() -> Self {
+        BackupDataOptions {
+            include: false,
+            insert_batch_rows: 1,
+        }
+    }
+}
+
+impl BackupDataOptions {
+    /// Rows included, one row per `INSERT`.
+    pub fn included() -> Self {
+        BackupDataOptions {
+            include: true,
+            ..BackupDataOptions::default()
+        }
+    }
+
+    /// Sets how many rows one `INSERT` carries.
+    pub fn with_insert_batch_rows(mut self, rows: u32) -> Self {
+        self.insert_batch_rows = rows;
+        self
+    }
+}
+
 /// Placeholder rendered in place of a secret.
 struct Redacted;
 
@@ -1003,6 +1424,133 @@ mod tests {
         assert!(json.contains(r#""insert_batch_rows":50"#), "{json}");
         // `where` is a Rust keyword and the wire name all the same.
         assert!(json.contains(r#""where":"id > 10""#), "{json}");
+    }
+
+    #[test]
+    fn a_transfer_spec_serialises_to_the_documented_wire_shape() {
+        // The wire pin for architecture document §6. The bridge reads every one
+        // of these names by hand, and the defaults are pinned too: 500 and
+        // 10 000 are what the document says a caller who says nothing gets.
+        let spec = TransferSpec::new(
+            "select id, txt from t",
+            7,
+            ObjectRef::new("T").with_schema("PUBLIC"),
+        );
+        assert_eq!(
+            serde_json::to_string(&spec).expect("serialises"),
+            r#"{"kind":"transfer","source_sql":"select id, txt from t","#.to_string()
+                + r#""target_session":7,"target_table":{"schema":"PUBLIC","name":"T"},"#
+                + r#""mode":"insert","batch_size":500,"commit_every":10000,"#
+                // No `column_map`: absent means "use the source result set's own
+                // column names", which is not the same request as an empty map.
+                + r#""on_error":"abort"}"#
+        );
+    }
+
+    #[test]
+    fn the_transfer_words_are_the_ones_the_bridge_accepts() {
+        // `truncate_insert` is snake_case while every other enum on this wire is
+        // one lowercase word, so it is the one a rename would quietly break.
+        assert_eq!(
+            serde_json::to_string(&TransferMode::Insert).expect("serialises"),
+            r#""insert""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TransferMode::Upsert).expect("serialises"),
+            r#""upsert""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TransferMode::TruncateInsert).expect("serialises"),
+            r#""truncate_insert""#
+        );
+        assert_eq!(TransferMode::default(), TransferMode::Insert);
+
+        assert_eq!(
+            serde_json::to_string(&OnError::Abort).expect("serialises"),
+            r#""abort""#
+        );
+        assert_eq!(
+            serde_json::to_string(&OnError::Skip).expect("serialises"),
+            r#""skip""#
+        );
+        assert_eq!(
+            serde_json::to_string(&OnError::Log).expect("serialises"),
+            r#""log""#
+        );
+        assert_eq!(OnError::default(), OnError::Abort);
+    }
+
+    #[test]
+    fn a_column_map_appears_only_once_it_holds_something() {
+        let spec = TransferSpec::new("select 1", 3, ObjectRef::new("T"))
+            .with_mode(TransferMode::Upsert)
+            .with_batch_size(1)
+            .with_commit_every(0)
+            .with_column("SRC_ID", "ID")
+            .with_column("SRC_TXT", "TXT")
+            .with_on_error(OnError::Log);
+        assert_eq!(
+            serde_json::to_string(&spec).expect("serialises"),
+            r#"{"kind":"transfer","source_sql":"select 1","target_session":3,"#.to_string()
+                // The target table names neither catalog nor schema, and neither
+                // travels as a null.
+                + r#""target_table":{"name":"T"},"mode":"upsert","batch_size":1,"#
+                + r#""commit_every":0,"column_map":[{"from":"SRC_ID","to":"ID"},"#
+                + r#"{"from":"SRC_TXT","to":"TXT"}],"on_error":"log"}"#
+        );
+
+        // And setting the map back to nothing takes it off the wire again.
+        let cleared = spec.with_column_map([]);
+        assert!(
+            !serde_json::to_string(&cleared)
+                .expect("serialises")
+                .contains("column_map")
+        );
+    }
+
+    #[test]
+    fn a_backup_spec_serialises_to_the_documented_wire_shape() {
+        // An unset scope is an empty object, not a pair of nulls: the bridge
+        // reads absent as "wherever the connection is pointed".
+        let spec = BackupSpec::new("/tmp/backup.sql");
+        assert_eq!(
+            serde_json::to_string(&spec).expect("serialises"),
+            r#"{"kind":"backup","scope":{},"#.to_string()
+                + r#""output":{"path":"/tmp/backup.sql","charset":"UTF-8","newline":"\n"},"#
+                + r#""compress":"none","#
+                + r#""ddl":{"include":false,"include_drop":false,"constraints":"alter"},"#
+                // No `mode` and no `where`: a backup writes many tables to one
+                // file and INSERT is the only format that survives that.
+                + r#""data":{"include":false,"insert_batch_rows":1}}"#
+        );
+    }
+
+    #[test]
+    fn a_scoped_compressed_backup_sends_every_member_it_was_given() {
+        let spec = BackupSpec::new("/tmp/app.sql.gz")
+            .with_scope(ScopeRef::new().with_catalog("APP").with_schema("PUBLIC"))
+            .with_compress(Compression::Gzip)
+            .with_output(
+                OutputSpec::new("/tmp/app.sql.gz")
+                    .with_charset("EUC-KR")
+                    .with_newline(Newline::Crlf),
+            )
+            .with_ddl(DdlOptions::included().with_drop(true))
+            .with_data(BackupDataOptions::included().with_insert_batch_rows(100));
+        assert_eq!(
+            serde_json::to_string(&spec).expect("serialises"),
+            r#"{"kind":"backup","scope":{"catalog":"APP","schema":"PUBLIC"},"#.to_string()
+                + r#""output":{"path":"/tmp/app.sql.gz","charset":"EUC-KR","newline":"\r\n"},"#
+                + r#""compress":"gzip","#
+                + r#""ddl":{"include":true,"include_drop":true,"constraints":"alter"},"#
+                + r#""data":{"include":true,"insert_batch_rows":100}}"#
+        );
+
+        // A scope with only a schema leaves the catalog off entirely.
+        let json = serde_json::to_string(&BackupSpec::new("/tmp/s.sql").with_schema("APP"))
+            .expect("serialises");
+        assert!(json.contains(r#""scope":{"schema":"APP"}"#), "{json}");
+        assert_eq!(Compression::default(), Compression::None);
     }
 
     #[test]

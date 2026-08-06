@@ -20,6 +20,8 @@ menu:
   query_object: 選択したオブジェクトを照会
   open_sql_file: SQL ファイルを開く…
   extract_script: スクリプトを抽出…
+  transfer_table: 行を転送…
+  backup_schema: スキーマをバックアップ…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER図
   about: rudbman について
@@ -407,6 +409,53 @@ extract:
   cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
+
+transfer:
+  title: 行の転送
+  object: 転送元オブジェクト
+  target_connection: 転送先の接続
+  target_schema: 転送先スキーマ
+  target_table: 転送先テーブル
+  mode: 書き込み方法
+  mode_insert: すべての行を挿入する
+  mode_upsert: 挿入し、既にある行は更新する
+  mode_truncate: 転送先を空にしてから挿入する
+  where: WHERE 句
+  on_error: 入らなかった行の扱い
+  on_error_abort: 転送を中止する
+  on_error_skip: その行を飛ばす
+  on_error_log: 行を飛ばして理由を記録する
+  start: 転送
+  starting: 開始しています…
+  counters: "%{rows} 行"
+  skipped: "%{skipped} 行を飛ばしました"
+  cancelling: キャンセルしています…
+  done: "%{rows} 行を %{table} に転送しました。"
+  done_skipped: "%{skipped} 行は入らなかったので飛ばしました。"
+  cancelled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
+  failed: "転送に失敗しました: %{error}"
+  failed_unknown: ブリッジが理由を示さないまま転送に失敗しました。
+
+backup:
+  title: スキーマのバックアップ
+  scope: スキーマ
+  scope_all: データベース全体
+  output: 出力ファイル
+  output_none: ファイルが未選択
+  browse: 参照…
+  compress: gzip で圧縮する
+  ddl: スキーマを含める
+  drop: 先に DROP 文を入れる
+  data: 行を含める
+  batch_rows: INSERT あたりの行数
+  start: バックアップ
+  starting: 開始しています…
+  counters: "%{rows} 行、%{bytes}"
+  cancelling: キャンセルしています…
+  done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
+  cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
+  failed: "バックアップに失敗しました: %{error}"
+  failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

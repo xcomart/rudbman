@@ -20,6 +20,8 @@ menu:
   query_object: Consultar el objeto seleccionado
   open_sql_file: Abrir archivo SQL…
   extract_script: Extraer script…
+  transfer_table: Transferir filas…
+  backup_schema: Copiar el esquema…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagrama ERD
   about: Acerca de rudbman
@@ -407,6 +409,53 @@ extract:
   cancelled: "Cancelado. El archivo parcial quedó en %{path}."
   failed: "La extracción falló: %{error}"
   failed_unknown: La extracción falló y el puente no dijo por qué.
+
+transfer:
+  title: Transferir filas
+  object: Objeto de origen
+  target_connection: Conexión de destino
+  target_schema: Esquema de destino
+  target_table: Tabla de destino
+  mode: Modo de escritura
+  mode_insert: Insertar cada fila
+  mode_upsert: Insertar, o actualizar la fila existente
+  mode_truncate: Vaciar primero la tabla de destino
+  where: Cláusula WHERE
+  on_error: Ante una fila que no entra
+  on_error_abort: Detener la transferencia
+  on_error_skip: Omitir la fila
+  on_error_log: Omitir la fila y registrar por qué
+  start: Transferir
+  starting: iniciando…
+  counters: "%{rows} filas"
+  skipped: "%{skipped} omitidas"
+  cancelling: Cancelando…
+  done: "Se transfirieron %{rows} filas a %{table}."
+  done_skipped: "%{skipped} filas no entraron y se omitieron."
+  cancelled: "Cancelado. %{rows} filas ya se habían confirmado en %{table} y siguen ahí."
+  failed: "La transferencia falló: %{error}"
+  failed_unknown: La transferencia falló y el puente no dijo por qué.
+
+backup:
+  title: Copia del esquema
+  scope: Esquema
+  scope_all: Toda la base de datos
+  output: Archivo de salida
+  output_none: Ningún archivo elegido
+  browse: Examinar…
+  compress: Comprimir el archivo con gzip
+  ddl: Incluir el esquema
+  drop: Anteponer sentencias DROP
+  data: Incluir las filas
+  batch_rows: Filas por INSERT
+  start: Copiar
+  starting: iniciando…
+  counters: "%{rows} filas, %{bytes}"
+  cancelling: Cancelando…
+  done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
+  cancelled: "Cancelado. El archivo parcial quedó en %{path}."
+  failed: "La copia falló: %{error}"
+  failed_unknown: La copia falló y el puente no dijo por qué.
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

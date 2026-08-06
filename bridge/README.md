@@ -69,9 +69,9 @@ the Rust side drop `ExceptionCheck` from the normal path.
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
-| `0x40` | `JOB_START` | session | — | JSON | JSON — **not implemented yet** |
-| `0x41` | `JOB_POLL` | job | — | — | JSON — **not implemented yet** |
-| `0x42` | `JOB_CANCEL` | job | — | — | — **not implemented yet** |
+| `0x40` | `JOB_START` | session | — | JSON `{kind, …}` | JSON `{job}` |
+| `0x41` | `JOB_POLL` | job | — | — | JSON progress |
+| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{cancelled}` |
 | `0x50` | `PROBE_DRIVER` | — | — | JSON `{jars[]}` | JSON `{classes[], services[]}` |
 
 Unimplemented codes return an ERROR envelope with `kind: "protocol"` and a
@@ -305,6 +305,120 @@ and emitting them would make the statement fail to replay.
 `arg` is the maximum row count. `arg <= 0` means the default 500; values above
 1,000,000 are clamped. No JSON is parsed on this path.
 
+### `JOB_START`, `JOB_POLL`, `JOB_CANCEL`
+
+A job is work that moves more rows than anyone wants to carry across JNI and
+takes long enough that the UI has to stay alive while it runs. **The rows never
+leave the JVM**; what crosses is a handle and, every couple of hundred
+milliseconds, a progress object. Files are written here too, on the side the data
+is on.
+
+Three kinds: `extract` (objects → script, CSV or template file), `backup` (a
+scope's tables → one script file) and `transfer` (a query on one session →
+a table on another).
+
+```json
+{ "kind": "extract",
+  "objects": [{ "catalog": null, "schema": "APP", "name": "ORDERS" }],
+  "output":  { "path": "/tmp/orders.sql", "charset": "UTF-8", "newline": "\n" },
+  "ddl":     { "include": true, "include_drop": false, "constraints": "alter" },
+  "data":    { "include": true, "mode": "insert", "insert_batch_rows": 1,
+               "template_path": null, "where": null } }
+```
+
+```json
+{ "kind": "backup",
+  "scope":    { "catalog": null, "schema": "APP" },
+  "output":   { "path": "/tmp/app.sql.gz", "charset": "UTF-8", "newline": "\n" },
+  "compress": "gzip",
+  "ddl":      { "include": true, "include_drop": false, "constraints": "alter" },
+  "data":     { "include": true, "insert_batch_rows": 1 } }
+```
+
+```json
+{ "kind": "transfer",
+  "source_sql":     "select * from orders where created_at > '2026-01-01'",
+  "target_session":  7,
+  "target_table":   { "catalog": null, "schema": "APP", "name": "ORDERS" },
+  "mode":           "insert",
+  "batch_size":     500,
+  "commit_every":   10000,
+  "column_map":     [{ "from": "ID", "to": "ORDER_ID" }],
+  "on_error":       "abort" }
+```
+
+`JOB_START` answers `{"job": <handle>}`. `JOB_POLL` answers:
+
+```json
+{ "state": "running | done | failed | cancelled",
+  "rows_done": 12000, "rows_skipped": 0, "rows_total": null,
+  "bytes": 918273, "phase": "data:APP.ORDERS", "errors": [], "eta_s": null }
+```
+
+- **A job handle dies on the first poll that reports a terminal state.** That
+  poll unregisters it in the same call; a second poll is a `protocol` error. Stop
+  polling as soon as a terminal state arrives, and never cancel afterwards.
+- **Specification errors are synchronous.** A bad `mode`, `charset`,
+  `on_error`, an unknown `target_session`, or an `upsert` whose target has no
+  primary key comes back as an ERROR envelope from `JOB_START` itself. The one
+  exception is an error that needs the query's result shape — a `column_map`
+  naming a column the source did not return — which fails the job instead.
+- `rows_total` and `eta_s` are `null`: no `COUNT(*)` is run up front.
+  `rows_skipped` is always present and is zero for everything but a transfer
+  under `on_error: skip | log`. `bytes` is zero for a transfer, which writes no
+  file, and lags by up to one buffer for the ones that do, exact at the end.
+- `errors[]` holds error-envelope objects and is **capped at 100**; past that,
+  dropped rows are only counted. `rows_skipped` is the total.
+- Cancellation sets a flag and calls `Statement.cancel()` on every statement the
+  job has in flight — two of them for a transfer. Each poll re-delivers the
+  cancel until the worker acknowledges it, because a cancel that lands in the
+  sliver before the driver enters execution cancels nothing. A cancelled job
+  keeps its partial output file.
+- `CLOSE_SESSION` cancels and unregisters the jobs that use that session, **in
+  either direction** — a transfer holds the target's connection lock too, and
+  closing it would otherwise wait on a lock only a cancel releases.
+
+**Extract and backup** write every `CREATE`, then every foreign key as
+`ALTER TABLE … ADD CONSTRAINT`, then the data. Foreign keys go last because two
+tables that reference each other cannot be created in any order at all.
+`ddl.constraints: "alter"` (the default) forces the reverse-generated DDL path,
+with the blind spots listed under `DESCRIBE`/`ddl`: lifting the keys out of a
+server's own `CREATE` text would mean parsing vendor SQL.
+
+A backup is an extract without the object list: the scope's `TABLE` entries are
+enumerated in name order — no views, no routines. The data section is reordered
+so that a table follows the tables it references, because the keys are already in
+place by then and alphabetical order would have `CHILD` rejected before `PARENT`
+exists. A reference cycle has no such order and is left in name order. The
+catalog written into the script is the one `scope.catalog` asked for, never the
+one the driver reports, so a backup does not pin itself to the source database's
+name. `compress: "gzip"` wraps the output; `bytes` then counts the compressed
+file, matching its size.
+
+**Transfer** holds both connection locks for the whole stream, taken in ascending
+session-handle order so that two transfers in opposite directions cannot
+deadlock; a transfer into its own session is safe on the reentrant lock. Values
+move by `getObject` / `setObject`, so type coercion is the target driver's
+problem and an exotic vendor type is a known edge that takes the `on_error` path.
+The target's auto-commit is turned off and restored at the end; a commit happens
+every `commit_every` rows (`0` = once at the end) and once on success. **A cancel
+or a failure rolls back the uncommitted tail and leaves what was committed**,
+which is what `rows_done` reports.
+
+- `truncate_insert` empties the target with `DELETE FROM`. `TRUNCATE` is a
+  dialect, privilege and transactionality minefield; `DELETE` means the same
+  thing everywhere and rolls back with the rest.
+- `upsert` reads its conflict key from the target's primary key and spells the
+  statement per product: `ON CONFLICT` (PostgreSQL, SQLite), `ON DUPLICATE KEY`
+  (MySQL, MariaDB), H2's `MERGE … KEY (…)`, standard `MERGE` (Oracle, SQL Server,
+  Db2). An unrecognised product has no portable form and is rejected rather than
+  guessed at.
+- `on_error: "abort"` (the default) fails the job on the first bad row. `skip`
+  and `log` roll the failed batch back to a savepoint and replay it a row at a
+  time, so one poisoned row costs only itself; `log` also records the failure.
+  Where the driver has no savepoints, those two policies fall back to one row per
+  batch, which is slower but cannot double-insert.
+
 ## `RDB1` batch codec
 
 All integers little-endian.
@@ -413,6 +527,12 @@ this is a known sharp edge, deferred with `LOB_READ`.
   the one JDBC method documented as callable from another thread.
 - Handles are never reused, so a stale handle is always reported as a stale
   handle and never mistaken for a live object.
+- A job runs on its own daemon thread and takes the session's connection lock for
+  each phase of work — a whole table stream, not a statement, because a result
+  set cannot survive another statement on the same connection. `EXECUTE` on that
+  session blocks meanwhile, so a UI that wants to keep querying during a long job
+  opens a second session. A transfer holds two such locks, taken in ascending
+  session-handle order.
 
 ## Driver isolation
 
@@ -449,6 +569,15 @@ src/main/java/comart/rudbman/bridge/
 ├── Params.java            EXECUTE parameter binding
 ├── DriverProbe.java       PROBE_DRIVER
 ├── codec/                 RDB1 encoder
+├── job/
+│   ├── Jobs.java          worker thread, progress, cancellation, the job table
+│   ├── ExtractJob.java    kind: "extract"
+│   ├── BackupJob.java     kind: "backup"
+│   ├── TransferJob.java   kind: "transfer"
+│   ├── Scripts.java       DROP and batched INSERT text, shared by the two writers
+│   ├── Literals.java      value → SQL literal or plain text, per dialect
+│   └── ScriptOut.java     counting, charset-encoding, optionally gzipped output
+├── template/              the jdbgen template engine, for extract's template mode
 └── meta/
     ├── Describe.java      DESCRIBE dispatch, the DatabaseMetaData kinds
     ├── Routines.java      procedures and functions with their parameters
@@ -456,6 +585,7 @@ src/main/java/comart/rudbman/bridge/
     ├── Ddl.java           native DDL, and reverse generation as the fallback
     ├── Dialect.java       product name → the vendor paths that apply
     ├── Ident.java         identifier quoting, only where it is needed
+    ├── Upsert.java        the per-product spelling of "insert or update"
     ├── Attempt.java       savepoint-fenced query that is allowed to fail
     ├── RsView.java        reader for metadata result sets with optional columns
     ├── SessionInfo.java   SESSION_INFO
@@ -473,8 +603,8 @@ From [jdbgen](https://github.com/comart/jdbgen) (MIT, Dennis Soungjin Park):
 - `utils/ClassUtils.java` → `DriverProbe.java`
 
 New here: primary keys, foreign keys, indexes, `type_info`, routines and
-sequences, DDL generation, the `RDB1` codec, the handle registry, cancellation
-and the error envelope.
+sequences, DDL generation, the `RDB1` codec, the handle registry, cancellation,
+the error envelope and the job layer (extract, backup, transfer).
 
 ## Tests
 
@@ -493,10 +623,20 @@ tripping rather than by asserting on strings:
   reconstruction was built from. String assertions only prove that the expected
   words appear somewhere; replaying proves that what came out is the table that
   went in.
+- `ExtractJobTest` and `BackupJobTest` run their generated scripts into a fresh
+  database and read the rows back. `TransferJobTest` reads the target through its
+  own session, which is the only evidence a transfer leaves — no file, and no row
+  ever crossed JNI.
 
 ## Known gaps
 
-- `LOB_READ` (`0x25`) and the job operations (`0x40`–`0x42`) are not implemented.
+- `LOB_READ` (`0x25`) is not implemented.
+- The `upsert` statements for Oracle, SQL Server and Db2 are written from the
+  products' documentation and are not covered by a test; only the H2 form is
+  executed here.
+- A transfer binds with `getObject` / `setObject`. Arrays and vendor structured
+  types often do not survive that between two different products; those rows take
+  the `on_error` path.
 - The batch carries a `lob_id`, but §4.5 of the architecture document specifies
   `LOB_READ` as taking `{row, col, offset, len}`. These are two different
   addressing schemes; one of them has to go. The cursor currently records

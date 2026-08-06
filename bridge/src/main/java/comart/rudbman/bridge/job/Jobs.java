@@ -13,6 +13,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -101,9 +102,13 @@ public final class Jobs {
             case "extract":
                 job = new ExtractJob(session, spec);
                 break;
+            case "transfer":
+                job = new TransferJob(session, spec);
+                break;
+            case "backup":
+                job = new BackupJob(session, spec);
+                break;
             default:
-                // "transfer" and "backup" are architecture.md 6 as well; they
-                // arrive in M6 as further subclasses, not as changes here.
                 throw new BridgeException("protocol", "unknown job kind '" + kind + "'");
         }
         job.register();
@@ -152,11 +157,17 @@ public final class Jobs {
      * is taken: the worker is holding that lock and only a statement cancel will
      * make it let go.
      *
+     * <p>The test is {@link Job#uses(Session)}, not "is this the session the job
+     * was started on". A transfer holds the target session's lock for its whole
+     * run while being registered against the source, so a filter on the owning
+     * session alone would let {@code CLOSE_SESSION} on the target wait forever
+     * for a lock only a cancel can release.
+     *
      * @param session the session being closed
      */
     public static void cancelAll(Session session) {
         for (Job job : new ArrayList<>(LIVE.values())) {
-            if (job.session() == session) {
+            if (job.uses(session)) {
                 job.cancel();
                 job.unregister();
             }
@@ -187,6 +198,28 @@ public final class Jobs {
         private static final String FAILED = "failed";
         private static final String CANCELLED = "cancelled";
 
+        /**
+         * Cancellation slot for the statement a job reads from - the only one an
+         * extract or a backup has.
+         */
+        protected static final int SOURCE = 0;
+
+        /** Cancellation slot for the statement a transfer writes through. */
+        protected static final int TARGET = 1;
+
+        /** How many statements one job can have in flight at once. */
+        private static final int SLOTS = 2;
+
+        /**
+         * How many failures {@code errors[]} carries before it stops growing.
+         *
+         * <p>A million-row transfer with {@code on_error: "log"} and a broken
+         * target can fail every row, and that array crosses the JNI boundary on
+         * every poll. Past the cap the failures are only counted, which is what
+         * {@code rows_skipped} already reports.
+         */
+        private static final int MAX_ERRORS = 100;
+
         private final Session session;
         private final String kind;
         private long handle;
@@ -195,16 +228,22 @@ public final class Jobs {
         private volatile String phase = "starting";
         private volatile boolean cancelRequested;
         private volatile long rowsDone;
+        private volatile long rowsSkipped;
         private volatile long rowsTotal = -1;
         private volatile long bytes;
         private final long startedNanos = System.nanoTime();
 
         /**
-         * The statement a cancel has to interrupt. Volatile and nulled as soon as
-         * the statement is done with, so that a cancel arriving a moment late
-         * does not touch a closed statement.
+         * The statements a cancel has to interrupt, by slot. Each entry is
+         * cleared as soon as its statement is done with, so that a cancel
+         * arriving a moment late does not touch a closed statement.
+         *
+         * <p>There is more than one because a transfer streams a source result
+         * set into a target batch: both statements are alive at the same time and
+         * a cancel that only reached one of them would leave the other blocked.
          */
-        private volatile Statement inFlight;
+        private final AtomicReferenceArray<Statement> inFlight =
+                new AtomicReferenceArray<>(SLOTS);
 
         /** Errors collected so far, in the ERROR envelope's shape. */
         private final List<JsonObject> errors = new ArrayList<>();
@@ -223,6 +262,21 @@ public final class Jobs {
         /** @return the session this job runs on. */
         public final Session session() {
             return session;
+        }
+
+        /**
+         * Answers whether this job touches a session, in either direction.
+         *
+         * <p>{@code CLOSE_SESSION} asks this before it takes the connection lock.
+         * The default is the session the job was started on; a job that also
+         * holds a second connection - a transfer's target - has to say so, or
+         * closing that second session waits on a lock nothing will release.
+         *
+         * @param s a session being closed
+         * @return whether this job holds or uses {@code s}
+         */
+        public boolean uses(Session s) {
+            return session == s;
         }
 
         /** @return this job's registry handle. */
@@ -286,7 +340,9 @@ public final class Jobs {
                 }
                 LOG.log(Level.FINE, "job " + handle + " ended abnormally", t);
             } finally {
-                inFlight = null;
+                for (int i = 0; i < SLOTS; i++) {
+                    inFlight.set(i, null);
+                }
             }
         }
 
@@ -328,7 +384,18 @@ public final class Jobs {
          * @param stmt the statement, or {@code null} to clear
          */
         protected final void inFlight(Statement stmt) {
-            inFlight = stmt;
+            inFlight(SOURCE, stmt);
+        }
+
+        /**
+         * Publishes one of the statements a cancel should interrupt.
+         *
+         * @param slot {@link #SOURCE} or {@link #TARGET}; the two are
+         *             independent, so clearing one leaves the other armed
+         * @param stmt the statement, or {@code null} to clear
+         */
+        protected final void inFlight(int slot, Statement stmt) {
+            inFlight.set(slot, stmt);
             if (stmt != null && cancelRequested) {
                 cancelStatement(stmt);
             }
@@ -349,11 +416,18 @@ public final class Jobs {
                 return false;
             }
             cancelRequested = true;
-            Statement stmt = inFlight;
-            if (stmt != null) {
-                cancelStatement(stmt);
-            }
+            cancelInFlight();
             return true;
+        }
+
+        /** Issues {@link Statement#cancel()} on every statement still armed. */
+        private void cancelInFlight() {
+            for (int i = 0; i < SLOTS; i++) {
+                Statement stmt = inFlight.get(i);
+                if (stmt != null) {
+                    cancelStatement(stmt);
+                }
+            }
         }
 
         private static void cancelStatement(Statement stmt) {
@@ -400,6 +474,15 @@ public final class Jobs {
         }
 
         /**
+         * @param n rows dropped since the last call, under a transfer's
+         *          {@code on_error} policy of {@code skip} or {@code log}. An
+         *          extract or a backup never calls this and reports zero.
+         */
+        protected final void addSkipped(long n) {
+            rowsSkipped += n;
+        }
+
+        /**
          * @param n bytes written since the last call
          */
         protected final void addBytes(long n) {
@@ -417,11 +500,18 @@ public final class Jobs {
         /**
          * Records a failure that did not stop the job.
          *
+         * <p>Capped at {@value #MAX_ERRORS} entries. Past the cap the failure is
+         * dropped rather than appended: the array travels across JNI on every
+         * poll, and the count the caller actually needs is already in
+         * {@code rows_skipped}.
+         *
          * @param t the failure
          */
         protected final void addError(Throwable t) {
             synchronized (this) {
-                errors.add(Envelope.describe(t));
+                if (errors.size() < MAX_ERRORS) {
+                    errors.add(Envelope.describe(t));
+                }
             }
         }
 
@@ -436,7 +526,8 @@ public final class Jobs {
          * sees the final numbers with it.
          *
          * @return the progress object of architecture.md 6:
-         *         {@code {state, rows_done, rows_total, bytes, phase, errors[], eta_s}}
+         *         {@code {state, rows_done, rows_skipped, rows_total, bytes,
+         *         phase, errors[], eta_s}}
          */
         public final JsonObject progress() {
             // A requested cancel is re-armed on every reading until the worker
@@ -448,14 +539,14 @@ public final class Jobs {
             // very call that needed cancelling. The poller is already knocking
             // every 200ms; each knock re-delivers the cancel until it lands.
             if (cancelRequested && !isTerminal()) {
-                Statement stmt = inFlight;
-                if (stmt != null) {
-                    cancelStatement(stmt);
-                }
+                cancelInFlight();
             }
             JsonObject o = new JsonObject();
             o.addProperty("state", state);
             o.addProperty("rows_done", rowsDone);
+            // Always present, zero for the jobs that cannot skip a row, so that
+            // one progress shape serves every kind.
+            o.addProperty("rows_skipped", rowsSkipped);
             // Absent rather than zero: a client that draws a determinate progress
             // bar has to be able to tell "no rows yet" from "no idea how many".
             o.addProperty("rows_total", rowsTotal < 0 ? null : rowsTotal);
