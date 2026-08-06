@@ -20,6 +20,8 @@ menu:
   query_object: 선택한 객체 조회
   open_sql_file: SQL 파일 열기…
   extract_script: 스크립트 추출…
+  # Draws the ERD of the scope the explorer's selection sits in.
+  erd: ERD 다이어그램
   about: rudbman 정보
   quit: 종료
   connection: 연결
@@ -405,3 +407,16 @@ extract:
   cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
   failed: "추출에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 추출에 실패했습니다.
+
+# The ERD panel: one schema's tables and the foreign keys between them.
+erd:
+  tab: "ERD — %{scope}"
+  tab_all: ERD
+  loading: 불러오는 중…
+  load_failed: "다이어그램을 그리지 못했습니다: %{error}"
+  empty: 이 스키마에는 테이블이 없습니다.
+  auto_arrange: 자동 배치
+  export_svg: SVG 내보내기…
+  export_done: "%{path}에 저장했습니다."
+  export_failed: "다이어그램을 저장하지 못했습니다: %{error}"
+  refresh: 새로 고침

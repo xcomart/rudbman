@@ -37,6 +37,8 @@ mod caption;
 mod connection;
 mod connection_dialog;
 mod driver_manager;
+mod erd_layout;
+mod erd_pane;
 mod explorer;
 mod extract_dialog;
 mod i18n;
@@ -84,6 +86,8 @@ use app_settings::WindowGeometry;
 use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
+use erd_layout::ErdLayouts;
+use erd_pane::{ErdDiagram, ErdPane, ErdPaneEvent, ErdTarget};
 use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
 use extract_dialog::{ExtractDialog, ExtractDialogEvent};
 use i18n::ts;
@@ -125,6 +129,8 @@ actions!(
         OpenSqlFile,
         /// Open the extraction dialog over the object selected in the explorer.
         ExtractScript,
+        /// Draw the ERD of the scope the explorer's selection sits in.
+        OpenErd,
         /// Close the open dialog or dropdown menu, if there is one.
         DismissDialog,
     ]
@@ -369,6 +375,19 @@ impl ConnectionState {
             ConnectionState::Failed(_) | ConnectionState::Dead(_) => TabStatus::Error,
         }
     }
+}
+
+/// What the keyboard is being handed to when a tab comes to the front.
+///
+/// Resolved out of the pane tree *before* anything is focused, because reading
+/// the tree borrows the application immutably and focusing borrows it mutably.
+enum FocusTarget {
+    /// A query pane; the caret goes into its editor.
+    Query(Entity<QueryPane>),
+    /// A diagram; the keyboard goes onto its canvas.
+    Erd(Entity<ErdPane>),
+    /// Anything with nothing to type into, and the empty pane.
+    Shell,
 }
 
 /// A query pane's write confirmation, waiting for an answer.
@@ -738,6 +757,130 @@ impl Workspace {
         self.append_tab(PaneItem::TableDetail(panel), window, cx);
     }
 
+    /// Draws the ERD of one scope, or brings the open one to the front.
+    ///
+    /// The same navigation rule the detail panels follow: a second diagram of
+    /// one scope would show exactly what the first one does, and — unlike a
+    /// second query pane — there is nothing of the user's in it to keep apart.
+    ///
+    /// Nothing happens without a session behind the scope. The panel's whole
+    /// content is a fetch, so a diagram over a dead connection would be a tab
+    /// that can only ever say "the connection is closed".
+    fn open_erd(&mut self, target: ErdTarget, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((pane, index)) = self.erd_tab(&target, cx) {
+            self.activate_tab(pane, index, window, cx);
+            return;
+        }
+        if self.session_of(target.connection).is_none() {
+            return;
+        }
+
+        let panel = cx.new(|cx| ErdPane::new(target, cx));
+        // Subscribe first, *then* ask, for the reason `ErdPane::new` does not
+        // emit: a request from a constructor reaches nobody.
+        cx.subscribe(&panel, |workspace, panel, event, cx| match event {
+            ErdPaneEvent::Load(target) => {
+                workspace.load_erd(panel.clone(), (**target).clone(), cx);
+            }
+            ErdPaneEvent::LayoutChanged(target) => {
+                let positions = panel.read(cx).positions(cx);
+                workspace.save_erd_layout(target, positions, cx);
+            }
+        })
+        .detach();
+        panel.update(cx, |panel, cx| panel.refresh(cx));
+        self.append_tab(PaneItem::Erd(panel.clone()), window, cx);
+        // A diagram opened with the keyboard should answer the keyboard: the
+        // zoom and auto-arrange chords are the canvas's, and until the fetch
+        // comes back the panel's own root stands in for it.
+        panel.update(cx, |panel, cx| panel.take_focus(window, cx));
+    }
+
+    /// Fetches one diagram: the catalogue, and the arrangement it was left in.
+    ///
+    /// Both on one background task. They are wanted at the same moment and
+    /// handing them to [`ErdPane::deliver`] separately would draw the grid
+    /// layout for a frame and then jump.
+    ///
+    /// A layout file that cannot be read is logged and treated as absent: the
+    /// diagram is worth drawing in its default arrangement, and a schema the
+    /// user can see beats an error about a file they did not write.
+    fn load_erd(&mut self, panel: Entity<ErdPane>, target: ErdTarget, cx: &mut Context<Self>) {
+        let Some(session) = self.session_of(target.connection) else {
+            let message = ts!("explorer.disconnected");
+            cx.defer(move |cx| {
+                panel.update(cx, |panel, cx| panel.deliver(Err(message), cx));
+            });
+            return;
+        };
+        let profile = self.profile_of(target.connection);
+
+        let fetch = cx.background_spawn(async move {
+            let model = erd_pane::load_model(session.session(), &target)?;
+            let saved = profile
+                .map(|profile| match ErdLayouts::load(profile) {
+                    Ok(layouts) => layouts.positions(&target.scope),
+                    Err(error) => {
+                        log::warn!("the saved ERD layout could not be read: {error:#}");
+                        HashMap::new()
+                    }
+                })
+                .unwrap_or_default();
+            Ok::<ErdDiagram, String>(ErdDiagram { model, saved })
+        });
+        cx.spawn(async move |_workspace, cx| {
+            let outcome = fetch.await.map_err(SharedString::from);
+            panel
+                .update(cx, |panel, cx| panel.deliver(outcome, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Writes one scope's box positions to `erd/<profile-uuid>.json`.
+    ///
+    /// Once per gesture, because [`ErdPaneEvent::LayoutChanged`] arrives once
+    /// per gesture — the same discipline the sidebar's width follows, and for
+    /// the same reason: a file written per frame would be the only thing in the
+    /// frame doing work.
+    ///
+    /// Read, edit and write happen together on one background task. Two
+    /// gestures finishing at once therefore settle as last writer wins, which
+    /// for one user dragging one box is the only outcome there is.
+    fn save_erd_layout(
+        &mut self,
+        target: &ErdTarget,
+        positions: HashMap<String, (f32, f32)>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(profile) = self.profile_of(target.connection) else {
+            return;
+        };
+        let scope = target.scope.clone();
+        cx.background_spawn(async move {
+            let mut layouts = ErdLayouts::load(profile).unwrap_or_else(|error| {
+                log::warn!("the saved ERD layout could not be read: {error:#}");
+                ErdLayouts::default()
+            });
+            layouts.set_positions(&scope, positions);
+            if let Err(error) = layouts.save(profile) {
+                log::error!("the ERD layout could not be saved: {error:#}");
+            }
+        })
+        .detach();
+    }
+
+    /// The profile one open connection was created from.
+    ///
+    /// The layout file is keyed by it rather than by [`ConnectionId`], which
+    /// lives only as long as the tab does.
+    fn profile_of(&self, connection: ConnectionId) -> Option<uuid::Uuid> {
+        self.connections
+            .iter()
+            .find(|open| open.id == connection)
+            .map(|open| open.profile.id)
+    }
+
     /// Opens a query pane in the active pane, with `sql` already in it.
     ///
     /// Nothing happens without a live session: a SQL editor with no connection
@@ -823,7 +966,7 @@ impl Workspace {
         let area = self.work_area()?;
         match area.panes.get(area.active())?.active()? {
             PaneItem::Query { pane, .. } => Some(pane),
-            PaneItem::TableDetail(_) => None,
+            PaneItem::TableDetail(_) | PaneItem::Erd(_) => None,
         }
     }
 
@@ -834,6 +977,15 @@ impl Workspace {
             .leaves()
             .into_iter()
             .find_map(|(id, pane)| pane.detail_of(target, cx).map(|index| (id, index)))
+    }
+
+    /// Where `target`'s diagram is already open, if it is.
+    fn erd_tab(&self, target: &ErdTarget, cx: &App) -> Option<(PaneId, usize)> {
+        self.work_area()?
+            .panes
+            .leaves()
+            .into_iter()
+            .find_map(|(id, pane)| pane.erd_of(target, cx).map(|index| (id, index)))
     }
 
     /// Appends a tab to the active pane and brings it to the front.
@@ -929,21 +1081,25 @@ impl Workspace {
     /// tab has nothing to type into.
     ///
     /// A query pane takes the caret into its editor, which is what makes closing
-    /// the tab in front of one leave the user typing where they were. A detail
-    /// panel and an empty pane fall back to the shell, whose handlers are what
-    /// keep the menu rows and the shortcuts alive.
+    /// the tab in front of one leave the user typing where they were. An ERD
+    /// takes the keyboard onto its canvas, where the zoom and auto-arrange
+    /// chords are bound. A detail panel and an empty pane fall back to the
+    /// shell, whose handlers are what keep the menu rows and the shortcuts
+    /// alive.
     fn focus_active_tab(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        let query = match self
+        let target = match self
             .work_area()
             .and_then(|area| area.panes.get(pane))
             .and_then(Pane::active)
         {
-            Some(PaneItem::Query { pane, .. }) => Some(pane.clone()),
-            _ => None,
+            Some(PaneItem::Query { pane, .. }) => FocusTarget::Query(pane.clone()),
+            Some(PaneItem::Erd(panel)) => FocusTarget::Erd(panel.clone()),
+            Some(PaneItem::TableDetail(_)) | None => FocusTarget::Shell,
         };
-        match query {
-            Some(pane) => pane.update(cx, |pane, cx| pane.focus_editor(window, cx)),
-            None => self.focus_shell(window, cx),
+        match target {
+            FocusTarget::Query(pane) => pane.update(cx, |pane, cx| pane.focus_editor(window, cx)),
+            FocusTarget::Erd(panel) => panel.update(cx, |panel, cx| panel.take_focus(window, cx)),
+            FocusTarget::Shell => self.focus_shell(window, cx),
         }
     }
 
@@ -1376,6 +1532,11 @@ impl Workspace {
             Some(PaneItem::TableDetail(panel)) => {
                 panel.read(cx).focus_handle(cx).contains_focused(window, cx)
             }
+            // Two handles, for the reason a query pane has two: the canvas
+            // takes the focus for itself when a box is pressed, and an ERD
+            // whose canvas held the keyboard would strand it exactly as
+            // [`Workspace::reclaim_focus`] describes.
+            Some(PaneItem::Erd(panel)) => panel.read(cx).contains_focus(window, cx),
             None => false,
         }
     }
@@ -1713,6 +1874,22 @@ impl Workspace {
         self.open_extract(target, window, cx);
     }
 
+    /// Draws the ERD of the scope the explorer's selection sits in.
+    ///
+    /// Wired exactly as [`Workspace::extract_script_action`] is, and gated one
+    /// level wider: a diagram is of a *scope*, so a schema, a folder and a
+    /// table all name one and the connection root does not. The panel opens on
+    /// the connection the selected node belongs to rather than on the tab
+    /// showing, which is the same thing today and would not be if the sidebar
+    /// ever drew more than one root.
+    fn open_erd_action(&mut self, _: &OpenErd, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_menu_open(false, cx);
+        let Some((connection, scope)) = self.explorer.read(cx).selected_scope(cx) else {
+            return;
+        };
+        self.open_erd(ErdTarget { connection, scope }, window, cx);
+    }
+
     /// Closes the active pane.
     fn close_pane_action(&mut self, _: &ClosePane, window: &mut Window, cx: &mut Context<Self>) {
         self.close_active_pane(window, cx);
@@ -1951,6 +2128,9 @@ impl Workspace {
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSqlFile), cx)),
             MenuEntry::new(ts!("menu.extract_script"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ExtractScript), cx)),
+            MenuEntry::new(ts!("menu.erd"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+E"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenErd), cx)),
             MenuEntry::new(ts!("menu.toggle_explorer"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
@@ -2541,6 +2721,7 @@ fn render_pane(
             let body = match payload.active() {
                 Some(PaneItem::TableDetail(panel)) => panel.clone().into_any_element(),
                 Some(PaneItem::Query { pane, .. }) => pane.clone().into_any_element(),
+                Some(PaneItem::Erd(panel)) => panel.clone().into_any_element(),
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
                 // — never because there is nothing to connect to.
@@ -2782,6 +2963,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::query_object_action))
             .on_action(cx.listener(Self::open_sql_file_action))
             .on_action(cx.listener(Self::extract_script_action))
+            .on_action(cx.listener(Self::open_erd_action))
             .on_action(cx.listener(Self::close_pane_action))
             .on_action(cx.listener(Self::focus_next_pane_action))
             .on_action(cx.listener(Self::focus_prev_pane_action))
@@ -3238,6 +3420,7 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.query_object"), QueryObject),
                 MenuItem::action(ts!("menu.open_sql_file"), OpenSqlFile),
                 MenuItem::action(ts!("menu.extract_script"), ExtractScript),
+                MenuItem::action(ts!("menu.erd"), OpenErd),
             ],
         },
         Menu {
@@ -3284,6 +3467,13 @@ fn bind_shortcuts(cx: &mut App) {
             QueryObject,
             Some(explorer::KEY_CONTEXT),
         ),
+        // Scoped to the sidebar for the same reason: it acts on what is
+        // selected there, and `Ctrl+E` is a line command in several editors.
+        KeyBinding::new(
+            &format!("{modifier}-e"),
+            OpenErd,
+            Some(explorer::KEY_CONTEXT),
+        ),
         KeyBinding::new("escape", DismissDialog, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-w"), ClosePane, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-]"), FocusNextPane, Some(KEY_CONTEXT)),
@@ -3321,6 +3511,7 @@ fn main() {
         // contexts the shell's own bindings have to be able to outrank.
         rudbman_editor::init(cx);
         rudbman_grid::init(cx);
+        rudbman_erd::init(cx);
         bind_shortcuts(cx);
         cx.set_menus(app_menus());
 
@@ -3822,6 +4013,18 @@ mod tests {
         workspace.work_area().expect("a connection tab is open")
     }
 
+    /// The scope of `connection`'s public schema, which is what a diagram is
+    /// drawn over.
+    fn erd_target(connection: ConnectionId) -> ErdTarget {
+        ErdTarget {
+            connection,
+            scope: explorer::Scope {
+                catalog: None,
+                schema: Some("PUBLIC".to_string()),
+            },
+        }
+    }
+
     /// An object of `connection` in the public schema.
     fn object(connection: ConnectionId, name: &str) -> ObjectTarget {
         ObjectTarget {
@@ -3998,6 +4201,181 @@ mod tests {
                 );
             })
             .expect("the window is open");
+    }
+
+    /// The ERD's end of the tab discipline: one diagram per scope, opened by
+    /// the action the menu row dispatches, and a focus that comes back to the
+    /// shell when the tab is closed.
+    #[gpui::test]
+    fn an_erd_opens_once_per_scope_and_the_action_finds_it(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2("erd-tabs", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_object(object(id, "ORDERS"), window, cx);
+                workspace.open_erd(erd_target(id), window, cx);
+
+                let pane = active_pane(workspace);
+                let titles = tab_titles(workspace, pane, cx);
+                assert_eq!(titles.len(), 2, "{titles:?}");
+                assert_eq!(titles[1], ts!("erd.tab", scope = "PUBLIC").to_string());
+                assert_eq!(active_tab(workspace, pane), 1);
+                // A diagram is not a query, so the status bar's own cells stay
+                // empty over one.
+                assert!(workspace.active_query().is_none());
+                pane
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                // Back to the detail tab, and then the same scope again: a
+                // navigation, not a second copy.
+                workspace.activate_tab(pane, 0, window, cx);
+                assert_eq!(active_tab(workspace, pane), 0);
+
+                workspace.open_erd(erd_target(id), window, cx);
+                assert_eq!(
+                    tab_titles(workspace, pane, cx).len(),
+                    2,
+                    "the same scope opened a second tab"
+                );
+                assert_eq!(active_tab(workspace, pane), 1);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // And through the action the menu row and the shortcut dispatch, which
+        // reads the explorer's selection rather than being handed a target.
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.activate_tab(pane, 0, window, cx);
+                workspace.explorer.update(cx, |explorer, cx| {
+                    explorer.select(
+                        NodeId::Folder {
+                            connection: id,
+                            scope: explorer::Scope {
+                                catalog: None,
+                                schema: Some("PUBLIC".to_string()),
+                            },
+                            folder: explorer::Folder::Tables,
+                        },
+                        cx,
+                    );
+                });
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        cx.dispatch_action(OpenErd);
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                assert_eq!(
+                    tab_titles(workspace, pane, cx).len(),
+                    2,
+                    "the action opened a diagram beside the one already showing"
+                );
+                assert_eq!(active_tab(workspace, pane), 1);
+
+                // With the keyboard inside the diagram, closing it has to hand
+                // the keyboard on: the panel stops being rendered, and gpui
+                // resolves actions against the last drawn frame.
+                workspace.focus_active_tab(pane, window, cx);
+                assert!(
+                    workspace.pane_holds_focus(pane, window, cx),
+                    "the diagram did not take the keyboard"
+                );
+                workspace.close_tab(pane, 1, window, cx);
+                assert_eq!(tab_titles(workspace, pane, cx), ["PUBLIC.ORDERS"]);
+                assert!(
+                    workspace.focus_handle.is_focused(window),
+                    "a detail panel has nothing to type into, so the shell takes over"
+                );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// The whole thread, over a real database: the loader reaches H2, the
+    /// panel is handed a model, and moving a box writes the layout file that
+    /// the next open reads back.
+    #[gpui::test]
+    fn a_diagram_loads_from_the_database_and_its_layout_survives(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2("erd-load", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        // A schema of this connection's own, so the diagram has a foreign key
+        // in it whatever else the H2 instance holds. Outside the update: the
+        // call blocks, and the rule the shell itself follows is that nothing
+        // blocking runs inside one.
+        let session = window
+            .update(&mut cx, |workspace, _window, _cx| {
+                workspace.session_of(id).expect("the session is live")
+            })
+            .expect("the window is open");
+        for sql in [
+            "create schema if not exists ERD",
+            "create table ERD.TEAM (ID int primary key, NAME varchar(40))",
+            "create table ERD.PERSON (ID int primary key, TEAM_ID int not null, \
+                 constraint FK_ERD_PERSON_TEAM foreign key (TEAM_ID) references ERD.TEAM(ID))",
+        ] {
+            session
+                .session()
+                .execute(&rudbman_jdbc::StatementSpec::new(sql))
+                .unwrap_or_else(|error| panic!("{sql}: {error}"));
+        }
+        drop(session);
+
+        let target = ErdTarget {
+            connection: id,
+            scope: explorer::Scope {
+                catalog: None,
+                schema: Some("ERD".to_string()),
+            },
+        };
+        let panel = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_erd(target.clone(), window, cx);
+                let pane = active_pane(workspace);
+                match area(workspace)
+                    .panes
+                    .get(pane)
+                    .expect("the pane is in the tree")
+                    .active()
+                {
+                    Some(PaneItem::Erd(panel)) => panel.clone(),
+                    other => panic!("the ERD is not the tab on top: {other:?}"),
+                }
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        let positions = window
+            .update(&mut cx, |_workspace, _window, cx| {
+                let panel = panel.read(cx);
+                assert!(!panel.is_loading(), "the fetch never came back");
+                assert_eq!(panel.failure(), None);
+                assert_eq!(panel.table_count(), Some(2));
+                panel.positions(cx)
+            })
+            .expect("the window is open");
+        assert!(positions.contains_key("PERSON"), "{positions:?}");
+        assert!(positions.contains_key("TEAM"), "{positions:?}");
+
+        // What a drag amounts to, without the mouse: the file is written from
+        // the event the canvas raises, and the workspace is what writes it.
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("layout.json");
+        let mut layouts = ErdLayouts::default();
+        layouts.set_positions(&target.scope, positions);
+        layouts.save_to(&path).expect("the layout is written");
+
+        let read = ErdLayouts::load_from(&path).expect("the layout is read back");
+        let saved = read.positions(&target.scope);
+        assert_eq!(saved.len(), 2, "{saved:?}");
+        assert!(saved.contains_key("PERSON"));
     }
 
     /// Closing a connection tab takes its whole work area with it.

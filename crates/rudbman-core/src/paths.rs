@@ -17,7 +17,7 @@
 //! [`settings_file`], [`connections_file`], [`drivers_file`],
 //! [`known_hosts_file`]. What has no fixed number of members gets a
 //! subdirectory instead: [`ui_themes_dir`], [`editor_themes_dir`],
-//! [`snippets_dir`] and [`drivers_dir`].
+//! [`snippets_dir`], [`drivers_dir`] and [`erd_layouts_dir`].
 
 use std::ffi::OsString;
 use std::fs;
@@ -53,6 +53,9 @@ const DRIVERS_DIR_NAME: &str = "drivers";
 
 /// Name of the directory holding the user's saved SQL snippets.
 const SNIPPETS_DIR_NAME: &str = "snippets";
+
+/// Name of the directory holding saved ERD box positions.
+const ERD_DIR_NAME: &str = "erd";
 
 /// Byte order mark that Windows editors readily prepend to UTF-8 files.
 const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -176,6 +179,24 @@ pub fn snippets_dir() -> Result<PathBuf> {
     Ok(config_dir()?.join(SNIPPETS_DIR_NAME))
 }
 
+/// Directory holding the saved layouts of the ERD canvas (`erd`).
+///
+/// One `<profile-uuid>.json` per connection profile, holding a table's box
+/// position per scope (architecture document, §8). Keyed by the *profile* and
+/// not by the open connection, because a diagram arranged on staging is worth
+/// keeping when that tab is closed and opened again — and two tabs on one
+/// profile are two views of the same schema, so they share an arrangement.
+///
+/// Like [`config_dir`], the directory is not created by this call; a user who
+/// has never opened a diagram simply has none.
+///
+/// # Errors
+///
+/// Fails when no home directory can be determined for the current user.
+pub fn erd_layouts_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join(ERD_DIR_NAME))
+}
+
 /// Build a unique temporary path next to `path`.
 ///
 /// Keeping the temporary file in the same directory guarantees that the final
@@ -239,7 +260,7 @@ mod tests {
     #[test]
     fn config_paths_share_the_config_directory() {
         let dir = config_dir().expect("config dir");
-        let cases: [(PathBuf, &str); 8] = [
+        let cases: [(PathBuf, &str); 9] = [
             (settings_file().expect("settings"), SETTINGS_FILE_NAME),
             (
                 connections_file().expect("connections"),
@@ -257,6 +278,7 @@ mod tests {
             ),
             (drivers_dir().expect("driver jars"), DRIVERS_DIR_NAME),
             (snippets_dir().expect("snippets"), SNIPPETS_DIR_NAME),
+            (erd_layouts_dir().expect("erd layouts"), ERD_DIR_NAME),
         ];
         for (path, name) in cases {
             assert_eq!(

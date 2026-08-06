@@ -45,6 +45,8 @@ menu:
   open_sql_file: Open SQL file…
   # Opens the extraction dialog over the object selected in the explorer.
   extract_script: Extract script…
+  # Draws the ERD of the scope the explorer's selection sits in.
+  erd: ERD diagram
   about: About rudbman
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
@@ -593,3 +595,26 @@ extract:
   failed: "The extraction failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The extraction failed for a reason the bridge did not give.
+
+# The ERD panel: one schema's tables and the foreign keys between them.
+#
+# Never translated: table and column names, type names, and the "SVG" and
+# "ERD" abbreviations themselves.
+erd:
+  # The panel's own title and the title of its tab. `scope` is the catalogue
+  # and schema being drawn and is the database's own name for them.
+  tab: "ERD — %{scope}"
+  # The same tab on a product whose catalogue and schema levels were both
+  # skipped, so there is no scope to name.
+  tab_all: ERD
+  loading: loading…
+  load_failed: "The diagram could not be drawn: %{error}"
+  # A scope with no tables in it, as against one that could not be read.
+  empty: This schema has no tables.
+  # Re-runs the automatic layout over every box.
+  auto_arrange: Arrange
+  # Opens a save dialog, hence the ellipsis.
+  export_svg: Export SVG…
+  export_done: "Written to %{path}."
+  export_failed: "The diagram could not be written: %{error}"
+  refresh: Refresh

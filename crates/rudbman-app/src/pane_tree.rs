@@ -49,6 +49,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{App, Entity, ScrollHandle, SharedString};
 
+use crate::erd_pane::{ErdPane, ErdTarget};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::QueryPane;
@@ -116,18 +117,25 @@ pub enum PaneItem {
         /// tabs open at once never carry the same title.
         number: u64,
     },
-    // M5 adds `Erd`, M7 `QueryBuilder`; see the architecture document, §7.1.
+    /// One schema's tables and the foreign keys between them.
+    ///
+    /// Holds only the panel, because the panel knows what it is drawing: a
+    /// scope, which is also what tells two ERD tabs apart.
+    Erd(Entity<ErdPane>),
+    // M7 adds `QueryBuilder`; see the architecture document, §7.1.
 }
 
 impl PaneItem {
     /// The title its tab carries.
     ///
     /// A detail panel is named after the object it describes, qualified by its
-    /// schema; a query pane has no name of its own, so it takes its number.
+    /// schema; a query pane has no name of its own, so it takes its number; a
+    /// diagram is named after the scope it covers.
     pub fn title(&self, cx: &App) -> SharedString {
         match self {
             PaneItem::TableDetail(panel) => SharedString::from(panel.read(cx).target().qualified()),
             PaneItem::Query { number, .. } => ts!("query.tab", index = number),
+            PaneItem::Erd(panel) => panel.read(cx).target().title(),
         }
     }
 
@@ -140,6 +148,7 @@ impl PaneItem {
         match self {
             PaneItem::TableDetail(panel) => panel.read(cx).target().connection,
             PaneItem::Query { pane, .. } => pane.read(cx).connection(),
+            PaneItem::Erd(panel) => panel.read(cx).target().connection,
         }
     }
 }
@@ -240,7 +249,19 @@ impl Pane {
     pub fn detail_of(&self, target: &ObjectTarget, cx: &App) -> Option<usize> {
         self.items.iter().position(|item| match item {
             PaneItem::TableDetail(panel) => panel.read(cx).target() == target,
-            PaneItem::Query { .. } => false,
+            PaneItem::Query { .. } | PaneItem::Erd(_) => false,
+        })
+    }
+
+    /// The index of the tab drawing `target`, if one is open here.
+    ///
+    /// The counterpart of [`Pane::detail_of`], and there for the same reason:
+    /// a second diagram of one scope would show exactly what the first one
+    /// does, so opening it again is a navigation.
+    pub fn erd_of(&self, target: &ErdTarget, cx: &App) -> Option<usize> {
+        self.items.iter().position(|item| match item {
+            PaneItem::Erd(panel) => panel.read(cx).target() == target,
+            PaneItem::TableDetail(_) | PaneItem::Query { .. } => false,
         })
     }
 }

@@ -20,6 +20,8 @@ menu:
   query_object: Ausgewähltes Objekt abfragen
   open_sql_file: SQL-Datei öffnen…
   extract_script: Skript extrahieren…
+  # Draws the ERD of the scope the explorer's selection sits in.
+  erd: ERD-Diagramm
   about: Über rudbman
   quit: Beenden
   connection: Verbindung
@@ -405,3 +407,16 @@ extract:
   cancelled: "Abgebrochen. Die unvollständige Datei liegt unter %{path}."
   failed: "Die Extraktion schlug fehl: %{error}"
   failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.
+
+# The ERD panel: one schema's tables and the foreign keys between them.
+erd:
+  tab: "ERD — %{scope}"
+  tab_all: ERD
+  loading: wird geladen…
+  load_failed: "Das Diagramm konnte nicht gezeichnet werden: %{error}"
+  empty: Dieses Schema enthält keine Tabellen.
+  auto_arrange: Anordnen
+  export_svg: SVG exportieren…
+  export_done: "Nach %{path} geschrieben."
+  export_failed: "Das Diagramm konnte nicht geschrieben werden: %{error}"
+  refresh: Aktualisieren
