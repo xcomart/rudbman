@@ -45,6 +45,11 @@ menu:
   open_sql_file: Open SQL file…
   # Opens the extraction dialog over the object selected in the explorer.
   extract_script: Extract script…
+  # Opens the transfer dialog over the same object: its rows, into a table on
+  # another connection.
+  transfer_table: Transfer rows…
+  # Opens the backup dialog over the scope the explorer's selection sits in.
+  backup_schema: Back up schema…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD diagram
   about: About rudbman
@@ -595,6 +600,85 @@ extract:
   failed: "The extraction failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The extraction failed for a reason the bridge did not give.
+
+# The transfer dialog: one object's rows, into a table on a connection the user
+# picks. The form half describes the job; the card that replaces it reports it.
+#
+# Never translated: SQL keywords, and the names of schemas and tables.
+transfer:
+  title: Transfer rows
+  # The object the dialog was opened over, qualified by its schema. Read-only:
+  # what is read is what was selected.
+  object: Source object
+  # The target: which connection, and where in it. A blank schema means
+  # wherever that connection is pointed.
+  target_connection: Target connection
+  target_schema: Target schema
+  target_table: Target table
+  mode: Write mode
+  # The three write modes. Worded as what happens to a row, because that is the
+  # difference between them.
+  mode_insert: Insert every row
+  mode_upsert: Insert, or update the row already there
+  mode_truncate: Empty the target table first
+  # A predicate narrowing the source query, without the WHERE keyword; the
+  # field's own placeholder is a sample and is not translated.
+  where: WHERE clause
+  # What to do with a row the target will not take.
+  on_error: On a row that will not go in
+  on_error_abort: Stop the transfer
+  on_error_skip: Skip the row
+  on_error_log: Skip the row and record why
+  start: Transfer
+  # The progress card, before the bridge has named a phase of its own.
+  starting: starting…
+  counters: "%{rows} rows"
+  # Shown beside the row count only once something has actually been dropped.
+  skipped: "%{skipped} skipped"
+  # The cancel has been issued and the job has not stopped yet.
+  cancelling: Cancelling…
+  # The three endings. A cancelled transfer keeps whatever was committed before
+  # it stopped, so the message says how much that was.
+  done: "Transferred %{rows} rows into %{table}."
+  done_skipped: "%{skipped} rows would not go in and were skipped."
+  cancelled: "Cancelled. %{rows} rows had already been committed to %{table} and are still there."
+  failed: "The transfer failed: %{error}"
+  # A failure the bridge reported without saying why, which is a bug in it.
+  failed_unknown: The transfer failed for a reason the bridge did not give.
+
+# The backup dialog: every table of one schema, out to a replayable script.
+backup:
+  title: Back up schema
+  # The scope the dialog was opened over. Read-only: what is backed up is where
+  # the selection sits.
+  scope: Schema
+  # A product whose catalogue and schema levels were both skipped — SQLite —
+  # has one scope and no name for it.
+  scope_all: The whole database
+  output: Output file
+  output_none: No file chosen
+  # The button beside the path, and the title of the dialog it opens.
+  browse: Browse…
+  compress: Compress the file with gzip
+  # The two halves of a script, with their own sub-options below them.
+  ddl: Include the schema
+  drop: Precede it with DROP statements
+  data: Include the rows
+  # A backup writes INSERT statements and nothing else, so there is no row
+  # format to choose — only how many rows one of them carries.
+  batch_rows: Rows per INSERT
+  start: Back up
+  # The progress card, before the bridge has named a phase of its own. The
+  # phases after it are the bridge's own words and are shown as they arrive.
+  starting: starting…
+  # `bytes` arrives already formatted with its unit symbol, and counts what
+  # reached the file — after compression, when there is any.
+  counters: "%{rows} rows, %{bytes}"
+  cancelling: Cancelling…
+  done: "Wrote %{rows} rows (%{bytes}) to %{path}."
+  cancelled: "Cancelled. The partial file was left at %{path}."
+  failed: "The backup failed: %{error}"
+  failed_unknown: The backup failed for a reason the bridge did not give.
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 #

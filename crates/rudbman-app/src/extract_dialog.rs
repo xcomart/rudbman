@@ -73,7 +73,11 @@ const DIALOG_WIDTH: f32 = 520.;
 /// The interval the architecture document (§6) names. Each reading is a JNI
 /// round trip, so this is the frame rate of the progress card and not a
 /// sampling rate: nothing accumulates between polls that a poll could miss.
-const POLL_INTERVAL: Duration = Duration::from_millis(200);
+///
+/// Shared with the transfer and backup dialogs: the three cards poll the same
+/// `JOB_POLL` and a card that sampled at its own rate would only be a different
+/// frame rate for the same work.
+pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Rows one `INSERT` carries when the field is empty or unreadable.
 ///
@@ -246,7 +250,11 @@ pub fn build_spec(target: &ObjectTarget, form: &ExtractForm) -> Option<ExtractSp
 }
 
 /// `value` when it holds something other than whitespace.
-fn non_empty(value: Option<&str>) -> Option<&str> {
+///
+/// Shared with the transfer and backup dialogs, which have the same question to
+/// ask of a schema name that may be absent, may be blank, and means the same
+/// thing either way.
+pub fn non_empty(value: Option<&str>) -> Option<&str> {
     value.filter(|text| !text.trim().is_empty())
 }
 
@@ -255,7 +263,9 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 /// The unit symbols are not translated, for the same reason the licence
 /// identifier is not: `kB` is a symbol, not a word, and the decimal multiples
 /// are what every file manager on every platform shows.
-fn format_bytes(bytes: u64) -> String {
+///
+/// Shared with the backup dialog, whose progress card counts the same bytes.
+pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
     if bytes < 1000 {
         return format!("{bytes} B");
@@ -1117,7 +1127,9 @@ fn mode_label(mode: DataMode) -> SharedString {
 /// be resolved — the bridge resolves a relative path against the *JVM's*
 /// working directory, which is rarely what someone picking a file means, so
 /// the prompt is always given somewhere absolute to start from.
-fn default_directory() -> PathBuf {
+///
+/// Shared with the backup dialog, which opens the same kind of save prompt.
+pub fn default_directory() -> PathBuf {
     directories::UserDirs::new()
         .map(|dirs| dirs.home_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))

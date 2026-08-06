@@ -20,6 +20,8 @@ menu:
   query_object: Запросить выбранный объект
   open_sql_file: Открыть файл SQL…
   extract_script: Извлечь скрипт…
+  transfer_table: Перенести строки…
+  backup_schema: Создать копию схемы…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD-диаграмма
   about: О программе rudbman
@@ -407,6 +409,53 @@ extract:
   cancelled: "Отменено. Частично записанный файл остался в %{path}."
   failed: "Извлечение не удалось: %{error}"
   failed_unknown: Извлечение не удалось, но мост не сообщил причину.
+
+transfer:
+  title: Перенос строк
+  object: Исходный объект
+  target_connection: Целевое подключение
+  target_schema: Целевая схема
+  target_table: Целевая таблица
+  mode: Способ записи
+  mode_insert: Вставлять каждую строку
+  mode_upsert: Вставлять или обновлять существующую строку
+  mode_truncate: Сначала очистить целевую таблицу
+  where: Предложение WHERE
+  on_error: Со строкой, которая не проходит
+  on_error_abort: Прервать перенос
+  on_error_skip: Пропустить строку
+  on_error_log: Пропустить строку и записать причину
+  start: Перенести
+  starting: запуск…
+  counters: "%{rows} строк"
+  skipped: "пропущено %{skipped}"
+  cancelling: Отмена…
+  done: "Перенесено %{rows} строк в %{table}."
+  done_skipped: "%{skipped} строк не прошли и были пропущены."
+  cancelled: "Отменено. %{rows} строк уже зафиксированы в %{table} и остаются там."
+  failed: "Перенос не удался: %{error}"
+  failed_unknown: Перенос не удался, но мост не сообщил причину.
+
+backup:
+  title: Резервная копия схемы
+  scope: Схема
+  scope_all: Вся база данных
+  output: Файл вывода
+  output_none: Файл не выбран
+  browse: Обзор…
+  compress: Сжать файл в gzip
+  ddl: Включить схему
+  drop: Предварять инструкциями DROP
+  data: Включить строки
+  batch_rows: Строк на INSERT
+  start: Создать копию
+  starting: запуск…
+  counters: "%{rows} строк, %{bytes}"
+  cancelling: Отмена…
+  done: "%{rows} строк (%{bytes}) записано в %{path}."
+  cancelled: "Отменено. Частично записанный файл остался в %{path}."
+  failed: "Резервное копирование не удалось: %{error}"
+  failed_unknown: Резервное копирование не удалось, но мост не сообщил причину.
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

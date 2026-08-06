@@ -20,6 +20,8 @@ menu:
   query_object: 선택한 객체 조회
   open_sql_file: SQL 파일 열기…
   extract_script: 스크립트 추출…
+  transfer_table: 행 전송…
+  backup_schema: 스키마 백업…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD 다이어그램
   about: rudbman 정보
@@ -407,6 +409,53 @@ extract:
   cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
   failed: "추출에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 추출에 실패했습니다.
+
+transfer:
+  title: 행 전송
+  object: 원본 객체
+  target_connection: 대상 연결
+  target_schema: 대상 스키마
+  target_table: 대상 테이블
+  mode: 쓰기 방식
+  mode_insert: 모든 행 삽입
+  mode_upsert: 삽입하거나 기존 행 갱신
+  mode_truncate: 대상 테이블을 비우고 삽입
+  where: WHERE 절
+  on_error: 들어가지 못한 행 처리
+  on_error_abort: 전송 중단
+  on_error_skip: 그 행 건너뛰기
+  on_error_log: 행을 건너뛰고 이유 기록
+  start: 전송
+  starting: 시작하는 중…
+  counters: "%{rows}행"
+  skipped: "%{skipped}행 건너뜀"
+  cancelling: 취소하는 중…
+  done: "%{rows}행을 %{table}에 전송했습니다."
+  done_skipped: "%{skipped}행은 들어가지 못해 건너뛰었습니다."
+  cancelled: "취소했습니다. 이미 커밋된 %{rows}행은 %{table}에 남아 있습니다."
+  failed: "전송에 실패했습니다: %{error}"
+  failed_unknown: 브리지가 이유를 알려주지 않은 채 전송에 실패했습니다.
+
+backup:
+  title: 스키마 백업
+  scope: 스키마
+  scope_all: 데이터베이스 전체
+  output: 출력 파일
+  output_none: 선택한 파일 없음
+  browse: 찾아보기…
+  compress: gzip으로 압축하기
+  ddl: 스키마 포함
+  drop: 앞에 DROP 문 넣기
+  data: 데이터 포함
+  batch_rows: INSERT당 행 수
+  start: 백업
+  starting: 시작하는 중…
+  counters: "%{rows}행, %{bytes}"
+  cancelling: 취소하는 중…
+  done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
+  cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
+  failed: "백업에 실패했습니다: %{error}"
+  failed_unknown: 브리지가 이유를 알려주지 않은 채 백업에 실패했습니다.
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
