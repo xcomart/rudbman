@@ -1,0 +1,29 @@
+[package]
+name = "rudbman-erd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The ERD: a model, two layouts, an orthogonal router, an SVG writer and the canvas that draws them"
+
+[dependencies]
+# The palette the canvas draws with and the `Hsla` → `#rrggbb` conversion the
+# SVG writer needs, and nothing else. In particular *not* `rudbman-jdbc`
+# (architecture document, §3.1): the diagram arrives as an `ErdModel` the host
+# built, so this crate's tests need no JVM and no driver.
+rudbman-ui.workspace = true
+
+gpui.workspace = true
+
+# Box widths are worked out from the *display* width of a table's names rather
+# than from their length in `char`s, so that a schema of Korean column names is
+# not sized to half the room it needs. The result grid fits its columns with the
+# same crate, and for the same reason.
+unicode-width.workspace = true
+
+[dev-dependencies]
+# gpui's headless test platform. Panning, zooming and dragging a box only exist
+# once there is a window and a laid-out element tree; the model, both layouts,
+# the router and the SVG writer are pure and are tested without one.
+gpui = { workspace = true, features = ["test-support"] }

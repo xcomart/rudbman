@@ -5594,12 +5594,14 @@ dependencies = [
  "raw-window-handle",
  "rudbman-core",
  "rudbman-editor",
+ "rudbman-erd",
  "rudbman-grid",
  "rudbman-jdbc",
  "rudbman-sql",
  "rudbman-ssh",
  "rudbman-ui",
  "rust-i18n",
+ "serde",
  "serde_json",
  "sys-locale",
  "tempfile",
@@ -5632,6 +5634,15 @@ dependencies = [
  "rudbman-sql",
  "rudbman-ui",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "rudbman-erd"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "rudbman-ui",
+ "unicode-width",
 ]
 
 [[package]]
