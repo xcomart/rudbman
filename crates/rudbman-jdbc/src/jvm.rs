@@ -221,8 +221,6 @@ fn is_java_home(path: &Path) -> bool {
 /// and finally the path this crate was built against, which is what makes
 /// `cargo test` work from a checkout.
 pub fn default_bridge_jar() -> PathBuf {
-    const JAR_NAME: &str = "rudbman-bridge.jar";
-
     if let Some(path) = std::env::var_os(BRIDGE_JAR_ENV) {
         return PathBuf::from(path);
     }
