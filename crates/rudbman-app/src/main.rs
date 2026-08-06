@@ -77,13 +77,16 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div,
     prelude::*, px, relative, size,
 };
-use rudbman_core::{AppSettings, ConnectionProfile, DriverStore, TitlebarStyle, WindowState};
+use rudbman_core::{
+    AppSettings, ConnectionProfile, ConnectionStore, DriverStore, TitlebarStyle, WindowState,
+};
 use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
     ThemeRegistry, WindowControlIcons, WindowControls, hide_later, modal, scroll_to, scrolled,
     set_editor_theme, set_theme, theme, theme_store,
 };
+use uuid::Uuid;
 
 use about_dialog::{AboutDialog, AboutDialogEvent};
 use app_settings::WindowGeometry;
@@ -91,7 +94,7 @@ use backup_dialog::{BackupDialog, BackupDialogEvent};
 use builder_pane::{BuilderPane, BuilderPaneEvent};
 use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
-use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
+use connection_dialog::{ConnectionDialog, ConnectionDialogEvent, profile_rows};
 use erd_layout::ErdLayouts;
 use erd_pane::{ErdDiagram, ErdPane, ErdPaneEvent, ErdTarget};
 use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
@@ -245,6 +248,32 @@ const TAB_SCROLLBAR: &str = "tab-scrollbar";
 /// Punctuation rather than a word, so it is the same in every language.
 const NOTHING: SharedString = SharedString::new_static("—");
 
+/// Width the welcome screen's column stops growing at, in logical pixels.
+///
+/// A line of text and a list of names, so it is bounded by what stays readable
+/// rather than by what the window offers: stretched across a maximised window
+/// the same content would be one word per screenful of white.
+const WELCOME_WIDTH: f32 = 420.;
+
+/// Height at which the welcome screen's saved list starts scrolling.
+///
+/// Only the list scrolls. The heading and the button above it stay put, because
+/// a user with forty profiles must not have to scroll back up to reach the way
+/// to make the forty-first.
+const WELCOME_LIST_MAX_HEIGHT: f32 = 260.;
+
+/// Tab-ring position of the welcome screen's "new connection" button.
+///
+/// Ahead of the saved list, whose rows carry the indices
+/// [`connection_dialog::profile_rows`] gives them.
+const WELCOME_NEW_TAB: isize = 1;
+
+/// Debug selector of the welcome screen's "new connection" button.
+///
+/// Compiled away outside a test build; it saves a test working the button's
+/// position out from the centred column's layout.
+const WELCOME_NEW_SELECTOR: &str = "welcome-new";
+
 /// Marker for a drag of the explorer's right edge.
 ///
 /// A type of its own rather than a [`DraggedSplit`] with a reserved id: the
@@ -279,6 +308,22 @@ struct DraggedSplit {
 fn next_connection_id() -> ConnectionId {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     ConnectionId(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Reads `connections.json` for the welcome screen's list.
+///
+/// A store that cannot be read is logged and answered as an empty one: the
+/// welcome screen would otherwise have to grow an error strip of its own for a
+/// file the connection dialog already reports on, and an empty list still shows
+/// the button that makes the first profile.
+fn load_profiles() -> ConnectionStore {
+    match ConnectionStore::load() {
+        Ok(store) => store,
+        Err(error) => {
+            log::error!("could not read connections.json: {error:#}");
+            ConnectionStore::default()
+        }
+    }
 }
 
 /// Everything one connection tab shows below the strip.
@@ -447,6 +492,14 @@ struct Workspace {
     connections: Vec<Connection>,
     /// Index into [`Workspace::connections`] of the tab on screen.
     active_connection: usize,
+    /// The saved profiles, as the welcome screen offers them.
+    ///
+    /// A copy of `connections.json`, read at start-up and again whenever the
+    /// connection dialog closes — the dialog is the only thing that edits the
+    /// file, and it may have saved, renamed or deleted a profile while it was
+    /// up. Nothing else reads this: opening a session goes through the profile
+    /// this hands over, not through the file.
+    profiles: ConnectionStore,
     /// Horizontal scroll of the tab strip, used to reveal the active tab.
     tab_scroll: ScrollHandle,
     /// Whether the tab strip's overlay scroll indicator is on screen.
@@ -522,11 +575,19 @@ impl Workspace {
                 // The dialog has already saved the profile and closed itself;
                 // opening the session is the shell's half of the workflow,
                 // because the tab it produces belongs here.
+                //
+                // The welcome screen is re-read on the way out of the dialog by
+                // either door: whichever one was taken, the file behind the
+                // list may have been saved, renamed or deleted since it was
+                // last read, and the list is what the user comes back to when
+                // this tab is closed again.
                 ConnectionDialogEvent::Connect(profile) => {
+                    this.profiles = load_profiles();
                     this.open_connection((**profile).clone(), window, cx);
                 }
                 ConnectionDialogEvent::Dismissed => {
                     dialog.update(cx, |dialog, cx| dialog.close(cx));
+                    this.profiles = load_profiles();
                     this.focus_shell(window, cx);
                 }
             },
@@ -628,6 +689,7 @@ impl Workspace {
             explorer_width: settings_snapshot.explorer_width,
             connections: Vec::new(),
             active_connection: 0,
+            profiles: load_profiles(),
             tab_scroll: ScrollHandle::new(),
             tab_scrollbar: ScrollbarState::new(),
             about,
@@ -744,6 +806,33 @@ impl Workspace {
         self.sync_visible_root(cx);
         self.follow_work_area(held, window, cx);
         cx.notify();
+    }
+
+    /// Opens a session on the saved profile `id`, with nothing asked first.
+    ///
+    /// What clicking a row of the welcome screen's list does. The profile has
+    /// been saved already, so there is nothing to fill in: putting the dialog up
+    /// over a profile the user has just picked would be a form to dismiss
+    /// between them and the database.
+    ///
+    /// Nothing is checked ahead of the attempt either — not the driver, not the
+    /// password. A profile whose driver has gone shows that in its tab, and a
+    /// profile with no secret in the keychain is one the database is asked
+    /// about: trust authentication is a perfectly ordinary way to be let in, and
+    /// a dialog demanding a password first would lock those users out of their
+    /// own connection.
+    fn open_profile(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(profile) = self.profiles.get(id).cloned() else {
+            // The list is a snapshot; the file may have lost the profile since.
+            return;
+        };
+        self.open_connection(profile, window, cx);
+        // The tab takes the welcome screen off screen, and with it the very row
+        // that was clicked — which is holding the keyboard, because the rows are
+        // in the tab ring. Left there it would swallow every action from then
+        // on; see [`Workspace::reclaim_focus`]. Nothing else can have it at this
+        // point: there was no work area and no sidebar to hold it.
+        self.focus_shell(window, cx);
     }
 
     /// The session of one connection, when it is open.
@@ -1080,10 +1169,19 @@ impl Workspace {
         // Through `open_query`, which is the one gate every new query pane
         // comes through: running, cancelling and the write confirmation are its
         // pipeline, and the builder has no business owning a second one.
-        cx.subscribe_in(&panel, window, |workspace, _panel, event, window, cx| {
-            let BuilderPaneEvent::OpenSql(sql) = event;
-            workspace.open_query(sql, window, cx);
-        })
+        cx.subscribe_in(
+            &panel,
+            window,
+            |workspace, panel, event, window, cx| match event {
+                BuilderPaneEvent::OpenSql(sql) => workspace.open_query(sql, window, cx),
+                // On the panel the pointer was released over, which is the one
+                // that emitted this — not whichever builder the action would have
+                // picked. Dropping on a builder is aiming at it.
+                BuilderPaneEvent::TableDropped(target) => {
+                    workspace.add_to_builder_on(panel.clone(), target.clone(), cx);
+                }
+            },
+        )
         .detach();
 
         let area = self.work_area_mut()?;
@@ -1122,13 +1220,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Checked before a tab is opened as well as inside
+        // [`Workspace::add_to_builder_on`], so that a target from a connection
+        // that is not the one on screen cannot leave an empty builder behind.
         if self.active_connection().map(|open| open.id) != Some(target.connection) {
             return;
         }
-        let Some(session) = self.session_of(target.connection) else {
-            return;
-        };
-
         let panel = match self.builder_tab() {
             Some((pane, index)) => {
                 self.activate_tab(pane, index, window, cx);
@@ -1137,6 +1234,34 @@ impl Workspace {
             None => self.open_builder(window, cx),
         };
         let Some(panel) = panel else {
+            return;
+        };
+        self.add_to_builder_on(panel, target, cx);
+    }
+
+    /// Puts one explorer object on *this* builder.
+    ///
+    /// Split out from [`Workspace::add_to_builder`] because a drop has already
+    /// chosen its builder — the one the pointer was over — and re-running the
+    /// "which builder?" rule over it could move the table to a different tab
+    /// than the one the user aimed at. What both paths share is everything
+    /// after that choice: the same guards, the same one-round-trip column load
+    /// and the same `add_table`.
+    ///
+    /// Only ever this connection's own: a builder belongs to the connection its
+    /// tab is under, and the explorer draws only the active connection's tree,
+    /// so a target from anywhere else would be a table the statement could not
+    /// name.
+    fn add_to_builder_on(
+        &mut self,
+        panel: Entity<BuilderPane>,
+        target: ObjectTarget,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_connection().map(|open| open.id) != Some(target.connection) {
+            return;
+        }
+        let Some(session) = self.session_of(target.connection) else {
             return;
         };
 
@@ -1419,6 +1544,18 @@ impl Workspace {
         });
     }
 
+    /// Whether the sidebar is actually on screen.
+    ///
+    /// Two conditions, and only one of them is the user's: the panel is drawn
+    /// when they have asked for it *and* there is a connection for it to show.
+    /// A tree of nothing beside a welcome screen is a column of chrome with no
+    /// content, so the welcome screen takes the whole width — and because the
+    /// preference itself is left alone, the sidebar comes straight back with the
+    /// first connection rather than having to be asked for again.
+    fn explorer_showing(&self) -> bool {
+        !self.connections.is_empty() && self.explorer_visible
+    }
+
     /// Shows or hides the sidebar, and remembers which.
     fn toggle_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.explorer_visible = !self.explorer_visible;
@@ -1549,6 +1686,9 @@ impl Workspace {
         // Only the area on screen can be holding the keyboard, so only closing
         // that one moves it.
         let held = index == self.active_connection && self.area_holds_focus(window, cx);
+        // Asked before the tab goes, for the same reason: it reads the frame
+        // that still has the sidebar in it.
+        let sidebar = self.explorer_showing();
 
         let connection = self.connections.remove(index);
         let closed = connection.id;
@@ -1581,6 +1721,14 @@ impl Workspace {
             .min(self.connections.len().saturating_sub(1));
         self.sync_visible_root(cx);
         self.follow_work_area(held, window, cx);
+        // Closing the last tab takes the sidebar off screen with it — see
+        // [`Workspace::explorer_showing`] — which is the same focus hazard as
+        // hiding it by hand: a focus left on the tree would swallow every action
+        // from then on, the `Ctrl+B` that would bring it back included.
+        if sidebar && !self.explorer_showing() {
+            let explorer = self.explorer.read(cx).focus_handle(cx);
+            self.reclaim_focus(&explorer, window, cx);
+        }
         self.drop_stale_confirm(cx);
         cx.notify();
     }
@@ -2621,7 +2769,7 @@ impl Workspace {
         // The sidebar and the handle that resizes it, both left out entirely
         // when the panel is hidden — a zero-width flex child would still take
         // the divider's hit area with it.
-        let sidebar = self.explorer_visible.then(|| {
+        let sidebar = self.explorer_showing().then(|| {
             div()
                 .flex()
                 .flex_none()
@@ -2629,7 +2777,7 @@ impl Workspace {
                 .min_h_0()
                 .child(self.explorer.clone())
         });
-        let handle = self.explorer_visible.then(|| {
+        let handle = self.explorer_showing().then(|| {
             div()
                 .id("explorer-divider")
                 .occlude()
@@ -2664,8 +2812,114 @@ impl Workspace {
             .children(handle)
             .child(div().flex().flex_1().min_w_0().min_h_0().child(match work {
                 Some((root, chrome)) => render_pane(root, &chrome, cx),
-                None => render_placeholder(false, &theme),
+                None => self.render_welcome(&theme, cx),
             }))
+            .into_any_element()
+    }
+
+    /// Renders the welcome screen: what the window is, with nothing open.
+    ///
+    /// The first screen of a first run, and the one a user comes back to every
+    /// time they close their last tab, so it carries the two things there are to
+    /// do from here rather than describing them: the button that makes a
+    /// connection, and the connections already saved. A row of that list opens
+    /// straight away — see [`Workspace::open_profile`] — which is what makes the
+    /// list a way in rather than a reminder that the dialog exists.
+    ///
+    /// One centred column, narrow enough to read as a card in a wide window and
+    /// with the list the only part of it that scrolls: a heading and a button
+    /// that scrolled away from the profiles would take the way out of an empty
+    /// list with them.
+    ///
+    /// It paints no fill of its own. The body behind it already carries the one
+    /// tinted fill the window permits, and a second one here would compose back
+    /// to opaque; see [`app_settings::window_tint`].
+    fn render_welcome(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let this = cx.entity();
+        let profiles = self.profiles.connections();
+        let rows = profile_rows(profiles, None, theme, move |id, window, cx| {
+            this.update(cx, |workspace, cx| workspace.open_profile(id, window, cx));
+        });
+
+        // With nothing saved there is no list to head, and the words that stand
+        // in for it are the empty state's own: there are no connections, and the
+        // way to get one is the button just above.
+        let saved = if rows.is_empty() {
+            div()
+                .text_size(px(13.))
+                .text_color(theme.text_muted)
+                .child(ts!("empty.hint"))
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .min_h_0()
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(theme.text_muted)
+                        .child(ts!("welcome.saved")),
+                )
+                .child(
+                    div()
+                        .id("welcome-list")
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.))
+                        .min_h_0()
+                        .max_h(px(WELCOME_LIST_MAX_HEIGHT))
+                        .overflow_y_scroll()
+                        .children(rows),
+                )
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .min_w_0()
+            .min_h_0()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .min_h_0()
+                    .w_full()
+                    .max_w(px(WELCOME_WIDTH))
+                    .p(px(16.))
+                    .child(div().text_size(px(18.)).text_color(theme.text).child(
+                        if profiles.is_empty() {
+                            ts!("empty.title")
+                        } else {
+                            ts!("welcome.title")
+                        },
+                    ))
+                    // A row, so that the button is as wide as its label rather
+                    // than as wide as the column.
+                    .child(
+                        div().flex().flex_row().child(
+                            div()
+                                .flex_none()
+                                .debug_selector(|| WELCOME_NEW_SELECTOR.to_string())
+                                .child(
+                                    Button::new("welcome-new", ts!("welcome.new_connection"))
+                                        .variant(ButtonVariant::Primary)
+                                        .tab_index(WELCOME_NEW_TAB)
+                                        // The same action the menu row, the tab
+                                        // strip's plus and Ctrl+N dispatch: one
+                                        // command, however it is reached.
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(Box::new(NewConnection), cx);
+                                        }),
+                                ),
+                        ),
+                    )
+                    .child(saved),
+            )
             .into_any_element()
     }
 
@@ -3105,7 +3359,7 @@ fn render_pane(
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
                 // — never because there is nothing to connect to.
-                None => render_placeholder(true, theme),
+                None => render_placeholder(theme),
             };
             div()
                 .id(("pane", id.as_u64()))
@@ -3207,28 +3461,24 @@ fn render_pane(
     }
 }
 
-/// Renders the empty state: a pane with no tabs, or the whole body while no
-/// connection is open at all.
+/// Renders the empty state of a pane with no tabs.
 ///
-/// Two wordings, and the difference matters. With nothing open the body says
-/// there is no connection and points at the way to make one — the menu row and
-/// its shortcut. Inside a work area it says the opposite: the connection is
-/// live, and the pane is empty because nothing has been opened into it yet. One
-/// wording for both states would have a live tab sitting above the words "no
-/// connections".
+/// The wording is the opposite of the welcome screen's, and the difference
+/// matters: here the connection is live and the pane is empty because nothing
+/// has been opened into it yet, so the words point at the explorer beside it
+/// rather than at the connection dialog. One wording for both states would have
+/// a live tab sitting above the words "no connections".
 ///
-/// Text only, and deliberately no button: a button that opens nothing is worse
-/// than no button at all.
+/// Text only, and no button. There is nothing here a single command would do —
+/// what fills a pane is whatever the user picks out of the tree — whereas the
+/// window with no connection at all has exactly one next step and
+/// [`Workspace::render_welcome`] offers it as a button.
 ///
 /// It paints no fill of its own. The body behind it already carries the one
 /// tinted fill the window permits, and a second one here would compose back to
 /// opaque; see [`app_settings::window_tint`].
-fn render_placeholder(connected: bool, theme: &Theme) -> AnyElement {
-    let (title, hint) = if connected {
-        (ts!("empty.connected_title"), ts!("empty.connected_hint"))
-    } else {
-        (ts!("empty.title"), ts!("empty.hint"))
-    };
+fn render_placeholder(theme: &Theme) -> AnyElement {
+    let (title, hint) = (ts!("empty.connected_title"), ts!("empty.connected_hint"));
     div()
         .flex()
         .flex_col()
@@ -4074,11 +4324,15 @@ mod tests {
     }
 
     #[test]
-    fn both_empty_states_of_a_pane_are_translated() {
+    fn every_empty_state_wording_is_translated() {
         // `t!` answers with the key path when a key is missing, so a typo
-        // reaches the screen as "empty.connected_ttle". The two pairs have to
-        // differ, or the connected state would still read "no connections".
+        // reaches the screen as "empty.connected_ttle". The two `empty` pairs
+        // have to differ, or the connected state would still read "no
+        // connections".
         for label in [
+            ts!("welcome.title"),
+            ts!("welcome.new_connection"),
+            ts!("welcome.saved"),
             ts!("empty.title"),
             ts!("empty.hint"),
             ts!("empty.connected_title"),
@@ -4092,14 +4346,18 @@ mod tests {
             ts!("statusbar.tunnel_lost", reason = "r"),
         ] {
             assert!(!label.is_empty(), "empty label");
-            assert!(!label.starts_with("empty."), "untranslated label {label:?}");
-            assert!(
-                !label.starts_with("statusbar."),
-                "untranslated label {label:?}"
-            );
+            for namespace in ["welcome.", "empty.", "statusbar."] {
+                assert!(
+                    !label.starts_with(namespace),
+                    "untranslated label {label:?}"
+                );
+            }
         }
         assert_ne!(ts!("empty.title"), ts!("empty.connected_title"));
         assert_ne!(ts!("empty.hint"), ts!("empty.connected_hint"));
+        // The welcome screen shows one heading or the other, never both, so a
+        // shared wording would make the two states indistinguishable.
+        assert_ne!(ts!("welcome.title"), ts!("empty.title"));
     }
 
     /// The end of the M1 thread, in one test: a real H2 session opens, a tab
@@ -4244,9 +4502,20 @@ mod tests {
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         // The setting on disk decides how the sidebar starts, and this is about
-        // hiding one that is showing.
+        // hiding one that is showing — which takes a connection as well as the
+        // preference, since the welcome screen has the window to itself; see
+        // [`Workspace::explorer_showing`]. The tab needs no session behind it:
+        // what is being tested is the panel, and a failed connection renders one
+        // exactly as a live one does.
         window
             .update(cx, |workspace, _window, cx| {
+                workspace.connections.push(Connection {
+                    id: next_connection_id(),
+                    profile: connection::h2::profile("explorer-focus"),
+                    state: ConnectionState::Failed("no driver".into()),
+                    work: WorkArea::new(),
+                });
+                workspace.active_connection = 0;
                 workspace.explorer_visible = true;
                 cx.notify();
             })
@@ -4283,6 +4552,316 @@ mod tests {
                 assert!(
                     workspace.explorer_visible,
                     "the second toggle was dropped: the sidebar cannot be brought back"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// The debug selector of one profile's row, as `debug_bounds` wants it.
+    ///
+    /// That takes a `&'static str` and the id is only known at run time, so the
+    /// string is leaked: a handful of bytes for the length of a test process.
+    fn row_selector(profile: &ConnectionProfile) -> &'static str {
+        Box::leak(format!("{}{}", connection_dialog::ROW_SELECTOR, profile.id).into_boxed_str())
+    }
+
+    /// A driver id no `drivers.json` defines, and none ever will.
+    ///
+    /// Opening a profile that names it takes [`Workspace::open_connection`]'s
+    /// no-driver path, which is the one outcome that does not depend on what the
+    /// machine running the test has installed — and it still produces the tab
+    /// these tests are about, with the reason in it.
+    const MISSING_DRIVER: &str = "no-such-driver.welcome-test";
+
+    /// A saved profile that opens into a tab and no further.
+    fn unopenable_profile(name: &str) -> ConnectionProfile {
+        ConnectionProfile::new(name, MISSING_DRIVER, "jdbc:rudbman:none", "sa")
+    }
+
+    /// A window showing the welcome screen, with `profiles` saved behind it.
+    ///
+    /// The store is set directly rather than written to `connections.json`: the
+    /// file is the user's own, and what these tests are about is what the shell
+    /// does with the list once it has one.
+    fn workspace_over_welcome(
+        profiles: &[ConnectionProfile],
+        cx: &mut gpui::TestAppContext,
+    ) -> gpui::WindowHandle<Workspace> {
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+        window
+            .update(cx, |workspace, _window, cx| {
+                let mut store = ConnectionStore::default();
+                for profile in profiles {
+                    store.upsert(profile.clone());
+                }
+                workspace.profiles = store;
+                cx.notify();
+            })
+            .expect("the window is open");
+        window
+    }
+
+    /// With nothing open the welcome screen has the window to itself: no
+    /// sidebar beside it, whatever the stored preference says — and the
+    /// preference untouched, so the first connection brings the panel back
+    /// without the user having to ask for it again.
+    #[gpui::test]
+    fn the_welcome_screen_has_the_window_to_itself(cx: &mut gpui::TestAppContext) {
+        let saved = unopenable_profile("saved");
+        let window = workspace_over_welcome(std::slice::from_ref(&saved), cx);
+        window
+            .update(cx, |workspace, _window, cx| {
+                workspace.explorer_visible = true;
+                cx.notify();
+            })
+            .expect("the window is open");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        // Nothing but the welcome screen draws a saved profile, so the row's
+        // bounds are the assertion that the welcome screen is what the body
+        // drew — and it is this test's own profile, not whatever the machine
+        // running it happens to have in `connections.json`.
+        assert!(
+            cx.debug_bounds(row_selector(&saved)).is_some(),
+            "the saved connections were not drawn"
+        );
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(
+                    !workspace.explorer_showing(),
+                    "the sidebar was drawn beside the welcome screen"
+                );
+                assert!(
+                    workspace.explorer_visible,
+                    "the welcome screen wrote to the user's preference"
+                );
+
+                // A tab, and the panel comes back on the preference that was
+                // never touched.
+                workspace.connections.push(Connection {
+                    id: next_connection_id(),
+                    profile: unopenable_profile("open"),
+                    state: ConnectionState::Failed("no driver".into()),
+                    work: WorkArea::new(),
+                });
+                workspace.active_connection = 0;
+                workspace.sync_visible_root(cx);
+                assert!(
+                    workspace.explorer_showing(),
+                    "the sidebar did not come back with the first connection"
+                );
+                // And the welcome screen is not what the body draws any more:
+                // there is a work area now, and that is what stands in its
+                // place.
+                assert!(workspace.work_area().is_some());
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+    }
+
+    /// Clicking a saved connection opens it, with no form in between.
+    ///
+    /// The profile was filled in when it was saved; putting the dialog up over
+    /// one the user has just picked would be a form to dismiss between them and
+    /// their database. Nothing is checked ahead of the attempt either — the tab
+    /// is where a missing driver is reported, exactly as it is for a refused
+    /// password.
+    #[gpui::test]
+    fn clicking_a_saved_connection_opens_it_with_nothing_in_between(cx: &mut gpui::TestAppContext) {
+        let profile = unopenable_profile("staging");
+        let window =
+            workspace_over_welcome(&[unopenable_profile("production"), profile.clone()], cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        // The second row, so that a handler wired to the wrong profile shows up
+        // as the wrong tab rather than passing by luck.
+        let row = cx
+            .debug_bounds(row_selector(&profile))
+            .expect("both saved connections are drawn");
+        cx.simulate_click(row.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                assert_eq!(workspace.connections.len(), 1, "one click, one tab");
+                let open = workspace.active_connection().expect("the tab is on top");
+                assert_eq!(open.profile.id, profile.id, "another profile was opened");
+                assert!(
+                    !workspace.connect.read(cx).is_open(),
+                    "a dialog came up between the click and the connection"
+                );
+                match &open.state {
+                    ConnectionState::Failed(message) => assert!(
+                        message.contains(MISSING_DRIVER),
+                        "the attempt stopped before the driver lookup: {message}"
+                    ),
+                    _ => panic!("the attempt did not reach the driver lookup"),
+                }
+                // The row that was clicked is not rendered any more, so the
+                // keyboard must not still be on it.
+                assert!(
+                    workspace.focus_handle.is_focused(window),
+                    "the focus was left on the welcome screen"
+                );
+            })
+            .expect("the window is open");
+
+        // The regression that rule exists for: with the focus stranded, this
+        // dispatch would never arrive.
+        let showing = window
+            .update(&mut cx, |workspace, _window, _cx| {
+                workspace.explorer_visible
+            })
+            .expect("the window is open");
+        cx.dispatch_action(ToggleExplorer);
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                assert_ne!(
+                    workspace.explorer_visible, showing,
+                    "the action was dropped: the focus is on something unrendered"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// The welcome screen's button is the same command as the menu row.
+    #[gpui::test]
+    fn the_welcome_button_opens_the_connection_dialog(cx: &mut gpui::TestAppContext) {
+        let window = workspace_over_welcome(&[], cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        // Nothing saved, so the screen is the heading, the button, and a line of
+        // words where the list would be.
+        let button = cx
+            .debug_bounds(WELCOME_NEW_SELECTOR)
+            .expect("the button is drawn");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(
+                    workspace.connect.read(cx).is_open(),
+                    "the button did not open the connection dialog"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// Closing the last tab comes back to the welcome screen, and the keyboard
+    /// has to come back with it.
+    ///
+    /// The sidebar goes off screen the moment the last connection does — see
+    /// [`Workspace::explorer_showing`] — which is the same hazard as hiding it
+    /// by hand: a focus left on the tree resolves to the window root, which
+    /// carries none of the workspace's handlers, and every action after it is
+    /// dropped without a trace.
+    #[gpui::test]
+    fn closing_the_last_tab_takes_the_focus_back_from_the_sidebar(cx: &mut gpui::TestAppContext) {
+        let window = workspace_over_welcome(&[], cx);
+        window
+            .update(cx, |workspace, _window, cx| {
+                workspace.connections.push(Connection {
+                    id: next_connection_id(),
+                    profile: unopenable_profile("last"),
+                    state: ConnectionState::Failed("no driver".into()),
+                    work: WorkArea::new(),
+                });
+                workspace.active_connection = 0;
+                workspace.explorer_visible = true;
+                workspace.sync_explorer_root(0, cx);
+                workspace.sync_visible_root(cx);
+            })
+            .expect("the window is open");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        // What clicking a row in the tree amounts to, without the mouse.
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.explorer.read(cx).focus_handle(cx).focus(window);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.close_connection(0, window, cx);
+                assert!(workspace.connections.is_empty());
+                assert!(
+                    !workspace.explorer_showing(),
+                    "the sidebar outlived the last connection"
+                );
+                assert!(
+                    workspace.focus_handle.is_focused(window),
+                    "the focus was left on a sidebar nothing renders"
+                );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // The regression: with the focus stranded, this never arrives, and the
+        // window is inert from the welcome screen on.
+        cx.dispatch_action(NewConnection);
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(
+                    workspace.connect.read(cx).is_open(),
+                    "the action was dropped: the focus is on something unrendered"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// The welcome list is re-read when the dialog closes.
+    ///
+    /// The dialog is the only thing that edits `connections.json`, and it may
+    /// have saved, renamed or deleted a profile while it was up; a list left as
+    /// it was would offer a profile that is gone, or hide one just made.
+    #[gpui::test]
+    fn the_welcome_list_follows_what_the_dialog_did(cx: &mut gpui::TestAppContext) {
+        let stale = unopenable_profile("stale");
+        let window = workspace_over_welcome(std::slice::from_ref(&stale), cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                // Emitted by the dialog on its way out, whichever way it went.
+                workspace
+                    .connect
+                    .update(cx, |_dialog, cx| cx.emit(ConnectionDialogEvent::Dismissed));
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, _cx| {
+                // Whatever is on disk — an empty store on a machine that has
+                // never saved a profile — but never the list from before.
+                let ids: Vec<_> = workspace
+                    .profiles
+                    .connections()
+                    .iter()
+                    .map(|profile| profile.id)
+                    .collect();
+                let disk: Vec<_> = load_profiles()
+                    .connections()
+                    .iter()
+                    .map(|profile| profile.id)
+                    .collect();
+                assert_eq!(ids, disk, "the list was not re-read");
+                assert!(
+                    workspace.profiles.get(stale.id).is_none(),
+                    "the list the dialog opened over survived it"
                 );
             })
             .expect("the window is open");
@@ -4973,6 +5552,56 @@ mod tests {
                     ts!("query.row_count", count = 2),
                     "the join did not produce the two people"
                 );
+            })
+            .expect("the window is open");
+    }
+
+    /// A drop lands on the builder it was let go of, not on the one the action
+    /// would have chosen.
+    ///
+    /// Two builders, the second in front — which is where "add to builder"
+    /// puts everything. The table announced by the *first* has to arrive
+    /// there, because the pointer was over it, and nowhere else. The drop
+    /// gesture itself is `BuilderPane`'s, tested there against real pointer
+    /// events; what is at stake here is which panel the shell then loads for.
+    #[gpui::test]
+    fn a_dropped_table_lands_on_the_builder_it_was_dropped_on(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2("builder-drop", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let (first, second) = window
+            .update(&mut cx, |workspace, window, cx| {
+                let first = workspace.open_builder(window, cx).expect("a builder opens");
+                let second = workspace
+                    .open_builder(window, cx)
+                    .expect("a second builder opens");
+                (first, second)
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                // The one in front is the second, so the action's rule and the
+                // drop's would disagree — which is what makes the assertion
+                // below mean something.
+                assert_eq!(
+                    workspace
+                        .builder_tab()
+                        .and_then(|(pane, index)| workspace.builder_at(pane, index)),
+                    Some(second.clone())
+                );
+                first.update(cx, |_panel, cx| {
+                    cx.emit(BuilderPaneEvent::TableDropped(object(id, "ORDERS")));
+                });
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |_workspace, _window, cx| {
+                assert_eq!(first.read(cx).table_count(), 1);
+                assert_eq!(second.read(cx).table_count(), 0);
             })
             .expect("the window is open");
     }
