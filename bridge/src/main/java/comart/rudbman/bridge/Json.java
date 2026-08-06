@@ -88,6 +88,23 @@ public final class Json {
     }
 
     /**
+     * Reads a member as a {@code long}.
+     *
+     * <p>Handles are {@code long} on the wire and a handle read through
+     * {@link #i32} would start truncating silently at 2^31; anything carrying a
+     * handle or a row count comes through here.
+     *
+     * @param o    an object
+     * @param name a member name
+     * @param dflt fallback value
+     * @return the member's long value, or {@code dflt} when absent or JSON null
+     */
+    public static long i64(JsonObject o, String name, long dflt) {
+        JsonElement e = o.get(name);
+        return e == null || e.isJsonNull() ? dflt : e.getAsLong();
+    }
+
+    /**
      * @param o    an object
      * @param name a member name
      * @param dflt fallback value

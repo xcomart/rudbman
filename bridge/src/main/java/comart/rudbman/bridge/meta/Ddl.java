@@ -655,9 +655,24 @@ public final class Ddl {
         return out;
     }
 
-    /** @return the primary key's constraint name; fills {@code into} with its columns in order */
-    private static String readPrimaryKey(DatabaseMetaData dbm, String catalog, String schema,
-                                         String table, List<String> into) throws SQLException {
+    /**
+     * Reads a table's primary key.
+     *
+     * <p>Public because a transfer's {@code upsert} mode needs exactly this to
+     * find its conflict key, and a second reader of {@code getPrimaryKeys} would
+     * only differ from this one in its handling of the drivers that answer badly.
+     *
+     * @param dbm     the connection metadata
+     * @param catalog catalog, may be {@code null}
+     * @param schema  schema, may be {@code null}
+     * @param table   the table name
+     * @param into    filled with the key's columns, in {@code KEY_SEQ} order
+     * @return the primary key's constraint name, or {@code null} when the driver
+     *         does not name it or the table has no primary key
+     * @throws SQLException if the driver fails
+     */
+    public static String readPrimaryKey(DatabaseMetaData dbm, String catalog, String schema,
+                                        String table, List<String> into) throws SQLException {
         TreeMap<Integer, String> ordered = new TreeMap<>();
         String name = null;
         try (ResultSet rs = dbm.getPrimaryKeys(catalog, schema, table)) {

@@ -11,13 +11,7 @@ import comart.rudbman.bridge.meta.Dialect;
 import comart.rudbman.bridge.meta.Ident;
 import comart.rudbman.bridge.template.TemplateManager;
 
-import java.io.BufferedWriter;
-import java.io.Closeable;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
-import java.math.BigDecimal;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -29,12 +23,10 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Types;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -68,12 +60,9 @@ import java.util.Map;
  * <h2>What is dialect specific, and where it stops</h2>
  *
  * <p>Identifier quoting comes from {@link Ident}, so generated {@code INSERT}s
- * and generated DDL agree. Literals are rendered conservatively: text is single
- * quoted with quotes doubled, numbers go bare, dates go out as plain quoted
- * strings rather than as typed {@code DATE '…'} literals - every product accepts
- * a string there, and SQL Server rejects the typed form. Binary is the one place
- * where a common form does not exist, and the four spellings this bridge knows
- * are listed on {@link #hexLiteral}.
+ * and generated DDL agree. Value rendering lives in {@link Literals} and the
+ * statement shapes in {@link Scripts}, shared with {@link BackupJob} so that the
+ * two produce the same bytes for the same rows.
  */
 public final class ExtractJob extends Jobs.Job {
 
@@ -121,8 +110,6 @@ public final class ExtractJob extends Jobs.Job {
     private final String templatePath;
     private final int insertBatchRows;
     private final String where;
-
-    private long reportedBytes;
 
     /**
      * Validates a job specification.
@@ -230,7 +217,7 @@ public final class ExtractJob extends Jobs.Job {
         if (parent != null) {
             Files.createDirectories(parent);
         }
-        try (Out out = new Out(Files.newOutputStream(path))) {
+        try (ScriptOut out = new ScriptOut(Files.newOutputStream(path), charset, newline, false)) {
             try {
                 if (ddlInclude) {
                     writeDdl(out);
@@ -253,7 +240,7 @@ public final class ExtractJob extends Jobs.Job {
 
     // ------------------------------------------------------------------- ddl
 
-    private void writeDdl(Out out) throws Exception {
+    private void writeDdl(ScriptOut out) throws Exception {
         phase("ddl");
         runLocked(() -> {
             Connection conn = session().connection();
@@ -268,7 +255,8 @@ public final class ExtractJob extends Jobs.Job {
                 // does that.
                 for (int i = objects.size() - 1; i >= 0; i--) {
                     Obj o = objects.get(i);
-                    out.line(dropStatement(dialect, id.qualify(o.catalog, o.schema, o.name)));
+                    out.line(Scripts.dropStatement(dialect,
+                            id.qualify(o.catalog, o.schema, o.name)));
                 }
                 out.line("");
             }
@@ -295,29 +283,9 @@ public final class ExtractJob extends Jobs.Job {
         syncBytes(out);
     }
 
-    /**
-     * @return a {@code DROP TABLE} statement, with {@code IF EXISTS} on the
-     *         products that have it. Oracle and Db2 do not (Oracle only from
-     *         23ai), so there the statement fails on a missing table and the
-     *         script has to be run past that error.
-     */
-    private static String dropStatement(Dialect dialect, String qualified) {
-        boolean ifExists;
-        switch (dialect) {
-            case ORACLE:
-            case DB2:
-            case OTHER:
-                ifExists = false;
-                break;
-            default:
-                ifExists = true;
-        }
-        return "DROP TABLE " + (ifExists ? "IF EXISTS " : "") + qualified + ";";
-    }
-
     // ------------------------------------------------------------------ data
 
-    private void writeData(Out out) throws Exception {
+    private void writeData(ScriptOut out) throws Exception {
         TemplateManager template = null;
         if ("template".equals(mode)) {
             // Read once, parsed once, applied per row. The caller resolves the
@@ -340,7 +308,7 @@ public final class ExtractJob extends Jobs.Job {
         }
     }
 
-    private void writeTable(Out out, Obj o, TemplateManager template) throws Exception {
+    private void writeTable(ScriptOut out, Obj o, TemplateManager template) throws Exception {
         DatabaseMetaData dbm = session().metaData();
         Dialect dialect = Dialect.of(dbm);
         Ident id = Ident.of(dbm);
@@ -388,68 +356,13 @@ public final class ExtractJob extends Jobs.Job {
                                 template);
                         break;
                     default:
-                        writeInserts(out, rs, qualified, names, types, dialect, id);
+                        Scripts.writeInserts(this, out, rs, qualified, names, types, dialect, id,
+                                insertBatchRows);
                 }
             } finally {
                 inFlight(null);
             }
         }
-    }
-
-    private void writeInserts(Out out, ResultSet rs, String qualified, String[] names,
-                              int[] types, Dialect dialect, Ident id) throws Exception {
-        StringBuilder cols = new StringBuilder();
-        for (String name : names) {
-            if (cols.length() > 0) {
-                cols.append(", ");
-            }
-            cols.append(id.q(name));
-        }
-        String head = "INSERT INTO " + qualified + " (" + cols + ") VALUES";
-
-        // Oracle has no multi-row VALUES clause; asking for one there would
-        // produce a script that cannot run, so the request is clamped rather
-        // than honoured into a broken file.
-        int batchRows = dialect == Dialect.ORACLE ? 1 : insertBatchRows;
-
-        List<String> tuples = new ArrayList<>(batchRows);
-        long sinceSync = 0;
-        while (rs.next()) {
-            if (shouldStop()) {
-                break;
-            }
-            StringBuilder t = new StringBuilder("(");
-            for (int i = 1; i <= names.length; i++) {
-                if (i > 1) {
-                    t.append(", ");
-                }
-                t.append(literal(rs, i, types[i - 1], dialect));
-            }
-            tuples.add(t.append(')').toString());
-            addRows(1);
-            if (tuples.size() >= batchRows) {
-                flushTuples(out, head, tuples);
-            }
-            if (++sinceSync >= BYTE_SYNC_ROWS) {
-                sinceSync = 0;
-                syncBytes(out);
-            }
-        }
-        if (!tuples.isEmpty()) {
-            flushTuples(out, head, tuples);
-        }
-    }
-
-    private void flushTuples(Out out, String head, List<String> tuples) throws IOException {
-        if (tuples.size() == 1) {
-            out.line(head + " " + tuples.get(0) + ";");
-        } else {
-            out.line(head);
-            for (int i = 0; i < tuples.size(); i++) {
-                out.line(tuples.get(i) + (i == tuples.size() - 1 ? ";" : ","));
-            }
-        }
-        tuples.clear();
     }
 
     /**
@@ -469,7 +382,8 @@ public final class ExtractJob extends Jobs.Job {
      * record separator and its data can differ. Rewriting them would be data
      * loss.
      */
-    private void writeCsv(Out out, ResultSet rs, String[] names, int[] types) throws Exception {
+    private void writeCsv(ScriptOut out, ResultSet rs, String[] names, int[] types)
+            throws Exception {
         StringBuilder header = new StringBuilder();
         for (String name : names) {
             if (header.length() > 0) {
@@ -489,7 +403,7 @@ public final class ExtractJob extends Jobs.Job {
                 if (i > 1) {
                     row.append(',');
                 }
-                String v = text(rs, i, types[i - 1]);
+                String v = Literals.text(rs, i, types[i - 1]);
                 if (v != null) {
                     row.append(csvField(v));
                 }
@@ -533,7 +447,7 @@ public final class ExtractJob extends Jobs.Job {
      * only way to reach either. A dotted key is a processor chain in this syntax,
      * not a path, so there is no {@code ${meta.table}} to fall back on.
      */
-    private void writeTemplate(Out out, ResultSet rs, Obj o, String qualified, String[] names,
+    private void writeTemplate(ScriptOut out, ResultSet rs, Obj o, String qualified, String[] names,
                                String[] typeNames, int[] types, Dialect dialect,
                                TemplateManager template) throws Exception {
         long sinceSync = 0;
@@ -552,11 +466,11 @@ public final class ExtractJob extends Jobs.Job {
             model.put("row_no", rowNo);
             model.put("columns", columns);
             for (int i = 1; i <= names.length; i++) {
-                String v = text(rs, i, types[i - 1]);
+                String v = Literals.text(rs, i, types[i - 1]);
                 Map<String, Object> col = new LinkedHashMap<>();
                 col.put("name", names[i - 1]);
                 col.put("value", v);
-                col.put("literal", literal(rs, i, types[i - 1], dialect));
+                col.put("literal", Literals.literal(rs, i, types[i - 1], dialect));
                 col.put("type_name", typeNames[i - 1]);
                 col.put("jdbc_type", types[i - 1]);
                 columns.add(col);
@@ -572,241 +486,9 @@ public final class ExtractJob extends Jobs.Job {
         }
     }
 
-    // -------------------------------------------------------------- literals
-
-    /**
-     * Renders one column of the current row as a SQL literal.
-     *
-     * @return the literal text, or {@code NULL}
-     * @throws SQLException if the driver fails
-     */
-    private static String literal(ResultSet rs, int i, int type, Dialect dialect)
-            throws SQLException {
-        switch (type) {
-            case Types.BINARY:
-            case Types.VARBINARY:
-            case Types.LONGVARBINARY:
-            case Types.BLOB: {
-                byte[] b = rs.getBytes(i);
-                return b == null || rs.wasNull() ? "NULL" : hexLiteral(b, dialect);
-            }
-            case Types.TINYINT:
-            case Types.SMALLINT:
-            case Types.INTEGER:
-            case Types.BIGINT: {
-                // Read as text rather than as a long: an unsigned BIGINT does not
-                // fit one, and the driver already knows how to spell its own.
-                String s = rs.getString(i);
-                return s == null || rs.wasNull() ? "NULL" : s;
-            }
-            case Types.DECIMAL:
-            case Types.NUMERIC: {
-                BigDecimal d = rs.getBigDecimal(i);
-                // toPlainString, because toString switches to exponent notation
-                // at some scales and not every parser accepts 1E+2 as a decimal.
-                return d == null || rs.wasNull() ? "NULL" : d.toPlainString();
-            }
-            case Types.FLOAT:
-            case Types.REAL:
-            case Types.DOUBLE: {
-                double d = rs.getDouble(i);
-                if (rs.wasNull()) {
-                    return "NULL";
-                }
-                if (Double.isNaN(d) || Double.isInfinite(d)) {
-                    // No portable literal exists; a quoted form at least fails
-                    // loudly instead of producing a wrong number silently.
-                    return Ident.literal(Double.toString(d));
-                }
-                return Double.toString(d);
-            }
-            case Types.BIT:
-            case Types.BOOLEAN: {
-                boolean b = rs.getBoolean(i);
-                if (rs.wasNull()) {
-                    return "NULL";
-                }
-                return booleanLiteral(b, dialect);
-            }
-            default: {
-                String s = rs.getString(i);
-                return s == null || rs.wasNull() ? "NULL" : Ident.literal(s);
-            }
-        }
-    }
-
-    /**
-     * @return {@code TRUE}/{@code FALSE} where the product has a boolean type,
-     *         {@code 1}/{@code 0} where it does not. Oracle before 23ai, SQL
-     *         Server and SQLite are in the second group.
-     */
-    private static String booleanLiteral(boolean b, Dialect dialect) {
-        switch (dialect) {
-            case ORACLE:
-            case SQLSERVER:
-            case SQLITE:
-            case MYSQL:
-            case MARIADB:
-                return b ? "1" : "0";
-            default:
-                return b ? "TRUE" : "FALSE";
-        }
-    }
-
-    /**
-     * Renders binary data.
-     *
-     * <p>There is no common spelling, so four are known:
-     * {@code 0x…} for SQL Server, {@code '\x…'} for PostgreSQL's bytea input,
-     * {@code HEXTORAW('…')} for Oracle and the standard {@code X'…'} for
-     * everything else, which is what H2, MySQL, SQLite and Db2 accept. A product
-     * that reaches {@link Dialect#OTHER} gets the standard form and may not take
-     * it.
-     */
-    private static String hexLiteral(byte[] b, Dialect dialect) {
-        String hex = hex(b);
-        switch (dialect) {
-            case SQLSERVER:  return "0x" + hex;
-            case POSTGRESQL: return "'\\x" + hex + "'";
-            case ORACLE:     return "HEXTORAW('" + hex + "')";
-            default:         return "X'" + hex + "'";
-        }
-    }
-
-    /**
-     * Renders one column of the current row as plain text, for CSV and templates.
-     *
-     * @return the text, or {@code null} for SQL NULL
-     * @throws SQLException if the driver fails
-     */
-    private static String text(ResultSet rs, int i, int type) throws SQLException {
-        switch (type) {
-            case Types.BINARY:
-            case Types.VARBINARY:
-            case Types.LONGVARBINARY:
-            case Types.BLOB: {
-                byte[] b = rs.getBytes(i);
-                return b == null || rs.wasNull() ? null : hex(b);
-            }
-            default: {
-                String s = rs.getString(i);
-                return s == null || rs.wasNull() ? null : s;
-            }
-        }
-    }
-
-    /**
-     * @param b the bytes
-     * @return their upper-case hexadecimal spelling, with no prefix
-     */
-    private static String hex(byte[] b) {
-        StringBuilder sb = new StringBuilder(b.length * 2);
-        for (byte x : b) {
-            sb.append(Character.forDigit((x >> 4) & 0xf, 16))
-                    .append(Character.forDigit(x & 0xf, 16));
-        }
-        return sb.toString().toUpperCase(Locale.ROOT);
-    }
-
     // ---------------------------------------------------------------- output
 
-    private void syncBytes(Out out) {
-        long written = out.written();
-        addBytes(written - reportedBytes);
-        reportedBytes = written;
-    }
-
-    /**
-     * The output file: a buffered, charset-encoding writer over a stream that
-     * counts the bytes it passes on.
-     *
-     * <p>The count is what {@code JOB_POLL} reports, and it is read without
-     * flushing, so it lags by up to one buffer. That is the right trade for a
-     * progress bar; flushing per row to make the number exact would cost far more
-     * than the number is worth.
-     */
-    private final class Out implements Closeable {
-
-        private final Counting counting;
-        private final Writer writer;
-
-        Out(OutputStream raw) {
-            counting = new Counting(raw);
-            writer = new BufferedWriter(new OutputStreamWriter(counting, charset), 1 << 16);
-        }
-
-        /** Writes text exactly as given, including any line breaks it holds. */
-        void raw(String s) throws IOException {
-            writer.write(s);
-        }
-
-        /** Writes text and the configured record separator. */
-        void line(String s) throws IOException {
-            writer.write(s);
-            writer.write(newline);
-        }
-
-        /**
-         * Writes a block of generated SQL, translating its line breaks to the
-         * configured separator.
-         *
-         * <p>Only generated text goes through here. Row data never does: a line
-         * break inside a value is data, and rewriting it would corrupt the row.
-         */
-        void block(String s) throws IOException {
-            String normalised = s.replace("\r\n", "\n");
-            if ("\n".equals(newline)) {
-                writer.write(normalised);
-            } else {
-                writer.write(normalised.replace("\n", newline));
-            }
-        }
-
-        void flush() throws IOException {
-            writer.flush();
-        }
-
-        /** @return bytes handed to the file so far, buffered text excluded */
-        long written() {
-            return counting.count;
-        }
-
-        @Override
-        public void close() throws IOException {
-            writer.close();
-        }
-    }
-
-    /** An output stream that counts. */
-    private static final class Counting extends OutputStream {
-
-        private final OutputStream out;
-        private volatile long count;
-
-        Counting(OutputStream out) {
-            this.out = out;
-        }
-
-        @Override
-        public void write(int b) throws IOException {
-            out.write(b);
-            count++;
-        }
-
-        @Override
-        public void write(byte[] b, int off, int len) throws IOException {
-            out.write(b, off, len);
-            count += len;
-        }
-
-        @Override
-        public void flush() throws IOException {
-            out.flush();
-        }
-
-        @Override
-        public void close() throws IOException {
-            out.close();
-        }
+    private void syncBytes(ScriptOut out) {
+        addBytes(out.unreported());
     }
 }
