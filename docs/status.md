@@ -5,7 +5,7 @@
 남았는지, 그리고 이 저장소에서 일하는 방식**만 담는다. 마일스톤 하나가 끝날
 때마다 이 문서를 갱신한다.
 
-최종 갱신: 2026-08-06 (M6 완료 직후).
+최종 갱신: 2026-08-06 (M7 완료 직후 — **마일스톤 전부 완료**).
 
 ## 어디까지 왔나
 
@@ -18,20 +18,24 @@
 | M4 | 완료 | 브리지 job 프레임(0x40~42) + ExtractJob(DDL은 CREATE 전부→FK ALTER 전부, insert/csv/template), jdbgen 템플릿 엔진 승계(자산 호환 카나리아 테스트), Rust Job API, 추출 다이얼로그, SQL 파일 열기(Ctrl+O) → 기존 실행 파이프라인 |
 | M5 | 완료 | rudbman-erd 크레이트(모델·격자/자체 Sugiyama 배치·직교 라우팅·SVG 내보내기·캔버스 위젯 — 순수/gpui 모듈 분리), `PaneItem::Erd`+`ErdPane`(로딩·툴바), FK 로더(테이블당 imported_keys, 결정적 정렬), 배치 저장 `erd/<uuid>.json`(제스처당 1회), 탐색기 `OpenErd`(Ctrl/Cmd+E, 스코프 단위) |
 | M6 | 완료 | 브리지 `TransferJob`(두 세션 락 핸들 오름차순, 취소 2슬롯, `uses(Session)` 훅, upsert 방언 3계열 + PK/OTHER 동기 거절, on_error abort/skip/log — savepoint로 배치 격리, errors 상한 100)·`BackupJob`(스코프 열거, INSERT만 FK 위상 정렬, gzip)·`meta/Upsert`, 진행률 `rows_skipped`, Rust `TransferSpec`/`BackupSpec`+`start_transfer`/`start_backup`, 전송·백업 다이얼로그(추출 폴링 패턴, 타깃 연결 셀렉트) |
+| M7 | 완료 | rudbman-erd 캔버스 공유화(`canvas` 모듈 — 뷰포트·제스처·열 단위 기하·4레이어 페인트, ERD SVG 바이트 불변 실증) + `BuilderView`(열 클릭 토글·열→열 조인 드래그, 상태는 호스트 소유), rudbman-sql `quote_ident`/`qualify`(필요할 때만 인용 — 키워드·비식별자 문자·방언별 케이스 접힘), `PaneItem::QueryBuilder`+`BuilderPane`(조인/WHERE/GROUP BY/ORDER BY 폼, SQL 미리보기, `open_query`로 에디터行), `open_query_for` 인용 결함 수정 |
 | 중간 UI 작업 | 완료 | 미니탭(팬마다 탭 목록, 중복 열기=이동), **연결별 작업 영역**(상단 탭 전환이 하단 전체를 전환 — 사용자 확정 설계), 포커스 회수 규율(아래 "함정"), 에디터 폰트 설정 배선 |
 
 - 저장소: <https://github.com/xcomart/rudbman> (public, MIT).
 - 브랜치 흐름은 logman과 동일: **dev에서 작업, main은 PR 머지 커밋만**. CI는
   3플랫폼 매트릭스이고 브리지(Java) 스위트를 Rust보다 먼저 돌린다.
-- 테스트 규모(2026-08-06): Rust 약 740 + Java 141. 전부 실제 JVM/H2를 부팅하는
+- 테스트 규모(2026-08-06): Rust 약 780 + Java 141. 전부 실제 JVM/H2를 부팅하는
   통합 테스트를 포함한다.
 
 ## 다음 작업
 
-1. **M7 — 쿼리 빌더, 마무리**: ERD 캔버스(팬·줌·드래그·히트 판정)를 공유한다
-   (§7.7). PNG 내보내기는 여전히 SVG만(§12.5). 전송·백업의 PostgreSQL/MySQL
-   실물 검증(컨테이너 선택 테스트)과 Oracle/SQL Server/DB2 MERGE 철자 확인도
-   남아 있다(브리지 README의 알려진 공백).
+계획된 마일스톤(M0~M7)은 전부 끝났다. 남은 것은 순서 자유:
+
+1. **첫 릴리스**: release.yml 배선(§10.4), jlink 이미지에 `jdk.charsets` 포함
+   확인(§6 패키징 노트), 3플랫폼 아티팩트 스모크.
+2. **실물 DB 검증**: PostgreSQL/MySQL 컨테이너 선택 테스트(전송·백업 경로),
+   Oracle/SQL Server/DB2의 upsert MERGE 철자 확인(브리지 README 알려진 공백).
+3. **미결 기능**: 아래 목록(LOB 뷰어가 가장 큼 — §12.7 재읽기 전략 결정 필요).
 
 ### 마일스톤에 안 걸린 미결
 

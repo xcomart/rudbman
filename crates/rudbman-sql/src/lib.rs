@@ -54,6 +54,13 @@
 //! parameters and reserved words; [`Syntax`] is the complete list, in one
 //! record, and the reserved-word tables are in `src/keywords.rs`.
 //!
+//! A dialect also knows how to *write* an identifier back out.
+//! [`Dialect::quote_ident`] quotes a name only when leaving it bare would
+//! change it — a reserved word, a space, a case the server would fold — and
+//! [`Dialect::qualify`] joins the parts of a qualified name that way. That is
+//! the crate's one output-side API, and [`mod@ident`] explains why it is not
+//! simply "quote everything".
+//!
 //! # Known limitations
 //!
 //! Written down rather than half-implemented:
@@ -76,6 +83,8 @@
 //!
 //! * [`mod@dialect`] — [`Dialect`], [`DialectId`], and the [`Syntax`] record of
 //!   what the vendors disagree about.
+//! * [`mod@ident`] — [`Dialect::quote_ident`] and [`Dialect::qualify`], for the
+//!   callers that write SQL rather than read it.
 //! * [`mod@lexer`] — [`Token`], [`TokenKind`], [`LineState`], [`lex_line`],
 //!   [`lex`], [`Lexer`].
 //! * [`mod@statement`] — [`StatementSpan`], [`split_statements`],
@@ -85,6 +94,7 @@
 #![warn(missing_docs)]
 
 pub mod dialect;
+pub mod ident;
 pub mod lexer;
 pub mod statement;
 

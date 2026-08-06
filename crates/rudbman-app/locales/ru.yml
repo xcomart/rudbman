@@ -24,6 +24,11 @@ menu:
   backup_schema: Создать копию схемы…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD-диаграмма
+  # Puts the object selected in the explorer onto a query builder's canvas,
+  # opening one first if the connection has none.
+  add_to_builder: Добавить в конструктор запросов
+  # Opens an empty query builder on the connection whose tab is showing.
+  new_builder: Новый конструктор запросов
   about: О программе rudbman
   quit: Выход
   connection: Подключение
@@ -469,3 +474,25 @@ erd:
   export_done: "Записано в %{path}."
   export_failed: "Не удалось записать диаграмму: %{error}"
   refresh: Обновить
+
+# The query builder: a canvas of tables, the form under it, and the SELECT the
+# two of them describe.
+builder:
+  tab: "Конструктор %{index}"
+  canvas_hint: Выберите таблицу в обозревателе и добавьте её в конструктор.
+  joins: Соединения
+  join_inner: INNER JOIN
+  join_left: LEFT JOIN
+  join_right: RIGHT JOIN
+  join_full: FULL JOIN
+  remove: Удалить
+  where: Условия
+  add_condition: Добавить условие
+  columns: Выбранные столбцы
+  group_by: Группировать
+  order_none: Без сортировки
+  order_asc: По возрастанию
+  order_desc: По убыванию
+  sql: Запрос
+  no_sql: Добавьте таблицу, чтобы получить запрос.
+  open_editor: Открыть в редакторе

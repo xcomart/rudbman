@@ -49,6 +49,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{App, Entity, ScrollHandle, SharedString};
 
+use crate::builder_pane::BuilderPane;
 use crate::erd_pane::{ErdPane, ErdTarget};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
@@ -122,7 +123,20 @@ pub enum PaneItem {
     /// Holds only the panel, because the panel knows what it is drawing: a
     /// scope, which is also what tells two ERD tabs apart.
     Erd(Entity<ErdPane>),
-    // M7 adds `QueryBuilder`; see the architecture document, §7.1.
+    /// A canvas of tables, the form under it, and the `SELECT` they describe.
+    ///
+    /// Numbered like a query pane and for the same reason: several at once is
+    /// the ordinary case — one builder per question — and unlike a diagram
+    /// there is nothing about a builder that identifies it, because two of them
+    /// over the same tables are two different questions.
+    QueryBuilder {
+        /// The canvas and its form.
+        pane: Entity<BuilderPane>,
+        /// Which builder of this connection it is, counting from one. Kept
+        /// beside the view for the reason a query pane's number is: it is the
+        /// tab strip's business and nothing else's.
+        number: u64,
+    },
 }
 
 impl PaneItem {
@@ -130,12 +144,14 @@ impl PaneItem {
     ///
     /// A detail panel is named after the object it describes, qualified by its
     /// schema; a query pane has no name of its own, so it takes its number; a
-    /// diagram is named after the scope it covers.
+    /// diagram is named after the scope it covers; a builder takes its number,
+    /// as the query pane does and for the same reason.
     pub fn title(&self, cx: &App) -> SharedString {
         match self {
             PaneItem::TableDetail(panel) => SharedString::from(panel.read(cx).target().qualified()),
             PaneItem::Query { number, .. } => ts!("query.tab", index = number),
             PaneItem::Erd(panel) => panel.read(cx).target().title(),
+            PaneItem::QueryBuilder { number, .. } => ts!("builder.tab", index = number),
         }
     }
 
@@ -149,6 +165,7 @@ impl PaneItem {
             PaneItem::TableDetail(panel) => panel.read(cx).target().connection,
             PaneItem::Query { pane, .. } => pane.read(cx).connection(),
             PaneItem::Erd(panel) => panel.read(cx).target().connection,
+            PaneItem::QueryBuilder { pane, .. } => pane.read(cx).connection(),
         }
     }
 }
@@ -249,7 +266,7 @@ impl Pane {
     pub fn detail_of(&self, target: &ObjectTarget, cx: &App) -> Option<usize> {
         self.items.iter().position(|item| match item {
             PaneItem::TableDetail(panel) => panel.read(cx).target() == target,
-            PaneItem::Query { .. } | PaneItem::Erd(_) => false,
+            PaneItem::Query { .. } | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => false,
         })
     }
 
@@ -261,8 +278,22 @@ impl Pane {
     pub fn erd_of(&self, target: &ErdTarget, cx: &App) -> Option<usize> {
         self.items.iter().position(|item| match item {
             PaneItem::Erd(panel) => panel.read(cx).target() == target,
-            PaneItem::TableDetail(_) | PaneItem::Query { .. } => false,
+            PaneItem::TableDetail(_) | PaneItem::Query { .. } | PaneItem::QueryBuilder { .. } => {
+                false
+            }
         })
+    }
+
+    /// The index of the first query builder open here, if there is one.
+    ///
+    /// Unlike a detail panel or a diagram, a builder is not *of* anything, so
+    /// this cannot ask "is this one showing X". It answers the question "add to
+    /// builder" actually has — where is there a builder to add to — and the
+    /// workspace prefers the tab already on top over the answer from here.
+    pub fn first_builder(&self) -> Option<usize> {
+        self.items
+            .iter()
+            .position(|item| matches!(item, PaneItem::QueryBuilder { .. }))
     }
 }
 

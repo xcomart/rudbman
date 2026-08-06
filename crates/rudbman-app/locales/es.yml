@@ -24,6 +24,11 @@ menu:
   backup_schema: Copiar el esquema…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagrama ERD
+  # Puts the object selected in the explorer onto a query builder's canvas,
+  # opening one first if the connection has none.
+  add_to_builder: Añadir al generador de consultas
+  # Opens an empty query builder on the connection whose tab is showing.
+  new_builder: Nuevo generador de consultas
   about: Acerca de rudbman
   quit: Salir
   connection: Conexión
@@ -469,3 +474,25 @@ erd:
   export_done: "Escrito en %{path}."
   export_failed: "No se pudo escribir el diagrama: %{error}"
   refresh: Actualizar
+
+# The query builder: a canvas of tables, the form under it, and the SELECT the
+# two of them describe.
+builder:
+  tab: "Generador %{index}"
+  canvas_hint: Seleccione una tabla en el explorador y añádala al generador.
+  joins: Uniones
+  join_inner: INNER JOIN
+  join_left: LEFT JOIN
+  join_right: RIGHT JOIN
+  join_full: FULL JOIN
+  remove: Quitar
+  where: Condiciones
+  add_condition: Añadir condición
+  columns: Columnas seleccionadas
+  group_by: Agrupar
+  order_none: Sin ordenar
+  order_asc: Ascendente
+  order_desc: Descendente
+  sql: Sentencia
+  no_sql: Añada una tabla para generar una sentencia.
+  open_editor: Abrir en el editor

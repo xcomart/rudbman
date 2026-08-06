@@ -52,6 +52,11 @@ menu:
   backup_schema: Back up schema…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD diagram
+  # Puts the object selected in the explorer onto a query builder's canvas,
+  # opening one first if the connection has none.
+  add_to_builder: Add to query builder
+  # Opens an empty query builder on the connection whose tab is showing.
+  new_builder: New query builder
   about: About rudbman
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
@@ -702,3 +707,39 @@ erd:
   export_done: "Written to %{path}."
   export_failed: "The diagram could not be written: %{error}"
   refresh: Refresh
+
+# The query builder: a canvas of tables, the form under it, and the SELECT the
+# two of them describe.
+#
+# Never translated: table, column and alias names, and the SQL keywords in the
+# join-type list — INNER JOIN reads as INNER JOIN in every dialect.
+builder:
+  # The title of a builder pane's tab. `index` counts from one within the
+  # connection and is never reused, so two open tabs never share a title.
+  tab: "Builder %{index}"
+  # Shown where the canvas would be, before any table has been added.
+  canvas_hint: Select a table in the explorer and add it to the builder.
+  # Heading of the list of joins drawn on the canvas.
+  joins: Joins
+  join_inner: INNER JOIN
+  join_left: LEFT JOIN
+  join_right: RIGHT JOIN
+  join_full: FULL JOIN
+  # Deletes the join or the condition on the row it sits on.
+  remove: Remove
+  # Heading of the condition rows, which are combined with AND.
+  where: Conditions
+  add_condition: Add condition
+  # Heading of the picked columns, each with its grouping and sorting.
+  columns: Selected columns
+  group_by: Group
+  # The three states of a column's sort.
+  order_none: Unsorted
+  order_asc: Ascending
+  order_desc: Descending
+  # Heading of the read-only preview of the generated statement.
+  sql: Statement
+  # The preview with nothing to show yet.
+  no_sql: Add a table to build a statement.
+  # Sends the statement to a new query pane, where it can be run.
+  open_editor: Open in editor
