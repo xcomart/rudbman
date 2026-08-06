@@ -923,9 +923,12 @@ jlink --add-modules \
     java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,\
     java.security.jgss,java.security.sasl,java.management,java.logging,\
     jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
-    --strip-debug --no-header-files --no-man-pages --compress=zip-6 \
+    --strip-debug --no-header-files --no-man-pages --compress=2 \
     --output runtime/
 ```
+
+`--compress=2`는 JDK 17의 철자다(zip 압축). `zip-6` 구문은 JDK 21부터라
+릴리스가 고정한 JDK 17에서는 오류가 난다.
 
 - `jdk.unsupported`는 **필수**다. 상당수 드라이버가 `sun.misc.Unsafe`를 쓴다
 - `jdk.charsets`도 **필수**다. 템플릿 엔진의 EUC-KR 패딩 폭 계산이 확장
