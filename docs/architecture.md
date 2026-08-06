@@ -1062,9 +1062,9 @@ logman's `packaging/` is inherited. Linux gets a tar plus `install.sh` plus a
 gets a zipped folder — the executable is the launcher.
 
 The archive layout is dictated by §4.1's search order. Relative to the
-executable, the bridge JAR goes to `lib/rudbman-bridge.jar` (`<exe_dir>/lib`)
-and the runtime goes beside it (`<exe_dir>/runtime`, or `<exe_dir>/../runtime`
-on macOS):
+executable, the bridge JAR goes to `lib/rudbman-bridge.jar` (`<exe_dir>/lib`,
+or `<exe_dir>/../lib` inside the macOS bundle) and the runtime goes beside it
+(`<exe_dir>/runtime`, or `<exe_dir>/../runtime` on macOS):
 
 ```
 rudbman-vX.Y.Z-<target>/          # Windows and Linux
@@ -1076,11 +1076,16 @@ rudbman-vX.Y.Z-<target>/          # Windows and Linux
 rudbman.app/                      # macOS
 └── Contents/
     ├── MacOS/rudbman
-    ├── MacOS/lib/rudbman-bridge.jar
+    ├── lib/rudbman-bridge.jar
     ├── runtime/
     ├── Resources/rudbman.icns
     └── Info.plist
 ```
+
+On macOS the JAR must not sit under `Contents/MacOS/`: everything in that
+directory is nested code to `codesign`, and sealing the bundle fails on an
+unsigned JAR. `Contents/lib/` is sealed as a plain resource instead — the
+first v0.1.0 release run failed exactly this way.
 
 Unlike logman's, the Linux `install.sh` installs not a single binary but **the
 whole tree** into `~/.local/share/rudbman/`, then creates a `~/.local/bin/rudbman`

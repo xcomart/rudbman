@@ -112,10 +112,12 @@ jobs:
         run: cargo build --release --locked -p rudbman-app --target ${{ matrix.target }}
 
       # A bare Mach-O binary cannot carry an icon; macOS wants an .app bundle
-      # with an Info.plist and an .icns. The runtime goes under Contents/, one
-      # level above the executable, which is the second place the JVM loader
-      # looks (architecture.md 4.1); the bridge JAR stays in lib/ beside the
-      # executable, same as everywhere else.
+      # with an Info.plist and an .icns. The runtime and the bridge JAR both go
+      # under Contents/, one level above the executable, which is the second
+      # place the JVM loader looks for each (architecture.md 4.1, 10.3). Not
+      # under Contents/MacOS/: everything there is nested code to codesign,
+      # and sealing the bundle fails on an unsigned JAR — the first v0.1.0
+      # run failed exactly this way.
       #
       # The bundle is ad-hoc signed (`codesign --sign -`): no Apple Developer
       # account, no secrets, and no identity in the signature. That is not
@@ -136,9 +138,9 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           app="rudbman.app"
-          mkdir -p "$app/Contents/MacOS/lib" "$app/Contents/Resources"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/lib" "$app/Contents/Resources"
           cp "target/${{ matrix.target }}/release/rudbman" "$app/Contents/MacOS/"
-          cp bridge/build/libs/rudbman-bridge.jar "$app/Contents/MacOS/lib/"
+          cp bridge/build/libs/rudbman-bridge.jar "$app/Contents/lib/"
           cp -R runtime "$app/Contents/runtime"
           cp assets/icon.icns "$app/Contents/Resources/rudbman.icns"
           sed "s/__VERSION__/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
@@ -275,7 +277,7 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then
             contents="$STAGING/rudbman.app/Contents"
             exe="$contents/MacOS/rudbman"
-            jar="$contents/MacOS/lib/rudbman-bridge.jar"
+            jar="$contents/lib/rudbman-bridge.jar"
             runtime="$contents/runtime"
           else
             exe="$STAGING/rudbman"
