@@ -1,0 +1,334 @@
+# Build release archives for a version tag and attach them to a GitHub
+# Release. Trigger with:
+#
+#   git tag -a v0.1.0 -m "..." && git push origin v0.1.0
+#
+# The build matrix only uploads artifacts; a single publish job creates the
+# release afterwards. When each build job published directly, all three ran
+# generate_release_notes and the release body carried the same changelog
+# line three times.
+#
+# Inherited from logman, plus the two halves logman does not have. Every build
+# job runs Gradle -> jlink -> cargo, in that order: rudbman-jdbc's build script
+# refuses to compile without bridge/build/libs/rudbman-bridge.jar, and the
+# archives ship a jlink runtime so users need no JDK of their own. What comes
+# out is a tree, not a binary — see architecture.md 10.3.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev
+
+      # gpui's build script compiles HLSL shaders with fxc.exe from the
+      # Windows SDK. It only looks on PATH and at one hardcoded location, so
+      # point it at whatever SDK the runner image actually carries.
+      - name: Locate fxc.exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter fxc.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName | Select-Object -Last 1
+          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
+          "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # 17 is what the bridge compiles against (--release 17), so it is also
+      # what the shipped runtime is jlinked from. Temurin because it exists for
+      # all three runners and carries the jmods jlink needs.
+      - name: Install JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: bridge/*.gradle
+
+      # Before cargo, always: rudbman-jdbc's build script panics if the JAR is
+      # missing. Only `jar` here — CI already ran the bridge's own suite on the
+      # commit this tag points at.
+      - name: Build the bridge JAR
+        working-directory: bridge
+        # bash on every runner: the Windows one has Git Bash, and this keeps
+        # `./gradlew` meaning the same file on all three.
+        shell: bash
+        run: ./gradlew jar --no-daemon
+
+      # The Java runtime that ships inside the archive, per architecture.md
+      # 10.2. The module list is the load-bearing part: a driver that reaches
+      # for a missing module fails at connect time, not at build time, which is
+      # why the smoke step below checks the result. jdk.unsupported covers
+      # drivers using sun.misc.Unsafe and jdk.charsets covers the extended
+      # charsets the template engine's EUC-KR width maths needs.
+      #
+      # `--compress=2` is JDK 17's spelling of maximum compression; the
+      # `--compress=zip-N` form only exists from JDK 21 on.
+      - name: Build the bundled Java runtime
+        shell: bash
+        run: |
+          jlink --module-path "$JAVA_HOME/jmods" \
+            --add-modules \
+              java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,java.security.jgss,java.security.sasl,java.management,java.logging,jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
+            --strip-debug --no-header-files --no-man-pages --compress=2 \
+            --output runtime
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked -p rudbman-app --target ${{ matrix.target }}
+
+      # A bare Mach-O binary cannot carry an icon; macOS wants an .app bundle
+      # with an Info.plist and an .icns. The runtime goes under Contents/, one
+      # level above the executable, which is the second place the JVM loader
+      # looks (architecture.md 4.1); the bridge JAR stays in lib/ beside the
+      # executable, same as everywhere else.
+      #
+      # The bundle is ad-hoc signed (`codesign --sign -`): no Apple Developer
+      # account, no secrets, and no identity in the signature. That is not
+      # notarization and it does not satisfy Gatekeeper, so the first launch of
+      # a downloaded copy still needs right-click -> Open. What it buys is one
+      # signature over the bundle as a whole, sealing the Info.plist we just
+      # wrote where the linker's own ad-hoc signature covers the executable
+      # alone: from here nothing in the bundle can change without
+      # `codesign --verify` noticing. Same tamper seal the Windows step settles
+      # for, minus the certificate.
+      #
+      # logman verifies with --deep; rudbman cannot. The jlink runtime is a
+      # tree of Mach-O files that arrive with signatures of their own, and a
+      # deep verify walks into them and judges those instead of the seal this
+      # step just made. --strict over the bundle is the claim being made here.
+      - name: Package (macos)
+        if: runner.os == 'macOS'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          app="rudbman.app"
+          mkdir -p "$app/Contents/MacOS/lib" "$app/Contents/Resources"
+          cp "target/${{ matrix.target }}/release/rudbman" "$app/Contents/MacOS/"
+          cp bridge/build/libs/rudbman-bridge.jar "$app/Contents/MacOS/lib/"
+          cp -R runtime "$app/Contents/runtime"
+          cp assets/icon.icns "$app/Contents/Resources/rudbman.icns"
+          sed "s/__VERSION__/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --force --sign - "$app"
+          codesign --verify --strict "$app"
+          staging="rudbman-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir "$staging"
+          cp -R "$app" README.md "$staging/"
+          tar czf "$staging.tar.gz" "$staging"
+          echo "ASSET=$staging.tar.gz" >> "$GITHUB_ENV"
+          echo "STAGING=$staging" >> "$GITHUB_ENV"
+
+      # Linux gets the flat tree plus a desktop entry, hicolor icons and a
+      # per-user install script; install.sh puts everything under ~/.local.
+      - name: Package (linux)
+        if: runner.os == 'Linux'
+        run: |
+          staging="rudbman-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$staging/lib" "$staging/icons"
+          cp "target/${{ matrix.target }}/release/rudbman" "$staging/"
+          cp bridge/build/libs/rudbman-bridge.jar "$staging/lib/"
+          cp -R runtime "$staging/runtime"
+          cp README.md packaging/linux/com.aihouse.rudbman.desktop "$staging/"
+          install -m755 packaging/linux/install.sh "$staging/install.sh"
+          cp assets/icon-128.png "$staging/icons/rudbman-128.png"
+          cp assets/icon-256.png "$staging/icons/rudbman-256.png"
+          cp assets/icon.svg "$staging/icons/rudbman.svg"
+          tar czf "$staging.tar.gz" "$staging"
+          echo "ASSET=$staging.tar.gz" >> "$GITHUB_ENV"
+          echo "STAGING=$staging" >> "$GITHUB_ENV"
+
+      # signtool.exe ships with the Windows SDK and is not on PATH, so it needs
+      # the same treatment as fxc.exe above.
+      - name: Locate signtool.exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $candidates = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' }
+          # Versioned SDK directories (bin\10.0.26100.0\x64) sort newest last;
+          # the legacy unversioned bin\x64 copy is only a fallback because it
+          # can predate the SDK actually installed on the image.
+          $signtool = $candidates |
+            Where-Object { $_.FullName -match '\\bin\\10\.[0-9.]+\\x64\\' } |
+            Sort-Object FullName | Select-Object -Last 1
+          if (-not $signtool) { $signtool = $candidates | Select-Object -First 1 }
+          if (-not $signtool) { throw "signtool.exe not found in the Windows SDK" }
+          "SIGNTOOL=$($signtool.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Authenticode-sign the exe with a self-signed certificate. This is a
+      # tamper seal, not a reputation: the signing root is trusted by nobody,
+      # so SmartScreen still shows "Windows protected your PC" and the
+      # publisher still reads as unknown. It does let users compare the
+      # certificate thumbprint across releases and it keeps the timestamp, so
+      # the signature outlives the certificate's own validity window.
+      #
+      # The secrets are mapped into env rather than tested in `if:` because the
+      # `secrets` context is not available in step-level `if:` expressions.
+      # A missing certificate therefore skips signing instead of failing the
+      # build, which keeps forks and pre-secret tags releasable.
+      - name: Sign (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PFX_BASE64)) {
+            Write-Host "signing skipped (no certificate secret)"
+            exit 0
+          }
+          # The retry loop below reads $LASTEXITCODE itself, so keep pwsh from
+          # throwing on the first non-zero signtool exit.
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Resolve-Path both normalises the separators signtool sees and fails
+          # loudly if the build output is not where it is expected.
+          $exe = (Resolve-Path "target/${{ matrix.target }}/release/rudbman.exe").Path
+          $pfx = Join-Path $env:RUNNER_TEMP "rudbman-signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String(($env:PFX_BASE64 -replace '\s', '')))
+            # The timestamp authority is a third-party service; give it a
+            # couple of retries before failing the release over a blip.
+            $signed = $false
+            foreach ($attempt in 1..3) {
+              & $env:SIGNTOOL sign /f $pfx /p $env:PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $exe
+              if ($LASTEXITCODE -eq 0) { $signed = $true; break }
+              Write-Host "signtool exited $LASTEXITCODE on attempt $attempt of 3"
+              if ($attempt -lt 3) { Start-Sleep -Seconds 15 }
+            }
+            if (-not $signed) { throw "signtool sign failed" }
+          } finally {
+            # The decoded key must not survive the step, failure included.
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+          # `signtool verify /pa` would fail on purpose here: chain validation
+          # ends at an untrusted root. Check that a signature is attached and
+          # matches the file instead, which is all a self-signed seal can claim.
+          $sig = Get-AuthenticodeSignature $exe
+          $status = [string]$sig.Status
+          if (-not $sig.SignerCertificate) { throw "no signature attached to $exe" }
+          if ($status -eq 'NotSigned' -or $status -eq 'HashMismatch') {
+            throw "authenticode check failed: $status"
+          }
+          # UnknownError is what an untrusted root reports; anything else here
+          # is informational only.
+          Write-Host "signed by $($sig.SignerCertificate.Subject) (status: $status)"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = "rudbman-${{ github.ref_name }}-${{ matrix.target }}"
+          New-Item -ItemType Directory "$staging/lib" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/rudbman.exe" $staging
+          Copy-Item "bridge/build/libs/rudbman-bridge.jar" "$staging/lib/"
+          Copy-Item runtime $staging -Recurse
+          Copy-Item README.md $staging
+          Compress-Archive -Path $staging -DestinationPath "$staging.zip"
+          "ASSET=$staging.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "STAGING=$staging" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # The archive layout is a contract with code that has already shipped:
+      # the JVM loader finds its runtime and the bridge JAR by walking relative
+      # paths from the executable, and a module the jlink list forgot only
+      # surfaces as a NoClassDefFoundError when a user opens a connection. So
+      # check the staged tree before it is published, not after (10.3).
+      #
+      # Windows included: `runtime/bin/java` resolves to java.exe under Git
+      # Bash, so one script covers all three runners.
+      - name: Smoke-test the staged tree
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            contents="$STAGING/rudbman.app/Contents"
+            exe="$contents/MacOS/rudbman"
+            jar="$contents/MacOS/lib/rudbman-bridge.jar"
+            runtime="$contents/runtime"
+          else
+            exe="$STAGING/rudbman"
+            if [ "$RUNNER_OS" = "Windows" ]; then exe="$exe.exe"; fi
+            jar="$STAGING/lib/rudbman-bridge.jar"
+            runtime="$STAGING/runtime"
+          fi
+          test -f "$exe" || { echo "no executable at $exe"; exit 1; }
+          test -f "$jar" || { echo "no bridge JAR at $jar"; exit 1; }
+          modules=$("$runtime/bin/java" --list-modules)
+          for module in jdk.charsets jdk.unsupported; do
+            if ! printf '%s\n' "$modules" | grep -q "^${module}@"; then
+              echo "the bundled runtime is missing $module"
+              printf '%s\n' "$modules"
+              exit 1
+            fi
+          done
+          echo "$exe, $jar and a runtime with $(printf '%s\n' "$modules" | wc -l) modules"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # actions/checkout peels annotated tags to plain commits; re-fetch the
+      # real tag object so its message is readable.
+      - name: Read the tag annotation
+        run: |
+          git fetch --force origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > release-body.md
+          # A lightweight tag has no message; fall back to the subject line.
+          if ! grep -q '[^[:space:]]' release-body.md; then
+            git tag -l --format='%(contents:subject)' "${GITHUB_REF_NAME}" > release-body.md
+          fi
+          cat release-body.md
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-body.md
+          generate_release_notes: true
+          files: dist/*

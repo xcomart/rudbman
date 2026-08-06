@@ -137,7 +137,9 @@ UI 스레드와의 결합은 `rudbman-app`이 담당한다. 이 경계 덕분에
 - JVM 생성은 **전용 백그라운드 스레드**에서 한다. macOS에서 gpui가 메인 스레드를
   점유하고 있고, JVM 생성 스레드는 살아 있어야 한다.
 - 런타임 위치 결정 순서:
-  1. 실행 파일 옆의 번들 런타임 (`<exe_dir>/../runtime`, macOS는 `Contents/runtime`)
+  1. 실행 파일 옆의 번들 런타임 — `<exe_dir>/runtime`(Windows·Linux의 평평한
+     배포 폴더), 그다음 `<exe_dir>/../runtime`(macOS `.app`의
+     `Contents/runtime`)
   2. 환경 변수 `RUDBMAN_JAVA_HOME`
   3. `JAVA_HOME`
   결정된 경로를 `JAVA_HOME`으로 설정한 **뒤** `JavaVM::new()`를 부른다.
@@ -920,12 +922,18 @@ Rust를 고칠 때마다 JVM이 뜨는 것은 견딜 수 없다.
 jlink --add-modules \
     java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,\
     java.security.jgss,java.security.sasl,java.management,java.logging,\
-    jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
-    --strip-debug --no-header-files --no-man-pages --compress=zip-6 \
+    jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
+    --strip-debug --no-header-files --no-man-pages --compress=2 \
     --output runtime/
 ```
 
+`--compress=2`는 JDK 17의 철자다(zip 압축). `zip-6` 구문은 JDK 21부터라
+릴리스가 고정한 JDK 17에서는 오류가 난다.
+
 - `jdk.unsupported`는 **필수**다. 상당수 드라이버가 `sun.misc.Unsafe`를 쓴다
+- `jdk.charsets`도 **필수**다. 템플릿 엔진의 EUC-KR 패딩 폭 계산이 확장
+  문자셋을 요구한다(§6 패키징 노트) — 없으면 조용히 휴리스틱 폴백으로 넘어가
+  한국어 고정폭 출력이 어긋난다
 - `java.naming`은 JNDI/LDAP 인증
 - `java.security.jgss`/`sasl`은 Kerberos 통합 인증
 - `java.transaction.xa`는 XA 지원 드라이버가 로드 시 참조한다
@@ -938,9 +946,38 @@ jlink --add-modules \
 ### 10.3 배포 형태
 
 logman의 `packaging/`을 승계한다. Linux는 tar + `install.sh` + `.desktop`,
-macOS는 `.app` 번들(`Contents/runtime/`), Windows는 폴더 + 런처.
+macOS는 `.app` 번들(`Contents/runtime/`), Windows는 폴더 zip — 실행 파일이
+곧 런처다.
+
+아카이브 레이아웃은 §4.1의 탐색 순서가 정한다. 실행 파일 기준으로 브리지
+JAR은 `lib/rudbman-bridge.jar`(`<exe_dir>/lib`), 런타임은 옆(`<exe_dir>/runtime`,
+macOS는 `<exe_dir>/../runtime`)에 놓는다:
+
+```
+rudbman-vX.Y.Z-<target>/          # Windows·Linux
+├── rudbman(.exe)
+├── lib/rudbman-bridge.jar
+├── runtime/                      # jlink 산출물(§10.2)
+└── README.md (+ Linux: install.sh, .desktop, icons/)
+
+rudbman.app/                      # macOS
+└── Contents/
+    ├── MacOS/rudbman
+    ├── MacOS/lib/rudbman-bridge.jar
+    ├── runtime/
+    ├── Resources/rudbman.icns
+    └── Info.plist
+```
+
+Linux `install.sh`는 logman과 달리 바이너리 하나가 아니라 **트리 전체**를
+`~/.local/share/rudbman/`에 넣고 `~/.local/bin/rudbman` 심볼릭 링크를 만든다.
+`current_exe()`가 심볼릭 링크를 실제 경로로 풀기 때문에 런타임·JAR의 상대
+탐색이 그대로 동작한다.
 
 CI는 3플랫폼 매트릭스. 각 잡이 JDK 셋업 → Gradle → jlink → cargo 순으로 돈다.
+릴리스 잡은 패키징 후 스모크로 `runtime/bin/java --list-modules`에
+`jdk.charsets`·`jdk.unsupported`가 있는지, JAR과 실행 파일이 제자리에 있는지
+확인한다 — 빠진 모듈은 접속 시점에야 드러나기 때문(§10.2).
 
 ### 10.4 브랜치와 릴리스
 

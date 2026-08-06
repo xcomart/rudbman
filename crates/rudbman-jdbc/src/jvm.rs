@@ -180,11 +180,25 @@ impl JvmConfig {
     }
 }
 
-/// The bundled runtime beside the executable: `<exe_dir>/../runtime`, which on
-/// macOS is `<bundle>/Contents/runtime`.
-fn bundled_runtime() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    Some(exe.parent()?.parent()?.join("runtime"))
+/// The bundled runtime beside the executable, in the order of architecture
+/// document §4.1: `<exe_dir>/runtime` — the flat archive Windows and Linux
+/// ship — then `<exe_dir>/../runtime`, which on macOS is
+/// `<bundle>/Contents/runtime`.
+fn bundled_runtime() -> Vec<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| runtime_candidates(&exe))
+        .unwrap_or_default()
+}
+
+/// The places a runtime bundled with the executable at `exe` could be.
+fn runtime_candidates(exe: &Path) -> Option<Vec<PathBuf>> {
+    let dir = exe.parent()?;
+    let mut candidates = vec![dir.join("runtime")];
+    if let Some(above) = dir.parent() {
+        candidates.push(above.join("runtime"));
+    }
+    Some(candidates)
 }
 
 /// Whether a directory holds a JVM shared library where java-locator will look.
@@ -536,5 +550,18 @@ mod tests {
     #[test]
     fn a_directory_without_a_jvm_library_is_not_a_java_home() {
         assert!(!is_java_home(Path::new("/definitely/not/a/runtime")));
+    }
+
+    #[test]
+    fn the_bundled_runtime_is_looked_for_beside_the_executable_then_above_it() {
+        let candidates = runtime_candidates(Path::new("/opt/rudbman/bin/rudbman")).unwrap();
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("/opt/rudbman/bin/runtime"),
+                PathBuf::from("/opt/rudbman/runtime"),
+            ],
+            "the flat archive's spelling must win over the macOS bundle's"
+        );
     }
 }

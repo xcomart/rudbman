@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=rudbman
+Comment=JDBC database GUI
+Exec=rudbman
+Icon=rudbman
+Terminal=false
+Categories=Development;Database;
+StartupWMClass=com.aihouse.rudbman
