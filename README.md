@@ -136,7 +136,7 @@ tag: Gradle, then `jlink`, then `cargo`, then packaging.
 The design document — the JNI wire protocol, the columnar batch codec, the
 data-plane rule that row data never crosses the JNI boundary, the SSH tunnel
 lifecycle, and the milestone plan — lives in
-[docs/architecture.md](docs/architecture.md) (Korean). Current progress and
+[docs/architecture.md](docs/architecture.md). Current progress and
 open items are tracked in [docs/status.md](docs/status.md).
 
 `vendor/gpui` is a vendored copy of gpui 0.2.2 carrying six crash/hang

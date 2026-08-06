@@ -215,24 +215,37 @@ fn is_java_home(path: &Path) -> bool {
 /// Where to look for the bridge JAR when nothing says otherwise.
 ///
 /// In order: the `RUDBMAN_BRIDGE_JAR` environment variable, `lib/` beside the
-/// executable, the executable's own directory, and finally the path this crate
-/// was built against — which is what makes `cargo test` work from a checkout.
+/// executable, the executable's own directory, `lib/` one level above it —
+/// `Contents/lib` in the macOS bundle, where the JAR must live because
+/// everything under `Contents/MacOS/` is nested code to `codesign` (§10.3) —
+/// and finally the path this crate was built against, which is what makes
+/// `cargo test` work from a checkout.
 pub fn default_bridge_jar() -> PathBuf {
-    const JAR_NAME: &str = "rudbman-bridge.jar";
-
     if let Some(path) = std::env::var_os(BRIDGE_JAR_ENV) {
         return PathBuf::from(path);
     }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        for candidate in [dir.join("lib").join(JAR_NAME), dir.join(JAR_NAME)] {
+    if let Ok(exe) = std::env::current_exe() {
+        for candidate in bridge_jar_candidates(&exe) {
             if candidate.is_file() {
                 return candidate;
             }
         }
     }
     PathBuf::from(env!("RUDBMAN_BRIDGE_JAR"))
+}
+
+/// The places a JAR bundled with the executable at `exe` could be.
+fn bridge_jar_candidates(exe: &Path) -> Vec<PathBuf> {
+    const JAR_NAME: &str = "rudbman-bridge.jar";
+
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    let mut candidates = vec![dir.join("lib").join(JAR_NAME), dir.join(JAR_NAME)];
+    if let Some(above) = dir.parent() {
+        candidates.push(above.join("lib").join(JAR_NAME));
+    }
+    candidates
 }
 
 /// The running JVM and the one method handle this crate caches.
@@ -550,6 +563,22 @@ mod tests {
     #[test]
     fn a_directory_without_a_jvm_library_is_not_a_java_home() {
         assert!(!is_java_home(Path::new("/definitely/not/a/runtime")));
+    }
+
+    #[test]
+    fn the_bridge_jar_is_looked_for_beside_the_executable_then_above_it() {
+        let candidates = bridge_jar_candidates(Path::new(
+            "/Applications/rudbman.app/Contents/MacOS/rudbman",
+        ));
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("/Applications/rudbman.app/Contents/MacOS/lib/rudbman-bridge.jar"),
+                PathBuf::from("/Applications/rudbman.app/Contents/MacOS/rudbman-bridge.jar"),
+                PathBuf::from("/Applications/rudbman.app/Contents/lib/rudbman-bridge.jar"),
+            ],
+            "Contents/lib is the macOS bundle's spelling - codesign owns MacOS/ (section 10.3)"
+        );
     }
 
     #[test]
