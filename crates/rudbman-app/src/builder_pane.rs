@@ -652,7 +652,7 @@ impl BuilderPane {
                     .border_color(chrome.border)
                     // SQL is columnar text, and the editor it is about to be
                     // put into draws it the same way.
-                    .font_family("monospace")
+                    .font_family(crate::app_settings::monospace_family(cx))
                     .text_size(px(12.))
                     .text_color(if empty {
                         chrome.text_muted

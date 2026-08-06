@@ -573,7 +573,7 @@ impl TableDetail {
                     .bg(chrome.surface)
                     .border_1()
                     .border_color(chrome.border)
-                    .font_family("monospace")
+                    .font_family(crate::app_settings::monospace_family(cx))
                     .text_size(px(12.))
                     .text_color(chrome.text)
                     .child(ddl.text.clone()),

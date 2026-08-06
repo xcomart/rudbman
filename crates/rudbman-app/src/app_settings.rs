@@ -21,8 +21,92 @@
 //! free: dropping the override is the revert, and a window closed mid-dialog
 //! still saves the settings the user last committed to.
 
-use gpui::{App, Bounds, Global, Hsla, Pixels, Point, Size, px};
+use std::sync::OnceLock;
+
+use gpui::{App, Bounds, Global, Hsla, Pixels, Point, SharedString, Size, px};
 use rudbman_core::{AppSettings, WindowState};
+
+/// fontconfig's generic alias for a fixed-pitch face.
+///
+/// Only Linux resolves it. It is the last answer [`monospace_family`] gives,
+/// and the only one it gives there.
+const GENERIC_MONOSPACE: &str = "monospace";
+
+/// Fixed-pitch families to look for on Windows, best first.
+///
+/// Cascadia Mono ships with Windows 11 and with the Terminal on 10; Cascadia
+/// Code is the same face with programming ligatures and stands in when only the
+/// Terminal's own install is present. Consolas has been in Windows since Vista
+/// and Courier New since far earlier, so between them the list cannot come up
+/// empty on a real machine.
+#[cfg(target_os = "windows")]
+const MONOSPACE_CANDIDATES: &[&str] =
+    &["Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"];
+
+/// Fixed-pitch families to look for on macOS, best first.
+///
+/// SF Mono arrives with the Terminal and with Xcode and is what the system's
+/// own developer tools draw code in; Menlo has shipped since 10.6 and Monaco
+/// since long before that.
+#[cfg(target_os = "macos")]
+const MONOSPACE_CANDIDATES: &[&str] = &["SF Mono", "Menlo", "Monaco"];
+
+/// No candidates anywhere else: see [`monospace_family`].
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const MONOSPACE_CANDIDATES: &[&str] = &[];
+
+/// The family to draw fixed-pitch text with when no editor font is configured.
+///
+/// This is the app layer keeping the promise
+/// [`rudbman_core::AppSettings::editor_font_family`] documents: a `None` there
+/// means "the per-OS monospace default chosen by the app layer", and this is
+/// that choice.
+///
+/// The naive answer — the literal `"monospace"` — is a *fontconfig* alias, so
+/// it resolves to a real fixed-pitch face on Linux and nowhere else. Windows
+/// DirectWrite has no such family: gpui logs `monospace not found` and falls
+/// back to the system UI font, which is proportional, so SQL and `CREATE`
+/// statements lose their columns. CoreText has no alias either. So on those two
+/// platforms a family that actually exists has to be named, and the only way to
+/// know which ones exist is to ask.
+///
+/// Off the two platforms that need it — Linux, and gpui's headless test
+/// platform, whose font list is the fallback stack and nothing else — the
+/// candidate list is empty or matches nothing and the alias is returned
+/// unchanged, which is the behaviour that was there before.
+///
+/// Resolved once per process and cached: enumerating every installed family is
+/// a platform call far too heavy for a render pass. A font installed while
+/// rudbman is running is therefore not picked up until the next start, which is
+/// a trade we make knowingly — the alternative is paying for the enumeration on
+/// every frame that draws a line of SQL.
+pub fn monospace_family(cx: &App) -> SharedString {
+    static RESOLVED: OnceLock<SharedString> = OnceLock::new();
+    RESOLVED
+        .get_or_init(|| {
+            pick(MONOSPACE_CANDIDATES, &cx.text_system().all_font_names())
+                .map_or_else(|| SharedString::new_static(GENERIC_MONOSPACE), Into::into)
+        })
+        .clone()
+}
+
+/// The first of `candidates` that `installed` offers, spelled as `installed`
+/// spells it.
+///
+/// Compared without ASCII case, and the *installed* spelling is what comes
+/// back: the platforms report families in their own casing (and DirectWrite in
+/// the system locale), and the name handed to the text system afterwards should
+/// be one it has already said it has. Order is the candidate list's, not the
+/// installed list's — this answers "the best face that is here", not "the first
+/// face alphabetically".
+fn pick(candidates: &[&str], installed: &[String]) -> Option<String> {
+    candidates.iter().find_map(|candidate| {
+        installed
+            .iter()
+            .find(|name| name.eq_ignore_ascii_case(candidate))
+            .cloned()
+    })
+}
 
 /// Global wrapper holding the current [`AppSettings`].
 pub struct CurrentSettings(pub AppSettings);
@@ -364,6 +448,58 @@ mod tests {
             // to run twice.
             clear_preview(cx);
             assert_eq!(effective(cx).theme, "one-dark");
+        });
+    }
+
+    /// The candidate list decides, not the installed list's order: a machine
+    /// with both Consolas and Cascadia Mono has to get the better of the two.
+    #[test]
+    fn the_best_installed_monospace_family_wins() {
+        let installed = vec![
+            "Arial".to_string(),
+            "Consolas".to_string(),
+            "Cascadia Mono".to_string(),
+        ];
+        assert_eq!(
+            pick(&["Cascadia Mono", "Consolas"], &installed),
+            Some("Cascadia Mono".to_string())
+        );
+        // And the next one down when the first is missing.
+        assert_eq!(
+            pick(&["Cascadia Code", "Consolas"], &installed),
+            Some("Consolas".to_string())
+        );
+    }
+
+    /// Matched without case, returned in the platform's spelling — that name is
+    /// what the text system is asked for afterwards.
+    #[test]
+    fn a_candidate_is_matched_without_case_and_answered_in_the_installed_spelling() {
+        let installed = vec!["CONSOLAS".to_string()];
+        assert_eq!(
+            pick(&["Consolas"], &installed),
+            Some("CONSOLAS".to_string())
+        );
+    }
+
+    /// Nothing installed, or nothing worth having: the caller falls back to the
+    /// fontconfig alias, which is what Linux and the headless test platform get
+    /// and what the app drew with before there was a candidate list at all.
+    #[test]
+    fn nothing_to_pick_is_left_to_the_generic_alias() {
+        assert_eq!(pick(&["Consolas"], &["Arial".to_string()]), None);
+        assert_eq!(pick(&["Consolas"], &[]), None);
+        // The empty candidate list every other platform carries.
+        assert_eq!(pick(&[], &["Consolas".to_string()]), None);
+    }
+
+    /// The headless test platform offers no fixed-pitch family, so the helper
+    /// has to hand back the alias — the string every render test was written
+    /// against.
+    #[gpui::test]
+    fn the_test_platform_falls_back_to_the_generic_alias(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(monospace_family(cx), GENERIC_MONOSPACE);
         });
     }
 

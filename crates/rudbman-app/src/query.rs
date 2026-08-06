@@ -1491,20 +1491,18 @@ impl Render for QueryPane {
                 // this wrapper is where the editor font settings take effect —
                 // through `effective`, so the settings dialog's live preview
                 // reaches the editor the same way it reaches the chrome. With
-                // no family configured it falls back to the generic monospace
-                // alias rather than the UI font: SQL is columnar text, and the
-                // DDL tab already reads the same way.
+                // no family configured it falls back to the platform's
+                // monospace default rather than the UI font: SQL is columnar
+                // text, and the DDL tab already reads the same way.
                 div()
                     .flex()
                     .flex_basis(relative(share))
                     .min_w_0()
                     .min_h_0()
-                    .font_family(
-                        fonts
-                            .editor_font_family
-                            .clone()
-                            .unwrap_or_else(|| "monospace".to_string()),
-                    )
+                    .font_family(fonts.editor_font_family.clone().map_or_else(
+                        || crate::app_settings::monospace_family(cx),
+                        SharedString::from,
+                    ))
                     .text_size(px(fonts.editor_font_size))
                     .child(self.editor.clone()),
             )
