@@ -32,13 +32,15 @@
 //!
 //! ## What the grid asks the host to do
 //!
-//! Three things, all of them round trips the widget has no business making:
+//! Four things, all of them round trips the widget has no business making:
 //! fetching the next batch ([`GridEvent::NearEnd`]), re-running the query in a
 //! different order ([`GridEvent::SortRequested`] — the grid never sorts what it
 //! holds, because it holds only the first n rows of an answer the server has all
-//! of), and opening a cell ([`GridEvent::CellActivated`], which is how a LOB
-//! reaches a viewer). Copying is *not* among them: gpui owns the clipboard and
-//! the grid owns the selection, so the grid does it itself.
+//! of), opening a cell ([`GridEvent::CellActivated`], which is how a LOB
+//! reaches a viewer), and drawing the right-click menu
+//! ([`GridEvent::ContextMenu`] — the grid has no strings to name items with,
+//! architecture document §7.8). Copying is *not* among them: gpui owns the
+//! clipboard and the grid owns the selection, so the grid does it itself.
 
 use std::ops::Range;
 
@@ -210,6 +212,26 @@ pub enum SortDirection {
     Descending,
 }
 
+/// What a right click landed on, so that the host knows which menu to draw.
+///
+/// The grid does not name the items and does not run them: it says where the
+/// press was and what was under it, and the host — which owns the strings and
+/// the commands — does the rest (architecture document, §7.8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuTarget {
+    /// The body: a cell, or a row number in the gutter.
+    ///
+    /// Which cells the menu acts on is [`GridView::selection`], not this — a
+    /// right click inside the selection leaves it alone, so the pressed cell is
+    /// not necessarily the interesting one.
+    Cell,
+    /// A column heading.
+    Header {
+        /// The source column, unaffected by hiding or by column widths.
+        column: usize,
+    },
+}
+
 /// What the grid asks its host for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GridEvent {
@@ -244,6 +266,27 @@ pub enum GridEvent {
         row: usize,
         /// The source column index.
         column: usize,
+    },
+    /// The user right clicked, and wants the menu for what is under the
+    /// pointer.
+    ///
+    /// The grid has already taken the focus and moved the selection if it had
+    /// to; what is left — deciding which items exist, what they are called,
+    /// which are greyed out and what they do — is the host's, because this
+    /// layer holds no strings (architecture document, §7.8). Everything such a
+    /// menu needs is on [`GridView`] already: [`GridView::copy`],
+    /// [`GridView::select_all`], [`GridView::clear_selection`],
+    /// [`GridView::toggle_sort`], [`GridView::set_column_hidden`],
+    /// [`GridView::show_all_columns`], [`GridView::autofit_column`], and
+    /// [`GridView::sort`], [`GridView::is_column_hidden`],
+    /// [`GridView::hidden_column_count`], [`GridView::column_name`] to label
+    /// and disable them.
+    ContextMenu {
+        /// What was under the pointer.
+        target: MenuTarget,
+        /// Where the pointer was, in **window** coordinates, which is what the
+        /// menu anchors to.
+        position: Point<Pixels>,
     },
 }
 
@@ -304,6 +347,7 @@ enum Hit {
 ///     GridEvent::NearEnd => view.fetch_more(cx),
 ///     GridEvent::SortRequested { column, direction } => view.reorder(*column, *direction, cx),
 ///     GridEvent::CellActivated { row, column } => view.open_cell(*row, *column, cx),
+///     GridEvent::ContextMenu { target, position } => view.open_menu(*target, *position, cx),
 /// })
 /// .detach();
 /// ```
@@ -484,6 +528,23 @@ impl<S: GridSource> GridView<S> {
         self.columns.get(column).is_some_and(|state| state.hidden)
     }
 
+    /// How many columns are hidden.
+    ///
+    /// What tells a host's menu whether "show every column" is worth offering:
+    /// zero means there is nothing to show.
+    pub fn hidden_column_count(&self) -> usize {
+        self.columns.iter().filter(|state| state.hidden).count()
+    }
+
+    /// The name of source column `column`, or `None` when there is no such
+    /// column.
+    ///
+    /// The grid draws this in the heading; a host menu labels its items with it
+    /// — "hide *ORDER_ID*" — and copies it.
+    pub fn column_name(&self, column: usize) -> Option<&str> {
+        (column < self.source.column_count()).then(|| self.source.column(column).name)
+    }
+
     /// Hides or shows `column`.
     ///
     /// Clears the selection: display positions are what a selection is written
@@ -498,6 +559,26 @@ impl<S: GridSource> GridView<S> {
             return;
         }
         state.hidden = hidden;
+        self.relayout();
+        self.clamp_h_offset();
+        self.selection.clear();
+        cx.notify();
+    }
+
+    /// Un-hides every column.
+    ///
+    /// The way back from [`GridView::set_column_hidden`], and the one thing a
+    /// header menu needs that no other gesture offers: a hidden column has no
+    /// heading to right click. Clears the selection for the same reason hiding
+    /// one does — every display position after the first restored column moves.
+    pub fn show_all_columns(&mut self, cx: &mut Context<Self>) {
+        self.ensure_layout();
+        if self.hidden_column_count() == 0 {
+            return;
+        }
+        for state in &mut self.columns {
+            state.hidden = false;
+        }
         self.relayout();
         self.clamp_h_offset();
         self.selection.clear();
@@ -1025,6 +1106,76 @@ impl<S: GridSource> GridView<S> {
         cx.notify();
     }
 
+    /// A right click on a column heading, from the heading itself or from its
+    /// resize grip.
+    ///
+    /// Takes the focus — the menu's items act on the grid, so the keys should
+    /// too afterwards — and leaves the selection exactly as it was: a header
+    /// menu is about the column, and "hide this column" would be a strange
+    /// thing to have just cleared the selection for.
+    fn on_header_menu(
+        &mut self,
+        column: usize,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.focus_handle.focus(window);
+        cx.emit(GridEvent::ContextMenu {
+            target: MenuTarget::Header { column },
+            position: event.position,
+        });
+    }
+
+    /// A right click in the body: move the selection if the press fell outside
+    /// it, then hand the gesture to the host.
+    ///
+    /// The selection rule is the one every grid and file list uses, and the one
+    /// §7.8 states: a press *inside* what is picked leaves it alone — otherwise
+    /// "copy" on a block of a hundred cells would copy one — and a press
+    /// outside picks what was pressed, so the menu is never about something the
+    /// user cannot see. A press in the gutter picks the whole row, exactly as a
+    /// left one does.
+    ///
+    /// Nothing else happens: no drag is started, and no
+    /// [`GridEvent::CellActivated`] is raised however many times the button is
+    /// clicked.
+    fn on_right_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_layout();
+        let Some(hit) = self.hit(event.position) else {
+            return;
+        };
+        self.focus_handle.focus(window);
+        cx.stop_propagation();
+
+        let columns = self.laid_out.len();
+        match hit {
+            Hit::Gutter(row) => {
+                let picked = (0..columns).any(|column| self.selection.contains(row, column));
+                if !picked {
+                    self.selection.replace_rows(row..=row, columns);
+                }
+            }
+            Hit::Cell(cell) => {
+                if !self.selection.contains(cell.row, cell.column) {
+                    self.selection.replace(cell);
+                }
+            }
+        }
+
+        cx.emit(GridEvent::ContextMenu {
+            target: MenuTarget::Cell,
+            position: event.position,
+        });
+        cx.notify();
+    }
+
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(resize) = self.resizing {
             let width = resize.width + f32::from(event.position.x - resize.from);
@@ -1207,6 +1358,17 @@ impl<S: GridSource> GridView<S> {
                 grid.focus_handle.focus(window);
                 grid.toggle_sort(source_column, cx);
             }))
+            // A right click on a heading is a menu about that column and does
+            // not re-sort it, so it does not go through `on_click`. The header
+            // band is its own element tree above the body, which the body's
+            // arithmetic hit test does not cover — hence a listener here rather
+            // than another branch in `hit`.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |grid, event: &MouseDownEvent, window, cx| {
+                    grid.on_header_menu(source_column, event, window, cx);
+                }),
+            )
             .child(
                 div()
                     .flex_1()
@@ -1249,6 +1411,16 @@ impl<S: GridSource> GridView<S> {
                                     width: grid.column_width(source_column),
                                 });
                             }
+                        }),
+                    )
+                    // Occluding keeps the heading underneath from seeing the
+                    // press at all, so the grip has to raise the menu itself —
+                    // otherwise the last few pixels of every heading would be
+                    // the one part of the header with no menu.
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |grid, event: &MouseDownEvent, window, cx| {
+                            grid.on_header_menu(source_column, event, window, cx);
                         }),
                     ),
             )
@@ -1466,6 +1638,7 @@ impl<S: GridSource> Render for GridView<S> {
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::activate))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .on_drag_move::<DraggedThumb>(cx.listener(
@@ -1761,6 +1934,27 @@ mod tests {
         click_at(cx, column_x(column), row_y(row), Modifiers::none(), 1);
     }
 
+    /// Presses and releases the right button over a point, and hands back where
+    /// it was pressed — which is what the event carries.
+    fn right_click_at(cx: &mut VisualTestContext, x: f32, y: f32) -> Point<Pixels> {
+        let position = point(px(x), px(y));
+        cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Right,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Right,
+            click_count: 1,
+        });
+        cx.run_until_parked();
+        position
+    }
+
     /// The claim the whole crate is built around: a million rows and forty
     /// columns cost exactly one screenful of reads per frame, and the reads land
     /// where the viewport is rather than at the start of the result.
@@ -1991,6 +2185,128 @@ mod tests {
         assert_eq!(
             grid.selected(&mut cx, 6, 4),
             vec![(3, 0), (3, 1), (3, 2), (3, 3)]
+        );
+    }
+
+    /// A right click asks for a menu and moves the selection onto what was
+    /// pressed — unless the press was already inside it, which is what keeps a
+    /// menu raised over a block from being about one cell of it.
+    #[gpui::test]
+    fn a_right_click_asks_for_a_menu_and_moves_the_selection(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(6, 4, probe), cx);
+
+        // A block, so that "inside" and "outside" both exist.
+        click_cell(&mut cx, 1, 1);
+        click_at(&mut cx, column_x(2), row_y(2), Modifiers::shift(), 1);
+        grid.drain();
+
+        // Outside it: the selection follows the press.
+        let position = right_click_at(&mut cx, column_x(3), row_y(4));
+        assert_eq!(grid.selected(&mut cx, 6, 4), vec![(4, 3)]);
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::ContextMenu {
+                target: MenuTarget::Cell,
+                position,
+            }],
+            "the press was not reported in window coordinates"
+        );
+
+        // Inside it: the selection stays whole.
+        click_cell(&mut cx, 1, 1);
+        click_at(&mut cx, column_x(2), row_y(2), Modifiers::shift(), 1);
+        grid.drain();
+        let block = grid.selected(&mut cx, 6, 4);
+        let position = right_click_at(&mut cx, column_x(2), row_y(1));
+        assert_eq!(
+            grid.selected(&mut cx, 6, 4),
+            block,
+            "a right click inside the selection shrank it"
+        );
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::ContextMenu {
+                target: MenuTarget::Cell,
+                position,
+            }]
+        );
+
+        // The gutter takes the whole row, as a left click there does.
+        let position = right_click_at(&mut cx, GUTTER_WIDTH / 2., row_y(5));
+        assert_eq!(
+            grid.selected(&mut cx, 6, 4),
+            vec![(5, 0), (5, 1), (5, 2), (5, 3)]
+        );
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::ContextMenu {
+                target: MenuTarget::Cell,
+                position,
+            }]
+        );
+    }
+
+    /// A right click on a heading raises the column's menu, names the *source*
+    /// column, and does not re-sort what it was pressed on.
+    #[gpui::test]
+    fn a_right_click_on_a_heading_names_the_source_column(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(6, 4, probe), cx);
+
+        click_cell(&mut cx, 1, 1);
+        grid.update(&mut cx, |grid, cx| grid.set_column_hidden(0, true, cx));
+        grid.drain();
+
+        // Display column 1 is now source column 2.
+        let position = right_click_at(&mut cx, column_x(1), HEADER_HEIGHT / 2.);
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::ContextMenu {
+                target: MenuTarget::Header { column: 2 },
+                position,
+            }]
+        );
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.sort()),
+            None,
+            "a right click sorted the column"
+        );
+    }
+
+    /// The way back from hiding: the only column gesture with no heading of its
+    /// own to be reached from, so a host menu is the only route to it.
+    #[gpui::test]
+    fn every_hidden_column_can_be_shown_again(cx: &mut TestAppContext) {
+        let (grid, mut cx) = open(null_and_empty(), cx);
+
+        assert_eq!(grid.read(&mut cx, |grid| grid.hidden_column_count()), 0);
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.column_name(0).map(str::to_owned)),
+            Some("id".to_owned())
+        );
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.column_name(9).map(str::to_owned)),
+            None
+        );
+
+        grid.update(&mut cx, |grid, cx| grid.set_column_hidden(0, true, cx));
+        grid.update(&mut cx, |grid, cx| grid.set_column_hidden(2, true, cx));
+        assert_eq!(grid.read(&mut cx, |grid| grid.hidden_column_count()), 2);
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.visible_column_indices()),
+            vec![1]
+        );
+
+        grid.update(&mut cx, |grid, cx| grid.show_all_columns(cx));
+        assert_eq!(grid.read(&mut cx, |grid| grid.hidden_column_count()), 0);
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.visible_column_indices()),
+            vec![0, 1, 2]
+        );
+        assert!(
+            grid.read(&mut cx, |grid| grid.selection().is_empty()),
+            "the display positions moved under the selection"
         );
     }
 

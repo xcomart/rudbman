@@ -866,6 +866,20 @@ pub enum ExplorerEvent {
     Load(NodeId),
     /// An object was activated and should be opened in a pane.
     Activated(Box<ObjectTarget>),
+    /// A row was right-clicked and wants its menu drawn over it.
+    ///
+    /// Promoted from the tree's own event and not answered here: the rows of
+    /// this panel offer the workspace's five object commands, and every one of
+    /// them needs a session, a pane tree or a dialog — none of which the
+    /// sidebar has (architecture document, §7.8). The tree has already moved
+    /// the selection onto the node, so the menu the workspace builds and the
+    /// row the user is looking at name the same thing.
+    ContextMenu {
+        /// The node the pointer went down on.
+        node: NodeId,
+        /// Where the pointer was, in window coordinates.
+        position: Point<Pixels>,
+    },
 }
 
 /// The sidebar view.
@@ -895,6 +909,15 @@ impl Explorer {
                 }
             }
             TreeEvent::SelectionChanged(_) => {}
+            // Straight on to the workspace. The selection has already moved
+            // here, so the node in the event and the highlighted row are the
+            // same one.
+            TreeEvent::ContextMenu { id, position } => {
+                cx.emit(ExplorerEvent::ContextMenu {
+                    node: id.clone(),
+                    position: *position,
+                });
+            }
         });
 
         Self {

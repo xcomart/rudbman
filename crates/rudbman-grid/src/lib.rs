@@ -38,6 +38,7 @@
 //!     GridEvent::NearEnd => view.fetch_next_batch(cx),
 //!     GridEvent::SortRequested { column, direction } => view.reorder(*column, *direction, cx),
 //!     GridEvent::CellActivated { row, column } => view.open_lob(*row, *column, cx),
+//!     GridEvent::ContextMenu { target, position } => view.open_menu(*target, *position, cx),
 //! })
 //! .detach();
 //! ```
@@ -50,7 +51,7 @@ pub mod selection;
 pub mod source;
 
 pub use copy::{CopyFormat, DEFAULT_INSERT_TABLE, copy_payload};
-pub use grid::{GridEvent, GridView, SortDirection};
+pub use grid::{GridEvent, GridView, MenuTarget, SortDirection};
 pub use selection::{CellAddress, CellRange, Selection};
 pub use source::{
     CellLabel, GridCell, GridColumn, GridColumnAlign, GridColumnKind, GridSource, GridSourceState,

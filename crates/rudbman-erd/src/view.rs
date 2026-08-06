@@ -29,7 +29,8 @@ use std::rc::Rc;
 
 use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, KeyBinding, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Window, actions, canvas, div, prelude::*,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window, actions, canvas, div,
+    prelude::*,
 };
 use rudbman_ui::theme::{Theme, theme};
 use rudbman_ui::to_hex;
@@ -60,16 +61,35 @@ actions!(
 pub const KEY_CONTEXT: &str = "ErdView";
 
 /// What the diagram tells its host about.
-///
-/// One case, and it is deliberately not "a box moved": it is "the arrangement
-/// is different from the one you saved". It arrives once when a drag ends and
-/// once when [`ErdView::auto_arrange`] has run — never while a drag is in
-/// flight, because a host that writes a file per frame is a host that writes a
-/// hundred files per gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErdEvent {
     /// The boxes are somewhere other than where they were.
+    ///
+    /// Deliberately not "a box moved": it is "the arrangement is different from
+    /// the one you saved". It arrives once when a drag ends and once when
+    /// [`ErdView::auto_arrange`] has run — never while a drag is in flight,
+    /// because a host that writes a file per frame is a host that writes a
+    /// hundred files per gesture.
     LayoutChanged,
+    /// The user right clicked, and wants the menu for what is under the
+    /// pointer.
+    ///
+    /// The diagram has already taken the focus and moved the selection if it
+    /// had to; what is left — which items exist, what they are called, which
+    /// are greyed out and what they do — is the host's, because this layer
+    /// holds no strings (architecture document, §7.8). Everything such a menu
+    /// needs is on [`ErdView`] already: [`ErdView::selected`] to name the
+    /// table, [`ErdView::auto_arrange`], [`ErdView::export_svg`] and the zoom
+    /// actions to act on it.
+    ContextMenu {
+        /// Which table's box was under the pointer, or `None` for the
+        /// background — the difference between a menu about a table and a menu
+        /// about the canvas.
+        table: Option<usize>,
+        /// Where the pointer was, in **window** coordinates, which is what the
+        /// menu anchors to.
+        position: Point<Pixels>,
+    },
 }
 
 /// A diagram: boxes, the lines between them, and the gestures that move them.
@@ -80,6 +100,7 @@ pub enum ErdEvent {
 /// let erd = cx.new(ErdView::new);
 /// cx.subscribe(&erd, |pane, erd, event, cx| match event {
 ///     ErdEvent::LayoutChanged => pane.save_positions(erd.read(cx).positions(), cx),
+///     ErdEvent::ContextMenu { table, position } => pane.open_menu(*table, *position, cx),
 /// })
 /// .detach();
 /// ```
@@ -259,6 +280,38 @@ impl ErdView {
         cx.notify();
     }
 
+    /// A right click: move the selection onto the box, then hand the gesture to
+    /// the host.
+    ///
+    /// Three deliberate differences from [`Self::on_mouse_down`]. It takes the
+    /// selection with it, because the menu the host is about to open is about
+    /// *that* table and a menu whose commands act on a box other than the one
+    /// under the pointer acts by surprise (§7.8). It does not take the
+    /// selection *away* on the background: a right click is a request for a
+    /// menu rather than a deselect, and the canvas menu it asks for says
+    /// nothing about which box is picked. And it starts neither a drag nor a
+    /// pan — the pointer is about to be over a menu, and a gesture left half
+    /// open would move a box the moment the menu closed.
+    fn on_right_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.focus_handle.focus(window);
+
+        let table = self.viewport.hit(&self.rects, event.position);
+        if table.is_some() {
+            self.selected = table;
+        }
+        cx.emit(ErdEvent::ContextMenu {
+            table,
+            position: event.position,
+        });
+        cx.notify();
+    }
+
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if event.pressed_button != Some(MouseButton::Left) {
             return;
@@ -369,6 +422,7 @@ impl Render for ErdView {
             .on_action(cx.listener(Self::zoom_actual))
             .on_action(cx.listener(Self::rearrange))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -402,7 +456,9 @@ pub fn init(cx: &mut App) {
 mod tests {
     use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 
-    use crate::canvas::test_support::{self, drag_to, press, release, wheel, window_point};
+    use crate::canvas::test_support::{
+        self, drag_to, press, release, right_press, wheel, window_point,
+    };
     use crate::canvas::{MAX_ZOOM, MIN_ZOOM};
     use crate::model::{ErdColumn, ErdRelation, ErdTable};
 
@@ -590,6 +646,77 @@ mod tests {
         // The referencing table ends up to the left of the one it references.
         let positions = erd.read(&mut cx, |erd| erd.positions());
         assert!(positions["orders"].0 < positions["customers"].0);
+    }
+
+    /// The window point the top of a box's title band is drawn at.
+    fn header_point(handles: &Handles, cx: &mut VisualTestContext, table: usize) -> Point<Pixels> {
+        let rect = handles.read(cx, |erd| erd.rects[table]);
+        window_point(rect.x + rect.w / 2., rect.y + 10.)
+    }
+
+    #[gpui::test]
+    fn right_clicking_asks_for_a_menu_and_takes_the_selection_with_it(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(model(), HashMap::new(), cx);
+
+        let first = header_point(&erd, &mut cx, 0);
+        right_press(&mut cx, first);
+        assert_eq!(
+            erd.drain(),
+            vec![ErdEvent::ContextMenu {
+                table: Some(0),
+                position: first,
+            }]
+        );
+        assert_eq!(erd.read(&mut cx, |erd| erd.selected()), Some(0));
+
+        // The other box: the menu is about it, so the selection is too.
+        let second = header_point(&erd, &mut cx, 1);
+        right_press(&mut cx, second);
+        assert_eq!(
+            erd.drain(),
+            vec![ErdEvent::ContextMenu {
+                table: Some(1),
+                position: second,
+            }]
+        );
+        assert_eq!(erd.read(&mut cx, |erd| erd.selected()), Some(1));
+
+        // The background asks for the canvas's own menu, and does not take the
+        // selection away on the way.
+        let empty = window_point(1400., 800.);
+        right_press(&mut cx, empty);
+        assert_eq!(
+            erd.drain(),
+            vec![ErdEvent::ContextMenu {
+                table: None,
+                position: empty,
+            }]
+        );
+        assert_eq!(erd.read(&mut cx, |erd| erd.selected()), Some(1));
+    }
+
+    #[gpui::test]
+    fn a_right_click_starts_neither_a_drag_nor_a_pan(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(model(), HashMap::new(), cx);
+        let positions = erd.read(&mut cx, |erd| erd.positions());
+        let pan = erd.read(&mut cx, |erd| erd.viewport.pan);
+
+        // A press on a box, and then the moves that would have dragged it.
+        right_press(&mut cx, window_point(10., 10.));
+        erd.drain();
+        drag_to(&mut cx, window_point(130., 70.));
+        release(&mut cx, window_point(130., 70.));
+        assert_eq!(erd.read(&mut cx, |erd| erd.positions()), positions);
+        assert_eq!(erd.drain(), Vec::new());
+
+        // And on the background, which would have panned.
+        right_press(&mut cx, window_point(1400., 800.));
+        erd.drain();
+        drag_to(&mut cx, window_point(1300., 700.));
+        release(&mut cx, window_point(1300., 700.));
+        assert_eq!(erd.read(&mut cx, |erd| erd.viewport.pan), pan);
+        assert_eq!(erd.read(&mut cx, |erd| erd.positions()), positions);
+        assert_eq!(erd.drain(), Vec::new());
     }
 
     #[gpui::test]

@@ -501,3 +501,41 @@ builder:
   sql: Sentencia
   no_sql: Añada una tabla para generar una sentencia.
   open_editor: Abrir en el editor
+
+context:
+  copy_as: "Copiar como %{format}"
+  select_all: Seleccionar todo
+  clear_selection: Anular la selección
+  sort_asc: Ordenar ascendente
+  sort_desc: Ordenar descendente
+  sort_clear: Quitar la ordenación
+  autofit: Ajustar al contenido
+  hide_column: Ocultar esta columna
+  show_columns: Mostrar todas las columnas
+  copy_column_name: Copiar el nombre de la columna
+  cut: Cortar
+  copy: Copiar
+  paste: Pegar
+  undo: Deshacer
+  redo: Rehacer
+  toggle_comment: Comentar o descomentar
+  run_statement: Ejecutar la sentencia
+  run_selection: Ejecutar la selección
+  run_all: Ejecutar todo
+  find: Buscar…
+  replace: Reemplazar…
+  close_tab: Cerrar la pestaña
+  close_others: Cerrar las demás pestañas
+  close_right: Cerrar las pestañas de la derecha
+  split_right: Dividir a la derecha
+  split_below: Dividir abajo
+  close_pane: Cerrar el panel
+  open_detail: Abrir los detalles
+  zoom_in: Acercar
+  zoom_out: Alejar
+  zoom_reset: Tamaño real
+  remove_table: Quitar la tabla
+  select_column: Añadir a la lista de selección
+  clear_column: Quitar de la lista de selección
+  connect: Conectar
+  edit: Editar…

@@ -40,8 +40,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use gpui::{
     App, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString, Subscription, Task, Window, div,
-    prelude::*, px,
+    MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, Render, ScrollHandle, SharedString,
+    Subscription, Task, Window, div, prelude::*, px,
 };
 use rudbman_core::{
     ConnectionProfile, ConnectionStore, DriverDef, DriverStore, KeepAlive, SecretSlot, SecretStore,
@@ -83,6 +83,14 @@ const BODY_MAX_HEIGHT: f32 = 480.;
 ///
 /// Compiled away outside a test build; see [`profile_rows`].
 pub(crate) const ROW_SELECTOR: &str = "profile-row:";
+
+/// What a right-click on a saved-profile row is answered with.
+///
+/// Shared rather than generic because the one list that has no menu — the
+/// dialog's own — passes `None`, and a `None` of an unnameable closure type is
+/// something the caller cannot write.
+pub(crate) type ProfileContextHandler =
+    std::rc::Rc<dyn Fn(Uuid, Point<Pixels>, &mut Window, &mut App)>;
 
 /// The dialog's two scrolling surfaces and the id of each one's overlay bar.
 const SCROLLBARS: [(&str, Surface); 2] = [
@@ -387,10 +395,27 @@ impl ConnectionDialog {
         }
     }
 
+    /// Shows the dialog with `id` selected and its form filled in.
+    ///
+    /// What the welcome screen's "edit…" row opens: that list offers one
+    /// profile at a time and the dialog it leads to has to be showing that
+    /// one, not whichever happens to be first. An id no saved profile answers
+    /// to leaves [`ConnectionDialog::open`]'s own choice standing rather than
+    /// opening a form over nothing — a profile can be deleted between the
+    /// screen being drawn and the row being clicked.
+    pub fn open_at(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.open_showing(Some(id), cx);
+    }
+
     /// Shows the dialog, re-reading both stores.
     pub fn open(&mut self, cx: &mut Context<Self>) {
+        self.open_showing(None, cx);
+    }
+
+    /// The whole of both, differing only in which profile the form opens over.
+    fn open_showing(&mut self, wanted: Option<Uuid>, cx: &mut Context<Self>) {
         self.reload(cx);
-        self.selected = self.store.connections().first().map(|profile| profile.id);
+        self.selected = profile_to_show(&self.store, wanted);
         if self.selected.is_none() {
             self.add_profile(cx);
         } else {
@@ -1102,6 +1127,10 @@ impl ConnectionDialog {
             move |id, _window, cx| {
                 this.update(cx, |dialog, cx| dialog.select(id, cx));
             },
+            // No menu here: the form beside the list is already open on the
+            // selected profile, so every command a menu would carry is a
+            // control the user can see.
+            None,
         );
 
         div()
@@ -1927,6 +1956,23 @@ impl Render for ConnectionDialog {
     }
 }
 
+/// Which saved profile a dialog opening over `wanted` should show.
+///
+/// `wanted` is the welcome list's "edit…" naming the row that was
+/// right-clicked; `None` is the plain "new connection" door, which has no
+/// opinion. Either way the answer falls back to the first saved profile, which
+/// is what the dialog has always opened over — a profile can be deleted between
+/// the welcome screen being drawn and its row being clicked, and a form opened
+/// over nothing would be worse than a form opened over the wrong thing.
+///
+/// Separate from [`ConnectionDialog::open_showing`] because that one re-reads
+/// the file first, and the rule itself is worth pinning down without one.
+fn profile_to_show(store: &ConnectionStore, wanted: Option<Uuid>) -> Option<Uuid> {
+    wanted
+        .filter(|id| store.get(*id).is_some())
+        .or_else(|| store.connections().first().map(|profile| profile.id))
+}
+
 /// The saved profiles as rows, grouped under the folder each is filed in.
 ///
 /// Shared by this dialog's list and the welcome screen the shell draws while no
@@ -1944,11 +1990,17 @@ impl Render for ConnectionDialog {
 /// show — the welcome screen's — passes `None`. `on_click` is handed the
 /// profile's id, which is all either caller needs: the dialog selects it, the
 /// shell opens a connection on it.
+///
+/// `on_context` is the right-click, and only the welcome screen passes one.
+/// The dialog's own list gets no menu: everything such a menu would offer —
+/// edit this profile, delete it — is the form standing beside the row, already
+/// open on whatever is selected.
 pub(crate) fn profile_rows(
     profiles: &[ConnectionProfile],
     selected: Option<Uuid>,
     chrome: &Theme,
     on_click: impl Fn(Uuid, &mut Window, &mut App) + Clone + 'static,
+    on_context: Option<ProfileContextHandler>,
 ) -> Vec<gpui::AnyElement> {
     let mut groups: Vec<(Option<String>, Vec<&ConnectionProfile>)> = Vec::new();
     for profile in profiles {
@@ -1995,6 +2047,7 @@ pub(crate) fn profile_rows(
                         .bg(color)
                 });
             let on_click = on_click.clone();
+            let on_context = on_context.clone();
             rows.push(
                 div()
                     .id(("profile-row", index))
@@ -2029,6 +2082,20 @@ pub(crate) fn profile_rows(
                             .child(name),
                     )
                     .on_click(move |_, window, cx| on_click(id, window, cx))
+                    // Taken on the press, as every right-click in the shell is:
+                    // a menu that waited for the release would lag the gesture
+                    // here and nowhere else. The press is swallowed so that it
+                    // belongs to the menu about to open rather than to the
+                    // screen behind it.
+                    .when_some(on_context, |row, on_context| {
+                        row.on_mouse_down(
+                            MouseButton::Right,
+                            move |event: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                on_context(id, event.position, window, cx);
+                            },
+                        )
+                    })
                     .into_any_element(),
             );
             index += 1;
@@ -2173,6 +2240,33 @@ fn parse_or<T: std::str::FromStr>(input: &Entity<TextInput>, default: T, cx: &Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dialog_opens_over_the_profile_it_was_asked_for() {
+        let mut store = ConnectionStore::default();
+        let first = ConnectionProfile::new("first", "h2", "jdbc:h2:mem:a", "sa");
+        let second = ConnectionProfile::new("second", "h2", "jdbc:h2:mem:b", "sa");
+        store.upsert(first.clone());
+        store.upsert(second.clone());
+
+        // The welcome list's "edit…" names a row, and that is the one the form
+        // opens over — not whichever profile happens to be first.
+        assert_eq!(profile_to_show(&store, Some(second.id)), Some(second.id));
+        // The plain door has no opinion and takes the first, as it always has.
+        assert_eq!(profile_to_show(&store, None), Some(first.id));
+        // A profile deleted between the screen being drawn and the row being
+        // clicked falls back rather than opening a form over nothing.
+        assert_eq!(
+            profile_to_show(&store, Some(Uuid::new_v4())),
+            Some(first.id)
+        );
+        // And with nothing saved there is nothing to show, which is what makes
+        // the dialog start a new profile instead.
+        assert_eq!(
+            profile_to_show(&ConnectionStore::default(), Some(first.id)),
+            None
+        );
+    }
 
     #[test]
     fn a_url_is_taken_apart_by_the_template_that_built_it() {

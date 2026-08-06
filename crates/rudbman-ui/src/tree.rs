@@ -50,8 +50,8 @@ use std::hash::Hash;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, DragMoveEvent, ElementId, EventEmitter, FocusHandle,
-    Focusable, KeyBinding, MouseButton, MouseUpEvent, ScrollHandle, ScrollStrategy,
-    UniformListScrollHandle, Window, actions, div, prelude::*, px, uniform_list,
+    Focusable, KeyBinding, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
+    ScrollStrategy, UniformListScrollHandle, Window, actions, div, prelude::*, px, uniform_list,
 };
 
 use crate::scrollbar::{
@@ -235,6 +235,21 @@ pub enum TreeEvent<Id> {
     Activated(Id),
     /// The selection moved.
     SelectionChanged(Option<Id>),
+    /// A row was right-clicked, and the host should open a menu over it.
+    ///
+    /// The tree has already taken focus and moved the selection onto `id` — a
+    /// [`TreeEvent::SelectionChanged`] arrives first when that changed
+    /// anything — so the commands the host puts in the menu can be the ones it
+    /// already has for the selection, and the highlight shows which row the
+    /// menu is about. The tree draws no menu itself: the rows have no strings
+    /// in them, so neither can their menu.
+    ContextMenu {
+        /// The node the pointer went down on.
+        id: Id,
+        /// Where the pointer was, in window coordinates, for the menu to hang
+        /// from.
+        position: Point<Pixels>,
+    },
 }
 
 /// Where a [`TreeView`] gets its nodes and how their rows are drawn.
@@ -306,6 +321,7 @@ pub trait TreeSource: 'static {
 ///     TreeEvent::LoadChildren(parent) => view.fetch(parent.clone(), cx),
 ///     TreeEvent::Activated(id) => view.open(id, cx),
 ///     TreeEvent::SelectionChanged(_) => {}
+///     TreeEvent::ContextMenu { id, position } => view.open_menu(id, *position, cx),
 /// })
 /// .detach();
 /// ```
@@ -314,7 +330,8 @@ pub trait TreeSource: 'static {
 /// `Left` to close it or step out to its parent, `Enter` and `Space` to
 /// activate, `Home` and `End` for the ends of the list. A click selects, a
 /// double click activates, and a click on the arrow opens or closes without
-/// disturbing the selection.
+/// disturbing the selection. A right-click anywhere on a row — the arrow
+/// included — selects it and asks the host for a menu.
 pub struct TreeView<S: TreeSource> {
     source: S,
     focus_handle: FocusHandle,
@@ -769,6 +786,7 @@ impl<S: TreeSource> TreeView<S> {
             has_children,
         };
         let content = self.source.render_row(&id, info, window, cx);
+        let menu_id = id.clone();
 
         let arrow = div()
             .id(ElementId::from(("tree-arrow", ix)))
@@ -785,7 +803,10 @@ impl<S: TreeSource> TreeView<S> {
                 this.cursor_pointer()
                     // The press is taken here so that the row underneath never
                     // sees the click: aiming at the arrow is aiming at the
-                    // arrow, and it must not also move the selection.
+                    // arrow, and it must not also move the selection. Only the
+                    // left button, though — a right-click is a request for the
+                    // row's menu wherever on the row it lands, so that one
+                    // travels on to the handler below.
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |tree, _, _window, cx| {
                         tree.toggle(&id, cx);
@@ -813,6 +834,28 @@ impl<S: TreeSource> TreeView<S> {
                     cx.emit(TreeEvent::Activated(id.clone()));
                 }
             }))
+            // Taken on the press rather than on the click, which is gpui's name
+            // for a left button only, and because a menu that appeared on
+            // release would lag the gesture everywhere else in the shell.
+            //
+            // The press is swallowed: it belongs to the menu about to open, not
+            // to whatever the tree is sitting in.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |tree, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    tree.focus_handle.focus(window);
+                    // The menu's commands act on the selection — the host has
+                    // no other handle on a row — so the right-click has to move
+                    // it first, or "drop table" would name whatever the user
+                    // last clicked instead of what they just aimed at.
+                    tree.set_selected(Some(menu_id.clone()), cx);
+                    cx.emit(TreeEvent::ContextMenu {
+                        id: menu_id.clone(),
+                        position: event.position,
+                    });
+                }),
+            )
             .child(arrow)
             .child(content)
             .into_any_element()
@@ -903,10 +946,7 @@ mod tests {
     use std::ops::Deref;
     use std::rc::Rc;
 
-    use gpui::{
-        Entity, Modifiers, MouseDownEvent, MouseUpEvent, Pixels, Point, SharedString,
-        TestAppContext, VisualTestContext, point,
-    };
+    use gpui::{Entity, Modifiers, SharedString, TestAppContext, VisualTestContext, point};
 
     use super::*;
 
@@ -1085,6 +1125,28 @@ mod tests {
             modifiers: Modifiers::none(),
             button: MouseButton::Left,
             click_count: count,
+        });
+        cx.run_until_parked();
+    }
+
+    /// Presses and releases the right button over `position`.
+    ///
+    /// Both halves, even though the tree answers the press: a gesture that only
+    /// ever went down would leave gpui holding state no real pointer leaves
+    /// behind.
+    fn right_click(cx: &mut VisualTestContext, position: Point<Pixels>) {
+        cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Right,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Right,
+            click_count: 1,
         });
         cx.run_until_parked();
     }
@@ -1474,5 +1536,103 @@ mod tests {
         click(&mut cx, point(px(ON_THE_ARROW), px(FIRST_ROW)), 1);
         assert_eq!(tree.shape(&mut cx), vec![(Some("a"), 0), (Some("b"), 0)]);
         assert_eq!(tree.selected(&mut cx), Some("b"));
+    }
+
+    /// A right-click hands the host the row and the pointer, and moves the
+    /// selection there first so that the menu it builds acts on what was
+    /// aimed at.
+    #[gpui::test]
+    fn a_right_click_selects_the_row_and_asks_for_a_menu(cx: &mut TestAppContext) {
+        let (tree, mut cx) = open(three_deep(), cx);
+
+        let on_the_first = point(px(ON_THE_LABEL), px(FIRST_ROW));
+        right_click(&mut cx, on_the_first);
+        assert_eq!(tree.selected(&mut cx), Some("a"));
+        assert_eq!(
+            tree.drain(),
+            vec![
+                TreeEvent::SelectionChanged(Some("a")),
+                TreeEvent::ContextMenu {
+                    id: "a",
+                    position: on_the_first,
+                },
+            ],
+            "the selection moves before the menu is asked for"
+        );
+
+        // A second right-click on the row that is already selected still asks
+        // for a menu, and announces no selection change.
+        right_click(&mut cx, on_the_first);
+        assert_eq!(
+            tree.drain(),
+            vec![TreeEvent::ContextMenu {
+                id: "a",
+                position: on_the_first,
+            }]
+        );
+
+        let on_the_second = point(px(ON_THE_LABEL), px(SECOND_ROW));
+        right_click(&mut cx, on_the_second);
+        assert_eq!(tree.selected(&mut cx), Some("b"));
+        assert_eq!(
+            tree.drain(),
+            vec![
+                TreeEvent::SelectionChanged(Some("b")),
+                TreeEvent::ContextMenu {
+                    id: "b",
+                    position: on_the_second,
+                },
+            ]
+        );
+    }
+
+    /// The arrow takes the left button for itself, but not the right one: the
+    /// whole row is one target for a menu.
+    #[gpui::test]
+    fn a_right_click_on_the_arrow_is_a_right_click_on_the_row(cx: &mut TestAppContext) {
+        let (tree, mut cx) = open(three_deep(), cx);
+        click(&mut cx, point(px(ON_THE_LABEL), px(SECOND_ROW)), 1);
+        tree.drain();
+
+        let on_the_arrow = point(px(ON_THE_ARROW), px(FIRST_ROW));
+        right_click(&mut cx, on_the_arrow);
+
+        assert_eq!(tree.selected(&mut cx), Some("a"));
+        assert_eq!(
+            tree.drain(),
+            vec![
+                TreeEvent::SelectionChanged(Some("a")),
+                TreeEvent::ContextMenu {
+                    id: "a",
+                    position: on_the_arrow,
+                },
+            ]
+        );
+        assert_eq!(
+            tree.shape(&mut cx),
+            vec![(Some("a"), 0), (Some("b"), 0)],
+            "and it opens nothing on the way"
+        );
+    }
+
+    /// The left button keeps meaning exactly what it meant: a right-click in
+    /// between is not half of a double click.
+    #[gpui::test]
+    fn a_right_click_is_not_part_of_a_double_click(cx: &mut TestAppContext) {
+        let (tree, mut cx) = open(three_deep(), cx);
+
+        let on_the_second = point(px(ON_THE_LABEL), px(SECOND_ROW));
+        right_click(&mut cx, on_the_second);
+        tree.drain();
+
+        click(&mut cx, on_the_second, 1);
+        assert_eq!(
+            tree.drain(),
+            vec![],
+            "the row was already selected, and one click activates nothing"
+        );
+
+        click(&mut cx, on_the_second, 2);
+        assert_eq!(tree.drain(), vec![TreeEvent::Activated("b")]);
     }
 }

@@ -15,9 +15,6 @@ use crate::tooltip::tooltip_label;
 /// Glyph of the button opening the tab list.
 const TAB_MENU_GLYPH: &str = "\u{25be}";
 
-/// Marker put in the shortcut slot of the active tab's dropdown row.
-const ACTIVE_MARK: &str = "\u{2713}";
-
 /// Hover group tying the "+" button to the icon it may carry.
 const NEW_GROUP: &str = "tab-bar-new";
 
@@ -305,10 +302,12 @@ impl RenderOnce for TabBar {
                 .iter()
                 .enumerate()
                 .map(|(index, tab)| {
-                    let mut entry = MenuEntry::new(tab.title.clone());
-                    if index == active {
-                        entry = entry.shortcut(ACTIVE_MARK);
-                    }
+                    // The list is a choice, not a set of commands: the row of
+                    // the tab that is showing carries the menu's check mark.
+                    // It used to be pushed into the shortcut slot, on the right
+                    // and in the muted hint colour, because there was nowhere
+                    // else to put it.
+                    let mut entry = MenuEntry::new(tab.title.clone()).checked(index == active);
                     if let Some(handler) = on_select.clone() {
                         entry = entry.on_activate(move |window, cx| handler(index, window, cx));
                     }

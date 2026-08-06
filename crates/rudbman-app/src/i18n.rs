@@ -162,7 +162,7 @@ mod tests {
 
     /// One key per top-level namespace of `en.yml`, chosen so that no
     /// translation of it legitimately coincides with the English wording.
-    const PROBES: [&str; 9] = [
+    const PROBES: [&str; 10] = [
         "language.name",
         "common.close",
         "menu.new_connection",
@@ -172,6 +172,7 @@ mod tests {
         "about.title",
         "connect.title",
         "driver.class",
+        "context.select_all",
     ];
 
     /// Every `key: value` pair of one locale file, as a dotted path.
