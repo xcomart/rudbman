@@ -51,8 +51,10 @@ pub enum Op {
     Commit,
     /// Roll back. Handle: session.
     Rollback,
-    /// Start a job. Handle: session. Request: `{kind, …}` — `extract` today,
-    /// `backup` and `transfer` later. Response: `{job}`.
+    /// Start a job. Handle: session. Request: `{kind, …}` — `extract`, `backup`
+    /// or `transfer`, the kind being what the bridge dispatches on. Response:
+    /// `{job}`. A `transfer` is started on its **source** session and names the
+    /// target by handle in the body.
     JobStart,
     /// Poll a job's progress. Handle: job.
     ///

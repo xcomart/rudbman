@@ -29,9 +29,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use rudbman_jdbc::{
-    Batch, BridgeErrorKind, ColumnKind, ConnectionSpec, DataMode, DataOptions, DdlOptions,
-    DdlSource, DescribeRequest, Error, ExtractSpec, Job, JobProgress, JobState, Jvm, JvmConfig,
-    ObjectRef, Op, Param, Session, StatementSpec, Value, default_bridge_jar,
+    BackupDataOptions, BackupSpec, Batch, BridgeErrorKind, ColumnKind, Compression, ConnectionSpec,
+    DataMode, DataOptions, DdlOptions, DdlSource, DescribeRequest, Error, ExtractSpec, Job,
+    JobProgress, JobState, Jvm, JvmConfig, ObjectRef, OnError, Op, Param, Session, StatementSpec,
+    TransferMode, TransferSpec, Value, default_bridge_jar,
 };
 
 /// The process-wide JVM, started by whichever test needs it first.
@@ -1142,6 +1143,507 @@ fn dropping_a_job_nobody_polled_stops_it_instead_of_leaving_it_writing() {
         }
     }
     panic!("the abandoned job was still running long after it was dropped");
+}
+
+// --- jobs: DB-to-DB transfers ----------------------------------------------
+
+/// Opens a second session against a database of its own.
+///
+/// A transfer needs two, and they have to be two *sessions*: the bridge holds
+/// both connection locks for the whole stream, so the target cannot be the
+/// handle this test is also reading with.
+fn other_session() -> Session {
+    Session::open(jvm(), &spec(&fresh_url(), "sa", "")).expect("H2 accepts a second connection")
+}
+
+/// `id integer primary key, txt varchar(40)`, the fixture both ends of the
+/// transfer tests share.
+const PAIR_DDL: &str = "create table t (id integer not null primary key, txt varchar(40))";
+
+/// Reads the whole of a small table as `(id, txt)` pairs, ordered.
+fn rows_of(session: &Session, table: &str) -> Vec<(i64, Option<String>)> {
+    let batch = fetch_one(
+        session,
+        &format!("select id, txt from {table} order by id"),
+        100,
+    );
+    (0..batch.rows())
+        .map(|row| {
+            let id = match batch.value(row, 0) {
+                Some(Value::I64(id)) => id,
+                other => panic!("row {row} has a non-integer id: {other:?}"),
+            };
+            let txt = match batch.value(row, 1) {
+                Some(Value::Str(text)) => Some(text.to_string()),
+                Some(Value::Null) | None => None,
+                other => panic!("row {row} has a non-text txt: {other:?}"),
+            };
+            (id, txt)
+        })
+        .collect()
+}
+
+#[test]
+fn a_transfer_moves_rows_between_two_sessions_without_one_crossing_the_boundary() {
+    let source = session();
+    exec(&source, PAIR_DDL);
+    exec(
+        &source,
+        "insert into t values (1, 'one'), (2, 'it''s two'), (3, null)",
+    );
+
+    let target = other_session();
+    exec(&target, PAIR_DDL);
+
+    let mut job = source
+        .start_transfer(&TransferSpec::new(
+            "select id, txt from t order by id",
+            target.handle(),
+            ObjectRef::new("T").with_schema("PUBLIC"),
+        ))
+        .expect("the specification is accepted");
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    assert_eq!(end.rows_done, 3, "{end:?}");
+    assert_eq!(end.rows_skipped, 0, "nothing was refused: {end:?}");
+    assert_eq!(end.bytes, 0, "a transfer writes no file: {end:?}");
+    assert_eq!(end.phase, "done");
+    assert_eq!(end.rows_total, None, "no COUNT(*) is run up front: {end:?}");
+    assert!(end.errors.is_empty(), "{:?}", end.errors);
+
+    // The rows are in the other database, and this test never saw one of them.
+    assert_eq!(
+        rows_of(&target, "t"),
+        vec![
+            (1, Some("one".to_string())),
+            (2, Some("it's two".to_string())),
+            (3, None),
+        ]
+    );
+}
+
+#[test]
+fn truncate_insert_empties_the_target_first() {
+    let source = session();
+    exec(&source, PAIR_DDL);
+    exec(
+        &source,
+        "insert into t values (1, 'fresh'), (2, 'also fresh')",
+    );
+
+    let target = other_session();
+    exec(&target, PAIR_DDL);
+    exec(
+        &target,
+        "insert into t values (7, 'stale'), (8, 'stale too')",
+    );
+
+    let mut job = source
+        .start_transfer(
+            &TransferSpec::new(
+                "select id, txt from t",
+                target.handle(),
+                ObjectRef::new("T").with_schema("PUBLIC"),
+            )
+            .with_mode(TransferMode::TruncateInsert),
+        )
+        .expect("the specification is accepted");
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    assert_eq!(end.rows_done, 2, "{end:?}");
+
+    // The emptying is a DELETE, so it happened in the transfer's own
+    // transaction — but the transaction committed, so nothing of the old rows
+    // is left.
+    assert_eq!(
+        rows_of(&target, "t"),
+        vec![
+            (1, Some("fresh".to_string())),
+            (2, Some("also fresh".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn an_upsert_updates_what_is_there_and_inserts_what_is_not() {
+    let source = session();
+    exec(&source, PAIR_DDL);
+    exec(
+        &source,
+        "insert into t values (1, 'updated'), (2, 'inserted')",
+    );
+
+    let target = other_session();
+    exec(&target, PAIR_DDL);
+    exec(&target, "insert into t values (1, 'old'), (9, 'untouched')");
+
+    let mut job = source
+        .start_transfer(
+            &TransferSpec::new(
+                "select id, txt from t",
+                target.handle(),
+                ObjectRef::new("T").with_schema("PUBLIC"),
+            )
+            .with_mode(TransferMode::Upsert),
+        )
+        .expect("H2 has a MERGE and the target has a primary key");
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    assert_eq!(end.rows_done, 2, "{end:?}");
+    assert_eq!(end.rows_skipped, 0, "an upsert refuses nothing: {end:?}");
+
+    // The conflict key came from the target's primary key metadata: row 1 was
+    // updated rather than duplicated or refused, row 2 inserted, row 9 left
+    // alone because the source said nothing about it.
+    assert_eq!(
+        rows_of(&target, "t"),
+        vec![
+            (1, Some("updated".to_string())),
+            (2, Some("inserted".to_string())),
+            (9, Some("untouched".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn on_error_skip_drops_the_bad_rows_and_counts_them() {
+    let source = session();
+    exec(&source, PAIR_DDL);
+    exec(
+        &source,
+        "insert into t values (1, 'clash'), (2, 'fine'), (3, 'clash too'), (4, 'fine too')",
+    );
+
+    let target = other_session();
+    exec(&target, PAIR_DDL);
+    exec(
+        &target,
+        "insert into t values (1, 'sitting'), (3, 'sitting')",
+    );
+
+    // One row per batch, so a refused row is a refused row rather than a batch
+    // the driver failed as a unit: which rows of a failed batch went in is a
+    // driver-by-driver answer, and `skip` is only meaningful when it is not.
+    let mut job = source
+        .start_transfer(
+            &TransferSpec::new(
+                "select id, txt from t order by id",
+                target.handle(),
+                ObjectRef::new("T").with_schema("PUBLIC"),
+            )
+            .with_batch_size(1)
+            .with_on_error(OnError::Skip),
+        )
+        .expect("the specification is accepted");
+
+    let end = drain(&mut job);
+    assert_eq!(
+        end.state,
+        JobState::Done,
+        "`skip` means the job survives its bad rows: {end:?}"
+    );
+    assert_eq!(end.rows_done, 2, "the two rows that fitted: {end:?}");
+    assert_eq!(end.rows_skipped, 2, "the two that clashed: {end:?}");
+
+    assert_eq!(
+        rows_of(&target, "t"),
+        vec![
+            (1, Some("sitting".to_string())),
+            (2, Some("fine".to_string())),
+            (3, Some("sitting".to_string())),
+            (4, Some("fine too".to_string())),
+        ],
+        "the rows that could go in went in, and the ones already there stayed"
+    );
+}
+
+#[test]
+fn a_transfer_that_cannot_work_is_refused_at_the_start_rather_than_run() {
+    let source = session();
+    exec(&source, PAIR_DDL);
+    exec(&source, "insert into t values (1, 'a')");
+
+    // A handle the bridge has never issued. Not short-circuited in Rust: the
+    // bridge is the single authority on what a malformed request is.
+    let error = source
+        .start_transfer(&TransferSpec::new(
+            "select id, txt from t",
+            i64::MAX,
+            ObjectRef::new("T").with_schema("PUBLIC"),
+        ))
+        .expect_err("there is no such target session");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Protocol, "{error:?}");
+    assert!(!error.is_not_implemented(), "{error:?}");
+
+    // An upsert needs a conflict key, and it reads one from the target's
+    // primary key metadata. Without one there is no correct statement to write,
+    // so the start fails instead of the job.
+    let target = other_session();
+    exec(&target, "create table t (id integer, txt varchar(40))");
+    let error = source
+        .start_transfer(
+            &TransferSpec::new(
+                "select id, txt from t",
+                target.handle(),
+                ObjectRef::new("T").with_schema("PUBLIC"),
+            )
+            .with_mode(TransferMode::Upsert),
+        )
+        .expect_err("a keyless target cannot be upserted into");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Protocol, "{error:?}");
+
+    // A refused start moved nothing and left both sessions good for the next
+    // attempt.
+    assert!(rows_of(&target, "t").is_empty(), "no row was written");
+    assert!(source.ping().expect("still alive").ok);
+    assert!(target.ping().expect("still alive").ok);
+}
+
+#[test]
+fn cancelling_a_transfer_stops_it_and_leaves_both_sessions_usable() {
+    let source = session();
+    create_big_table(&source);
+
+    let target = other_session();
+    exec(&target, "create table big (id integer, v varchar(80))");
+
+    let mut job = source
+        .start_transfer(&TransferSpec::new(
+            "select id, v from big",
+            target.handle(),
+            ObjectRef::new("BIG").with_schema("PUBLIC"),
+        ))
+        .expect("the specification is accepted");
+
+    // Catch it moving rows: a cancel that arrived after the last one would
+    // prove nothing.
+    let mut seen = 0;
+    for _ in 0..2000 {
+        let progress = job.poll().expect("the job answers a poll");
+        assert_eq!(
+            progress.state,
+            JobState::Running,
+            "the job outran the sampler: {progress:?}"
+        );
+        seen = progress.rows_done;
+        if seen > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(seen > 0, "no rows were ever reported");
+
+    assert!(
+        job.cancel().expect("the cancel is answered"),
+        "the job was still running when the cancel arrived"
+    );
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Cancelled, "{end:?}");
+    assert!(
+        end.rows_done < BIG_ROWS,
+        "a cancel that only landed after the last row proves nothing: {end:?}"
+    );
+
+    // Both sessions survived: the source had a SELECT cancelled underneath it
+    // and the target a batch, and the job let go of both connection locks.
+    let batch = fetch_one(&source, "select count(*) from big", 1);
+    assert_eq!(batch.value(0, 0), Some(Value::I64(BIG_ROWS as i64)));
+    let batch = fetch_one(&target, "select count(*) from big", 1);
+    let landed = match batch.value(0, 0) {
+        Some(Value::I64(count)) => count,
+        other => panic!("expected a count, got {other:?}"),
+    };
+    // Whatever had been committed stays — that is the documented outcome, not
+    // an accident — and the uncommitted tail was rolled back.
+    assert!(
+        landed <= BIG_ROWS as i64,
+        "the target holds more rows than the source had: {landed}"
+    );
+}
+
+#[test]
+fn a_terminal_reading_retires_a_transfer_handle_too() {
+    let source = session();
+    exec(&source, PAIR_DDL);
+    exec(&source, "insert into t values (1, 'only')");
+
+    let target = other_session();
+    exec(&target, PAIR_DDL);
+
+    let mut job = source
+        .start_transfer(&TransferSpec::new(
+            "select id, txt from t",
+            target.handle(),
+            ObjectRef::new("T").with_schema("PUBLIC"),
+        ))
+        .expect("the specification is accepted");
+
+    assert_eq!(drain(&mut job).state, JobState::Done);
+    assert!(job.is_terminal(), "the crate knows the handle is spent");
+
+    let error = job
+        .poll()
+        .expect_err("the handle died in the call that reported the end");
+    let Error::Bridge(error) = error else {
+        panic!("expected an error envelope, got {error:?}")
+    };
+    assert_eq!(error.kind, BridgeErrorKind::Protocol, "{error:?}");
+    assert!(
+        !job.cancel().expect("answered without a round trip"),
+        "there was nothing left to cancel"
+    );
+}
+
+// --- jobs: backups ----------------------------------------------------------
+
+/// Creates two tables joined by a foreign key, and fills them.
+///
+/// The pair is the point: a backup writes every `CREATE` first and every
+/// foreign key afterwards as an `ALTER`, and only a script built that way
+/// replays into an empty database whatever order the tables come out in.
+fn create_related_tables(session: &Session) {
+    exec(
+        session,
+        "create table parent (id integer not null primary key, name varchar(20))",
+    );
+    exec(
+        session,
+        "create table child (id integer not null primary key,
+             parent_id integer not null,
+             constraint fk_child_parent foreign key (parent_id) references parent(id))",
+    );
+    exec(session, "insert into parent values (1, 'a'), (2, 'b')");
+    exec(
+        session,
+        "insert into child values (10, 1), (11, 2), (12, 1)",
+    );
+}
+
+/// Replays a script statement by statement into a database that has never seen
+/// it.
+///
+/// Statements end at a semicolon that ends a line — enough for what the bridge
+/// writes, and deliberately not a SQL parser. `rudbman-sql` is where a real
+/// splitter lives.
+fn replay(session: &Session, script: &str) {
+    let mut statement = String::new();
+    for line in script.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("--") {
+            continue;
+        }
+        statement.push_str(line);
+        statement.push('\n');
+        if trimmed.ends_with(';') {
+            exec(session, statement.trim().trim_end_matches(';'));
+            statement.clear();
+        }
+    }
+    assert!(
+        statement.trim().is_empty(),
+        "the script ended mid-statement: {statement}"
+    );
+}
+
+#[test]
+fn a_backup_of_a_schema_replays_into_an_empty_database() {
+    let source = session();
+    create_related_tables(&source);
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let path = dir.path().join("schema.sql");
+    let mut job = source
+        .start_backup(
+            &BackupSpec::new(&path)
+                .with_schema("PUBLIC")
+                .with_ddl(DdlOptions::included())
+                .with_data(BackupDataOptions::included()),
+        )
+        .expect("the specification is accepted");
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    // No object list was given: the bridge enumerated the schema's tables and
+    // wrote every row of both.
+    assert_eq!(end.rows_done, 5, "two parents and three children: {end:?}");
+    assert_eq!(end.rows_skipped, 0, "a backup refuses nothing: {end:?}");
+    assert!(end.errors.is_empty(), "{:?}", end.errors);
+
+    let script = std::fs::read_to_string(&path).expect("the file is where it was asked for");
+    assert_eq!(
+        end.bytes as usize,
+        script.len(),
+        "the byte count is exact once the job has ended"
+    );
+
+    let elsewhere = other_session();
+    replay(&elsewhere, &script);
+
+    let parents = fetch_one(&elsewhere, "select id, name from parent order by id", 10);
+    assert_eq!(parents.rows(), 2);
+    assert_eq!(parents.value(0, 0), Some(Value::I64(1)));
+    assert_eq!(parents.value(0, 1), Some(Value::Str("a")));
+    assert_eq!(parents.value(1, 1), Some(Value::Str("b")));
+    let batch = fetch_one(&elsewhere, "select count(*) from child", 1);
+    assert_eq!(batch.value(0, 0), Some(Value::I64(3)));
+
+    // The foreign key came across as well, which is what makes this a backup
+    // rather than a heap of rows.
+    elsewhere
+        .execute(&StatementSpec::new("insert into child values (13, 999)"))
+        .expect_err("the replayed foreign key is a real constraint");
+}
+
+#[test]
+fn a_gzip_backup_writes_a_gzip_file_and_counts_the_compressed_bytes() {
+    let source = session();
+    create_related_tables(&source);
+
+    let dir = tempfile::tempdir().expect("a temp directory");
+    let path = dir.path().join("schema.sql.gz");
+    let mut job = source
+        .start_backup(
+            &BackupSpec::new(&path)
+                .with_schema("PUBLIC")
+                .with_compress(Compression::Gzip)
+                .with_ddl(DdlOptions::included())
+                .with_data(BackupDataOptions::included()),
+        )
+        .expect("the specification is accepted");
+
+    let end = drain(&mut job);
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    assert_eq!(end.rows_done, 5, "{end:?}");
+
+    let bytes = std::fs::read(&path).expect("the file is there");
+    assert_eq!(
+        &bytes[..2],
+        &[0x1f, 0x8b],
+        "a gzip member starts with its magic number, or nothing will unpack it"
+    );
+    // The count is what was written to the file, after compression — otherwise
+    // a progress bar for a compressed backup would be measuring the wrong
+    // thing and would never agree with the file on disc.
+    assert_eq!(
+        end.bytes,
+        std::fs::metadata(&path).expect("the file is there").len(),
+        "the byte count is the compressed size"
+    );
+    assert!(
+        bytes.len() < 4096,
+        "a handful of rows should not compress to {} bytes",
+        bytes.len()
+    );
 }
 
 // --- driver probing, before any session exists -----------------------------

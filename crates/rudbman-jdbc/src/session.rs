@@ -62,7 +62,10 @@ use crate::protocol::{Op, parse_json, take_payload};
 use crate::response::{
     Cancelled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, JobProgress, Ping, SessionInfo,
 };
-use crate::spec::{ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, StatementSpec};
+use crate::spec::{
+    BackupSpec, ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, StatementSpec,
+    TransferSpec,
+};
 
 /// The `OPEN_SESSION` response body.
 #[derive(Deserialize)]
@@ -232,7 +235,61 @@ impl Session {
     /// Rust side: the bridge is the single authority on what a malformed
     /// request is.
     pub fn start_job(&self, spec: &ExtractSpec) -> Result<Job> {
-        let body = serde_json::to_vec(spec)?;
+        self.start_job_body(serde_json::to_vec(spec)?)
+    }
+
+    /// Starts a DB-to-DB transfer and returns its handle.
+    ///
+    /// **Called on the source session**; the target is named by handle inside
+    /// the spec. Rows go source `ResultSet` → target `PreparedStatement` inside
+    /// the JVM, so none of them reaches this process — see [`TransferSpec`].
+    ///
+    /// **Both sessions are locked for the whole stream**, taken in ascending
+    /// [`Session::handle`] order. An [`execute`](Session::execute) on either
+    /// one waits until the job ends, which is why a UI that has to keep
+    /// querying during a transfer opens another session. Transferring a session
+    /// into itself is allowed; the bridge's lock is reentrant.
+    ///
+    /// Closing either session cancels the job first — a job answers "do I use
+    /// this session?" for both ends, or closing the target would wait forever.
+    ///
+    /// # Errors
+    ///
+    /// Fails **here**, as a `protocol` error envelope, for what can be judged
+    /// without running anything: an unknown
+    /// [`target_session`](TransferSpec::target_session),
+    /// [`TransferMode::Upsert`](crate::TransferMode::Upsert) against a target
+    /// with no primary key or a product with no portable upsert, a malformed
+    /// spec. What depends on the source result set — a
+    /// [`ColumnMapping::from`](crate::ColumnMapping::from) the query does not
+    /// return — cannot be known until the query runs and arrives instead as an
+    /// early [`JobState::Failed`](crate::JobState::Failed).
+    pub fn start_transfer(&self, spec: &TransferSpec) -> Result<Job> {
+        self.start_job_body(serde_json::to_vec(spec)?)
+    }
+
+    /// Starts a backup of a whole schema and returns its handle.
+    ///
+    /// An extraction with no object list: the bridge enumerates the scope's
+    /// `TABLE`-typed tables by name and writes them through the same core. The
+    /// locking, phases and cancellation are [`start_job`](Session::start_job)'s
+    /// exactly — including that a cancel leaves the partial file where it is.
+    ///
+    /// # Errors
+    ///
+    /// A malformed specification — no output path, a charset the JVM does not
+    /// know, neither DDL nor data — fails here rather than becoming a job that
+    /// fails on its first poll. A scope that turns out to hold no table at all
+    /// is not malformed; it is a backup of nothing.
+    pub fn start_backup(&self, spec: &BackupSpec) -> Result<Job> {
+        self.start_job_body(serde_json::to_vec(spec)?)
+    }
+
+    /// The shared half of the three `JOB_START` calls.
+    ///
+    /// The kind is inside the body, so every job kind takes the same path: the
+    /// session handle, the serialised spec, and a `{job}` back.
+    fn start_job_body(&self, body: Vec<u8>) -> Result<Job> {
         let started: Started = self.json_call(Op::JobStart, self.handle, 0, Some(body))?;
         Ok(Job {
             jvm: self.jvm,
@@ -453,11 +510,12 @@ impl Drop for Cursor {
     }
 }
 
-/// One long-running operation inside the bridge: a script extraction today,
-/// a backup or a DB-to-DB transfer later (architecture document, §6).
+/// One long-running operation inside the bridge: a script extraction, a backup
+/// or a DB-to-DB transfer (architecture document, §6).
 ///
-/// A job runs on a thread of the bridge's own and writes its output where the
-/// rows already are. Nothing of it crosses the JNI boundary except a handle
+/// A job runs on a thread of the bridge's own and does its work where the rows
+/// already are — writing a file, or feeding another connection's
+/// `PreparedStatement`. Nothing of it crosses the JNI boundary except a handle
 /// and, per poll, a [`JobProgress`].
 ///
 /// # The terminal reading retires the handle
