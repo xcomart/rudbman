@@ -24,6 +24,11 @@ menu:
   backup_schema: スキーマをバックアップ…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER図
+  # Puts the object selected in the explorer onto a query builder's canvas,
+  # opening one first if the connection has none.
+  add_to_builder: クエリビルダーに追加
+  # Opens an empty query builder on the connection whose tab is showing.
+  new_builder: 新しいクエリビルダー
   about: rudbman について
   quit: 終了
   connection: 接続
@@ -469,3 +474,25 @@ erd:
   export_done: "%{path} に書き出しました。"
   export_failed: "図を書き出せませんでした: %{error}"
   refresh: 再読み込み
+
+# The query builder: a canvas of tables, the form under it, and the SELECT the
+# two of them describe.
+builder:
+  tab: "ビルダー %{index}"
+  canvas_hint: エクスプローラーでテーブルを選び、ビルダーに追加してください。
+  joins: 結合
+  join_inner: INNER JOIN
+  join_left: LEFT JOIN
+  join_right: RIGHT JOIN
+  join_full: FULL JOIN
+  remove: 削除
+  where: 条件
+  add_condition: 条件を追加
+  columns: 選択した列
+  group_by: グループ化
+  order_none: 並べ替えなし
+  order_asc: 昇順
+  order_desc: 降順
+  sql: ステートメント
+  no_sql: テーブルを追加するとステートメントが作られます。
+  open_editor: エディタで開く

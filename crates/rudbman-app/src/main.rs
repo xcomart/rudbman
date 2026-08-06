@@ -34,6 +34,8 @@
 mod about_dialog;
 mod app_settings;
 mod backup_dialog;
+mod builder_pane;
+mod builder_sql;
 mod caption;
 mod connection;
 mod connection_dialog;
@@ -86,6 +88,7 @@ use rudbman_ui::{
 use about_dialog::{AboutDialog, AboutDialogEvent};
 use app_settings::WindowGeometry;
 use backup_dialog::{BackupDialog, BackupDialogEvent};
+use builder_pane::{BuilderPane, BuilderPaneEvent};
 use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent};
@@ -140,6 +143,10 @@ actions!(
         BackupSchema,
         /// Draw the ERD of the scope the explorer's selection sits in.
         OpenErd,
+        /// Put the object selected in the explorer onto a query builder.
+        AddToBuilder,
+        /// Open an empty query builder on the connection whose tab is showing.
+        NewBuilder,
         /// Close the open dialog or dropdown menu, if there is one.
         DismissDialog,
     ]
@@ -294,6 +301,13 @@ struct WorkArea {
     /// tabs called "Query 3" — one of them a query that was closed and reopened
     /// — would be worse than a gap in the numbering.
     next_query: u64,
+    /// Number the next query builder tab of this connection is titled with.
+    ///
+    /// A counter of its own rather than a share of [`WorkArea::next_query`]:
+    /// the two kinds of tab are titled separately, and a window holding
+    /// "Query 1" and "Builder 2" would read as though a builder had been
+    /// numbered by something it has nothing to do with.
+    next_builder: u64,
 }
 
 impl WorkArea {
@@ -305,6 +319,7 @@ impl WorkArea {
             panes,
             active_pane,
             next_query: 1,
+            next_builder: 1,
         }
     }
 
@@ -395,6 +410,8 @@ enum FocusTarget {
     Query(Entity<QueryPane>),
     /// A diagram; the keyboard goes onto its canvas.
     Erd(Entity<ErdPane>),
+    /// A query builder; the keyboard goes onto its canvas too, once it has one.
+    Builder(Entity<BuilderPane>),
     /// Anything with nothing to type into, and the empty pane.
     Shell,
 }
@@ -942,17 +959,7 @@ impl Workspace {
         let session = connected.handle();
         let id = open.id;
         let profile = open.profile.clone();
-        // The dialect the editor highlights with and the sort round trip quotes
-        // with is the *driver's*, not the profile's: a profile names a driver
-        // and a driver names a dialect.
-        let dialect = DriverStore::load()
-            .ok()
-            .and_then(|store| {
-                store
-                    .get(&profile.driver_id)
-                    .map(|driver| driver.dialect.clone())
-            })
-            .unwrap_or_else(|| "generic".to_string());
+        let dialect = Self::dialect_of(&profile);
         let settings = app_settings::current(cx);
 
         let pane = cx.new(|cx| QueryPane::new(session, id, &profile, &dialect, &settings, sql, cx));
@@ -991,15 +998,51 @@ impl Workspace {
         pane.update(cx, |pane, cx| pane.focus_editor(window, cx));
     }
 
+    /// The dialect one profile's statements are written for.
+    ///
+    /// The *driver's*, not the profile's: a profile names a driver and a driver
+    /// names a dialect. Read from `drivers.json` each time rather than cached,
+    /// because the driver manager can rewrite that file while the window is
+    /// open, and a driver that has gone falls back to the generic profile
+    /// rather than to nothing.
+    fn dialect_of(profile: &ConnectionProfile) -> String {
+        DriverStore::load()
+            .ok()
+            .and_then(|store| {
+                store
+                    .get(&profile.driver_id)
+                    .map(|driver| driver.dialect.clone())
+            })
+            .unwrap_or_else(|| "generic".to_string())
+    }
+
     /// Opens a query pane over one explorer object, pre-filled with a `SELECT`.
+    ///
+    /// The name is written by [`builder_sql::table_ref`], which is also what
+    /// the query builder's `FROM` goes through: a name that needs quoting gets
+    /// it, a catalogue is not dropped on a product that has no schemas, and an
+    /// ordinary name in the catalogue's own case comes out exactly as before.
     fn open_query_for(
         &mut self,
         target: &ObjectTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let sql = format!("SELECT * FROM {}", target.qualified());
-        self.open_query(&sql, window, cx);
+        let dialect = rudbman_sql::Dialect::from_id(&self.active_dialect());
+        let name = builder_sql::table_ref(
+            &dialect,
+            target.catalog.as_deref(),
+            target.schema.as_deref(),
+            &target.name,
+        );
+        self.open_query(&format!("SELECT * FROM {name}"), window, cx);
+    }
+
+    /// The dialect of the connection whose tab is showing.
+    fn active_dialect(&self) -> String {
+        self.active_connection()
+            .map(|open| Self::dialect_of(&open.profile))
+            .unwrap_or_else(|| "generic".to_string())
     }
 
     /// The query pane the status bar and the run commands act on: the active
@@ -1012,7 +1055,135 @@ impl Workspace {
         let area = self.work_area()?;
         match area.panes.get(area.active())?.active()? {
             PaneItem::Query { pane, .. } => Some(pane),
-            PaneItem::TableDetail(_) | PaneItem::Erd(_) => None,
+            PaneItem::TableDetail(_) | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => None,
+        }
+    }
+
+    /// Opens an empty query builder in the active pane and hands it back.
+    ///
+    /// Gated on a live session for the reason a query pane is: the builder's
+    /// tables come from `DESCRIBE`, and a canvas over a dead connection could
+    /// never have anything put on it.
+    fn open_builder(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<BuilderPane>> {
+        let open = self.active_connection()?;
+        if !matches!(open.state, ConnectionState::Open(_)) {
+            return None;
+        }
+        let connection = open.id;
+        let dialect = Self::dialect_of(&open.profile);
+
+        let panel = cx.new(|cx| BuilderPane::new(connection, &dialect, cx));
+        // Through `open_query`, which is the one gate every new query pane
+        // comes through: running, cancelling and the write confirmation are its
+        // pipeline, and the builder has no business owning a second one.
+        cx.subscribe_in(&panel, window, |workspace, _panel, event, window, cx| {
+            let BuilderPaneEvent::OpenSql(sql) = event;
+            workspace.open_query(sql, window, cx);
+        })
+        .detach();
+
+        let area = self.work_area_mut()?;
+        let number = area.next_builder;
+        area.next_builder += 1;
+        self.append_tab(
+            PaneItem::QueryBuilder {
+                pane: panel.clone(),
+                number,
+            },
+            window,
+            cx,
+        );
+        // A builder opened with the keyboard should answer the keyboard: the
+        // zoom chords are the canvas's, and until a table arrives the panel's
+        // own root stands in for it.
+        panel.update(cx, |panel, cx| panel.take_focus(window, cx));
+        Some(panel)
+    }
+
+    /// Puts one explorer object on a query builder, opening one if there is
+    /// none.
+    ///
+    /// The builder the object lands on is the one already in front when that is
+    /// a builder, and otherwise the first one open anywhere in the work area —
+    /// which is brought to the front so that the table can be seen arriving.
+    /// A window with no builder at all gets one.
+    ///
+    /// Only ever this connection's own: a builder belongs to the connection its
+    /// tab is under, and the explorer draws only the active connection's tree,
+    /// so a target from anywhere else would be a table the statement could not
+    /// name.
+    fn add_to_builder(
+        &mut self,
+        target: ObjectTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_connection().map(|open| open.id) != Some(target.connection) {
+            return;
+        }
+        let Some(session) = self.session_of(target.connection) else {
+            return;
+        };
+
+        let panel = match self.builder_tab() {
+            Some((pane, index)) => {
+                self.activate_tab(pane, index, window, cx);
+                self.builder_at(pane, index)
+            }
+            None => self.open_builder(window, cx),
+        };
+        let Some(panel) = panel else {
+            return;
+        };
+
+        let fetch = cx.background_spawn({
+            let target = target.clone();
+            async move { builder_pane::load_columns(session.session(), &target) }
+        });
+        cx.spawn(async move |_workspace, cx| {
+            match fetch.await {
+                Ok(columns) => {
+                    panel
+                        .update(cx, |panel, cx| panel.add_table(&target, columns, cx))
+                        .ok();
+                }
+                // Nowhere to put this on screen: the builder has no message
+                // strip, and a column list that could not be read is the same
+                // failure the explorer already reports on the node itself.
+                Err(error) => log::error!("the column list could not be read: {error}"),
+            }
+        })
+        .detach();
+    }
+
+    /// Where a table added from the explorer should land.
+    ///
+    /// The tab in front when it is a builder, so that adding several tables in
+    /// a row keeps putting them where the user is looking; otherwise the first
+    /// builder in layout order.
+    fn builder_tab(&self) -> Option<(PaneId, usize)> {
+        let area = self.work_area()?;
+        let active = area.active();
+        if let Some(pane) = area.panes.get(active)
+            && matches!(pane.active(), Some(PaneItem::QueryBuilder { .. }))
+        {
+            return Some((active, pane.active_index()));
+        }
+        area.panes
+            .leaves()
+            .into_iter()
+            .find_map(|(id, pane)| pane.first_builder().map(|index| (id, index)))
+    }
+
+    /// The builder in tab `index` of `pane`, when that tab is one.
+    fn builder_at(&self, pane: PaneId, index: usize) -> Option<Entity<BuilderPane>> {
+        match self.work_area()?.panes.get(pane)?.get(index)? {
+            PaneItem::QueryBuilder { pane, .. } => Some(pane.clone()),
+            _ => None,
         }
     }
 
@@ -1140,11 +1311,15 @@ impl Workspace {
         {
             Some(PaneItem::Query { pane, .. }) => FocusTarget::Query(pane.clone()),
             Some(PaneItem::Erd(panel)) => FocusTarget::Erd(panel.clone()),
+            Some(PaneItem::QueryBuilder { pane, .. }) => FocusTarget::Builder(pane.clone()),
             Some(PaneItem::TableDetail(_)) | None => FocusTarget::Shell,
         };
         match target {
             FocusTarget::Query(pane) => pane.update(cx, |pane, cx| pane.focus_editor(window, cx)),
             FocusTarget::Erd(panel) => panel.update(cx, |panel, cx| panel.take_focus(window, cx)),
+            FocusTarget::Builder(panel) => {
+                panel.update(cx, |panel, cx| panel.take_focus(window, cx));
+            }
             FocusTarget::Shell => self.focus_shell(window, cx),
         }
     }
@@ -1583,6 +1758,9 @@ impl Workspace {
             // whose canvas held the keyboard would strand it exactly as
             // [`Workspace::reclaim_focus`] describes.
             Some(PaneItem::Erd(panel)) => panel.read(cx).contains_focus(window, cx),
+            // Two handles again, and for the same reason: the builder's canvas
+            // takes the focus when a box or a column row is pressed.
+            Some(PaneItem::QueryBuilder { pane, .. }) => pane.read(cx).contains_focus(window, cx),
             None => false,
         }
     }
@@ -2047,6 +2225,30 @@ impl Workspace {
         self.open_erd(ErdTarget { connection, scope }, window, cx);
     }
 
+    /// Puts the object selected in the explorer onto a query builder.
+    ///
+    /// Gated exactly as [`Workspace::query_object_action`] is, and on the same
+    /// selection: a builder holds relations, so a routine or a sequence names
+    /// nothing it could add.
+    fn add_to_builder_action(
+        &mut self,
+        _: &AddToBuilder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        let Some(target) = self.explorer.read(cx).selected_relation(cx) else {
+            return;
+        };
+        self.add_to_builder(target, window, cx);
+    }
+
+    /// Opens an empty query builder on the connection whose tab is showing.
+    fn new_builder_action(&mut self, _: &NewBuilder, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_menu_open(false, cx);
+        self.open_builder(window, cx);
+    }
+
     /// Closes the active pane.
     fn close_pane_action(&mut self, _: &ClosePane, window: &mut Window, cx: &mut Context<Self>) {
         self.close_active_pane(window, cx);
@@ -2304,6 +2506,10 @@ impl Workspace {
             MenuEntry::new(ts!("menu.erd"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+E"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenErd), cx)),
+            MenuEntry::new(ts!("menu.new_builder"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(NewBuilder), cx)),
+            MenuEntry::new(ts!("menu.add_to_builder"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(AddToBuilder), cx)),
             MenuEntry::new(ts!("menu.toggle_explorer"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
@@ -2895,6 +3101,7 @@ fn render_pane(
                 Some(PaneItem::TableDetail(panel)) => panel.clone().into_any_element(),
                 Some(PaneItem::Query { pane, .. }) => pane.clone().into_any_element(),
                 Some(PaneItem::Erd(panel)) => panel.clone().into_any_element(),
+                Some(PaneItem::QueryBuilder { pane, .. }) => pane.clone().into_any_element(),
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
                 // — never because there is nothing to connect to.
@@ -3149,6 +3356,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::transfer_table_action))
             .on_action(cx.listener(Self::backup_schema_action))
             .on_action(cx.listener(Self::open_erd_action))
+            .on_action(cx.listener(Self::add_to_builder_action))
+            .on_action(cx.listener(Self::new_builder_action))
             .on_action(cx.listener(Self::close_pane_action))
             .on_action(cx.listener(Self::focus_next_pane_action))
             .on_action(cx.listener(Self::focus_prev_pane_action))
@@ -3610,6 +3819,8 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.transfer_table"), TransferTable),
                 MenuItem::action(ts!("menu.backup_schema"), BackupSchema),
                 MenuItem::action(ts!("menu.erd"), OpenErd),
+                MenuItem::action(ts!("menu.new_builder"), NewBuilder),
+                MenuItem::action(ts!("menu.add_to_builder"), AddToBuilder),
             ],
         },
         Menu {
@@ -4565,6 +4776,245 @@ mod tests {
         let saved = read.positions(&target.scope);
         assert_eq!(saved.len(), 2, "{saved:?}");
         assert!(saved.contains_key("PERSON"));
+    }
+
+    /// The chord the SQL editor binds "run everything" to.
+    ///
+    /// Follows `rudbman_editor::init`, which is what the test harness
+    /// registers; the action itself is that crate's and is not exported.
+    const RUN_ALL: &str = if cfg!(target_os = "macos") {
+        "cmd-shift-enter"
+    } else {
+        "ctrl-shift-enter"
+    };
+
+    /// Selects one table in the explorer, which is what the builder's action
+    /// reads.
+    fn select_table(
+        window: &gpui::WindowHandle<Workspace>,
+        cx: &mut gpui::VisualTestContext,
+        connection: ConnectionId,
+        schema: &str,
+        name: &str,
+    ) {
+        window
+            .update(cx, |workspace, _window, cx| {
+                workspace.explorer.update(cx, |explorer, cx| {
+                    explorer.select(
+                        NodeId::Object {
+                            connection,
+                            scope: explorer::Scope {
+                                catalog: None,
+                                schema: Some(schema.to_string()),
+                            },
+                            folder: explorer::Folder::Tables,
+                            name: name.to_string(),
+                        },
+                        cx,
+                    );
+                });
+            })
+            .expect("the window is open");
+    }
+
+    /// The builder that is the tab on top, if one is.
+    fn active_builder(workspace: &Workspace) -> Entity<BuilderPane> {
+        let pane = active_pane(workspace);
+        match area(workspace)
+            .panes
+            .get(pane)
+            .expect("the pane is in the tree")
+            .active()
+        {
+            Some(PaneItem::QueryBuilder { pane, .. }) => pane.clone(),
+            other => panic!("the builder is not the tab on top: {other:?}"),
+        }
+    }
+
+    /// M7's own acceptance test: three tables joined in the builder, and the
+    /// statement it produces run in a query pane that answers with rows.
+    ///
+    /// Everything up to the joins goes through the action the menu row
+    /// dispatches, so the path being asserted is the one a user takes. The two
+    /// joins are injected rather than dragged: the drag itself is the canvas
+    /// widget's, tested in `rudbman-erd` against real pointer events, and what
+    /// is at stake here is what the *shell* does with the result.
+    #[gpui::test]
+    fn three_tables_joined_in_the_builder_run_as_one_statement(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2("builder-join", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        // Outside the update, because the calls block; the same rule the ERD
+        // test above follows.
+        let session = window
+            .update(&mut cx, |workspace, _window, _cx| {
+                workspace.session_of(id).expect("the session is live")
+            })
+            .expect("the window is open");
+        for sql in [
+            "create schema if not exists BLD",
+            "create table BLD.OFFICE (ID int primary key, CITY varchar(40))",
+            "create table BLD.TEAM (ID int primary key, NAME varchar(40), OFFICE_ID int not null, \
+                 constraint FK_BLD_TEAM_OFFICE foreign key (OFFICE_ID) references BLD.OFFICE(ID))",
+            "create table BLD.PERSON (ID int primary key, NAME varchar(40), TEAM_ID int not null, \
+                 constraint FK_BLD_PERSON_TEAM foreign key (TEAM_ID) references BLD.TEAM(ID))",
+            "insert into BLD.OFFICE values (1, 'Seoul')",
+            "insert into BLD.TEAM values (10, 'Core', 1)",
+            "insert into BLD.PERSON values (100, 'Ada', 10)",
+            "insert into BLD.PERSON values (101, 'Linus', 10)",
+        ] {
+            session
+                .session()
+                .execute(&rudbman_jdbc::StatementSpec::new(sql))
+                .unwrap_or_else(|error| panic!("{sql}: {error}"));
+        }
+        drop(session);
+
+        // The keyboard has to be somewhere inside the shell before an action is
+        // dispatched: gpui resolves one against the focused element of the last
+        // drawn frame, and the window the harness builds — unlike the one
+        // `main` opens — starts with the focus nowhere.
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.focus_shell(window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // Three tables, each through the explorer selection and the action —
+        // the first of which has to open the builder tab as well.
+        for name in ["PERSON", "TEAM", "OFFICE"] {
+            select_table(&window, &mut cx, id, "BLD", name);
+            cx.run_until_parked();
+            cx.dispatch_action(AddToBuilder);
+            cx.run_until_parked();
+        }
+
+        let (pane, panel) = window
+            .update(&mut cx, |workspace, _window, cx| {
+                let pane = active_pane(workspace);
+                let panel = active_builder(workspace);
+                // One tab, not three: every table lands on the builder already
+                // in front.
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    [ts!("builder.tab", index = 1).to_string()]
+                );
+                assert_eq!(panel.read(cx).table_count(), 3);
+                // A builder is not a query, so the status bar's own cells stay
+                // empty over one.
+                assert!(workspace.active_query().is_none());
+                (pane, panel)
+            })
+            .expect("the window is open");
+
+        // What drawing the two lines and clicking the three rows amounts to.
+        window
+            .update(&mut cx, |_workspace, _window, cx| {
+                panel.update(cx, |panel, cx| {
+                    panel.add_join((0, 2), (1, 0), cx);
+                    panel.add_join((1, 2), (2, 0), cx);
+                    panel.toggle_column(0, 1, cx);
+                    panel.toggle_column(1, 1, cx);
+                    panel.toggle_column(2, 1, cx);
+                });
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        let sql = window
+            .update(&mut cx, |_workspace, _window, cx| panel.read(cx).sql(cx))
+            .expect("the window is open");
+        assert_eq!(
+            sql,
+            "SELECT PERSON.NAME, TEAM.NAME, OFFICE.CITY\n\
+             FROM BLD.PERSON\n\
+             \x20 INNER JOIN BLD.TEAM ON PERSON.TEAM_ID = TEAM.ID\n\
+             \x20 INNER JOIN BLD.OFFICE ON TEAM.OFFICE_ID = OFFICE.ID"
+        );
+
+        // "Open in editor": the panel's one message, the workspace's one gate.
+        window
+            .update(&mut cx, |_workspace, _window, cx| {
+                panel.update(cx, |panel, cx| panel.open_in_editor(cx));
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        let query = window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    [
+                        ts!("builder.tab", index = 1).to_string(),
+                        ts!("query.tab", index = 1).to_string()
+                    ]
+                );
+                let query = workspace
+                    .active_query()
+                    .expect("the query pane is the tab on top")
+                    .clone();
+                assert_eq!(query.read(cx).editor_text(cx), sql);
+                query
+            })
+            .expect("the window is open");
+
+        // And it runs, through the editor's own chord: the builder produced a
+        // statement the database accepts, which is the whole of the milestone.
+        cx.simulate_keystrokes(RUN_ALL);
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |_workspace, _window, cx| {
+                let query = query.read(cx);
+                assert!(!query.is_running(), "the run never came back");
+                assert_eq!(
+                    query.status_cells().0,
+                    ts!("query.row_count", count = 2),
+                    "the join did not produce the two people"
+                );
+            })
+            .expect("the window is open");
+    }
+
+    /// The explorer's own "query this object", which now writes its `FROM`
+    /// through the same quoting the builder uses.
+    ///
+    /// The assertion is that an ordinary name is *unchanged*: quoting only
+    /// where it is needed is the whole point of the new API, and a statement
+    /// that suddenly came out as `SELECT * FROM "PUBLIC"."ORDERS"` would be a
+    /// regression rather than a fix.
+    #[gpui::test]
+    fn querying_an_object_leaves_an_ordinary_name_bare(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2("query-for", cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_query_for(&object(id, "ORDERS"), window, cx);
+                let query = workspace
+                    .active_query()
+                    .expect("the query pane is the tab on top");
+                assert_eq!(
+                    query.read(cx).editor_text(cx),
+                    "SELECT * FROM PUBLIC.ORDERS"
+                );
+
+                // A name that would not survive being written bare is quoted,
+                // and the schema is still in front of it.
+                let mut awkward = object(id, "Order Details");
+                awkward.schema = Some("PUBLIC".to_string());
+                workspace.open_query_for(&awkward, window, cx);
+                let query = workspace
+                    .active_query()
+                    .expect("the second query pane is the tab on top");
+                assert_eq!(
+                    query.read(cx).editor_text(cx),
+                    "SELECT * FROM PUBLIC.\"Order Details\""
+                );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
     }
 
     /// Closing a connection tab takes its whole work area with it.

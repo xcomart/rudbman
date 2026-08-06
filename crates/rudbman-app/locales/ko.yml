@@ -24,6 +24,11 @@ menu:
   backup_schema: 스키마 백업…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD 다이어그램
+  # Puts the object selected in the explorer onto a query builder's canvas,
+  # opening one first if the connection has none.
+  add_to_builder: 쿼리 빌더에 추가
+  # Opens an empty query builder on the connection whose tab is showing.
+  new_builder: 새 쿼리 빌더
   about: rudbman 정보
   quit: 종료
   connection: 연결
@@ -469,3 +474,25 @@ erd:
   export_done: "%{path}에 저장했습니다."
   export_failed: "다이어그램을 저장하지 못했습니다: %{error}"
   refresh: 새로 고침
+
+# The query builder: a canvas of tables, the form under it, and the SELECT the
+# two of them describe.
+builder:
+  tab: "빌더 %{index}"
+  canvas_hint: 탐색기에서 테이블을 선택해 빌더에 추가하세요.
+  joins: 조인
+  join_inner: INNER JOIN
+  join_left: LEFT JOIN
+  join_right: RIGHT JOIN
+  join_full: FULL JOIN
+  remove: 삭제
+  where: 조건
+  add_condition: 조건 추가
+  columns: 선택한 열
+  group_by: 그룹
+  order_none: 정렬 없음
+  order_asc: 오름차순
+  order_desc: 내림차순
+  sql: 문장
+  no_sql: 테이블을 추가하면 문장이 만들어집니다.
+  open_editor: 에디터에서 열기

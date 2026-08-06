@@ -24,6 +24,11 @@ menu:
   backup_schema: 备份模式…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER 图
+  # Puts the object selected in the explorer onto a query builder's canvas,
+  # opening one first if the connection has none.
+  add_to_builder: 添加到查询构建器
+  # Opens an empty query builder on the connection whose tab is showing.
+  new_builder: 新建查询构建器
   about: 关于 rudbman
   quit: 退出
   connection: 连接
@@ -469,3 +474,25 @@ erd:
   export_done: "已写入 %{path}。"
   export_failed: "无法写入图表：%{error}"
   refresh: 刷新
+
+# The query builder: a canvas of tables, the form under it, and the SELECT the
+# two of them describe.
+builder:
+  tab: "构建器 %{index}"
+  canvas_hint: 在资源管理器中选择一个表并添加到构建器。
+  joins: 连接
+  join_inner: INNER JOIN
+  join_left: LEFT JOIN
+  join_right: RIGHT JOIN
+  join_full: FULL JOIN
+  remove: 移除
+  where: 条件
+  add_condition: 添加条件
+  columns: 已选列
+  group_by: 分组
+  order_none: 不排序
+  order_asc: 升序
+  order_desc: 降序
+  sql: 语句
+  no_sql: 添加一个表以生成语句。
+  open_editor: 在编辑器中打开
