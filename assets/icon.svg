@@ -11,13 +11,12 @@
     so it gets the whole tile and nothing is set beside it.
 
     The colours are the application's own, from `crates/rudbman-ui/src/
-    theme.rs`. The body is `accent` (#61afef), shaded toward #4189c8 so the
-    solid reads as lit from above. The cap is `grid_pk` (#e5c07b), the gold
-    the grid marks primary keys with: a primary key is what identifies a row
-    and what every relation in a schema hangs off, so a cylinder wearing that
-    gold says *keyed store* in this program's own vocabulary. It is also what
-    sets the icon apart from the rest of its category, which is a shelf of
-    blue cylinders.
+    theme.rs`. The body is `accent` (#61afef); the cap is `grid_pk` (#e5c07b),
+    the gold the grid marks primary keys with: a primary key is what
+    identifies a row and what every relation in a schema hangs off, so a
+    cylinder wearing that gold says *keyed store* in this program's own
+    vocabulary. It is also what sets the icon apart from the rest of its
+    category, which is a shelf of blue cylinders.
 
     Not green, though green is in the palette and the sibling app uses it:
     `theme.rs` binds green to `success`. It already means "that worked"
@@ -31,8 +30,35 @@
     brightness step between the two, which is what a hue change alone cannot
     do — the cap stays the lit end and does not read as a separate chip.
 
-    The tile, its gradient and its border are shared with logman, deliberately:
-    the two are the same author's tools and wear the same plate.
+    The modelling. One light, above and a little to the left, and everything
+    below follows from it. The barrel is shaded around its girth — dark left
+    edge, highlight at about a third of the way across, falling away dark on
+    the right — which is the gradient that makes a rectangle read as a turned
+    solid; a top-to-bottom fade only ever reads as a lit flat. Over that sit
+    a soft specular streak where the highlight peaks, a darkening toward the
+    base where the form turns from the light, and a crescent of shadow under
+    the cap that seats the gold on the barrel instead of leaving it pasted
+    on. The cap itself takes an off-centre radial so its top face tilts
+    toward the light, with a thin bright arc on the near rim. The cylinder
+    drops a blurred pool of shadow on the tile, which is what lifts it off
+    the plate. Every one of these is a translucent overlay on the two base
+    fills, not a new shape: below about 24 px they dissolve back into the
+    barrel and the silhouette is all that is left, so the depth costs the
+    small sizes nothing.
+
+    The plate. The tile's gradient is steep enough to be seen as one — the
+    same One Dark greys, but a clear step from lit top to dark base rather
+    than a whisper of one. Its border is drawn twice: a dark crease at the
+    very edge that cuts the tile out of whatever it sits on, and a mid-grey
+    ring inside it that stays legible on both light and dark backdrops. The
+    emboss lives in that ring itself: its gradient runs from lit grey at the
+    top to shadowed grey at the base — the same overhead light that models
+    the cylinder catching the plate's frame — so the tile reads as a raised
+    plate while the ring keeps one geometric width all the way round. (An
+    earlier draft laid a separate highlight/shadow band inside a flat ring;
+    the bright half visually welded itself to the ring and the border looked
+    thicker at the top than at the bottom.) The tile began as logman's flat
+    plate; the emboss is this icon's own.
 
     Master file. `assets/icon-128.png`, `icon-256.png`, `icon.ico` and
     `icon.icns` are all rasterised from this one by `assets/render.py`, each
@@ -41,34 +67,94 @@
   -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#262b33"/>
-      <stop offset="1" stop-color="#1b1f24"/>
+      <stop offset="0" stop-color="#3a4150"/>
+      <stop offset="0.55" stop-color="#242933"/>
+      <stop offset="1" stop-color="#15181d"/>
     </linearGradient>
-    <linearGradient id="barrel" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#61afef"/>
-      <stop offset="1" stop-color="#4189c8"/>
+    <!-- the border ring is itself the emboss: lit on top, in shadow below -->
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8b97ae"/>
+      <stop offset="0.5" stop-color="#5b6474"/>
+      <stop offset="1" stop-color="#343a44"/>
     </linearGradient>
+    <!-- round-shading across the girth: edge, highlight, local colour, far edge -->
+    <linearGradient id="barrel" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3a76ad"/>
+      <stop offset="0.22" stop-color="#7fc3f8"/>
+      <stop offset="0.55" stop-color="#61afef"/>
+      <stop offset="1" stop-color="#2e5e8f"/>
+    </linearGradient>
+    <!-- the form turning away from the light toward its base -->
+    <linearGradient id="depth" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.55" stop-color="#1b1f24" stop-opacity="0"/>
+      <stop offset="1" stop-color="#1b1f24" stop-opacity="0.30"/>
+    </linearGradient>
+    <!-- the cap's top face, tilted toward the light -->
+    <radialGradient id="cap" cx="0.36" cy="0.25" r="1">
+      <stop offset="0" stop-color="#f7e5b1"/>
+      <stop offset="0.5" stop-color="#eac98a"/>
+      <stop offset="0.85" stop-color="#e5c07b"/>
+      <stop offset="1" stop-color="#c2974f"/>
+    </radialGradient>
+    <filter id="blur5" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <filter id="blur3" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+    <!-- overlays stroked along the barrel's arcs would poke past its straight
+         sides at their endpoints, so everything drawn on the barrel is clipped
+         to it -->
+    <clipPath id="body">
+      <path d="M 64 72 L 64 184 A 64 24 0 0 0 192 184 L 192 72 Z"/>
+    </clipPath>
   </defs>
 
-  <!-- tile -->
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
-  <rect x="11" y="11" width="234" height="234" rx="53" fill="none"
-        stroke="#4b5263" stroke-opacity="0.55" stroke-width="4"/>
+  <!-- tile: dark crease at the edge, then one embossed ring of constant width -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"
+        stroke="#0c0e11" stroke-width="2"/>
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="none"
+        stroke="url(#ring)" stroke-width="5"/>
+
+  <!-- the pool of shadow that lifts the cylinder off the plate -->
+  <ellipse cx="128" cy="210" rx="58" ry="12" fill="#06090c" opacity="0.45"
+           filter="url(#blur5)"/>
 
   <!-- cylinder body: straight sides closed by the bottom half-ellipse -->
   <path d="M 64 72 L 64 184 A 64 24 0 0 0 192 184 L 192 72 Z"
         fill="url(#barrel)"/>
 
-  <!-- the cap, in the grid's primary-key gold -->
-  <ellipse cx="128" cy="72" rx="64" ry="24" fill="#e5c07b"/>
+  <g clip-path="url(#body)">
+    <!-- base turning from the light -->
+    <path d="M 64 72 L 64 184 A 64 24 0 0 0 192 184 L 192 72 Z"
+          fill="url(#depth)"/>
 
-  <!--
-    Two grooves. Drawn in the tile's own dark and translucent, so they read as
-    shadow rather than as a third colour; below about 24 px they dissolve into
-    the barrel instead of breaking it into stripes.
-  -->
-  <path d="M 64 114 A 64 24 0 0 0 192 114" fill="none"
-        stroke="#1b1f24" stroke-opacity="0.34" stroke-width="9"/>
-  <path d="M 64 152 A 64 24 0 0 0 192 152" fill="none"
-        stroke="#1b1f24" stroke-opacity="0.34" stroke-width="9"/>
+    <!-- specular streak where the girth highlight peaks -->
+    <rect x="80" y="90" width="18" height="102" rx="9" fill="#ffffff"
+          opacity="0.18" filter="url(#blur3)"/>
+
+    <!-- the cap seated on the barrel: a crescent of shadow under its lip -->
+    <path d="M 64 72 A 64 24 0 0 0 192 72 A 64 34 0 0 1 64 72 Z"
+          fill="#1b1f24" opacity="0.30"/>
+
+    <!--
+      Two grooves. Drawn in the tile's own dark and translucent, so they read
+      as shadow rather than as a third colour; below about 24 px they dissolve
+      into the barrel instead of breaking it into stripes. Each carries a
+      faint lit lower lip, which is what makes a line into a recess.
+    -->
+    <path d="M 64 114 A 64 24 0 0 0 192 114" fill="none"
+          stroke="#1b1f24" stroke-opacity="0.34" stroke-width="9"/>
+    <path d="M 64 152 A 64 24 0 0 0 192 152" fill="none"
+          stroke="#1b1f24" stroke-opacity="0.34" stroke-width="9"/>
+    <path d="M 64 121 A 64 24 0 0 0 192 121" fill="none"
+          stroke="#ffffff" stroke-opacity="0.20" stroke-width="3.5"/>
+    <path d="M 64 159 A 64 24 0 0 0 192 159" fill="none"
+          stroke="#ffffff" stroke-opacity="0.20" stroke-width="3.5"/>
+  </g>
+
+  <!-- the cap, in the grid's primary-key gold -->
+  <ellipse cx="128" cy="72" rx="64" ry="24" fill="url(#cap)"/>
+  <path d="M 68 71 A 60 21 0 0 1 188 71" fill="none"
+        stroke="#fff6da" stroke-opacity="0.55" stroke-width="3"/>
 </svg>
