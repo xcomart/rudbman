@@ -55,7 +55,8 @@ use gpui::{
 };
 
 use crate::scrollbar::{
-    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, scroll_to, scrolled,
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
+    scrolled,
 };
 use crate::theme::theme;
 
@@ -751,6 +752,22 @@ impl<S: TreeSource> TreeView<S> {
         }
     }
 
+    /// Puts the bar up while the pointer rests on the edge it rides, and starts
+    /// it going the moment the pointer leaves.
+    fn hover_scrollbar(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.bar.hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        let Some(epoch) = self.bar.hover_leave() else {
+            return;
+        };
+        hide_now(self, epoch, cx, |tree: &mut Self| Some(&mut tree.bar));
+    }
+
     /// Draws row `ix`: the indent, the arrow and the background are the tree's,
     /// everything inside them is the source's.
     fn render_row(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -935,7 +952,13 @@ impl<S: TreeSource> Render for TreeView<S> {
                 cx.listener(|tree, _: &MouseUpEvent, _window, cx| tree.release_thumb(cx)),
             )
             .child(list)
-            .children(self.scrollbar().render(&theme))
+            .children(
+                self.scrollbar()
+                    .on_hover(cx.listener(|tree, hovered: &bool, _window, cx| {
+                        tree.hover_scrollbar(*hovered, cx);
+                    }))
+                    .render(&theme),
+            )
     }
 }
 

@@ -64,7 +64,9 @@ use gpui::{
     prelude::*, px,
 };
 use rudbman_sql::{Dialect, StatementSpan};
-use rudbman_ui::scrollbar::{DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later};
+use rudbman_ui::scrollbar::{
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
+};
 use rudbman_ui::{Checkbox, TextInput, editor_theme, theme};
 
 use crate::buffer::Buffer;
@@ -1555,14 +1557,42 @@ impl EditorView {
         )
     }
 
+    /// The state of whichever bar rides `axis`.
+    fn bar_mut(&mut self, axis: ScrollbarAxis) -> &mut ScrollbarState {
+        match axis {
+            ScrollbarAxis::Vertical => &mut self.vertical_bar,
+            ScrollbarAxis::Horizontal => &mut self.horizontal_bar,
+        }
+    }
+
+    /// Puts a bar up while the pointer rests on the edge it rides, and starts
+    /// it going the moment the pointer leaves.
+    fn hover_bar(&mut self, axis: ScrollbarAxis, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.bar_mut(axis).hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        if let Some(epoch) = self.bar_mut(axis).hover_leave() {
+            hide_now(self, epoch, cx, move |editor: &mut Self| {
+                Some(editor.bar_mut(axis))
+            });
+        }
+    }
+
     /// Lets go of a thumb and starts the clock that takes the bar down.
     fn release_thumb(&mut self, cx: &mut Context<Self>) {
-        for epoch in [self.vertical_bar.release(), self.horizontal_bar.release()]
-            .into_iter()
-            .flatten()
-        {
-            hide_later(epoch, cx, |editor: &mut Self| {
-                Some(&mut editor.vertical_bar)
+        for (axis, released) in [
+            (ScrollbarAxis::Vertical, self.vertical_bar.release()),
+            (ScrollbarAxis::Horizontal, self.horizontal_bar.release()),
+        ] {
+            let Some(epoch) = released else {
+                continue;
+            };
+            hide_later(epoch, cx, move |editor: &mut Self| {
+                Some(editor.bar_mut(axis))
             });
         }
         cx.notify();
@@ -1930,14 +1960,18 @@ impl Render for EditorView {
                 cx.listener(|editor, _: &MouseUpEvent, _window, cx| editor.release_thumb(cx)),
             )
             .child(EditorElement::new(cx.entity()))
-            .children(
-                self.scrollbar(ScrollbarAxis::Vertical)
-                    .and_then(|bar| bar.render(&theme)),
-            )
-            .children(
-                self.scrollbar(ScrollbarAxis::Horizontal)
-                    .and_then(|bar| bar.render(&theme)),
-            );
+            .children(self.scrollbar(ScrollbarAxis::Vertical).and_then(|bar| {
+                bar.on_hover(cx.listener(|editor, hovered: &bool, _window, cx| {
+                    editor.hover_bar(ScrollbarAxis::Vertical, *hovered, cx);
+                }))
+                .render(&theme)
+            }))
+            .children(self.scrollbar(ScrollbarAxis::Horizontal).and_then(|bar| {
+                bar.on_hover(cx.listener(|editor, hovered: &bool, _window, cx| {
+                    editor.hover_bar(ScrollbarAxis::Horizontal, *hovered, cx);
+                }))
+                .render(&theme)
+            }));
 
         div()
             .flex()

@@ -60,7 +60,7 @@ use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorThemeColors, EditorThemeFile,
     EditorThemePicker, EditorThemeRegistry, EditorThemeSwatch, Scrollbar, ScrollbarAxis,
     ScrollbarState, TextInput, ThemeColors, ThemeFile, ThemeRegistry, form_row, hide_later,
-    parse_hex, scroll_to, scrolled, theme, theme_store, to_hex,
+    hide_now, parse_hex, scroll_to, scrolled, theme, theme_store, to_hex,
 };
 
 use crate::i18n::ts;
@@ -971,6 +971,21 @@ impl ThemeEditor {
         }
     }
 
+    /// Puts the bar up while the pointer rests on the edge it rides, and starts
+    /// it going the moment the pointer leaves.
+    fn hover_scrollbar(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.scrollbar.hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        if let Some(epoch) = self.scrollbar.hover_leave() {
+            hide_now(self, epoch, cx, |editor| Some(&mut editor.scrollbar));
+        }
+    }
+
     /// The colour a field currently describes.
     ///
     /// For an automatic slot — an optional one left empty — that is the colour
@@ -1317,7 +1332,11 @@ impl Render for ThemeEditor {
         self.apply_pending_focus(window, cx);
         self.watch_scroll(cx);
         let chrome = theme(cx);
-        let bar = self.scrollbar();
+        let bar = self
+            .scrollbar()
+            .on_hover(cx.listener(|editor, hovered: &bool, _window, cx| {
+                editor.hover_scrollbar(*hovered, cx);
+            }));
 
         let preview = match self.catalog {
             Catalog::UiTheme => self.render_theme_preview(cx).into_any_element(),

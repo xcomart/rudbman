@@ -52,7 +52,8 @@ use gpui::{
     point, prelude::*, px, size, uniform_list,
 };
 use rudbman_ui::scrollbar::{
-    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, scroll_to, scrolled,
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
+    scrolled,
 };
 use rudbman_ui::theme::{Theme, theme};
 use unicode_width::UnicodeWidthStr;
@@ -1265,6 +1266,31 @@ impl<S: GridSource> GridView<S> {
         .fade(self.h_bar.fade())
     }
 
+    /// The state of whichever bar rides `axis`.
+    fn bar_mut(&mut self, axis: ScrollbarAxis) -> &mut ScrollbarState {
+        match axis {
+            ScrollbarAxis::Vertical => &mut self.v_bar,
+            ScrollbarAxis::Horizontal => &mut self.h_bar,
+        }
+    }
+
+    /// Puts a bar up while the pointer rests on the edge it rides, and starts
+    /// it going the moment the pointer leaves.
+    fn hover_bar(&mut self, axis: ScrollbarAxis, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.bar_mut(axis).hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        if let Some(epoch) = self.bar_mut(axis).hover_leave() {
+            hide_now(self, epoch, cx, move |grid: &mut Self| {
+                Some(grid.bar_mut(axis))
+            });
+        }
+    }
+
     /// Draws the fixed header band.
     fn render_header(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let visible = self.visible_columns();
@@ -1595,7 +1621,13 @@ impl<S: GridSource> Render for GridView<S> {
             .overflow_hidden()
             .child(measure)
             .child(list)
-            .children(self.vertical_bar().render(&palette))
+            .children(
+                self.vertical_bar()
+                    .on_hover(cx.listener(|grid, hovered: &bool, _window, cx| {
+                        grid.hover_bar(ScrollbarAxis::Vertical, *hovered, cx);
+                    }))
+                    .render(&palette),
+            )
             .child(
                 // The horizontal thumb rides the content area rather than the
                 // whole body, so its box has to be that area and not the body:
@@ -1606,7 +1638,13 @@ impl<S: GridSource> Render for GridView<S> {
                     .right_0()
                     .top_0()
                     .bottom_0()
-                    .children(self.horizontal_bar().render(&palette)),
+                    .children(
+                        self.horizontal_bar()
+                            .on_hover(cx.listener(|grid, hovered: &bool, _window, cx| {
+                                grid.hover_bar(ScrollbarAxis::Horizontal, *hovered, cx);
+                            }))
+                            .render(&palette),
+                    ),
             );
 
         div()
