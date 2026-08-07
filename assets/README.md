@@ -35,14 +35,17 @@ through GdkPixbuf's SVG loader; its module docstring says why that one.
 | `icon.icns` | The macOS `.app` bundle. Six sizes, 32–1024; the container has no 16 px entry, its smallest slot being 16 pt at 2× |
 | `render.py` | The generator |
 
-## The title bar mark is a separate file
+## The title bar draws this same file
 
-`crates/rudbman-app/assets/icons/logo.svg` draws the same cylinder at the left
-end of the self-drawn title bar. It is not generated from `icon.svg` and cannot
-be: it is a monochrome outline that the bar tints from the theme, with no tile,
-no gradient and no second colour, so that it holds its contrast in a light and
-a dark theme alike and matches the weight of the glyphs it sits beside. It also
-drops the grooves, which close up at the 16 px the bar draws it at.
+The self-drawn title bar shows this mark too: `crates/rudbman-app/src/icons.rs`
+embeds `icon.svg` under the asset path `icons/app-icon.svg`, and the bar draws
+it with gpui's `img` element, which keeps the SVG's own colours where the `svg`
+element would flatten it into a theme-tinted mask. There is no second drawing
+to keep in step — edit the master here and the title bar follows at the next
+build.
 
-Redraw it in the same pass as `icon.svg`, or the title bar and the desktop icon
-will stop agreeing.
+An earlier bar drew a monochrome outline stand-in
+(`crates/rudbman-app/assets/icons/logo.svg`, since removed): the tile was then
+a near-flat dark swatch that vanished against dark chrome. The plate's
+gradient, its ring and its embossed edge are what let the real icon take the
+stand-in's place.

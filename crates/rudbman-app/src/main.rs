@@ -75,7 +75,7 @@ use gpui::{
     AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
     Focusable, Hsla, KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point,
     ScrollHandle, SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div, img,
     prelude::*, px, relative, size,
 };
 use rudbman_core::{
@@ -3096,10 +3096,11 @@ impl Workspace {
         // *empty* title bar as far as the window is concerned, so a press on
         // them has to reach the drag area underneath and move the window.
         let title = custom.then(|| {
-            // Tinted like the other icons of the row rather than painted in the
-            // shipped icon's own colours; see [`icons::LOGO`].
-            let icon =
-                (!cfg!(target_os = "macos")).then(|| icons::icon(icons::LOGO, px(16.), theme.icon));
+            // The shipped icon in its own colours: img() keeps them, where the
+            // svg element would flatten the mark into a theme-tinted glyph;
+            // see [`icons::APP_ICON`].
+            let icon = (!cfg!(target_os = "macos"))
+                .then(|| img(icons::APP_ICON).size(px(16.)).flex_none());
             div()
                 .flex()
                 .flex_row()
