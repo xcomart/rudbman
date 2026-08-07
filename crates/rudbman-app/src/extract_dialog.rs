@@ -1504,7 +1504,14 @@ mod tests {
         window
             .update(cx, |dialog, _window, _cx| {
                 let Stage::Ended(Ended::Done { rows, bytes }) = &dialog.stage else {
-                    panic!("the job did not finish cleanly");
+                    // The bridge's own words, because a CI log has nothing else
+                    // to diagnose a one-off failure by.
+                    match &dialog.stage {
+                        Stage::Ended(Ended::Failed(message)) => {
+                            panic!("the job failed: {message}")
+                        }
+                        _ => panic!("the job did not finish cleanly"),
+                    }
                 };
                 assert_eq!(*rows, 3);
                 assert!(*bytes > 0, "a script with three rows in it is not empty");
