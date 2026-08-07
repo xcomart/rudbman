@@ -86,8 +86,14 @@ one next to its executable.
   best, so SmartScreen may say "Windows protected your PC"; choose **More
   info → Run anyway**.
 - **macOS** — unpack the `.tar.gz` and drag `rudbman.app` to Applications.
-  The bundle is ad-hoc signed rather than notarized, so the first launch needs
-  **right-click → Open** instead of a double-click.
+  The bundle is ad-hoc signed rather than notarized, so Gatekeeper quarantines
+  it on arrival: the first launch needs **right-click → Open** instead of a
+  double-click, and if macOS still refuses (newer versions offer no way
+  through), drop the quarantine flag and launch normally:
+
+  ```sh
+  xattr -d com.apple.quarantine /Applications/rudbman.app
+  ```
 - **Linux** — unpack the `.tar.gz` and run `./install.sh`. It copies the tree
   to `~/.local/share/rudbman`, links it from `~/.local/bin/rudbman`, and
   installs the desktop entry and icons. Needs no root; make sure
