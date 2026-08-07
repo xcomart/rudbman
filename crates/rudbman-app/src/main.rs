@@ -3504,8 +3504,7 @@ impl Workspace {
             )
             .children(saved);
 
-        centered_scroll(WELCOME_STATE, &self.welcome_scroll, bar, theme, content)
-            .into_any_element()
+        centered_scroll(WELCOME_STATE, &self.welcome_scroll, bar, theme, content).into_any_element()
     }
 
     /// Moves the sidebar's edge to wherever the pointer has dragged it.
@@ -5085,10 +5084,7 @@ mod tests {
         assert_ne!(ts!("empty.hint"), ts!("empty.connected_hint"));
         // The welcome screen shows one hint line or the other, never both, so
         // a shared wording would make the two states indistinguishable.
-        assert_ne!(
-            ts!("welcome.hint", shortcut = "Ctrl+N"),
-            ts!("empty.hint")
-        );
+        assert_ne!(ts!("welcome.hint", shortcut = "Ctrl+N"), ts!("empty.hint"));
     }
 
     /// The end of the M1 thread, in one test: a real H2 session opens, a tab
