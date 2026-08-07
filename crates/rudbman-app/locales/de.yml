@@ -44,12 +44,11 @@ tab:
   tip_new: "Neue Verbindung (%{shortcut})"
 
 welcome:
-  title: Verbindung öffnen
+  hint: Drücken Sie %{shortcut}, um eine neue Verbindung zu öffnen.
   new_connection: Neue Verbindung…
   saved: Gespeicherte Verbindungen
 
 empty:
-  title: Keine Verbindungen
   hint: Legen Sie eine Verbindung an, um eine Datenbank zu durchsuchen und SQL auszuführen.
   connected_title: Nichts geöffnet
   connected_hint: Wählen Sie im Explorer eine Tabelle, oder öffnen Sie eine Abfrage und führen Sie SQL auf dieser Verbindung aus.
