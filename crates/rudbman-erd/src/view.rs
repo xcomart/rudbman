@@ -28,15 +28,18 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, KeyBinding, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window, actions, canvas, div,
-    prelude::*,
+    AnyElement, App, Context, DragMoveEvent, ElementId, EventEmitter, FocusHandle, Focusable,
+    KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollWheelEvent, Window, actions, canvas, div, prelude::*,
+};
+use rudbman_ui::scrollbar::{
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
 };
 use rudbman_ui::theme::{Theme, theme};
 use rudbman_ui::to_hex;
 
 use crate::canvas::{
-    BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
+    BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
 };
 use crate::layout::{NodeRect, auto_layout, grid_layout};
 use crate::model::ErdModel;
@@ -118,6 +121,15 @@ pub struct ErdView {
     selected: Option<usize>,
     drag: Option<Drag>,
     panning: Option<PanDrag>,
+    /// Whether the bar down the right-hand edge is showing.
+    v_bar: ScrollbarState,
+    /// Whether the bar along the bottom edge is showing.
+    h_bar: ScrollbarState,
+    /// The vertical bar's id, unique to this diagram so that two open at once
+    /// do not read each other's drags.
+    v_bar_id: ElementId,
+    /// The horizontal bar's id, for the same reason.
+    h_bar_id: ElementId,
 }
 
 impl ErdView {
@@ -133,6 +145,10 @@ impl ErdView {
             selected: None,
             drag: None,
             panning: None,
+            v_bar: ScrollbarState::new(),
+            h_bar: ScrollbarState::new(),
+            v_bar_id: ElementId::from(("erd-vbar", cx.entity_id())),
+            h_bar_id: ElementId::from(("erd-hbar", cx.entity_id())),
         }
     }
 
@@ -335,6 +351,11 @@ impl ErdView {
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.panning = None;
+        // Before the early returns below: a release that let go of a thumb had
+        // no box drag and no pan to end, and would otherwise leave the bar up
+        // for as long as the pointer stayed still.
+        self.release_thumb(cx);
+
         let Some(drag) = self.drag.take() else {
             return;
         };
@@ -356,6 +377,131 @@ impl ErdView {
     ) {
         if self.viewport.scroll(event) {
             cx.notify();
+        }
+    }
+
+    /// The state of whichever bar rides `axis`.
+    fn bar_state(&self, axis: ScrollbarAxis) -> &ScrollbarState {
+        match axis {
+            ScrollbarAxis::Vertical => &self.v_bar,
+            ScrollbarAxis::Horizontal => &self.h_bar,
+        }
+    }
+
+    /// The same, to be moved on.
+    fn bar_mut(&mut self, axis: ScrollbarAxis) -> &mut ScrollbarState {
+        match axis {
+            ScrollbarAxis::Vertical => &mut self.v_bar,
+            ScrollbarAxis::Horizontal => &mut self.h_bar,
+        }
+    }
+
+    /// The bar riding `axis` as it stands this frame, or `None` when there is
+    /// no diagram for it to say anything about.
+    ///
+    /// Its track is the canvas as the last frame *measured* it, which is the
+    /// one-frame lag every bar over a scroll container already has: a resize is
+    /// corrected in the frame the resize is drawn in.
+    fn bar(&self, axis: ScrollbarAxis) -> Option<Scrollbar> {
+        let extent = self.viewport.bar_extent(&self.rects, axis)?;
+        let id = match axis {
+            ScrollbarAxis::Vertical => self.v_bar_id.clone(),
+            ScrollbarAxis::Horizontal => self.h_bar_id.clone(),
+        };
+
+        Some(
+            Scrollbar::new(
+                id,
+                axis,
+                self.viewport.bounds,
+                extent.visible,
+                extent.scrollable,
+                extent.scrolled,
+            )
+            .fade(self.bar_state(axis).fade()),
+        )
+    }
+
+    /// The bar riding `axis` as an element, sensor and all.
+    fn bar_element(
+        &self,
+        axis: ScrollbarAxis,
+        palette: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.bar(axis)?
+            .on_hover(cx.listener(move |view, hovered: &bool, _window, cx| {
+                view.hover_bar(axis, *hovered, cx);
+            }))
+            .render(palette)
+    }
+
+    /// Notices that the canvas has moved, and arms the expiry that takes the
+    /// bars down again.
+    ///
+    /// One place for every route that moves a viewport — the wheel, a drag of
+    /// the background, a zoom chord, a new model — because all of them change
+    /// how far the canvas is scrolled and none of them has to announce itself.
+    fn watch_bars(&mut self, cx: &mut Context<Self>) {
+        for axis in BARS {
+            let Some(extent) = self.viewport.bar_extent(&self.rects, axis) else {
+                continue;
+            };
+            if let Some(epoch) = self.bar_mut(axis).moved(extent.scrolled) {
+                hide_later(epoch, cx, move |view: &mut Self| Some(view.bar_mut(axis)));
+            }
+        }
+    }
+
+    /// Puts a bar up while the pointer rests on the edge it rides, and starts
+    /// it going the moment the pointer leaves.
+    fn hover_bar(&mut self, axis: ScrollbarAxis, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.bar_mut(axis).hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        if let Some(epoch) = self.bar_mut(axis).hover_leave() {
+            hide_now(self, epoch, cx, move |view: &mut Self| {
+                Some(view.bar_mut(axis))
+            });
+        }
+    }
+
+    /// Pans the canvas to wherever a thumb has been dragged.
+    ///
+    /// gpui hands a drag to every listener of that drag type, so both bars are
+    /// asked and only the one the drag began on answers — see the scrollbar
+    /// module for why the payload rather than the event is what says which.
+    fn on_drag_bar(
+        &mut self,
+        event: &DragMoveEvent<DraggedThumb>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for axis in BARS {
+            let Some(progress) = self.bar(axis).and_then(|bar| bar.dragged(event, cx)) else {
+                continue;
+            };
+            let Some(pan) = self.viewport.panned_to(&self.rects, axis, progress) else {
+                continue;
+            };
+            self.viewport.set_pan_along(axis, pan);
+            self.bar_mut(axis).hold();
+            cx.notify();
+        }
+    }
+
+    /// Lets go of whichever thumb was held, and starts the clock that takes its
+    /// bar down.
+    fn release_thumb(&mut self, cx: &mut Context<Self>) {
+        for axis in BARS {
+            if let Some(epoch) = self.bar_mut(axis).release() {
+                hide_later(epoch, cx, move |view: &mut Self| Some(view.bar_mut(axis)));
+                cx.notify();
+            }
         }
     }
 
@@ -388,6 +534,13 @@ impl Render for ErdView {
         // arrangement is this widget's. gpui reads a key context as a set, so a
         // binding scoped to either one finds this element.
         let context = format!("{CANVAS_KEY_CONTEXT} {KEY_CONTEXT}");
+
+        // Both bars, wired as every scrolling surface in the app wires one:
+        // notice the surface moved, and arm the expiry from inside the draw
+        // that noticed.
+        self.watch_bars(cx);
+        let vertical = self.bar_element(ScrollbarAxis::Vertical, &palette, cx);
+        let horizontal = self.bar_element(ScrollbarAxis::Horizontal, &palette, cx);
 
         let measure = canvas(
             move |bounds, _window, cx| {
@@ -425,12 +578,15 @@ impl Render for ErdView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
+            .on_drag_move::<DraggedThumb>(cx.listener(Self::on_drag_bar))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             // A box dragged out of the window lets go with the pointer outside,
             // which only this half sees.
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .child(measure)
             .child(diagram)
+            .children(vertical)
+            .children(horizontal)
     }
 }
 
@@ -454,7 +610,10 @@ pub fn init(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+    use std::time::Duration;
+
+    use gpui::{Entity, Modifiers, MouseMoveEvent, TestAppContext, VisualTestContext};
+    use rudbman_ui::scrollbar::{FADE_OUT, Fade, SCROLL_LINGER};
 
     use crate::canvas::test_support::{
         self, drag_to, press, release, right_press, wheel, window_point,
@@ -717,6 +876,111 @@ mod tests {
         assert_eq!(erd.read(&mut cx, |erd| erd.viewport.pan), pan);
         assert_eq!(erd.read(&mut cx, |erd| erd.positions()), positions);
         assert_eq!(erd.drain(), Vec::new());
+    }
+
+    /// Long enough for a timer that was due to have fired.
+    const A_MOMENT: Duration = Duration::from_millis(10);
+
+    /// The second box parked well past the far corner of any test window, so
+    /// that the diagram is bigger than what can be seen of it and there is
+    /// something for a bar to say.
+    fn spread_out() -> HashMap<String, (f32, f32)> {
+        HashMap::from([("customers".to_string(), (4_000., 3_000.))])
+    }
+
+    /// A canvas nobody has moved shows no bars; a wheel brings up the bar for
+    /// the axis it moved, and only that one.
+    #[gpui::test]
+    fn scrolling_the_canvas_brings_the_overlay_bars_up(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(model(), spread_out(), cx);
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.v_bar.fade()),
+            Fade::Hidden,
+            "a bar was up before anything moved"
+        );
+
+        wheel(&mut cx, window_point(100., 100.), -120., Modifiers::none());
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.v_bar.fade()),
+            Fade::In,
+            "a scrolled canvas did not fade its bar in"
+        );
+        // The wheel moved the canvas up and down and nothing sideways, so the
+        // bar along the bottom has nothing to report.
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.h_bar.fade()),
+            Fade::Hidden,
+            "the other axis put its bar up as well"
+        );
+    }
+
+    /// And it goes away on its own: up for the linger that tells a stopped
+    /// wheel from a paused one, then a fade during which it is still drawn, and
+    /// only then gone.
+    #[gpui::test]
+    fn the_overlay_bar_fades_out_once_the_canvas_stops(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(model(), spread_out(), cx);
+        wheel(&mut cx, window_point(100., 100.), -120., Modifiers::none());
+
+        cx.executor().advance_clock(SCROLL_LINGER / 2);
+        cx.run_until_parked();
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.v_bar.fade()),
+            Fade::In,
+            "the bar started going before its time was up"
+        );
+
+        cx.executor().advance_clock(SCROLL_LINGER / 2 + A_MOMENT);
+        cx.run_until_parked();
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.v_bar.fade()),
+            Fade::Out,
+            "the bar did not start fading when its time was up"
+        );
+
+        cx.executor().advance_clock(FADE_OUT + A_MOMENT);
+        cx.run_until_parked();
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.v_bar.fade()),
+            Fade::Hidden,
+            "the bar never finished going"
+        );
+    }
+
+    /// The pointer resting on the edge a bar rides brings it up with nothing
+    /// having scrolled, and it goes the moment the pointer leaves — no linger,
+    /// because a pointer leaving announces itself.
+    #[gpui::test]
+    fn the_pointer_on_the_edge_brings_the_bar_up(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(model(), spread_out(), cx);
+        let bounds = erd.read(&mut cx, |erd| erd.viewport.bounds);
+        let middle = bounds.origin.y + bounds.size.height / 2.;
+        let on_the_edge = gpui::point(bounds.origin.x + bounds.size.width - gpui::px(3.), middle);
+        let off_it = gpui::point(bounds.origin.x + bounds.size.width / 2., middle);
+
+        hover(&mut cx, on_the_edge);
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.v_bar.fade()),
+            Fade::In,
+            "the pointer on the edge did not bring the bar up"
+        );
+
+        hover(&mut cx, off_it);
+        assert_eq!(
+            erd.read(&mut cx, |erd| erd.v_bar.fade()),
+            Fade::Out,
+            "the bar stayed up after the pointer left"
+        );
+    }
+
+    /// Moves the pointer to `at` with no button held.
+    fn hover(cx: &mut VisualTestContext, at: Point<Pixels>) {
+        cx.simulate_event(MouseMoveEvent {
+            position: at,
+            pressed_button: None,
+            modifiers: Modifiers::none(),
+        });
+        cx.run_until_parked();
     }
 
     #[gpui::test]
