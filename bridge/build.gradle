@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'comart.rudbman'
-version = '0.1.1'
+version = '0.1.2'
 description = 'rudbman JDBC bridge'
 
 repositories {
