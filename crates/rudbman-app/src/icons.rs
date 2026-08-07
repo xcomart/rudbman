@@ -73,19 +73,20 @@ pub const WINDOW_CLOSE: &str = "icons/window-close.svg";
 
 /// The application mark, drawn at the left end of the custom title bar.
 ///
-/// Deliberately *not* the shipped application icon: `assets/icon.svg` and the
-/// `.png`/`.ico`/`.icns` files rasterised from it draw the mark on a dark tile,
-/// which is what makes it stand out among the icons of a desktop and what made
-/// it vanish here — over dark chrome the tile and the title bar were the same
-/// colour, and only the mark's outline came through. This one is the tile's
-/// contents alone, and being an SVG it is tinted from the theme like every
-/// other icon in the row, so it holds its contrast in a light and a dark theme
-/// both.
+/// This is the shipped `assets/icon.svg` itself, embedded under an asset path
+/// so the title bar can draw it with [`img`](gpui::img) — which, unlike the
+/// [`svg`](gpui::svg) element, keeps an SVG's own colours instead of reducing
+/// it to a tintable alpha mask. The bar shows the very mark the taskbar and
+/// Alt-Tab show — gold cap, blue barrel, embossed plate — and there is no
+/// second drawing to keep in step with the master.
 ///
-/// It draws the shipped icon's database cylinder as a monochrome outline. The
-/// two marks have to be redrawn together — this one and `assets/icon.svg` — or
-/// the title bar and the desktop icon stop agreeing. See `assets/README.md`.
-pub const LOGO: &str = "icons/logo.svg";
+/// It was not always so: an earlier bar drew a monochrome outline stand-in
+/// (`icons/logo.svg`), because the shipped icon's tile was then a near-flat
+/// dark swatch that melted into dark chrome, leaving only the outline showing.
+/// The plate now carries its own gradient, a legible ring and an embossed
+/// edge, so it separates from the bar the way it separates from a taskbar,
+/// and the stand-in went away with its reason.
+pub const APP_ICON: &str = "icons/app-icon.svg";
 
 // --- the explorer's object marks ------------------------------------------
 //
@@ -110,7 +111,7 @@ pub const FOLDER: &str = "icons/folder.svg";
 
 /// A schema, and — where a product has them — a catalogue.
 ///
-/// The database cylinder, the same mark [`LOGO`] draws, because that is what
+/// The database cylinder, the same solid [`APP_ICON`] draws, because that is what
 /// the level *is*: everything under it is one database's contents.
 pub const SCHEMA: &str = "icons/schema.svg";
 
@@ -137,7 +138,7 @@ pub const SIDEBAR: &str = "icons/sidebar.svg";
 
 /// Every icon, paired with the bytes [`Icons`] hands back for it.
 const ICONS: [(&str, &[u8]); 17] = [
-    (LOGO, include_bytes!("../assets/icons/logo.svg")),
+    (APP_ICON, include_bytes!("../../../assets/icon.svg")),
     (TAB_LIST, include_bytes!("../assets/icons/tab-list.svg")),
     (NEW_TAB, include_bytes!("../assets/icons/new-tab.svg")),
     (
@@ -214,10 +215,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} is missing from the asset source"));
             let text = std::str::from_utf8(&bytes).expect("an icon must be UTF-8");
             assert!(text.contains("<svg"), "{name} is not an SVG");
-            assert!(
-                text.contains("viewBox=\"0 0 24 24\""),
-                "{name} is not 24x24"
-            );
+            // The glyph set shares one 24×24 box; the application icon is the
+            // shipped 256 px mark, embedded whole rather than redrawn.
+            let viewbox = if name == APP_ICON {
+                "viewBox=\"0 0 256 256\""
+            } else {
+                "viewBox=\"0 0 24 24\""
+            };
+            assert!(text.contains(viewbox), "{name} has the wrong viewBox");
         }
     }
 

@@ -75,7 +75,7 @@ use gpui::{
     AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
     Focusable, Hsla, KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point,
     ScrollHandle, SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div, img,
     prelude::*, px, relative, size,
 };
 use rudbman_core::{
@@ -249,31 +249,64 @@ const MIN_SPLIT_RATIO: f32 = 0.1;
 /// pushing the panes apart.
 const SPLIT_HANDLE: f32 = 6.;
 
-/// Element id of the tab strip's overlay scroll indicator.
+/// A surface of the workspace that scrolls, and so wears an overlay bar.
 ///
-/// Held here rather than inside [`TabBar`] because a drag of the thumb is
-/// answered by the workspace, and the id is what tells this bar's drag from any
-/// other bar's in the window.
-const TAB_SCROLLBAR: &str = "tab-scrollbar";
+/// Two of them, on different axes and never on screen together in the way that
+/// matters: the tab strip runs sideways once the tabs outgrow it, the welcome
+/// screen runs down once its column outgrows the window. Naming them lets one
+/// set of handlers answer for both instead of one set each — the shape logman
+/// uses for the same pair of surfaces.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Surface {
+    /// The tab strip.
+    Tabs,
+    /// The welcome screen shown while no tab is open.
+    Welcome,
+}
+
+impl Surface {
+    /// Which way the surface scrolls, and so which way its bar lies.
+    fn axis(self) -> ScrollbarAxis {
+        match self {
+            Self::Tabs => ScrollbarAxis::Horizontal,
+            Self::Welcome => ScrollbarAxis::Vertical,
+        }
+    }
+}
+
+/// Every scrolling surface, with the element id its bar is drawn under.
+///
+/// The ids live here rather than inside the elements they overlay — [`TabBar`]
+/// would be the obvious home for the first — because a drag of a thumb is
+/// answered by the workspace, and the id is what tells one bar's drag from any
+/// other bar's in the window. Iterating this is how the drag and release paths
+/// find which bar an event belongs to.
+const SCROLLBARS: [(&str, Surface); 2] = [
+    ("tab-scrollbar", Surface::Tabs),
+    ("welcome-scrollbar", Surface::Welcome),
+];
 
 /// Placeholder for a status bar cell with nothing to report.
 ///
 /// Punctuation rather than a word, so it is the same in every language.
 const NOTHING: SharedString = SharedString::new_static("—");
 
-/// Width the welcome screen's column stops growing at, in logical pixels.
+/// Width of the welcome screen's column, in logical pixels.
 ///
-/// A line of text and a list of names, so it is bounded by what stays readable
-/// rather than by what the window offers: stretched across a maximised window
-/// the same content would be one word per screenful of white.
-const WELCOME_WIDTH: f32 = 420.;
+/// Fixed rather than fluid, and the width logman gives the same column: wide
+/// enough for a profile's name beside its host, narrow enough to read as one
+/// card in a maximised window rather than a screen-wide smear of rows.
+const WELCOME_WIDTH: f32 = 320.;
 
-/// Height at which the welcome screen's saved list starts scrolling.
+/// Element id of the welcome screen's scrolling box.
+const WELCOME_STATE: &str = "welcome-state";
+
+/// Room left above and below a column that [`centered_scroll`] is scrolling.
 ///
-/// Only the list scrolls. The heading and the button above it stay put, because
-/// a user with forty profiles must not have to scroll back up to reach the way
-/// to make the forty-first.
-const WELCOME_LIST_MAX_HEIGHT: f32 = 260.;
+/// Only ever seen once there is scrolling to do — while the column fits, the
+/// automatic margins dwarf it — and there it is what keeps the first and last
+/// rows off the edges of the body at either end of the travel.
+const SCROLL_MARGIN: f32 = 24.;
 
 /// Tab-ring position of the welcome screen's "new connection" button.
 ///
@@ -554,6 +587,10 @@ struct Workspace {
     tab_scroll: ScrollHandle,
     /// Whether the tab strip's overlay scroll indicator is on screen.
     tab_scrollbar: ScrollbarState,
+    /// Vertical scroll of the welcome screen.
+    welcome_scroll: ScrollHandle,
+    /// Whether the welcome screen's overlay scroll indicator is on screen.
+    welcome_scrollbar: ScrollbarState,
     /// The about dialog, rendered only while it reports itself open.
     about: Entity<AboutDialog>,
     /// The connection dialog, rendered only while it reports itself open.
@@ -765,6 +802,8 @@ impl Workspace {
             profiles: load_profiles(),
             tab_scroll: ScrollHandle::new(),
             tab_scrollbar: ScrollbarState::new(),
+            welcome_scroll: ScrollHandle::new(),
+            welcome_scrollbar: ScrollbarState::new(),
             about,
             connect,
             settings,
@@ -3096,10 +3135,11 @@ impl Workspace {
         // *empty* title bar as far as the window is concerned, so a press on
         // them has to reach the drag area underneath and move the window.
         let title = custom.then(|| {
-            // Tinted like the other icons of the row rather than painted in the
-            // shipped icon's own colours; see [`icons::LOGO`].
-            let icon =
-                (!cfg!(target_os = "macos")).then(|| icons::icon(icons::LOGO, px(16.), theme.icon));
+            // The shipped icon in its own colours: img() keeps them, where the
+            // svg element would flatten the mark into a theme-tinted glyph;
+            // see [`icons::APP_ICON`].
+            let icon = (!cfg!(target_os = "macos"))
+                .then(|| img(icons::APP_ICON).size(px(16.)).flex_none());
             div()
                 .flex()
                 .flex_row()
@@ -3271,11 +3311,7 @@ impl Workspace {
                 }
             })
             .scroll_handle(&self.tab_scroll)
-            .scrollbar(self.tab_scrollbar().on_hover(cx.listener(
-                |workspace, hovered: &bool, _window, cx| {
-                    workspace.hover_tab_scrollbar(*hovered, cx);
-                },
-            )))
+            .scrollbar(self.hovering_scrollbar(SCROLLBARS[0].0, Surface::Tabs, cx))
             .menu_icon(icons::TAB_LIST)
             .new_icon(icons::NEW_TAB)
             // The close button reuses the tab menu's own row: it is the same
@@ -3375,10 +3411,13 @@ impl Workspace {
     /// straight away — see [`Workspace::open_profile`] — which is what makes the
     /// list a way in rather than a reminder that the dialog exists.
     ///
-    /// One centred column, narrow enough to read as a card in a wide window and
-    /// with the list the only part of it that scrolls: a heading and a button
-    /// that scrolled away from the profiles would take the way out of an empty
-    /// list with them.
+    /// Laid out the way logman lays out its own empty state, deliberately —
+    /// the two are the same author's tools and greet an empty window the same
+    /// way: the application's name over one line of hint, then a fixed-width
+    /// column carrying the button and, under its own small heading, the saved
+    /// list. The column sits centred while it fits and scrolls from the top
+    /// once it does not — [`centered_scroll`] says why those are one
+    /// arrangement — under the same overlay bar the tab strip wears.
     ///
     /// It paints no fill of its own. The body behind it already carries the one
     /// tinted fill the window permits, and a second one here would compose back
@@ -3403,85 +3442,69 @@ impl Workspace {
             })),
         );
 
-        // With nothing saved there is no list to head, and the words that stand
-        // in for it are the empty state's own: there are no connections, and the
-        // way to get one is the button just above.
-        let saved = if rows.is_empty() {
-            div()
-                .text_size(px(13.))
-                .text_color(theme.text_muted)
-                .child(ts!("empty.hint"))
+        // A first run has nothing saved and no habit of the chord yet, so the
+        // line under the name says what a connection is for; once something is
+        // saved it carries the shortcut that skips the button instead.
+        let hint = if profiles.is_empty() {
+            ts!("empty.hint")
         } else {
+            ts!("welcome.hint", shortcut = format!("{SHORTCUT_MODIFIER}+N"))
+        };
+
+        let saved = (!rows.is_empty()).then(|| {
             div()
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .min_h_0()
+                .w(px(WELCOME_WIDTH))
                 .child(
                     div()
                         .text_size(px(11.))
                         .text_color(theme.text_muted)
                         .child(ts!("welcome.saved")),
                 )
-                .child(
-                    div()
-                        .id("welcome-list")
-                        .flex()
-                        .flex_col()
-                        .gap(px(1.))
-                        .min_h_0()
-                        .max_h(px(WELCOME_LIST_MAX_HEIGHT))
-                        .overflow_y_scroll()
-                        .children(rows),
-                )
-        };
+                .child(div().flex().flex_col().gap(px(1.)).children(rows))
+        });
 
-        div()
+        let bar = self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Welcome, cx);
+
+        let content = div()
             .flex()
             .flex_col()
-            .flex_grow()
-            .min_w_0()
-            .min_h_0()
             .items_center()
-            .justify_center()
+            .gap(px(14.))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .min_h_0()
-                    .w_full()
-                    .max_w(px(WELCOME_WIDTH))
-                    .p(px(16.))
-                    .child(div().text_size(px(18.)).text_color(theme.text).child(
-                        if profiles.is_empty() {
-                            ts!("empty.title")
-                        } else {
-                            ts!("welcome.title")
-                        },
-                    ))
-                    // A row, so that the button is as wide as its label rather
-                    // than as wide as the column.
-                    .child(
-                        div().flex().flex_row().child(
-                            div()
-                                .flex_none()
-                                .debug_selector(|| WELCOME_NEW_SELECTOR.to_string())
-                                .child(
-                                    Button::new("welcome-new", ts!("welcome.new_connection"))
-                                        .variant(ButtonVariant::Primary)
-                                        .tab_index(WELCOME_NEW_TAB)
-                                        // The same action the menu row, the tab
-                                        // strip's plus and Ctrl+N dispatch: one
-                                        // command, however it is reached.
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(Box::new(NewConnection), cx);
-                                        }),
-                                ),
-                        ),
-                    )
-                    .child(saved),
+                    .text_size(px(30.))
+                    .text_color(theme.text)
+                    .child(APP_NAME),
             )
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(theme.text_muted)
+                    .child(hint),
+            )
+            .child(
+                div()
+                    .w(px(WELCOME_WIDTH))
+                    .debug_selector(|| WELCOME_NEW_SELECTOR.to_string())
+                    .child(
+                        Button::new("welcome-new", ts!("welcome.new_connection"))
+                            .variant(ButtonVariant::Primary)
+                            .full_width(true)
+                            .tab_index(WELCOME_NEW_TAB)
+                            // The same action the menu row, the tab strip's
+                            // plus and Ctrl+N dispatch: one command, however
+                            // it is reached.
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(NewConnection), cx);
+                            }),
+                    ),
+            )
+            .children(saved);
+
+        centered_scroll(WELCOME_STATE, &self.welcome_scroll, bar, theme, content)
             .into_any_element()
     }
 
@@ -3555,72 +3578,123 @@ impl Workspace {
         }
     }
 
-    /// The tab strip's overlay scroll indicator, as it stands.
+    /// One surface's scroll offset and the state of the bar over it.
+    fn surface(&mut self, surface: Surface) -> (&ScrollHandle, &mut ScrollbarState) {
+        match surface {
+            Surface::Tabs => (&self.tab_scroll, &mut self.tab_scrollbar),
+            Surface::Welcome => (&self.welcome_scroll, &mut self.welcome_scrollbar),
+        }
+    }
+
+    /// The same pair, for the paths that only read.
+    fn surface_ref(&self, surface: Surface) -> (&ScrollHandle, &ScrollbarState) {
+        match surface {
+            Surface::Tabs => (&self.tab_scroll, &self.tab_scrollbar),
+            Surface::Welcome => (&self.welcome_scroll, &self.welcome_scrollbar),
+        }
+    }
+
+    /// One surface's overlay scroll indicator, as it stands.
     ///
     /// Rebuilt on demand rather than kept, because everything it is made of —
-    /// the strip's box, how far it overflows, where it sits — is measured afresh
-    /// by gpui on every layout pass.
-    fn tab_scrollbar(&self) -> Scrollbar {
-        Scrollbar::for_handle(TAB_SCROLLBAR, ScrollbarAxis::Horizontal, &self.tab_scroll)
-            .fade(self.tab_scrollbar.fade())
+    /// the surface's box, how far it overflows, where it sits — is measured
+    /// afresh by gpui on every layout pass.
+    fn scrollbar(&self, id: &'static str, surface: Surface) -> Scrollbar {
+        let (handle, state) = self.surface_ref(surface);
+        Scrollbar::for_handle(id, surface.axis(), handle).fade(state.fade())
     }
 
-    /// Puts the strip's bar up whenever the strip has moved, and starts the
-    /// clock that takes it down again.
+    /// The same bar, listening for the pointer reaching the edge it rides.
     ///
-    /// Called from `render` because that is where every way of scrolling the
-    /// strip meets: a wheel over the tabs, and the jump that brings a newly
-    /// activated tab back into view.
-    fn watch_tab_scroll(&mut self, cx: &mut Context<Self>) {
-        let scrolled = scrolled(&self.tab_scroll, ScrollbarAxis::Horizontal);
-        if let Some(epoch) = self.tab_scrollbar.moved(scrolled) {
-            hide_later(epoch, cx, |workspace| Some(&mut workspace.tab_scrollbar));
+    /// Only the bars that are drawn need it: the ones the drag path builds are
+    /// there to be measured, and never reach an element tree.
+    fn hovering_scrollbar(
+        &self,
+        id: &'static str,
+        surface: Surface,
+        cx: &mut Context<Self>,
+    ) -> Scrollbar {
+        self.scrollbar(id, surface).on_hover(cx.listener(
+            move |workspace, hovered: &bool, _window, cx| {
+                workspace.hover_scrollbar(surface, *hovered, cx);
+            },
+        ))
+    }
+
+    /// Puts each surface's bar up whenever that surface has moved, and starts
+    /// the clock that takes it down again.
+    ///
+    /// Called from `render` because that is where every way of scrolling them
+    /// meets: a wheel over the tabs or the welcome screen, and the jump that
+    /// brings a newly activated tab back into view.
+    fn watch_scroll(&mut self, cx: &mut Context<Self>) {
+        for (_, surface) in SCROLLBARS {
+            let (handle, state) = self.surface(surface);
+            let scrolled = scrolled(handle, surface.axis());
+            if let Some(epoch) = state.moved(scrolled) {
+                hide_later(epoch, cx, move |workspace| {
+                    Some(workspace.surface(surface).1)
+                });
+            }
         }
     }
 
-    /// Scrolls the tab strip to wherever its thumb has been dragged.
+    /// Scrolls whichever surface's thumb has been dragged.
     ///
-    /// Every element listening for this drag type hears every such drag, so the
+    /// Every element listening for this drag type hears every such drag, so each
     /// bar checks that the one being dragged is its own before answering.
-    fn drag_tab_scrollbar(&mut self, event: &DragMoveEvent<DraggedThumb>, cx: &mut Context<Self>) {
-        let Some(progress) = self.tab_scrollbar().dragged(event, cx) else {
-            return;
-        };
+    fn drag_scrollbar(&mut self, event: &DragMoveEvent<DraggedThumb>, cx: &mut Context<Self>) {
+        for (id, surface) in SCROLLBARS {
+            let Some(progress) = self.scrollbar(id, surface).dragged(event, cx) else {
+                continue;
+            };
 
-        // Held even when the pointer moved along the other axis and the strip
-        // has not budged: the bar has to stay up for as long as it is being
-        // held, and a still pointer moves nothing to notice.
-        self.tab_scrollbar.hold();
-        scroll_to(&self.tab_scroll, ScrollbarAxis::Horizontal, progress);
-        cx.notify();
+            // Held even when the pointer moved along the other axis and the
+            // surface has not budged: the bar has to stay up for as long as it
+            // is being held, and a still pointer moves nothing to notice.
+            let (handle, state) = self.surface(surface);
+            state.hold();
+            scroll_to(handle, surface.axis(), progress);
+            cx.notify();
+            return;
+        }
     }
 
-    /// Lets go of the strip's thumb, and starts the clock on the bar again.
+    /// Lets go of whichever thumb was being held, and starts its clock again.
     ///
     /// Every mouse release in the window arrives here; all but the one ending a
-    /// drag of this bar find nothing to let go of.
-    fn release_tab_scrollbar(&mut self, cx: &mut Context<Self>) {
-        if let Some(epoch) = self.tab_scrollbar.release() {
-            hide_later(epoch, cx, |workspace| Some(&mut workspace.tab_scrollbar));
-            cx.notify();
+    /// drag of a bar find nothing to let go of.
+    fn release_scrollbars(&mut self, cx: &mut Context<Self>) {
+        for (_, surface) in SCROLLBARS {
+            if let Some(epoch) = self.surface(surface).1.release() {
+                hide_later(epoch, cx, move |workspace| {
+                    Some(workspace.surface(surface).1)
+                });
+                cx.notify();
+            }
         }
     }
 
-    /// Puts the strip's bar up while the pointer rests on the edge it rides, and
-    /// starts it going the moment the pointer leaves.
-    fn hover_tab_scrollbar(&mut self, hovered: bool, cx: &mut Context<Self>) {
+    /// Puts one surface's bar up while the pointer rests on the edge it rides,
+    /// and starts it going the moment the pointer leaves.
+    ///
+    /// Told which surface rather than asked to work it out: each strip carries
+    /// this listener already and knows only its own.
+    fn hover_scrollbar(&mut self, surface: Surface, hovered: bool, cx: &mut Context<Self>) {
+        let state = self.surface(surface).1;
         if hovered {
-            if self.tab_scrollbar.hover_enter() {
+            if state.hover_enter() {
                 cx.notify();
             }
             return;
         }
 
-        if let Some(epoch) = self.tab_scrollbar.hover_leave() {
-            hide_now(self, epoch, cx, |workspace| {
-                Some(&mut workspace.tab_scrollbar)
-            });
-        }
+        let Some(epoch) = state.hover_leave() else {
+            return;
+        };
+        hide_now(self, epoch, cx, move |workspace| {
+            Some(workspace.surface(surface).1)
+        });
     }
 
     /// Renders the bottom status bar.
@@ -4093,6 +4167,62 @@ fn render_placeholder(theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
+/// A box that keeps `content` in the middle while it fits, and lets it be
+/// scrolled from the top once it does not.
+///
+/// `justify_center` does the first half and ruins the second. With more content
+/// than room, a centred column hangs off both ends of its box, and scrolling
+/// only ever reaches what lies past the *end* of one — so the head of the column
+/// goes off the top edge and stays there, unreachable. Automatic margins share
+/// out whatever room is spare, which centres the column exactly as `justify_center`
+/// would, and collapse to nothing when there is none, which leaves the column at
+/// the top with all of it below the fold and so all of it reachable.
+///
+/// Three boxes. The outermost is what the overlay bar hangs off, because the
+/// scrolling box cannot hold it — its children are what scroll away underneath
+/// it — and it is what the caller styles. Inside it is the box that scrolls,
+/// and inside that the one carrying the margins and the breathing room that
+/// keeps either end of the scroll off the edge.
+fn centered_scroll(
+    id: &'static str,
+    scroll: &ScrollHandle,
+    bar: Scrollbar,
+    theme: &Theme,
+    content: impl IntoElement,
+) -> Div {
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_grow()
+        .min_h_0()
+        .child(
+            div()
+                .id(id)
+                .track_scroll(scroll)
+                .flex()
+                .flex_col()
+                .flex_grow()
+                .min_h_0()
+                .items_center()
+                .overflow_y_scroll()
+                .child(
+                    // `flex_none` so that a column taller than the box overflows
+                    // it — and is scrolled to — rather than being squeezed into
+                    // it, which is what a flex item does by default.
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_none()
+                        .items_center()
+                        .my_auto()
+                        .py(px(SCROLL_MARGIN))
+                        .child(content),
+                ),
+        )
+        .children(bar.render(theme))
+}
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme(cx);
@@ -4100,7 +4230,7 @@ impl Render for Workspace {
         // inherits it unless it sets a size of its own, which is what makes the
         // setting — and the settings dialog's live preview of it — visible.
         let ui_font_size = app_settings::effective(cx).ui_font_size;
-        self.watch_tab_scroll(cx);
+        self.watch_scroll(cx);
         let toolbar = self.render_toolbar(window, cx);
         let body = self.render_body(cx);
         let status_bar = self.render_status_bar(cx);
@@ -4168,26 +4298,26 @@ impl Render for Workspace {
             .flex_col()
             .text_color(theme.text)
             .text_size(px(ui_font_size))
-            // The tab strip's overlay bar is answered from here rather than
-            // from the strip: gpui hands a drag move to every listener of that
-            // type wherever it sits, and the root is the one element that is
-            // always mounted while a drag of it is in flight.
+            // The overlay bars are answered from here rather than from the
+            // surfaces they ride: gpui hands a drag move to every listener of
+            // that type wherever it sits, and the root is the one element that
+            // is always mounted while a drag of one is in flight.
             .on_drag_move::<DraggedThumb>(cx.listener(
                 move |workspace, event: &DragMoveEvent<DraggedThumb>, _window, cx| {
-                    workspace.drag_tab_scrollbar(event, cx);
+                    workspace.drag_scrollbar(event, cx);
                 },
             ))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|workspace, _: &MouseUpEvent, _window, cx| {
-                    workspace.release_tab_scrollbar(cx);
+                    workspace.release_scrollbars(cx);
                     workspace.release_explorer(cx);
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|workspace, _: &MouseUpEvent, _window, cx| {
-                    workspace.release_tab_scrollbar(cx);
+                    workspace.release_scrollbars(cx);
                     workspace.release_explorer(cx);
                 }),
             )
@@ -4926,14 +5056,13 @@ mod tests {
     #[test]
     fn every_empty_state_wording_is_translated() {
         // `t!` answers with the key path when a key is missing, so a typo
-        // reaches the screen as "empty.connected_ttle". The two `empty` pairs
-        // have to differ, or the connected state would still read "no
-        // connections".
+        // reaches the screen as "empty.connected_ttle". The two hints have to
+        // differ, or the connected state would still read like the welcome
+        // screen's.
         for label in [
-            ts!("welcome.title"),
+            ts!("welcome.hint", shortcut = "Ctrl+N"),
             ts!("welcome.new_connection"),
             ts!("welcome.saved"),
-            ts!("empty.title"),
             ts!("empty.hint"),
             ts!("empty.connected_title"),
             ts!("empty.connected_hint"),
@@ -4953,11 +5082,13 @@ mod tests {
                 );
             }
         }
-        assert_ne!(ts!("empty.title"), ts!("empty.connected_title"));
         assert_ne!(ts!("empty.hint"), ts!("empty.connected_hint"));
-        // The welcome screen shows one heading or the other, never both, so a
-        // shared wording would make the two states indistinguishable.
-        assert_ne!(ts!("welcome.title"), ts!("empty.title"));
+        // The welcome screen shows one hint line or the other, never both, so
+        // a shared wording would make the two states indistinguishable.
+        assert_ne!(
+            ts!("welcome.hint", shortcut = "Ctrl+N"),
+            ts!("empty.hint")
+        );
     }
 
     /// The end of the M1 thread, in one test: a real H2 session opens, a tab
@@ -7182,6 +7313,173 @@ mod tests {
         assert_eq!(
             window_appearance(&blurred),
             WindowBackgroundAppearance::Blurred
+        );
+    }
+}
+
+/// What the welcome screen's box does when its column outgrows the window.
+///
+/// Only [`centered_scroll`] is put under test, and only through what its scroll
+/// handle reports: the arrangement is entirely a question of layout, and the
+/// handle is where gpui writes down the answer — the box it measured, and how
+/// far past it the column ran.
+#[cfg(test)]
+mod centered_scroll_tests {
+    use std::ops::Deref;
+
+    use gpui::{TestAppContext, VisualTestContext, point};
+
+    use super::*;
+
+    /// Height of the stand-in column.
+    ///
+    /// Nothing about the real welcome screen's contents matters here — only that
+    /// there is a definite height to hold the window against — so the test hands
+    /// the box one plain child rather than rebuilding the screen.
+    const COLUMN: f32 = 400.;
+
+    /// A window tall enough for the column and both its margins, several times
+    /// over.
+    const ROOMY: f32 = 900.;
+
+    /// A window shorter than the column, which is the whole point of the box.
+    const CRAMPED: f32 = 300.;
+
+    /// Wide enough that nothing wraps; the box only scrolls one way.
+    const WIDTH: f32 = 600.;
+
+    /// How far apart two measurements may be and still count as the same, in a
+    /// layout whose lengths are rounded to hundredths of a pixel.
+    const SLACK: f32 = 0.5;
+
+    /// A window holding nothing but the box under test.
+    struct Harness {
+        scroll: ScrollHandle,
+        bar: ScrollbarState,
+    }
+
+    impl Render for Harness {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::dark();
+            let bar = Scrollbar::for_handle(SCROLLBARS[1].0, Surface::Welcome.axis(), &self.scroll)
+                .fade(self.bar.fade());
+
+            div().flex().flex_col().size_full().child(centered_scroll(
+                WELCOME_STATE,
+                &self.scroll,
+                bar,
+                &theme,
+                div().flex_none().w(px(320.)).h(px(COLUMN)),
+            ))
+        }
+    }
+
+    /// Opens the harness in a window `height` tall and hands back its handle.
+    ///
+    /// Drawn twice: a bar is built from the box as the previous frame measured
+    /// it, so the opening frame has nothing to build one out of.
+    fn open(cx: &mut TestAppContext, height: f32) -> ScrollHandle {
+        let scroll = ScrollHandle::new();
+        let window = cx.add_window({
+            let scroll = scroll.clone();
+            move |_, _| Harness {
+                scroll,
+                bar: ScrollbarState::new(),
+            }
+        });
+
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        cx.simulate_resize(size(px(WIDTH), px(height)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+
+        scroll
+    }
+
+    /// The bar the workspace would draw over the box as it now stands.
+    fn scrollbar(scroll: &ScrollHandle) -> Scrollbar {
+        Scrollbar::for_handle(SCROLLBARS[1].0, Surface::Welcome.axis(), scroll)
+    }
+
+    /// With room to spare the column sits in the middle, exactly where
+    /// `justify_center` used to put it, and there is nothing to scroll — so no
+    /// bar is drawn either.
+    #[gpui::test]
+    fn a_column_that_fits_stays_in_the_middle(cx: &mut TestAppContext) {
+        let scroll = open(cx, ROOMY);
+        let box_ = scroll.bounds();
+        let column = scroll
+            .bounds_for_item(0)
+            .expect("the box never measured its column");
+
+        let above = f32::from(column.top() - box_.top());
+        let below = f32::from(box_.bottom() - column.bottom());
+        assert!(
+            (above - below).abs() < SLACK,
+            "the column was not centred: {above} above, {below} below"
+        );
+        assert_eq!(
+            scroll.max_offset().height,
+            px(0.),
+            "a column that fits left something to scroll"
+        );
+        assert!(
+            scrollbar(&scroll).thumb().is_none(),
+            "a box with nothing to scroll drew a bar anyway"
+        );
+    }
+
+    /// The regression: with less room than the column needs, the head of it used
+    /// to be pushed off the top edge and left there. It now starts at the top of
+    /// the box, and everything past the bottom is reachable by scrolling.
+    #[gpui::test]
+    fn a_column_that_does_not_fit_starts_at_the_top(cx: &mut TestAppContext) {
+        let scroll = open(cx, CRAMPED);
+        let box_ = scroll.bounds();
+        let column = scroll
+            .bounds_for_item(0)
+            .expect("the box never measured its column");
+
+        assert!(
+            f32::from(column.top() - box_.top()).abs() < SLACK,
+            "the column did not start at the top of the box: {:?} in {:?}",
+            column,
+            box_
+        );
+        assert!(
+            (f32::from(scroll.max_offset().height)
+                - f32::from(column.size.height - box_.size.height))
+            .abs()
+                < SLACK,
+            "the scrollable range did not cover the whole of the column"
+        );
+        assert!(
+            scrollbar(&scroll).thumb().is_some(),
+            "a box with something to scroll drew no bar"
+        );
+    }
+
+    /// And the far end of that scroll reaches the foot of the column, margin and
+    /// all, rather than stopping short of the last button.
+    #[gpui::test]
+    fn scrolling_to_the_end_reaches_the_foot_of_the_column(cx: &mut TestAppContext) {
+        let scroll = open(cx, CRAMPED);
+        scroll.set_offset(point(px(0.), -scroll.max_offset().height));
+        let box_ = scroll.bounds();
+        let column = scroll
+            .bounds_for_item(0)
+            .expect("the box never measured its column");
+
+        let foot = column.bottom() + scroll.offset().y;
+        assert!(
+            f32::from(foot - box_.bottom()).abs() < SLACK,
+            "the end of the scroll left {:?} of the column below the box",
+            foot - box_.bottom()
+        );
+        assert!(
+            f32::from(column.size.height) > COLUMN + SCROLL_MARGIN,
+            "the column was scrolled to its last button rather than past it"
         );
     }
 }

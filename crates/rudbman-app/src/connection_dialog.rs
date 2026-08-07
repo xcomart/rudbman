@@ -1916,9 +1916,21 @@ impl Render for ConnectionDialog {
         // notification for a text field it does not own the model of; rebuilding
         // it here is what makes the preview live. It writes only when the text
         // actually differs, so it cannot loop.
+        //
+        // Which of the two fields moved is what focus answers: typing in a part
+        // field leaves the caret there and the URL field unfocused, so the
+        // preview is stale and gets rewritten; typing in the URL field puts the
+        // caret *in* it, so the same divergence is the user overriding the
+        // template — and overwriting that would undo the keystroke they just
+        // made.
         if !self.url_overridden && self.manager.is_none() {
             let assembled = self.assembled_url(cx);
-            if !assembled.is_empty() && assembled != text(&self.url_input, cx) {
+            let diverged = !assembled.is_empty() && assembled != text(&self.url_input, cx);
+            if self.url_input.read(cx).focus_handle(cx).is_focused(window) {
+                if diverged {
+                    self.url_overridden = true;
+                }
+            } else if diverged {
                 set_text(&self.url_input, assembled, cx);
             }
         }
@@ -2279,6 +2291,10 @@ fn parse_or<T: std::str::FromStr>(input: &Entity<TextInput>, default: T, cx: &Ap
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Deref;
+
+    use gpui::VisualTestContext;
+
     use super::*;
 
     #[test]
@@ -2564,5 +2580,118 @@ mod tests {
         // A failure nothing can be said about gets no hint rather than a
         // platitude.
         assert_eq!(error_hint(&ConnectError::Tunnel("nope".into())), None);
+    }
+
+    /// The dialog open over a saved PostgreSQL profile, drawn in a window so
+    /// that `render` — where the URL preview is kept in step — actually runs.
+    ///
+    /// Seeded by hand rather than through [`ConnectionDialog::open`], which
+    /// would read `connections.json` and the keychain off whichever machine is
+    /// running the test.
+    fn open_over_a_profile(
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<ConnectionDialog>, VisualTestContext) {
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+
+        let window = cx.add_window(|_, cx| ConnectionDialog::new(cx));
+        let dialog = window
+            .update(cx, |_, _, cx| cx.entity())
+            .expect("the window is open");
+        cx.update(|cx| {
+            dialog.update(cx, |dialog, cx| {
+                let profile = ConnectionProfile::new("staging", "postgresql", "", "app");
+                dialog.selected = Some(profile.id);
+                dialog.store.upsert(profile);
+                dialog.rebuild_url_parts(cx);
+                set_text(&dialog.url_parts["host"], "db", cx);
+                set_text(&dialog.url_parts["database"], "app", cx);
+                dialog.open = true;
+            });
+        });
+
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        (dialog, cx)
+    }
+
+    /// The hint under the field says the URL can be typed over, so it has to
+    /// survive the next frame: the sync that keeps the preview live must not
+    /// take the user's own URL back.
+    #[gpui::test]
+    fn a_url_typed_over_the_assembled_one_becomes_an_override(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(text(&dialog.url_input, cx), "jdbc:postgresql://db:5432/app");
+            assert!(!dialog.url_overridden);
+        });
+
+        // What typing into the field amounts to: the caret in it, and content
+        // the template cannot produce.
+        cx.update(|window, cx| {
+            let input = dialog.read(cx).url_input.clone();
+            input.read(cx).focus_handle(cx).focus(window);
+            set_text(&input, "jdbc:postgresql://db:5432/app?ssl=true", cx);
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(
+                text(&dialog.url_input, cx),
+                "jdbc:postgresql://db:5432/app?ssl=true",
+                "the field was written back over the user's URL"
+            );
+            assert!(
+                dialog.url_overridden,
+                "an edited URL field is an override, badge and reset button and all"
+            );
+        });
+
+        // And having said so, the part fields leave it alone from here.
+        cx.update(|_, cx| {
+            let host = dialog.read(cx).url_parts["host"].clone();
+            set_text(&host, "replica", cx);
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(
+                text(&dialog.read(cx).url_input, cx),
+                "jdbc:postgresql://db:5432/app?ssl=true"
+            );
+        });
+    }
+
+    /// The other half of the same rule: with the caret in a part field, the URL
+    /// is the preview it has always been.
+    #[gpui::test]
+    fn a_part_field_still_rewrites_the_url_it_is_not_typing_into(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+
+        cx.update(|window, cx| {
+            let host = dialog.read(cx).url_parts["host"].clone();
+            host.read(cx).focus_handle(cx).focus(window);
+            set_text(&host, "replica", cx);
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(
+                text(&dialog.url_input, cx),
+                "jdbc:postgresql://replica:5432/app"
+            );
+            assert!(
+                !dialog.url_overridden,
+                "the preview following its fields is not an override"
+            );
+        });
     }
 }

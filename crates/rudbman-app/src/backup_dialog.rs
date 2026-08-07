@@ -1238,7 +1238,14 @@ mod tests {
         window
             .update(cx, |dialog, _window, _cx| {
                 let Stage::Ended(Ended::Done { rows, bytes }) = &dialog.stage else {
-                    panic!("the job did not finish cleanly");
+                    // The bridge's own words, because a CI log has nothing else
+                    // to diagnose a one-off failure by.
+                    match &dialog.stage {
+                        Stage::Ended(Ended::Failed(message)) => {
+                            panic!("the job failed: {message}")
+                        }
+                        _ => panic!("the job did not finish cleanly"),
+                    }
                 };
                 // No object list was given: the bridge enumerated the schema
                 // itself and wrote every row of both tables.
@@ -1290,7 +1297,12 @@ mod tests {
         let written = window
             .update(cx, |dialog, _window, _cx| {
                 let Stage::Ended(Ended::Done { rows, bytes }) = &dialog.stage else {
-                    panic!("the job did not finish cleanly");
+                    match &dialog.stage {
+                        Stage::Ended(Ended::Failed(message)) => {
+                            panic!("the job failed: {message}")
+                        }
+                        _ => panic!("the job did not finish cleanly"),
+                    }
                 };
                 assert_eq!(*rows, 2);
                 *bytes

@@ -167,7 +167,7 @@ mod tests {
         "common.close",
         "menu.new_connection",
         "tab.close",
-        "empty.title",
+        "empty.connected_title",
         "statusbar.no_connection",
         "about.title",
         "connect.title",

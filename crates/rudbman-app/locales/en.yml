@@ -84,20 +84,21 @@ tab:
 # saved — a row of that list opens straight away, so it is a way in rather than
 # a reminder that the dialog exists.
 welcome:
-  # Heading over a list with something in it. A user who has saved nothing at
-  # all reads `empty.title` and `empty.hint` instead: there is nothing to open,
-  # and the button is the whole of what there is to do.
-  title: Open a connection
+  # The line under the application's name once something is saved. A user who
+  # has saved nothing at all reads `empty.hint` there instead: no habit of the
+  # chord exists yet, and the words say what a connection is for.
+  # `%{shortcut}` is "Cmd+N" or "Ctrl+N"; neither is translated.
+  hint: Press %{shortcut} to open a new connection.
   # The button. Takes the ellipsis for the same reason the menu row does: it
   # asks before it acts.
   new_connection: New connection…
   # Heading of the saved list.
   saved: Saved connections
 
-# The placeholder shown in a pane that has nothing in it yet, and — `title` and
-# `hint` — on the welcome screen of a user who has saved no connection at all.
+# The placeholder shown in a pane that has nothing in it yet, and — `hint` —
+# the line under the name on the welcome screen of a user who has saved no
+# connection at all.
 empty:
-  title: No connections
   hint: Add a connection to browse a database and run SQL against it.
   # Shown in a pane once a connection is open. The tab is live; the pane is
   # empty because nothing has been opened into it yet, so the words point at the
