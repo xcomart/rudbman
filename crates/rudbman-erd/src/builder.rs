@@ -32,13 +32,17 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window, canvas, div, prelude::*,
+    AnyElement, App, Context, DragMoveEvent, ElementId, EventEmitter, FocusHandle, Focusable,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
+    Window, canvas, div, prelude::*,
+};
+use rudbman_ui::scrollbar::{
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
 };
 use rudbman_ui::theme::{Theme, theme};
 
 use crate::canvas::{
-    BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
+    BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
 };
 use crate::layout::{NODE_GAP, NodeRect, measure, row_anchor};
 use crate::model::ErdTable;
@@ -174,6 +178,15 @@ pub struct BuilderView {
     drag: Option<Drag>,
     panning: Option<PanDrag>,
     join: Option<JoinDrag>,
+    /// Whether the bar down the right-hand edge is showing.
+    v_bar: ScrollbarState,
+    /// Whether the bar along the bottom edge is showing.
+    h_bar: ScrollbarState,
+    /// The vertical bar's id, unique to this canvas so that two open at once do
+    /// not read each other's drags.
+    v_bar_id: ElementId,
+    /// The horizontal bar's id, for the same reason.
+    h_bar_id: ElementId,
 }
 
 impl BuilderView {
@@ -192,6 +205,10 @@ impl BuilderView {
             drag: None,
             panning: None,
             join: None,
+            v_bar: ScrollbarState::new(),
+            h_bar: ScrollbarState::new(),
+            v_bar_id: ElementId::from(("builder-vbar", cx.entity_id())),
+            h_bar_id: ElementId::from(("builder-hbar", cx.entity_id())),
         }
     }
 
@@ -469,6 +486,10 @@ impl BuilderView {
 
     fn on_mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.panning = None;
+        // Before the early returns below: a release that let go of a thumb had
+        // no join and no box drag to finish, and would otherwise leave the bar
+        // up for as long as the pointer stayed still.
+        self.release_thumb(cx);
 
         if let Some(join) = self.join.take() {
             self.finish_join(join, event.position, cx);
@@ -526,6 +547,135 @@ impl BuilderView {
         }
     }
 
+    /// The state of whichever bar rides `axis`.
+    fn bar_state(&self, axis: ScrollbarAxis) -> &ScrollbarState {
+        match axis {
+            ScrollbarAxis::Vertical => &self.v_bar,
+            ScrollbarAxis::Horizontal => &self.h_bar,
+        }
+    }
+
+    /// The same, to be moved on.
+    fn bar_mut(&mut self, axis: ScrollbarAxis) -> &mut ScrollbarState {
+        match axis {
+            ScrollbarAxis::Vertical => &mut self.v_bar,
+            ScrollbarAxis::Horizontal => &mut self.h_bar,
+        }
+    }
+
+    /// The bar riding `axis` as it stands this frame, or `None` when there is
+    /// no canvas for it to say anything about.
+    ///
+    /// Its track is the canvas as the last frame *measured* it, which is the
+    /// one-frame lag every bar over a scroll container already has: a resize is
+    /// corrected in the frame the resize is drawn in.
+    fn bar(&self, axis: ScrollbarAxis) -> Option<Scrollbar> {
+        let extent = self.viewport.bar_extent(&self.rects, axis)?;
+        let id = match axis {
+            ScrollbarAxis::Vertical => self.v_bar_id.clone(),
+            ScrollbarAxis::Horizontal => self.h_bar_id.clone(),
+        };
+
+        Some(
+            Scrollbar::new(
+                id,
+                axis,
+                self.viewport.bounds,
+                extent.visible,
+                extent.scrollable,
+                extent.scrolled,
+            )
+            .fade(self.bar_state(axis).fade()),
+        )
+    }
+
+    /// The bar riding `axis` as an element, sensor and all.
+    fn bar_element(
+        &self,
+        axis: ScrollbarAxis,
+        palette: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.bar(axis)?
+            .on_hover(cx.listener(move |builder, hovered: &bool, _window, cx| {
+                builder.hover_bar(axis, *hovered, cx);
+            }))
+            .render(palette)
+    }
+
+    /// Notices that the canvas has moved, and arms the expiry that takes the
+    /// bars down again.
+    ///
+    /// One place for every route that moves a viewport — the wheel, a drag of
+    /// the background, a zoom chord, a new table list — because all of them
+    /// change how far the canvas is scrolled and none has to announce itself.
+    fn watch_bars(&mut self, cx: &mut Context<Self>) {
+        for axis in BARS {
+            let Some(extent) = self.viewport.bar_extent(&self.rects, axis) else {
+                continue;
+            };
+            if let Some(epoch) = self.bar_mut(axis).moved(extent.scrolled) {
+                hide_later(epoch, cx, move |builder: &mut Self| {
+                    Some(builder.bar_mut(axis))
+                });
+            }
+        }
+    }
+
+    /// Puts a bar up while the pointer rests on the edge it rides, and starts
+    /// it going the moment the pointer leaves.
+    fn hover_bar(&mut self, axis: ScrollbarAxis, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.bar_mut(axis).hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        if let Some(epoch) = self.bar_mut(axis).hover_leave() {
+            hide_now(self, epoch, cx, move |builder: &mut Self| {
+                Some(builder.bar_mut(axis))
+            });
+        }
+    }
+
+    /// Pans the canvas to wherever a thumb has been dragged.
+    ///
+    /// gpui hands a drag to every listener of that drag type, so both bars are
+    /// asked and only the one the drag began on answers — see the scrollbar
+    /// module for why the payload rather than the event is what says which.
+    fn on_drag_bar(
+        &mut self,
+        event: &DragMoveEvent<DraggedThumb>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for axis in BARS {
+            let Some(progress) = self.bar(axis).and_then(|bar| bar.dragged(event, cx)) else {
+                continue;
+            };
+            let Some(pan) = self.viewport.panned_to(&self.rects, axis, progress) else {
+                continue;
+            };
+            self.viewport.set_pan_along(axis, pan);
+            self.bar_mut(axis).hold();
+            cx.notify();
+        }
+    }
+
+    /// Lets go of whichever thumb was held, and starts the clock that takes its
+    /// bar down.
+    fn release_thumb(&mut self, cx: &mut Context<Self>) {
+        for axis in BARS {
+            if let Some(epoch) = self.bar_mut(axis).release() {
+                hide_later(epoch, cx, move |builder: &mut Self| {
+                    Some(builder.bar_mut(axis))
+                });
+                cx.notify();
+            }
+        }
+    }
+
     /// Everything the canvas needs this frame, detached from `self`.
     fn scene(&self, palette: &Theme) -> Scene {
         Scene::new(
@@ -569,6 +719,13 @@ impl Render for BuilderView {
         // chords bound once for both canvases reach this one too.
         let context = format!("{CANVAS_KEY_CONTEXT} {BUILDER_KEY_CONTEXT}");
 
+        // Both bars, wired as every scrolling surface in the app wires one:
+        // notice the surface moved, and arm the expiry from inside the draw
+        // that noticed.
+        self.watch_bars(cx);
+        let vertical = self.bar_element(ScrollbarAxis::Vertical, &palette, cx);
+        let horizontal = self.bar_element(ScrollbarAxis::Horizontal, &palette, cx);
+
         let measure = canvas(
             move |bounds, _window, cx| {
                 view.update(cx, |view, cx| {
@@ -604,12 +761,15 @@ impl Render for BuilderView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
+            .on_drag_move::<DraggedThumb>(cx.listener(Self::on_drag_bar))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             // A join dragged out of the window lets go with the pointer
             // outside, which only this half sees.
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .child(measure)
             .child(diagram)
+            .children(vertical)
+            .children(horizontal)
     }
 }
 

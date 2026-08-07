@@ -41,7 +41,7 @@ use gpui::{
 };
 use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, Theme,
-    hide_later, scroll_to, scrolled, theme,
+    hide_later, hide_now, scroll_to, scrolled, theme,
 };
 
 use rudbman_jdbc::{DdlSource, DescribeRequest, Session};
@@ -408,7 +408,13 @@ impl TableDetail {
                     .overflow_y_scroll()
                     .child(content),
             )
-            .children(self.scrollbar().render(chrome))
+            .children(
+                self.scrollbar()
+                    .on_hover(cx.listener(|detail, hovered: &bool, _window, cx| {
+                        detail.hover_scrollbar(*hovered, cx);
+                    }))
+                    .render(chrome),
+            )
     }
 
     /// One tab's content, with the data in hand.
@@ -638,6 +644,23 @@ impl TableDetail {
                 Some(&mut detail.body_scrollbar)
             });
             cx.notify();
+        }
+    }
+
+    /// Puts the bar up while the pointer rests on the edge it rides, and starts
+    /// it going the moment the pointer leaves.
+    fn hover_scrollbar(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.body_scrollbar.hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        if let Some(epoch) = self.body_scrollbar.hover_leave() {
+            hide_now(self, epoch, cx, |detail: &mut Self| {
+                Some(&mut detail.body_scrollbar)
+            });
         }
     }
 }

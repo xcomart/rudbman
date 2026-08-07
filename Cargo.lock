@@ -5580,7 +5580,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5613,7 +5613,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -5627,7 +5627,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-editor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gpui",
  "ropey",
@@ -5638,7 +5638,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-erd"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gpui",
  "rudbman-ui",
@@ -5647,7 +5647,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-grid"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gpui",
  "rudbman-ui",
@@ -5656,7 +5656,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-jdbc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "jni",
@@ -5671,11 +5671,11 @@ dependencies = [
 
 [[package]]
 name = "rudbman-sql"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "rudbman-ssh"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -5687,7 +5687,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "gpui",

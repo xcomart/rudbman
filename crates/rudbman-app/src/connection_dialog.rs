@@ -49,7 +49,8 @@ use rudbman_core::{
 };
 use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    Segmented, Select, TextInput, Theme, form_row, hide_later, modal, scroll_to, scrolled, theme,
+    Segmented, Select, TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to,
+    scrolled, theme,
 };
 use uuid::Uuid;
 
@@ -1077,6 +1078,23 @@ impl ConnectionDialog {
         Scrollbar::for_handle(id, ScrollbarAxis::Vertical, handle).fade(state.fade())
     }
 
+    /// The same bar, listening for the pointer reaching the edge it rides.
+    ///
+    /// Only the bars that are drawn need it: the one the drag path builds is
+    /// there to be measured, and never reaches an element tree.
+    fn hovering_scrollbar(
+        &self,
+        id: &'static str,
+        surface: Surface,
+        cx: &mut Context<Self>,
+    ) -> Scrollbar {
+        self.scrollbar(id, surface).on_hover(cx.listener(
+            move |dialog, hovered: &bool, _window, cx| {
+                dialog.hover_scrollbar(surface, *hovered, cx);
+            },
+        ))
+    }
+
     /// Puts each bar up whenever its surface has moved.
     fn watch_scroll(&mut self, cx: &mut Context<Self>) {
         for (_, surface) in SCROLLBARS {
@@ -1117,6 +1135,28 @@ impl ConnectionDialog {
         }
     }
 
+    /// Puts one surface's bar up while the pointer rests on the edge it rides,
+    /// and starts it going the moment the pointer leaves.
+    ///
+    /// Told which surface rather than asked to work it out: each strip knows
+    /// only its own.
+    fn hover_scrollbar(&mut self, surface: Surface, hovered: bool, cx: &mut Context<Self>) {
+        let state = self.surface(surface).1;
+        if hovered {
+            if state.hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        let Some(epoch) = state.hover_leave() else {
+            return;
+        };
+        hide_now(self, epoch, cx, move |dialog: &mut Self| {
+            Some(dialog.surface(surface).1)
+        });
+    }
+
     /// The saved profile list, grouped by folder.
     fn render_list(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
@@ -1153,7 +1193,7 @@ impl ConnectionDialog {
                     .children(rows),
             )
             .children(
-                self.scrollbar(SCROLLBARS[0].0, Surface::List)
+                self.hovering_scrollbar(SCROLLBARS[0].0, Surface::List, cx)
                     .render(chrome),
             )
     }
@@ -1648,7 +1688,7 @@ impl ConnectionDialog {
                     .child(section(ts!("connect.section.tunnel"), chrome, tunnel)),
             )
             .children(
-                self.scrollbar(SCROLLBARS[1].0, Surface::Body)
+                self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Body, cx)
                     .render(chrome),
             )
     }

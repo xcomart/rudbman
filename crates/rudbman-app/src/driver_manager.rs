@@ -51,7 +51,7 @@ use rudbman_core::{DriverDef, DriverStore, drivers_dir};
 use rudbman_jdbc::{BridgeErrorKind, DriverProbe, Error as JdbcError};
 use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, TextInput,
-    Theme, form_row, hide_later, scroll_to, scrolled, theme,
+    Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
 };
 
 use crate::app_settings;
@@ -660,6 +660,18 @@ impl DriverManager {
         Scrollbar::for_handle(id, ScrollbarAxis::Vertical, handle).fade(state.fade())
     }
 
+    /// The same bar, listening for the pointer reaching the edge it rides.
+    ///
+    /// Only the bars that are drawn need it: the ones the drag path builds are
+    /// there to be measured, and never reach an element tree.
+    fn hovering_scrollbar(&self, id: &'static str, cx: &mut Context<Self>) -> Scrollbar {
+        let list = id == LIST_SCROLLBAR;
+        self.scrollbar(id)
+            .on_hover(cx.listener(move |manager, hovered: &bool, _window, cx| {
+                manager.hover_scrollbar(list, *hovered, cx);
+            }))
+    }
+
     /// Puts each bar up when its surface has moved, and starts the clock.
     fn watch_scroll(&mut self, cx: &mut Context<Self>) {
         for list in [true, false] {
@@ -720,6 +732,36 @@ impl DriverManager {
                 cx.notify();
             }
         }
+    }
+
+    /// Puts one surface's bar up while the pointer rests on the edge it rides,
+    /// and starts it going the moment the pointer leaves.
+    ///
+    /// Told which bar rather than asked to work it out: each strip senses only
+    /// its own edge.
+    fn hover_scrollbar(&mut self, list: bool, hovered: bool, cx: &mut Context<Self>) {
+        let state = if list {
+            &mut self.list_scrollbar
+        } else {
+            &mut self.body_scrollbar
+        };
+        if hovered {
+            if state.hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        let Some(epoch) = state.hover_leave() else {
+            return;
+        };
+        hide_now(self, epoch, cx, move |manager: &mut Self| {
+            Some(if list {
+                &mut manager.list_scrollbar
+            } else {
+                &mut manager.body_scrollbar
+            })
+        });
     }
 
     /// The list of driver definitions.
@@ -803,7 +845,7 @@ impl DriverManager {
                     .overflow_y_scroll()
                     .children(rows),
             )
-            .children(self.scrollbar(LIST_SCROLLBAR).render(chrome))
+            .children(self.hovering_scrollbar(LIST_SCROLLBAR, cx).render(chrome))
     }
 
     /// The driver class field, its "detect" button, and whatever the last probe
@@ -1211,7 +1253,7 @@ impl DriverManager {
                     .child(form_row(ts!("driver.maven"), maven))
                     .child(form_row(ts!("driver.jars"), jars)),
             )
-            .children(self.scrollbar(BODY_SCROLLBAR).render(chrome))
+            .children(self.hovering_scrollbar(BODY_SCROLLBAR, cx).render(chrome))
             .into_any_element()
     }
 

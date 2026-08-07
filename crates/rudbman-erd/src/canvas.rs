@@ -40,6 +40,7 @@ use gpui::{
     ScrollWheelEvent, ShapedLine, SharedString, TextRun, Window, actions, fill, outline, point, px,
     size,
 };
+use rudbman_ui::scrollbar::ScrollbarAxis;
 use rudbman_ui::theme::Theme;
 
 use crate::layout::{
@@ -94,6 +95,15 @@ const TEXT_FLOOR: f32 = 0.4;
 /// Where a canvas sits before anything has been panned.
 pub(crate) const INITIAL_PAN: f32 = 24.;
 
+/// How much room a scrollbar counts in front of the content and behind it, in
+/// screen pixels.
+///
+/// [`INITIAL_PAN`] on purpose, and not by coincidence: the home position is the
+/// top-left corner of the content with exactly that much room in front of it,
+/// so a canvas at home is one scrolled to precisely zero. Any other margin
+/// would leave a freshly opened diagram's thumb a little way down its track.
+const MARGIN: f32 = INITIAL_PAN;
+
 /// Text size of a column row, in logical units.
 const FONT_SIZE: f32 = 12.;
 
@@ -121,6 +131,52 @@ pub(crate) fn init(cx: &mut App) {
             Some(CANVAS_KEY_CONTEXT),
         ),
     ]);
+}
+
+/// What an overlay scrollbar over a canvas is drawn from, along one axis.
+///
+/// The same three numbers [`rudbman_ui::scrollbar::thumb`] takes, in screen
+/// pixels. A canvas has no scroll container to read them off — it has a pan, a
+/// zoom and a list of boxes — so they are worked out from those instead, and
+/// the bar is then wired exactly as every other surface's is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BarExtent {
+    /// How much of the axis the viewport shows.
+    pub(crate) visible: f32,
+    /// How much of the content, its margins included, lies outside the
+    /// viewport.
+    ///
+    /// Zero or less when the whole diagram fits, which is exactly what a bar
+    /// reads as "there is nothing to draw" — so a canvas with room to spare
+    /// needs no branch of its own.
+    pub(crate) scrollable: f32,
+    /// How far past the start of the content the viewport is looking.
+    ///
+    /// Runs negative, or past `scrollable`, while the canvas is panned off the
+    /// end of its own content, which a canvas may be: the thumb pins itself to
+    /// the nearer end and says nothing about it.
+    pub(crate) scrolled: f32,
+}
+
+/// The two edges a canvas hangs an overlay bar on.
+///
+/// Both widgets wire either bar the same way — notice the canvas moved, arm the
+/// expiry, read a drag, let go — so the axes are walked rather than written out
+/// twice per widget.
+pub(crate) const BARS: [ScrollbarAxis; 2] = [ScrollbarAxis::Vertical, ScrollbarAxis::Horizontal];
+
+/// Where the boxes start and where they end along `axis`, in logical units.
+///
+/// `None` for a canvas with no boxes on it, which has no content and therefore
+/// no extent — rather than the empty range at the origin, which would claim
+/// the diagram was somewhere.
+fn extent(rects: &[NodeRect], axis: ScrollbarAxis) -> Option<(f32, f32)> {
+    let mut spans = rects.iter().map(|rect| match axis {
+        ScrollbarAxis::Horizontal => (rect.x, rect.right()),
+        ScrollbarAxis::Vertical => (rect.y, rect.bottom()),
+    });
+    let first = spans.next()?;
+    Some(spans.fold(first, |(start, end), (x, y)| (start.min(x), end.max(y))))
 }
 
 /// Where a canvas is looking, and how closely.
@@ -273,6 +329,62 @@ impl Viewport {
         }
         self.pan = point(self.pan.x + dx, self.pan.y + dy);
         true
+    }
+
+    /// The component of the pan that runs along `axis`.
+    pub(crate) fn pan_along(&self, axis: ScrollbarAxis) -> f32 {
+        match axis {
+            ScrollbarAxis::Horizontal => self.pan.x,
+            ScrollbarAxis::Vertical => self.pan.y,
+        }
+    }
+
+    /// Moves the pan along `axis`, leaving the other axis where it was.
+    pub(crate) fn set_pan_along(&mut self, axis: ScrollbarAxis, pan: f32) {
+        match axis {
+            ScrollbarAxis::Horizontal => self.pan.x = pan,
+            ScrollbarAxis::Vertical => self.pan.y = pan,
+        }
+    }
+
+    /// What a bar riding `axis` is drawn from this frame.
+    ///
+    /// Everything is in screen pixels, so the content's logical extent is
+    /// scaled by the zoom: zooming in makes a diagram longer to scroll through
+    /// without moving a single box, and the thumb has to shrink to say so.
+    ///
+    /// `None` for a canvas with nothing on it. Everything else — a diagram
+    /// smaller than the window, a viewport panned off the end of one — comes
+    /// back as numbers the bar itself knows what to do with.
+    pub(crate) fn bar_extent(&self, rects: &[NodeRect], axis: ScrollbarAxis) -> Option<BarExtent> {
+        let (start, end) = extent(rects, axis)?;
+        let visible = f32::from(match axis {
+            ScrollbarAxis::Horizontal => self.bounds.size.width,
+            ScrollbarAxis::Vertical => self.bounds.size.height,
+        });
+
+        Some(BarExtent {
+            visible,
+            scrollable: (end - start) * self.zoom + 2. * MARGIN - visible,
+            scrolled: MARGIN - start * self.zoom - self.pan_along(axis),
+        })
+    }
+
+    /// The pan along `axis` that a thumb dragged `progress` of the way along
+    /// its track asks for.
+    ///
+    /// The inverse of [`BarExtent::scrolled`], written as a correction to the
+    /// pan rather than from scratch so that the two cannot drift apart: the
+    /// distance the bar wants to move is the difference between where it is and
+    /// where the pointer put it.
+    pub(crate) fn panned_to(
+        &self,
+        rects: &[NodeRect],
+        axis: ScrollbarAxis,
+        progress: f32,
+    ) -> Option<f32> {
+        let bar = self.bar_extent(rects, axis)?;
+        Some(self.pan_along(axis) + bar.scrolled - progress * bar.scrollable)
     }
 
     /// Which box is under `at`, if any.
@@ -1032,5 +1144,126 @@ mod tests {
         assert_eq!(hit_box(&rects, 10., 10.), Some(0));
         assert_eq!(hit_box(&rects, 60., 60.), Some(1));
         assert_eq!(hit_box(&rects, 400., 400.), None);
+    }
+
+    /// A viewport that has been measured at `width` by `height`, looking at
+    /// the corner every canvas starts in.
+    fn viewport(width: f32, height: f32) -> Viewport {
+        Viewport {
+            bounds: Bounds::new(point(px(0.), px(0.)), size(px(width), px(height))),
+            ..Viewport::default()
+        }
+    }
+
+    /// One box `w` by `h` at `(x, y)`.
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> NodeRect {
+        NodeRect { x, y, w, h }
+    }
+
+    /// A canvas nobody has panned is a canvas scrolled to exactly zero, which
+    /// is what makes the margin and the initial pan the same number.
+    #[test]
+    fn a_canvas_at_home_is_scrolled_to_the_start() {
+        let rects = vec![rect(0., 0., 400., 2_000.)];
+        let bar = viewport(800., 600.)
+            .bar_extent(&rects, ScrollbarAxis::Vertical)
+            .expect("a canvas with a box on it");
+
+        assert_eq!(bar.scrolled, 0.);
+        assert_eq!(bar.visible, 600.);
+        assert_eq!(bar.scrollable, 2_000. + 2. * MARGIN - 600.);
+    }
+
+    /// The extent is the whole spread of the boxes and not the first one's, and
+    /// a diagram that fits its window with its margins to spare has nothing to
+    /// scroll — the bar draws itself from that alone and needs no other answer.
+    #[test]
+    fn a_diagram_that_fits_has_nothing_to_scroll() {
+        let rects = vec![rect(0., 0., 100., 80.), rect(200., 300., 100., 80.)];
+        let viewport = viewport(800., 600.);
+
+        let across = viewport
+            .bar_extent(&rects, ScrollbarAxis::Horizontal)
+            .expect("a canvas with boxes on it");
+        assert_eq!(across.scrollable, 300. + 2. * MARGIN - 800.);
+        assert!(across.scrollable < 0.);
+
+        let down = viewport
+            .bar_extent(&rects, ScrollbarAxis::Vertical)
+            .expect("a canvas with boxes on it");
+        assert_eq!(down.scrollable, 380. + 2. * MARGIN - 600.);
+        assert!(down.scrollable < 0.);
+    }
+
+    /// Zooming in lengthens the run without moving a box: the content is
+    /// measured in screen pixels, because that is what the thumb is drawn in.
+    #[test]
+    fn zooming_in_lengthens_what_there_is_to_scroll() {
+        let rects = vec![rect(0., 0., 1_000., 1_000.)];
+        let mut viewport = viewport(800., 600.);
+        let before = viewport
+            .bar_extent(&rects, ScrollbarAxis::Horizontal)
+            .expect("a canvas with a box on it");
+
+        viewport.zoom = 2.;
+        let after = viewport
+            .bar_extent(&rects, ScrollbarAxis::Horizontal)
+            .expect("a canvas with a box on it");
+        assert_eq!(after.scrollable, 2_000. + 2. * MARGIN - 800.);
+        assert!(after.scrollable > before.scrollable);
+    }
+
+    /// A box left of the origin is still the start of the diagram, so the
+    /// canvas at home is scrolled to it rather than past it.
+    #[test]
+    fn the_start_of_the_content_is_where_the_leftmost_box_is() {
+        let rects = vec![rect(-500., -200., 100., 80.), rect(0., 0., 100., 80.)];
+        let bar = viewport(800., 600.)
+            .bar_extent(&rects, ScrollbarAxis::Horizontal)
+            .expect("a canvas with boxes on it");
+
+        // Home puts the origin 24 pixels in, and the content starts 500 units
+        // further back again.
+        assert_eq!(bar.scrolled, 500.);
+    }
+
+    /// A drag and the thumb it moves are the same arithmetic read in opposite
+    /// directions: the pan a progress asks for is the pan that reports that
+    /// progress back.
+    #[test]
+    fn a_dragged_thumb_lands_where_it_was_dragged_to() {
+        let rects = vec![rect(120., 60., 400., 3_000.)];
+        let mut viewport = viewport(800., 600.);
+        viewport.zoom = 1.5;
+
+        for progress in [0., 0.35, 1.] {
+            let pan = viewport
+                .panned_to(&rects, ScrollbarAxis::Vertical, progress)
+                .expect("a canvas with a box on it");
+
+            let mut moved = viewport;
+            moved.set_pan_along(ScrollbarAxis::Vertical, pan);
+            let bar = moved
+                .bar_extent(&rects, ScrollbarAxis::Vertical)
+                .expect("a canvas with a box on it");
+            assert!(
+                (bar.scrolled / bar.scrollable - progress).abs() < 1e-4,
+                "a thumb dragged to {progress} came back at {}",
+                bar.scrolled / bar.scrollable
+            );
+            // And the other axis is left exactly where it was.
+            assert_eq!(moved.pan.x, viewport.pan.x);
+        }
+    }
+
+    /// A canvas with nothing on it has no content and says so, rather than
+    /// claiming an empty diagram sits at the origin.
+    #[test]
+    fn an_empty_canvas_has_no_bar_at_all() {
+        let viewport = viewport(800., 600.);
+
+        assert_eq!(viewport.bar_extent(&[], ScrollbarAxis::Vertical), None);
+        assert_eq!(viewport.bar_extent(&[], ScrollbarAxis::Horizontal), None);
+        assert_eq!(viewport.panned_to(&[], ScrollbarAxis::Vertical, 0.5), None);
     }
 }
