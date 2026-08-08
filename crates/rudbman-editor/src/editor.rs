@@ -1521,7 +1521,10 @@ impl EditorView {
     }
 
     /// One of the two overlay bars as it stands this frame.
-    fn scrollbar(&self, axis: ScrollbarAxis) -> Option<Scrollbar> {
+    ///
+    /// `pub(crate)` for the regression test that holds the thumb to the scroll
+    /// position; the app itself never reads a bar from outside.
+    pub(crate) fn scrollbar(&self, axis: ScrollbarAxis) -> Option<Scrollbar> {
         let bounds = self.layout.bounds?;
         let limit = self.scrollable();
         let (visible, scrollable, scrolled, state) = match axis {
@@ -1551,7 +1554,11 @@ impl EditorView {
                 bounds,
                 f32::from(visible),
                 f32::from(scrollable),
-                f32::from(scrolled) / f32::from(scrollable),
+                // The raw distance, not the fraction of the range: the bar
+                // divides by `scrollable` itself, and handing it a value that
+                // was already divided once pinned the thumb to the top however
+                // far the surface had scrolled.
+                f32::from(scrolled),
             )
             .fade(state.fade()),
         )
