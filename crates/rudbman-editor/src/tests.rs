@@ -721,6 +721,48 @@ fn drawing_a_hundred_thousand_lines_styles_only_the_visible_ones(cx: &mut TestAp
     );
 }
 
+/// Regression: the bar was handed the scrolled *fraction* where its geometry
+/// expects the scrolled *distance* in the same unit as the range, so the thumb
+/// sat pinned to the top of the track however far the surface had scrolled. The
+/// slip started here and travelled out with every port of the editor.
+#[gpui::test]
+fn the_thumb_follows_the_scroll(cx: &mut TestAppContext) {
+    use gpui::px;
+    use rudbman_ui::scrollbar::ScrollbarAxis;
+
+    let (editor, mut cx) = open(&long_script(1_000), cx);
+    editor.update(&mut cx, |editor, cx| editor.move_to(0, cx));
+    draw(&mut cx);
+
+    let thumb = |editor: &EditorView| {
+        editor
+            .scrollbar(ScrollbarAxis::Vertical)
+            .and_then(|bar| bar.thumb())
+    };
+    let at_top = editor
+        .read(&mut cx, thumb)
+        .expect("a thousand lines outgrow the viewport");
+    assert_eq!(at_top.start, px(0.), "an unscrolled thumb sat off the top");
+
+    // Landing the caret on the last line scrolls the surface to its end, and
+    // the thumb has to arrive there with it: at the far end of its track, not
+    // a fraction-of-a-pixel below the top.
+    editor.update(&mut cx, |editor, cx| {
+        let end = editor.text().len();
+        editor.move_to(end, cx);
+    });
+    draw(&mut cx);
+
+    let at_bottom = editor
+        .read(&mut cx, thumb)
+        .expect("the surface still outgrows the viewport");
+    assert!(
+        at_bottom.start > at_top.start + px(10.),
+        "the thumb barely moved for a scroll to the end: {:?}",
+        at_bottom.start
+    );
+}
+
 #[gpui::test]
 fn one_keystroke_in_a_hundred_thousand_lines_relexes_a_constant_number(cx: &mut TestAppContext) {
     let (editor, mut cx) = open(&long_script(100_000), cx);
