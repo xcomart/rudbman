@@ -61,6 +61,8 @@ mod table_detail;
 mod theme_editor;
 mod theme_picker;
 mod transfer_dialog;
+mod update;
+mod update_dialog;
 
 // Compiles `locales/*.yml` into the binary and defines the machinery `t!`
 // expands to, which is why it has to sit in the crate root. `fallback = "en"`
@@ -85,7 +87,7 @@ use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
     ThemeRegistry, WindowControlIcons, WindowControls, hide_later, hide_now, modal, scroll_to,
-    scrolled, set_editor_theme, set_theme, theme, theme_store,
+    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use uuid::Uuid;
 
@@ -108,6 +110,7 @@ use query::{ConfirmRequest, QueryPane, QueryPaneEvent};
 use settings_dialog::{SettingsDialog, SettingsDialogEvent};
 use table_detail::{TableDetail, TableDetailEvent};
 use transfer_dialog::{TransferDialog, TransferDialogEvent, TransferTarget};
+use update_dialog::{UpdateDialog, UpdateDialogEvent};
 
 actions!(
     rudbman,
@@ -120,6 +123,10 @@ actions!(
         OpenSettings,
         /// Open the about dialog.
         ShowAbout,
+        /// Ask GitHub whether a newer release exists, showing the answer either
+        /// way. Unlike the start-up check, this one is not silent and does not
+        /// respect the ignored-version tag.
+        CheckUpdates,
         /// Close the active pane, unless it is the last one.
         ClosePane,
         /// Move keyboard focus to the next pane.
@@ -603,6 +610,14 @@ struct Workspace {
     transfer: Entity<TransferDialog>,
     /// The schema backup dialog, rendered only while it reports itself open.
     backup: Entity<BackupDialog>,
+    /// The update dialog, rendered only while it reports itself open.
+    ///
+    /// Two things open it: the start-up check in [`update`], at most once per
+    /// run and only when it found something worth saying, and the "Check for
+    /// updates" command, as often as the user asks. It also owns the download
+    /// and the swap that "Update" starts, which is why it is the one dialog the
+    /// shell cannot always close.
+    update: Entity<UpdateDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
     /// The shell's own right-click menu, while one is open.
@@ -637,6 +652,8 @@ struct Workspace {
     _transfer_events: Subscription,
     /// Keeps the backup dialog subscription alive.
     _backup_events: Subscription,
+    /// Keeps the update dialog subscription alive.
+    _update_events: Subscription,
     /// Records the window's placement as it is moved and resized.
     _bounds: Subscription,
 }
@@ -784,6 +801,59 @@ impl Workspace {
                 },
             );
 
+        let update = cx.new(UpdateDialog::new);
+        let update_events = cx.subscribe_in(&update, window, |this, dialog, event, window, cx| {
+            match event {
+                UpdateDialogEvent::Ignored { tag } => {
+                    // The dialog has already closed itself; writing the file is
+                    // the shell's job because the shell is what owns settings.
+                    update::remember_ignored(tag, cx);
+                    this.focus_shell(window, cx);
+                }
+                UpdateDialogEvent::Dismissed => {
+                    dialog.update(cx, |dialog, cx| dialog.close(cx));
+                    this.focus_shell(window, cx);
+                }
+            }
+        });
+
+        // The start-up update check, off the UI thread: it is an HTTPS request
+        // to GitHub, and nothing on screen waits for it. The tag the user may
+        // have ignored is read here, on the UI thread, because the settings
+        // global is only reachable from it.
+        //
+        // The answer opens a dialog, so it deliberately does *not* go through
+        // `open_about`'s `close_overlays` route: this is the one dialog nobody
+        // asked for, arriving at a moment nobody chose, and it must never take
+        // the screen from something the user opened themselves — a half-typed
+        // connection form above all. If anything is already up, the check simply
+        // says nothing and tries again next launch.
+        //
+        // `update::check` answers `None` outright in a test build; see the note
+        // on it for why the guard is there and not here.
+        let ignored = app_settings::current(cx).ignored_update;
+        cx.spawn(async move |this, cx| {
+            let found = cx
+                .background_executor()
+                .spawn(async move { update::check(ignored.as_deref()) })
+                .await;
+            let Some(release) = found else {
+                return;
+            };
+            this.update(cx, |workspace, cx| {
+                if workspace.dialog_open(cx) {
+                    log::debug!("update {} announced while a dialog is open", release.tag);
+                    return;
+                }
+                workspace.update.update(cx, |dialog, cx| {
+                    dialog.open(release, cx);
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
         // In memory only; the file is written once, when the window closes. See
         // [`app_settings::record_window_geometry`].
         let bounds = cx.observe_window_bounds(window, |_this, window, cx| {
@@ -810,6 +880,7 @@ impl Workspace {
             extract,
             transfer,
             backup,
+            update,
             menu_open: false,
             context_menu: None,
             confirm: None,
@@ -821,6 +892,7 @@ impl Workspace {
             _extract_events: extract_events,
             _transfer_events: transfer_events,
             _backup_events: backup_events,
+            _update_events: update_events,
             _bounds: bounds,
         }
     }
@@ -2119,6 +2191,27 @@ impl Workspace {
         }
     }
 
+    /// Whether any modal is on screen.
+    ///
+    /// Exactly the set [`Workspace::close_overlays`] closes, minus the dropdown
+    /// and the context menus: those are transient and dismiss themselves on the
+    /// next press, so a dialog appearing over one takes nothing away.
+    ///
+    /// One caller, and the reason this exists at all: the start-up update check
+    /// announces itself only into an empty window. It is the one dialog nobody
+    /// asked for, and it must not land on top of a half-typed connection form
+    /// or a running backup.
+    fn dialog_open(&self, cx: &App) -> bool {
+        self.confirm.is_some()
+            || self.about.read(cx).is_open()
+            || self.connect.read(cx).is_open()
+            || self.settings.read(cx).is_open()
+            || self.extract.read(cx).is_open()
+            || self.transfer.read(cx).is_open()
+            || self.backup.read(cx).is_open()
+            || self.update.read(cx).is_open()
+    }
+
     /// Closes every dialog and the dropdown menu.
     ///
     /// Every `open_*` method starts here, which is what keeps the modals
@@ -2128,6 +2221,12 @@ impl Workspace {
     /// Closing the settings dialog drops its live preview, so the palettes are
     /// re-applied on the way out; without that the window would keep wearing a
     /// theme that nothing in the settings names any more.
+    ///
+    /// The update dialog is closed here like the rest, so a user who reaches
+    /// for a command instead of one of its buttons is not left with a stale
+    /// announcement floating over the window — except while it is installing,
+    /// when its own `close` refuses and the swap is allowed to finish; see
+    /// [`UpdateDialog::close`].
     fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_open = false;
         self.close_context_menus(cx);
@@ -2160,6 +2259,9 @@ impl Workspace {
         }
         if self.backup.read(cx).is_open() {
             self.backup.update(cx, |dialog, cx| dialog.close(cx));
+        }
+        if self.update.read(cx).is_open() {
+            self.update.update(cx, |dialog, cx| dialog.close(cx));
         }
     }
 
@@ -2256,6 +2358,24 @@ impl Workspace {
     fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_overlays(window, cx);
         self.about.update(cx, |dialog, cx| dialog.open(cx));
+        cx.notify();
+    }
+
+    /// Asks GitHub for the latest release and shows the answer.
+    ///
+    /// Goes through `close_overlays` where the start-up check pointedly does
+    /// not: this dialog was asked for, so it is entitled to the screen the way
+    /// every other menu command is.
+    ///
+    /// Refuses while an install is already running, which is the one case where
+    /// the update dialog cannot be closed and so must not be reopened into a
+    /// different state.
+    fn check_updates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.update.read(cx).is_busy() {
+            return;
+        }
+        self.close_overlays(window, cx);
+        self.update.update(cx, |dialog, cx| dialog.start_check(cx));
         cx.notify();
     }
 
@@ -2488,6 +2608,11 @@ impl Workspace {
                 gpui::WindowDecorations::Server
             });
         }
+        // Paired with the call below, and never with a preview: the leaf crates
+        // read this to decide whether to paint their own background, and the
+        // answer is only right once the surface itself permits alpha. Ahead of
+        // the repaint, so the next frame already draws under the new answer.
+        set_window_tint(settings.window.background_opacity, cx);
         cx.refresh_windows();
         window.set_background_appearance(window_appearance(&settings.window));
         // After the background appearance, never before: on Windows that call
@@ -2827,6 +2952,16 @@ impl Workspace {
         self.open_about(window, cx);
     }
 
+    /// Handles the "Check for updates" menu item.
+    fn check_updates_action(
+        &mut self,
+        _: &CheckUpdates,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.check_updates(window, cx);
+    }
+
     /// Shows or hides the explorer sidebar.
     fn toggle_explorer_action(
         &mut self,
@@ -3023,6 +3158,16 @@ impl Workspace {
         if self.confirm.is_some() {
             self.answer_confirm(false, window, cx);
             self.focus_shell(window, cx);
+            return;
+        }
+        if self.update.read(cx).is_open() {
+            // Swallowed rather than propagated while an install runs: the key
+            // must not reach a pane, but nothing may take the screen from a
+            // swap either, so `Escape` simply does nothing until it is over.
+            if !self.update.read(cx).is_busy() {
+                self.update.update(cx, |dialog, cx| dialog.close(cx));
+                self.focus_shell(window, cx);
+            }
             return;
         }
         if self.about.read(cx).is_open() {
@@ -3242,6 +3387,10 @@ impl Workspace {
                 .shortcut(format!("{SHORTCUT_MODIFIER}+,"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
             MenuEntry::separator(),
+            // Next to About, where a Help menu would put it and where users of
+            // every other desktop application look for it.
+            MenuEntry::new(ts!("menu.check_updates"))
+                .on_activate(|window, cx| window.dispatch_action(Box::new(CheckUpdates), cx)),
             MenuEntry::new(ts!("menu.about"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ShowAbout), cx)),
             MenuEntry::separator(),
@@ -3375,16 +3524,17 @@ impl Workspace {
                 .on_drag(DraggedExplorer, |_, _, _, cx| cx.new(|_| gpui::Empty))
         });
 
+        // The row paints no fill of its own. Its children tile it, and each of
+        // them tints its own share: the explorer's surface under the sidebar, the
+        // background below over the work area. Side by side rather than stacked
+        // is exactly what [`app_settings::window_tint`] requires, and it is what
+        // lets the blur behind the window carry on under the sidebar too.
         div()
             .flex()
             .flex_row()
             .flex_grow()
             .min_w_0()
             .min_h_0()
-            // The only fill covering the body, which is what makes it the one
-            // place the window opacity may be applied; see
-            // [`app_settings::window_tint`].
-            .bg(app_settings::window_tint(theme.background, cx))
             // Measured against this box rather than tracked as a delta, exactly
             // as a split divider is: the width follows the pointer however far
             // the gesture wandered.
@@ -3395,10 +3545,21 @@ impl Workspace {
             ))
             .children(sidebar)
             .children(handle)
-            .child(div().flex().flex_1().min_w_0().min_h_0().child(match work {
-                Some((root, chrome)) => render_pane(root, &chrome, cx),
-                None => self.render_welcome(&theme, cx),
-            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    // Everything the row is not already covering with the
+                    // sidebar's own fill, and so the one fill over these pixels;
+                    // see [`app_settings::window_tint`].
+                    .bg(app_settings::window_tint(theme.background, cx))
+                    .child(match work {
+                        Some((root, chrome)) => render_pane(root, &chrome, cx),
+                        None => self.render_welcome(&theme, cx),
+                    }),
+            )
             .into_any_element()
     }
 
@@ -3419,8 +3580,8 @@ impl Workspace {
     /// once it does not — [`centered_scroll`] says why those are one
     /// arrangement — under the same overlay bar the tab strip wears.
     ///
-    /// It paints no fill of its own. The body behind it already carries the one
-    /// tinted fill the window permits, and a second one here would compose back
+    /// It paints no fill of its own. The work area behind it already carries the
+    /// tinted fill for these pixels, and a second one here would compose back
     /// to opaque; see [`app_settings::window_tint`].
     fn render_welcome(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity();
@@ -4142,8 +4303,8 @@ fn render_pane(
 /// window with no connection at all has exactly one next step and
 /// [`Workspace::render_welcome`] offers it as a button.
 ///
-/// It paints no fill of its own. The body behind it already carries the one
-/// tinted fill the window permits, and a second one here would compose back to
+/// It paints no fill of its own. The work area behind it already carries the
+/// tinted fill for these pixels, and a second one here would compose back to
 /// opaque; see [`app_settings::window_tint`].
 fn render_placeholder(theme: &Theme) -> AnyElement {
     let (title, hint) = (ts!("empty.connected_title"), ts!("empty.connected_hint"));
@@ -4263,6 +4424,11 @@ impl Render for Workspace {
             .read(cx)
             .is_open()
             .then(|| div().absolute().inset_0().child(self.backup.clone()));
+        let update = self
+            .update
+            .read(cx)
+            .is_open()
+            .then(|| div().absolute().inset_0().child(self.update.clone()));
         let confirm = self.render_confirm(cx);
         let context_menu = self.render_context_menu(cx);
 
@@ -4323,6 +4489,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::new_connection_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::show_about_action))
+            .on_action(cx.listener(Self::check_updates_action))
             .on_action(cx.listener(Self::toggle_explorer_action))
             .on_action(cx.listener(Self::new_query_action))
             .on_action(cx.listener(Self::query_object_action))
@@ -4348,6 +4515,7 @@ impl Render for Workspace {
             .children(extract)
             .children(transfer)
             .children(backup)
+            .children(update)
             .children(confirm)
             // Last: it paints above the dialogs, as its own backdrop already
             // implies, and it takes no room in the column — the element is an
@@ -4768,8 +4936,8 @@ fn window_appearance(window: &WindowState) -> WindowBackgroundAppearance {
 /// their key equivalents; register the bindings first so the keymap it reads is
 /// already populated.
 ///
-/// About, Settings and Quit live in the application menu because that is where
-/// macOS users look for them.
+/// About, Check for updates, Settings and Quit live in the application menu
+/// because that is where macOS users look for them.
 ///
 /// The item labels are translated, but the application menu's own name is the
 /// "rudbman" wordmark and stays as it is. Rebuilt and re-installed whenever the
@@ -4780,6 +4948,7 @@ fn app_menus() -> Vec<Menu> {
             name: APP_NAME.into(),
             items: vec![
                 MenuItem::action(ts!("menu.about"), ShowAbout),
+                MenuItem::action(ts!("menu.check_updates"), CheckUpdates),
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.settings"), OpenSettings),
                 MenuItem::separator(),
@@ -4870,12 +5039,33 @@ fn bind_shortcuts(cx: &mut App) {
 fn main() {
     env_logger::init();
 
+    // An update the previous run could only stage — because a JVM was loaded
+    // into it and Windows will not let its files be renamed — is applied here,
+    // synchronously, before the application exists and therefore before anything
+    // can load a JVM into *this* process. It answers `true` only when it has
+    // already spawned a fresh process on the new build, at which point the one
+    // useful thing left to do is get out of its way. See `update::apply_pending`.
+    if update::apply_pending() {
+        return;
+    }
+
     // The icon set has to be installed before the app runs: `svg()` resolves
     // every path through this source, and the default one answers `None`.
     Application::new().with_assets(Icons).run(|cx: &mut App| {
         if let Err(error) = rudbman_core::init_secrets() {
             log::warn!("the OS keychain is unavailable: {error}");
         }
+
+        // A self-update renames the copies it replaces aside instead of
+        // deleting them — Windows cannot delete a running image, and one code
+        // path for three platforms is worth more than an immediate unlink on
+        // the two that could. This is the other half: the leftovers are swept
+        // up on the next launch. On the background executor because a bundled
+        // JRE or a `.app` bundle is a recursive delete of thousands of files
+        // and nothing on screen depends on it.
+        cx.background_executor()
+            .spawn(async { update::clean_leftovers() })
+            .detach();
 
         // Load the settings before the widget layer installs its default
         // palettes, then override those to match what the user configured.
@@ -4898,6 +5088,10 @@ fn main() {
         // name themes of the user's own.
         theme_store::reload(cx);
         apply_themes(&settings, cx);
+        // The same value `window_appearance` below reads, handed to the widget
+        // layer so the result grid and the ERD canvases know whether to paint a
+        // background of their own; see [`app_settings::window_tint`].
+        set_window_tint(settings.window.background_opacity, cx);
 
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // The window's geometry is only in memory until here; this is the one

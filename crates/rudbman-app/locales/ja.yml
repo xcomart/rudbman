@@ -30,6 +30,7 @@ menu:
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 新しいクエリビルダー
   about: rudbman について
+  check_updates: 更新を確認
   quit: 終了
   connection: 接続
   view: 表示
@@ -538,3 +539,16 @@ context:
   clear_column: 選択リストから外す
   connect: 接続
   edit: 編集…
+
+update:
+  title: 更新があります
+  available: "rudbman %{version} が利用できます。"
+  installed: "現在実行中のバージョンは %{version} です。"
+  update: 更新
+  ignore: このバージョンを無視
+  checking: 更新を確認しています…
+  up_to_date: 最新バージョンです。
+  downloading: ダウンロードしています…
+  installing: インストールしています…
+  failed: 更新に失敗しました。
+  open_release: リリースページを開く

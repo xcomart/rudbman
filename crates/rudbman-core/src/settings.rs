@@ -253,6 +253,18 @@ pub struct AppSettings {
     pub explorer_visible: bool,
     /// Window geometry and background treatment.
     pub window: WindowState,
+    /// Release tag the user asked never to be told about again, e.g. `"v0.2.0"`.
+    ///
+    /// Written by the start-up update check when the user picks "ignore this
+    /// version", and compared against the latest tag verbatim: only that exact
+    /// release is suppressed, so the next one announces itself normally. `None`
+    /// — the default — means nothing has been ignored.
+    ///
+    /// Stored as the tag rather than as a parsed version because the tag is what
+    /// GitHub answers with and what the comparison already has in hand; nothing
+    /// here validates it, since an unrecognisable value can only ever fail to
+    /// match a real tag, which is the harmless direction.
+    pub ignored_update: Option<String>,
     /// Top-level keys this build does not know, kept verbatim.
     ///
     /// Ignoring an unknown key would be enough to *load* a file from a newer
@@ -282,6 +294,7 @@ impl Default for AppSettings {
             explorer_width: DEFAULT_EXPLORER_WIDTH,
             explorer_visible: true,
             window: WindowState::default(),
+            ignored_update: None,
             extra: BTreeMap::new(),
         }
     }
@@ -380,6 +393,9 @@ impl AppSettings {
         // string, which it rejects with a message about the wrong argument.
         self.jvm_extra_args.retain(|arg| !arg.trim().is_empty());
         self.fetch_batch_rows = self.fetch_batch_rows.clamp(1, MAX_FETCH_BATCH_ROWS);
+        // A blank tag would match no release and silence nothing, so it is the
+        // same thing as having ignored none.
+        blank_to_none(&mut self.ignored_update);
         self.window.sanitize();
     }
 }

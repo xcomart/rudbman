@@ -92,7 +92,7 @@ one next to its executable.
   through), drop the quarantine flag and launch normally:
 
   ```sh
-  xattr -d com.apple.quarantine /Applications/rudbman.app
+  xattr -r -d com.apple.quarantine /Applications/rudbman.app
   ```
 - **Linux** — unpack the `.tar.gz` and run `./install.sh`. It copies the tree
   to `~/.local/share/rudbman`, links it from `~/.local/bin/rudbman`, and

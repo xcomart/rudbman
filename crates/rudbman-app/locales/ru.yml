@@ -30,6 +30,7 @@ menu:
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Новый конструктор запросов
   about: О программе rudbman
+  check_updates: Проверить обновления
   quit: Выход
   connection: Подключение
   view: Вид
@@ -538,3 +539,16 @@ context:
   clear_column: Убрать из списка выборки
   connect: Подключиться
   edit: Изменить…
+
+update:
+  title: Доступно обновление
+  available: "Доступна версия rudbman %{version}."
+  installed: "Сейчас у вас запущена версия %{version}."
+  update: Обновить
+  ignore: Игнорировать эту версию
+  checking: Проверка обновлений…
+  up_to_date: У вас последняя версия.
+  downloading: Загрузка…
+  installing: Установка…
+  failed: Не удалось выполнить обновление.
+  open_release: Открыть страницу выпуска

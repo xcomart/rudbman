@@ -30,6 +30,7 @@ menu:
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 새 쿼리 빌더
   about: rudbman 정보
+  check_updates: 업데이트 확인
   quit: 종료
   connection: 연결
   view: 보기
@@ -538,3 +539,16 @@ context:
   clear_column: 조회 목록에서 제거
   connect: 연결
   edit: 편집…
+
+update:
+  title: 업데이트 있음
+  available: "rudbman %{version}을(를) 사용할 수 있습니다."
+  installed: "현재 실행 중인 버전은 %{version}입니다."
+  update: 업데이트
+  ignore: 이 버전 무시
+  checking: 업데이트를 확인하는 중…
+  up_to_date: 최신 버전입니다.
+  downloading: 다운로드 중…
+  installing: 설치하는 중…
+  failed: 업데이트에 실패했습니다.
+  open_release: 릴리스 페이지 열기
