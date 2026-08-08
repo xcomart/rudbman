@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -380,6 +381,7 @@ class ExtractJobTest {
         // The handle is gone with the session, which is what keeps an abandoned
         // job from outliving the connection it was reading through.
         assertFalse(H2.call(Ops.JOB_POLL, job, 0, null).ok);
+        awaitFileReleased(out);
     }
 
     // --------------------------------------------------------------- helpers
@@ -422,6 +424,37 @@ class ExtractJobTest {
             Thread.sleep(2);
         }
         throw new AssertionError("job " + job + " produced no rows");
+    }
+
+    /**
+     * Waits for the worker to let go of an output file, by deleting it.
+     *
+     * <p>Closing a session cancels its jobs without joining their threads, so the
+     * worker only closes the file some time after the call that cancelled it has
+     * returned. Windows will not delete a file that is still open, and
+     * {@code @TempDir} cleanup runs the moment the test method ends, so a test
+     * that walks away from a live worker fails in teardown instead of in an
+     * assertion. Deleting the file is both the wait and the proof it is over:
+     * it only succeeds once the handle is gone.
+     *
+     * @param out the file the job was writing
+     */
+    private static void awaitFileReleased(Path out) throws Exception {
+        for (int i = 0; i < 1200; i++) {
+            try {
+                if (Files.deleteIfExists(out)) {
+                    return;
+                }
+                // Nothing to delete yet. The worker opens the file before it ever
+                // looks at the cancel flag, so an absent file means it has not
+                // got that far and there is still a handle coming.
+            } catch (IOException stillOpen) {
+                // Windows, refusing to unlink an open file. Give the worker the
+                // moment it needs to reach the end of its try-with-resources.
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("worker never released " + out);
     }
 
     private static JsonObject obj(String schema, String name) {

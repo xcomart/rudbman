@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# `vendor/gpui` is a patched dependency, not a member: it keeps its own
-# manifest and must not inherit workspace settings.
-exclude = ["vendor/gpui"]
+# The `vendor/*` directories are patched dependencies, not members: they keep
+# their own manifests and must not inherit workspace settings.
+exclude = ["vendor/gpui", "vendor/proc-macro-error2"]
 
 # The vendored gpui carries logman's patches, byte for byte. They are marked
 # `LOGMAN PATCH` and must keep that marker: the two vendored trees are meant to
@@ -34,8 +34,19 @@ exclude = ["vendor/gpui"]
 #
 # crates.io has no newer gpui (0.2.2 is current), so vendoring is the only
 # route. Delete these patches and `vendor/gpui` once a release carries them.
+#
+# proc-macro-error2 2.0.1 (pulled in by gpui through stacksafe 0.1) re-exports
+# the private `extern crate proc_macro`, which E0365 is phasing out — every
+# build prints a future-incompatibility report for it, and a future rustc will
+# refuse the crate outright. Upstream has published no fixed release, so
+# `vendor/proc-macro-error2` carries the compiler's own suggested one-line fix
+# (`pub extern crate`), marked `LOGMAN PATCH` in `src/lib.rs`. Delete the patch
+# and the vendor directory when either end moves: a proc-macro-error2 release
+# with the fix, or a gpui whose stacksafe (1.x drops the dependency, but its
+# API is not a drop-in for gpui 0.2.2) no longer needs it.
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
+proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 
 [workspace.package]
 version = "0.1.3"
