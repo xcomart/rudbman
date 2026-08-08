@@ -30,6 +30,7 @@ menu:
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Neuer Abfrage-Builder
   about: Über rudbman
+  check_updates: Nach Updates suchen
   quit: Beenden
   connection: Verbindung
   view: Ansicht
@@ -538,3 +539,16 @@ context:
   clear_column: Aus der Auswahlliste entfernen
   connect: Verbinden
   edit: Bearbeiten…
+
+update:
+  title: Update verfügbar
+  available: "rudbman %{version} ist verfügbar."
+  installed: "Sie verwenden derzeit %{version}."
+  update: Aktualisieren
+  ignore: Diese Version ignorieren
+  checking: Suche nach Updates…
+  up_to_date: Sie verwenden die neueste Version.
+  downloading: Wird heruntergeladen…
+  installing: Wird installiert…
+  failed: Das Update ist fehlgeschlagen.
+  open_release: Release-Seite öffnen

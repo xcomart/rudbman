@@ -82,17 +82,28 @@ bitflags = "2"
 tempfile = "3"
 libc = "0.2"
 
-# --- HTTP: the driver downloader, and nothing else ---
-# Maven Central is the only host rudbman ever fetches from, and it is fetched
-# from a background thread that is already blocking on a file write — so a
-# synchronous client is the right shape and an async runtime would be a second
-# one beside the tunnel's. `ureq` is the smallest such client that still speaks
-# TLS. `rustls` is pinned to the `ring` provider for the same reason `russh` is:
-# `aws-lc-rs` needs NASM to build on Windows.
+# --- HTTP: the driver downloader and the update check ---
+# Maven Central and the GitHub releases API are the only hosts rudbman ever
+# fetches from, and both are fetched from a background thread that is already
+# blocking on a file write — so a synchronous client is the right shape and an
+# async runtime would be a second one beside the tunnel's. `ureq` is the
+# smallest such client that still speaks TLS. `rustls` is pinned to the `ring`
+# provider for the same reason `russh` is: `aws-lc-rs` needs NASM to build on
+# Windows. `gzip` is the update check's addition — the GitHub API answers with
+# compressed JSON, and without it the body arrives unreadable.
 ureq = { version = "3", default-features = false, features = [
     "rustls",
     "_ring",
+    "gzip",
 ] }
+
+# --- SHA-256, for the self-updater.  The GitHub releases API publishes a
+# `digest` field for every asset, and an updater that overwrites its own
+# installation should check it.  `ring` is already in the tree twice over — it
+# is the crypto backend both `russh` and `ureq`'s `rustls` resolve to — so
+# naming it directly adds a dependency edge and not a crate: the version below
+# is the one the lockfile already pins for them. ---
+ring = "0.17"
 
 # --- localization ---
 # `rust-i18n` compiles `crates/rudbman-app/locales/*.yml` into the binary, so

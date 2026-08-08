@@ -58,6 +58,10 @@ menu:
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: New query builder
   about: About rudbman
+  # Both the in-app row and the macOS menu-bar item, and also the title of the
+  # dialog it opens — so no trailing ellipsis, which would read oddly as a
+  # heading.
+  check_updates: Check for updates
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
   # act on connections.
@@ -827,3 +831,34 @@ context:
   # does; the ellipsis on "edit" is the connection dialog it opens.
   connect: Connect
   edit: Edit…
+
+# The update dialog, in all of its states: the announcement the start-up check
+# puts up when GitHub has a newer release than the running build, the manual
+# check from the menu, and the download that installs it. Both version numbers
+# are values, not words, and the name `rudbman` is not translated either.
+update:
+  title: Update available
+  available: "rudbman %{version} is available."
+  # Second line, quieter than the first: which build the user is looking at
+  # right now, so the offer means something without them going to the about box.
+  installed: "You are currently running %{version}."
+  # Downloads the release built for this platform and restarts into it. Falls
+  # back to opening the release page where the project publishes no such build.
+  update: Update
+  # Never mention *this* release again. A later one still announces itself, so
+  # the wording has to name the version rather than promise silence in general.
+  ignore: Ignore this version
+  # A check the user asked for, before the answer arrives. The start-up check
+  # shows nothing at all until it has one.
+  checking: Checking for updates…
+  # The answer no other path ever shows: the start-up check stays silent here.
+  up_to_date: You are up to date.
+  # The two halves of an install, shown above the progress bar.
+  downloading: Downloading…
+  installing: Installing…
+  # Heading of the error state. The detail printed underneath it comes from the
+  # operating system, from `tar`, or from the server, and is not translated.
+  failed: The update failed.
+  # The way out of the error state, and of a release with no build for this
+  # platform: the browser, and the user takes it from there.
+  open_release: Open the release page

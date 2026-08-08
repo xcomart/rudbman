@@ -30,6 +30,7 @@ menu:
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 新建查询构建器
   about: 关于 rudbman
+  check_updates: 检查更新
   quit: 退出
   connection: 连接
   view: 视图
@@ -538,3 +539,16 @@ context:
   clear_column: 从选择列表移除
   connect: 连接
   edit: 编辑…
+
+update:
+  title: 有可用更新
+  available: "rudbman %{version} 已发布。"
+  installed: "当前运行的是 %{version}。"
+  update: 更新
+  ignore: 忽略此版本
+  checking: 正在检查更新…
+  up_to_date: 已是最新版本。
+  downloading: 正在下载…
+  installing: 正在安装…
+  failed: 更新失败。
+  open_release: 打开发布页面
