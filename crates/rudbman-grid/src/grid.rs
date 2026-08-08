@@ -55,7 +55,7 @@ use rudbman_ui::scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
     scrolled,
 };
-use rudbman_ui::theme::{Theme, theme};
+use rudbman_ui::theme::{Theme, theme, window_translucent};
 use unicode_width::UnicodeWidthStr;
 
 use crate::copy::{CopyFormat, DEFAULT_INSERT_TABLE, copy_payload};
@@ -1653,7 +1653,14 @@ impl<S: GridSource> Render for GridView<S> {
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(palette.background)
+            // Nothing, while the window is translucent. The pane behind the grid
+            // already tints these same pixels with the very same colour, so an
+            // opaque fill here would hide the blur and a tinted one would
+            // saturate the surface alpha back to opaque; see
+            // `app_settings::window_tint`. The header, the row stripes and the
+            // selection go on painting — they are accents over the background,
+            // not the background.
+            .when(!window_translucent(cx), |grid| grid.bg(palette.background))
             .text_size(px(13.))
             .text_color(palette.text)
             .on_action(cx.listener(Self::move_up))

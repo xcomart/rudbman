@@ -85,7 +85,7 @@ use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
     ThemeRegistry, WindowControlIcons, WindowControls, hide_later, hide_now, modal, scroll_to,
-    scrolled, set_editor_theme, set_theme, theme, theme_store,
+    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use uuid::Uuid;
 
@@ -2488,6 +2488,11 @@ impl Workspace {
                 gpui::WindowDecorations::Server
             });
         }
+        // Paired with the call below, and never with a preview: the leaf crates
+        // read this to decide whether to paint their own background, and the
+        // answer is only right once the surface itself permits alpha. Ahead of
+        // the repaint, so the next frame already draws under the new answer.
+        set_window_tint(settings.window.background_opacity, cx);
         cx.refresh_windows();
         window.set_background_appearance(window_appearance(&settings.window));
         // After the background appearance, never before: on Windows that call
@@ -3375,16 +3380,17 @@ impl Workspace {
                 .on_drag(DraggedExplorer, |_, _, _, cx| cx.new(|_| gpui::Empty))
         });
 
+        // The row paints no fill of its own. Its children tile it, and each of
+        // them tints its own share: the explorer's surface under the sidebar, the
+        // background below over the work area. Side by side rather than stacked
+        // is exactly what [`app_settings::window_tint`] requires, and it is what
+        // lets the blur behind the window carry on under the sidebar too.
         div()
             .flex()
             .flex_row()
             .flex_grow()
             .min_w_0()
             .min_h_0()
-            // The only fill covering the body, which is what makes it the one
-            // place the window opacity may be applied; see
-            // [`app_settings::window_tint`].
-            .bg(app_settings::window_tint(theme.background, cx))
             // Measured against this box rather than tracked as a delta, exactly
             // as a split divider is: the width follows the pointer however far
             // the gesture wandered.
@@ -3395,10 +3401,21 @@ impl Workspace {
             ))
             .children(sidebar)
             .children(handle)
-            .child(div().flex().flex_1().min_w_0().min_h_0().child(match work {
-                Some((root, chrome)) => render_pane(root, &chrome, cx),
-                None => self.render_welcome(&theme, cx),
-            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    // Everything the row is not already covering with the
+                    // sidebar's own fill, and so the one fill over these pixels;
+                    // see [`app_settings::window_tint`].
+                    .bg(app_settings::window_tint(theme.background, cx))
+                    .child(match work {
+                        Some((root, chrome)) => render_pane(root, &chrome, cx),
+                        None => self.render_welcome(&theme, cx),
+                    }),
+            )
             .into_any_element()
     }
 
@@ -3419,8 +3436,8 @@ impl Workspace {
     /// once it does not — [`centered_scroll`] says why those are one
     /// arrangement — under the same overlay bar the tab strip wears.
     ///
-    /// It paints no fill of its own. The body behind it already carries the one
-    /// tinted fill the window permits, and a second one here would compose back
+    /// It paints no fill of its own. The work area behind it already carries the
+    /// tinted fill for these pixels, and a second one here would compose back
     /// to opaque; see [`app_settings::window_tint`].
     fn render_welcome(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity();
@@ -4142,8 +4159,8 @@ fn render_pane(
 /// window with no connection at all has exactly one next step and
 /// [`Workspace::render_welcome`] offers it as a button.
 ///
-/// It paints no fill of its own. The body behind it already carries the one
-/// tinted fill the window permits, and a second one here would compose back to
+/// It paints no fill of its own. The work area behind it already carries the
+/// tinted fill for these pixels, and a second one here would compose back to
 /// opaque; see [`app_settings::window_tint`].
 fn render_placeholder(theme: &Theme) -> AnyElement {
     let (title, hint) = (ts!("empty.connected_title"), ts!("empty.connected_hint"));
@@ -4898,6 +4915,10 @@ fn main() {
         // name themes of the user's own.
         theme_store::reload(cx);
         apply_themes(&settings, cx);
+        // The same value `window_appearance` below reads, handed to the widget
+        // layer so the result grid and the ERD canvases know whether to paint a
+        // background of their own; see [`app_settings::window_tint`].
+        set_window_tint(settings.window.background_opacity, cx);
 
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // The window's geometry is only in memory until here; this is the one

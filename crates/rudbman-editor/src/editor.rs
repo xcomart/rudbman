@@ -1885,6 +1885,13 @@ impl Render for EditorView {
             .flex_grow()
             .size_full()
             .overflow_hidden()
+            // Opaque even over a translucent window, unlike the result grid and
+            // the ERD canvases: code is read a character at a time and a desktop
+            // showing through behind it is exactly the wrong place for contrast to
+            // go. Safe to paint unconditionally because it is *opaque* — the alpha
+            // saturation that stops two tinted fills from stacking (see
+            // `app_settings::window_tint`) is not a hazard for a fill that means
+            // to hide what is under it.
             .bg(palette.background)
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))

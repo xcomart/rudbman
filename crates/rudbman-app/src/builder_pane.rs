@@ -847,9 +847,13 @@ impl Render for BuilderPane {
         // canvas widget's own mouse handling is undisturbed, because the
         // release that ends a drag has no press of its own behind it.
         //
-        // The resting border is the window's own background rather than no
-        // border at all, so that lighting it up while something is held over
-        // the canvas moves no pixel of what is inside.
+        // The resting border is drawn transparent rather than dropped, so that
+        // lighting it up while something is held over the canvas moves no pixel
+        // of what is inside. Transparent and not the chrome background it used to
+        // be: whatever is behind the border is that colour already, so the two
+        // look identical while the window is opaque — and while it is
+        // translucent, a background-coloured border would be an opaque hairline
+        // around a see-through canvas. See `app_settings::window_tint`.
         let empty = self.tables.is_empty();
         let accent = chrome.accent;
         let canvas = div()
@@ -858,7 +862,7 @@ impl Render for BuilderPane {
             .min_w_0()
             .min_h_0()
             .border_1()
-            .border_color(chrome.background)
+            .border_color(gpui::transparent_black())
             .on_drop::<DraggedObject>(cx.listener(|_pane, dragged: &DraggedObject, _window, cx| {
                 cx.emit(BuilderPaneEvent::TableDropped(dragged.0.clone()));
             }))

@@ -29,8 +29,16 @@
 //! 5. the bracket pair;
 //! 6. the text, with the composing run underlined;
 //! 7. the caret;
-//! 8. the gutter, which is opaque and sits over the horizontally scrolled text
-//!    rather than beside it.
+//! 8. the line numbers, in the gutter.
+//!
+//! Layers 1 to 7 are drawn under a content mask that stops at the gutter's inner
+//! edge. Horizontally scrolled text — and a selection over it — runs left past
+//! that edge, and the mask is what keeps it out of the gutter. Clipping rather
+//! than covering, which the gutter used to do with an opaque quad painted over
+//! the text afterwards: a mask says only *where the text may be seen*, and so
+//! assumes nothing about what fills the gutter behind the numbers or what colour
+//! it is. Covering had to be right about both, and had to be redrawn whenever
+//! either changed.
 
 use std::ops::Range;
 
@@ -80,8 +88,6 @@ pub struct PrepaintState {
     below: Vec<PaintQuad>,
     /// The caret, when it is visible.
     caret: Option<PaintQuad>,
-    /// The gutter's background.
-    gutter_fill: PaintQuad,
     /// Width of the gutter.
     gutter: Pixels,
     /// Height of one line.
@@ -295,13 +301,6 @@ impl Element for EditorElement {
             numbers,
             below,
             caret,
-            gutter_fill: fill(
-                Bounds::from_corners(
-                    bounds.origin,
-                    point(bounds.left() + gutter, bounds.bottom()),
-                ),
-                palette.background,
-            ),
             gutter,
             line_height,
             scroll,
@@ -336,29 +335,44 @@ impl Element for EditorElement {
         let scroll = prepaint.scroll;
         let gutter = prepaint.gutter;
 
+        // The body minus the gutter. Everything that belongs to the text is
+        // clipped to it, because a horizontally scrolled line — and a selection
+        // over it — extends to the left of it, and the gutter is not where it may
+        // be seen. gpui intersects a nested mask with the one it sits inside, so
+        // the body mask around it still holds the other three edges.
+        let text_area = Bounds::from_corners(
+            point(bounds.left() + gutter, bounds.top()),
+            bounds.bottom_right(),
+        );
+
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            for quad in prepaint.below.drain(..) {
-                window.paint_quad(quad);
-            }
+            window.with_content_mask(Some(ContentMask { bounds: text_area }), |window| {
+                for quad in prepaint.below.drain(..) {
+                    window.paint_quad(quad);
+                }
 
-            let text_left = bounds.left() + gutter - scroll.x;
-            for (line, shaped) in &prepaint.lines {
-                let top = bounds.top()
-                    + line_height * ((*line as f32) - f32::from(scroll.y) / f32::from(line_height));
-                shaped
-                    .paint(point(text_left, top), line_height, window, cx)
-                    .ok();
-            }
+                let text_left = bounds.left() + gutter - scroll.x;
+                for (line, shaped) in &prepaint.lines {
+                    let top = bounds.top()
+                        + line_height
+                            * ((*line as f32) - f32::from(scroll.y) / f32::from(line_height));
+                    shaped
+                        .paint(point(text_left, top), line_height, window, cx)
+                        .ok();
+                }
 
-            if focused
-                && !read_only
-                && let Some(caret) = prepaint.caret.take()
-            {
-                window.paint_quad(caret);
-            }
+                if focused
+                    && !read_only
+                    && let Some(caret) = prepaint.caret.take()
+                {
+                    window.paint_quad(caret);
+                }
+            });
 
-            // The gutter last, and opaque: the text scrolls under it.
-            window.paint_quad(prepaint.gutter_fill.clone());
+            // The line numbers are the only thing drawn in the gutter, and so the
+            // only thing outside the mask above. Nothing here fills the gutter
+            // behind them — the editor's own surface has already done that — which
+            // is the whole economy of clipping instead of covering.
             for (index, number) in prepaint.numbers.iter().enumerate() {
                 let line = prepaint.first_line + index;
                 let top = bounds.top()

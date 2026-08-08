@@ -1025,6 +1025,76 @@ pub fn set_theme(theme: Theme, cx: &mut App) {
     cx.set_global(theme);
 }
 
+/// The window's configured background opacity, `1.0` meaning fully opaque.
+///
+/// A [`Global`] for the same reason [`Theme`] is one, and for one more: the
+/// readers that need it most are leaves. The result grid and the ERD and
+/// query-builder canvases each paint a full-bleed background and each has to know
+/// whether the window is translucent before doing so, and not one of them knows
+/// what a settings file is. They already reach for [`theme`] exactly this way.
+/// (The SQL editor is not among them: it paints its background opaque either way,
+/// for legibility.)
+#[derive(Debug, Clone, Copy)]
+struct WindowTint(f32);
+
+impl Global for WindowTint {}
+
+/// The installed window opacity, or `1.0` when the shell has not set one.
+fn window_opacity(cx: &App) -> f32 {
+    cx.try_global::<WindowTint>().map_or(1.0, |tint| tint.0)
+}
+
+/// Installs the window's background opacity.
+///
+/// The shell calls this at exactly the moments it hands the platform surface a
+/// new background appearance — start-up, and a settings *save*. Never for a
+/// preview; [`window_tint`] says why.
+pub fn set_window_tint(opacity: f32, cx: &mut App) {
+    cx.set_global(WindowTint(opacity));
+}
+
+/// Whether the window is drawn with a translucent or blurred background.
+///
+/// What a full-bleed content fill asks before painting itself *at all*. The body
+/// behind such a fill already carries the one tinted fill the window permits, so
+/// anything covering the same pixels again — tinted or opaque — is what would
+/// hide the desktop or the blur behind it. See [`window_tint`] for why a second
+/// tinted fill is no answer either.
+///
+/// A view that would rather be legible than see-through simply does not ask, and
+/// paints itself opaque; the SQL editor is the one that made that choice.
+pub fn window_translucent(cx: &App) -> bool {
+    window_opacity(cx) < 1.0
+}
+
+/// Applies the window's background opacity to a background fill.
+///
+/// **At most one such fill may cover any given pixel**, and between them they
+/// must leave no pixel of the body uncovered. The window surface starts out
+/// fully transparent, so a single translucent fill lets the desktop (or the
+/// acrylic blur behind the window) show through. A second one on top does not:
+/// gpui's Windows renderer blends the alpha channel additively
+/// (`SrcBlendAlpha = ONE, DestBlendAlpha = ONE`), so two fills of, say, 0.75 and
+/// 0.62 saturate the surface alpha at 1.0 and the window goes opaque again. That
+/// is why chrome bands paint their surface untinted, and why a content fill over
+/// the body stops painting itself rather than tinting itself — see
+/// [`window_translucent`].
+///
+/// Only the shell may call this, and only for a fill it has reasoned about; the
+/// wrapper `app_settings::window_tint` is that call site and carries the rest of
+/// the argument. Widgets in this crate ask [`window_translucent`] instead.
+pub fn window_tint(color: Hsla, cx: &App) -> Hsla {
+    let opacity = window_opacity(cx);
+    if opacity < 1.0 {
+        Hsla {
+            a: opacity,
+            ..color
+        }
+    } else {
+        color
+    }
+}
+
 /// Returns `color` with its lightness shifted by `delta`, clamped to `[0, 1]`.
 ///
 /// Used by widgets to derive hover / pressed shades from a base color without

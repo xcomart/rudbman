@@ -73,6 +73,7 @@ use gpui::{
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session};
 use rudbman_ui::{ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView, theme};
 
+use crate::app_settings;
 use crate::i18n::ts;
 use crate::icons;
 
@@ -1035,7 +1036,11 @@ impl Render for Explorer {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .bg(chrome.surface)
+            // Tinted, because this is the only fill over the sidebar: the body's
+            // own stops at the work area beside it rather than reaching under
+            // here. Left untinted, the blur behind the window would stop dead at
+            // the sidebar's edge; see [`app_settings::window_tint`].
+            .bg(app_settings::window_tint(chrome.surface, cx))
             .border_r_1()
             .border_color(chrome.border)
             .child(

@@ -39,7 +39,7 @@ use gpui::{
 use rudbman_ui::scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
 };
-use rudbman_ui::theme::{Theme, theme};
+use rudbman_ui::theme::{Theme, theme, window_translucent};
 
 use crate::canvas::{
     BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
@@ -753,7 +753,15 @@ impl Render for BuilderView {
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(palette.background)
+            // Nothing, while the window is translucent. The pane behind the
+            // canvas already tints these same pixels with the very same colour,
+            // and a second fill over them would either hide the blur or saturate
+            // the surface alpha back to opaque; see `app_settings::window_tint`.
+            // The boxes and the joins the canvas draws are unaffected — they sit
+            // over the background rather than being it.
+            .when(!window_translucent(cx), |canvas| {
+                canvas.bg(palette.background)
+            })
             .on_action(cx.listener(Self::zoom_in))
             .on_action(cx.listener(Self::zoom_out))
             .on_action(cx.listener(Self::zoom_actual))

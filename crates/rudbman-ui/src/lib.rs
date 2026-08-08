@@ -57,7 +57,7 @@ pub use tab_bar::{TabBar, TabItem, TabStatus};
 pub use text_input::TextInput;
 pub use theme::{
     CustomUiTheme, Theme, ThemeColors, ThemeEntry, ThemeFile, ThemeRegistry, parse_hex, set_theme,
-    theme, to_hex,
+    set_window_tint, theme, to_hex, window_tint, window_translucent,
 };
 pub use tooltip::tooltip_label;
 pub use tree::{ChildState, TreeEvent, TreeRow, TreeRowInfo, TreeSource, TreeView};
@@ -69,12 +69,15 @@ use gpui::App;
 ///
 /// Both registries are installed empty and both palettes are set to their
 /// defaults, so that a view rendered before [`theme_store::reload`] has read the
-/// user's files still has colors to draw with.
+/// user's files still has colors to draw with. The window opacity defaults to
+/// fully opaque for the same reason: a view drawn before the shell has said what
+/// the window looks like still has an answer, and it is the one that paints.
 pub fn init(cx: &mut App) {
     ThemeRegistry::init(cx);
     EditorThemeRegistry::init(cx);
     set_theme(Theme::dark(), cx);
     set_editor_theme(EditorTheme::default(), cx);
+    set_window_tint(1.0, cx);
     TextInput::init(cx);
     tree::init(cx);
 }

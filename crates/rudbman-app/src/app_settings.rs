@@ -294,32 +294,50 @@ pub fn save(cx: &App) {
 
 /// Applies the configured window opacity to a background fill.
 ///
-/// Only a fill that covers the window edge to edge may use this, and **at most
-/// one such fill may cover any given pixel**. The window surface starts out
+/// **At most one such fill may cover any given pixel**, and between them they
+/// must leave no pixel of the body uncovered. The window surface starts out
 /// fully transparent, so a single translucent fill lets the desktop (or the
 /// acrylic blur behind the window) show through. A second one on top does not:
 /// gpui's Windows renderer blends the alpha channel additively
 /// (`SrcBlendAlpha = ONE, DestBlendAlpha = ONE`), so two fills of, say, 0.75 and
 /// 0.62 saturate the surface alpha at 1.0 and the window goes opaque. That is
-/// why the toolbar and the status bar paint their surface untinted and only the
-/// body — one fill, edge to edge — goes through here.
+/// why the toolbar and the status bar paint their surface untinted.
 ///
-/// Reads [`current`] rather than [`effective`], and so does not follow a
-/// preview. The fill is only half of what makes a window translucent: the other
-/// half is the platform surface being told to permit alpha, which happens in
+/// Two fills go through here, and they tile the body rather than stack: the
+/// explorer's surface under the sidebar, and the body's background over the work
+/// area beside it. The row holding the two paints nothing itself, so neither one
+/// ever lands on a pixel the other already has. Splitting it that way is what
+/// lets the blur carry on behind the sidebar instead of stopping at its edge.
+///
+/// What sits *over* the work area's fill would each be a second fill on the same
+/// pixels, so while the window is translucent the result grid and the ERD and
+/// query-builder canvases paint no background at all: they ask
+/// [`rudbman_ui::window_translucent`] and skip it, leaving the fill below as the
+/// only tinted one. Tinting them instead of skipping is the trap this whole
+/// comment is about.
+///
+/// The SQL editor is the deliberate exception and stays opaque, translucent
+/// window or not: code is read a character at a time and a desktop behind it is
+/// the wrong place for contrast to go. It costs the blur the editor's share of
+/// the window, which is the trade. Nothing about the additive alpha above
+/// constrains it — an *opaque* fill over a tinted one has no saturation problem,
+/// it simply wins.
+///
+/// The opacity itself lives in a widget-layer global, so that the leaves which
+/// have to agree with this can reach it; the shell pushes it there with
+/// [`rudbman_ui::set_window_tint`] at start-up and on a settings *save*. Which
+/// means this follows neither [`current`] nor [`effective`] directly, and in
+/// particular does not follow a preview — deliberately. The fill is only half of
+/// what makes a window translucent: the other half is the platform surface being
+/// told to permit alpha, which happens in
 /// [`gpui::Window::set_background_appearance`] and only when the settings are
 /// saved. Tinting ahead of that would compose against an opaque surface and
 /// merely darken the window, which is a worse answer than not previewing at all.
 pub fn window_tint(color: Hsla, cx: &App) -> Hsla {
-    let opacity = current(cx).window.background_opacity;
-    if opacity < 1.0 {
-        Hsla {
-            a: opacity,
-            ..color
-        }
-    } else {
-        color
-    }
+    // Deferred to the widget layer, which is where the leaves that have to agree
+    // with this can reach it; `current` and the global are set from the same
+    // value at the same moment.
+    rudbman_ui::window_tint(color, cx)
 }
 
 #[cfg(test)]
