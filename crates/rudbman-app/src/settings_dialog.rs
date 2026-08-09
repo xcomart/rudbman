@@ -10,7 +10,7 @@
 //! # Live preview
 //!
 //! Colours and fonts are shown before they are saved, because judging a palette
-//! from a card is not the same as living in it. The dialog does that without
+//! from a swatch is not the same as living in it. The dialog does that without
 //! persisting anything: every change to one of those controls publishes the form
 //! through [`crate::app_settings::set_preview`] and emits
 //! [`SettingsDialogEvent::Previewed`], and the shell re-applies the palettes from
@@ -35,27 +35,28 @@ use gpui::{
 };
 use rudbman_core::{AppSettings, TitlebarStyle};
 use rudbman_ui::{
-    Button, ButtonVariant, Checkbox, DraggedThumb, EditorThemePicker, EditorThemeRegistry,
-    EditorThemeSwatch, Scrollbar, ScrollbarAxis, ScrollbarState, Segmented, Select, TextInput,
-    Theme, ThemeRegistry, form_row, hide_later, hide_now, modal, scroll_to, scrolled, theme,
-    theme_store,
+    Button, ButtonVariant, Checkbox, DraggedThumb, EditorTheme, EditorThemeRegistry, SchemePreview,
+    SchemeSelect, SchemeSwatch, Scrollbar, ScrollbarAxis, ScrollbarState, Segmented, Select,
+    TextInput, Theme, ThemeRegistry, form_row, hide_later, hide_now, modal, scroll_to, scrolled,
+    theme, theme_store,
 };
 
 use crate::app_settings;
 use crate::i18n::{self, ts};
 use crate::theme_editor::{Catalog, CatalogFile, ThemeEditor, ThemeEditorEvent};
-use crate::theme_picker::{ThemePicker, ThemeSwatch};
 
-/// The dialog's three scrolling surfaces, and the element id of each one's
+/// The dialog's five scrolling surfaces, and the element id of each one's
 /// overlay scroll indicator.
 ///
-/// One drag listener answers all three, so it has to be able to say which bar a
-/// drag belongs to; these ids are how, and pairing each with the handle and the
-/// state it goes with keeps the three from being wired up crosswise.
-const SCROLLBARS: [(&str, Surface); 3] = [
+/// One drag listener answers all of them, so it has to be able to say which bar
+/// a drag belongs to; these ids are how, and pairing each with the handle and
+/// the state it goes with keeps them from being wired up crosswise.
+const SCROLLBARS: [(&str, Surface); 5] = [
     ("settings-body-scrollbar", Surface::Body),
     ("settings-font-scrollbar", Surface::Font),
     ("settings-language-scrollbar", Surface::Language),
+    ("settings-ui-theme-scrollbar", Surface::UiTheme),
+    ("settings-editor-theme-scrollbar", Surface::EditorTheme),
 ];
 
 /// Which of the dialog's scrolling surfaces is meant.
@@ -67,6 +68,10 @@ enum Surface {
     Font,
     /// The open language list.
     Language,
+    /// The open chrome theme list.
+    UiTheme,
+    /// The open editor theme list.
+    EditorTheme,
 }
 
 /// Width of the dialog panel.
@@ -74,16 +79,6 @@ const DIALOG_WIDTH: f32 = 760.;
 
 /// Height at which the form body starts scrolling.
 const BODY_MAX_HEIGHT: f32 = 520.;
-
-/// Cards per row in the chrome theme picker.
-const THEME_COLUMNS: usize = 3;
-
-/// Cards per row in the editor theme picker.
-///
-/// Two rather than three: each card carries a whole statement, and a statement
-/// needs the width. The widget's own default, spelled out here so that the two
-/// pickers in one section read as a deliberate pair.
-const EDITOR_THEME_COLUMNS: usize = 2;
 
 /// Segments of the title bar style picker, in [`TitlebarStyle`] order.
 ///
@@ -274,38 +269,71 @@ struct CatalogActions {
     status: Option<SharedString>,
 }
 
-/// The chrome themes as picker entries, each previewing its own window.
-fn ui_theme_swatches(cx: &App) -> Vec<ThemeSwatch> {
+/// The chrome themes as dropdown entries.
+///
+/// The pill previews the page it paints, the text on it, and the three hues a
+/// palette is actually argued about — the accent and the two status colors —
+/// which is as much of a chrome theme as a line of a dropdown can honestly show.
+fn ui_theme_swatches(cx: &App) -> Vec<SchemeSwatch> {
     ThemeRegistry::all(cx)
         .into_iter()
         .map(|entry| {
             let palette = ThemeRegistry::resolve(&entry.id, cx);
-            ThemeSwatch::new(entry.id, entry.name, palette)
+            SchemeSwatch::new(entry.id, entry.name).preview(SchemePreview {
+                background: palette.background,
+                foreground: palette.text,
+                accents: vec![palette.accent, palette.success, palette.danger],
+            })
         })
         .collect()
 }
 
-/// The editor themes as picker entries, each previewing its own statement.
-fn editor_theme_swatches(cx: &App) -> Vec<EditorThemeSwatch> {
+/// The editor themes as dropdown entries.
+///
+/// The four token colors a reader tells apart first — keyword, string, number
+/// and comment — on the editor's own page. A syntax palette really wants to be
+/// judged in arrangement, which is what [`rudbman_ui::EditorThemePicker`] is
+/// for and what the theme editor still shows; a settings row that has to fit
+/// beside a dozen other settings gets the hues and the contrast, which is
+/// enough to choose between themes by name.
+fn editor_theme_swatches(cx: &App) -> Vec<SchemeSwatch> {
     EditorThemeRegistry::all(cx)
         .into_iter()
         .map(|entry| {
             let palette = EditorThemeRegistry::resolve(&entry.id, cx);
-            EditorThemeSwatch::new(entry.id, entry.name).preview(palette)
+            SchemeSwatch::new(entry.id, entry.name).preview(editor_preview(&palette))
         })
         .collect()
 }
 
+/// The pill colors of one editor palette.
+fn editor_preview(palette: &EditorTheme) -> SchemePreview {
+    SchemePreview {
+        background: palette.background,
+        foreground: palette.foreground,
+        accents: vec![
+            palette.keyword,
+            palette.string,
+            palette.number,
+            palette.comment,
+        ],
+    }
+}
+
 /// Which of the dialog's dropdown lists is currently showing.
 ///
-/// A single field rather than one flag per dropdown, so that the two cannot be
-/// open at once — their lists are drawn deferred and would overlap.
+/// A single field rather than one flag per dropdown, so that no two can be open
+/// at once — their lists are drawn deferred and would overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenList {
     /// The interface language picker.
     Language,
     /// The editor font picker.
     Font,
+    /// The chrome theme picker.
+    UiTheme,
+    /// The editor theme picker.
+    EditorTheme,
 }
 
 /// Severity of the message strip at the bottom of the dialog.
@@ -375,6 +403,10 @@ pub struct SettingsDialog {
     font_scrollbar: ScrollbarState,
     /// Whether the language list's overlay scroll indicator is on screen.
     language_scrollbar: ScrollbarState,
+    /// Whether the chrome theme list's overlay scroll indicator is on screen.
+    ui_theme_scrollbar: ScrollbarState,
+    /// Whether the editor theme list's overlay scroll indicator is on screen.
+    editor_theme_scrollbar: ScrollbarState,
     /// Index of the section currently scrolled into view. Kept so that tabbing
     /// between two controls of the same section does not re-scroll it.
     visible_section: usize,
@@ -388,6 +420,10 @@ pub struct SettingsDialog {
     font_scroll: ScrollHandle,
     /// Scroll position of the language list, kept for the same reason.
     language_scroll: ScrollHandle,
+    /// Scroll position of the chrome theme list, kept for the same reason.
+    ui_theme_scroll: ScrollHandle,
+    /// Scroll position of the editor theme list, kept for the same reason.
+    editor_theme_scroll: ScrollHandle,
     /// Font size of the interface chrome.
     ui_font_size_input: Entity<TextInput>,
     /// Font size of the SQL editor and the result grid.
@@ -486,11 +522,15 @@ impl SettingsDialog {
             body_scrollbar: ScrollbarState::new(),
             font_scrollbar: ScrollbarState::new(),
             language_scrollbar: ScrollbarState::new(),
+            ui_theme_scrollbar: ScrollbarState::new(),
+            editor_theme_scrollbar: ScrollbarState::new(),
             visible_section: 0,
             open_list: None,
             fonts: Vec::new(),
             font_scroll: ScrollHandle::new(),
             language_scroll: ScrollHandle::new(),
+            ui_theme_scroll: ScrollHandle::new(),
+            editor_theme_scroll: ScrollHandle::new(),
             ui_font_size_input,
             editor_font_size_input,
             opacity_input,
@@ -507,6 +547,8 @@ impl SettingsDialog {
             Surface::Body => (&self.body_scroll, &mut self.body_scrollbar),
             Surface::Font => (&self.font_scroll, &mut self.font_scrollbar),
             Surface::Language => (&self.language_scroll, &mut self.language_scrollbar),
+            Surface::UiTheme => (&self.ui_theme_scroll, &mut self.ui_theme_scrollbar),
+            Surface::EditorTheme => (&self.editor_theme_scroll, &mut self.editor_theme_scrollbar),
         }
     }
 
@@ -516,6 +558,8 @@ impl SettingsDialog {
             Surface::Body => (&self.body_scroll, &self.body_scrollbar),
             Surface::Font => (&self.font_scroll, &self.font_scrollbar),
             Surface::Language => (&self.language_scroll, &self.language_scrollbar),
+            Surface::UiTheme => (&self.ui_theme_scroll, &self.ui_theme_scrollbar),
+            Surface::EditorTheme => (&self.editor_theme_scroll, &self.editor_theme_scrollbar),
         }
     }
 
@@ -678,7 +722,7 @@ impl SettingsDialog {
     /// Highlights `id` in one catalogue's picker and previews it.
     ///
     /// Nothing is persisted; the preview is dropped again if the dialog is
-    /// cancelled, exactly as when the user clicks a card.
+    /// cancelled, exactly as when the user picks a row of the dropdown.
     fn select(&mut self, catalog: Catalog, id: impl Into<SharedString>, cx: &mut Context<Self>) {
         match catalog {
             Catalog::UiTheme => self.ui_theme = id.into(),
@@ -1216,6 +1260,21 @@ impl SettingsDialog {
                     (&self.font_scroll, current)
                 }
                 OpenList::Language => (&self.language_scroll, self.language_index()),
+                // Positions are read off the registries rather than off the
+                // swatches, which keep their ids to themselves; the dropdowns
+                // are built from those same lists, in that same order.
+                OpenList::UiTheme => {
+                    let current = ThemeRegistry::all(cx)
+                        .iter()
+                        .position(|entry| *entry.id == **self.ui_theme);
+                    (&self.ui_theme_scroll, current)
+                }
+                OpenList::EditorTheme => {
+                    let current = EditorThemeRegistry::all(cx)
+                        .iter()
+                        .position(|entry| *entry.id == **self.editor_theme);
+                    (&self.editor_theme_scroll, current)
+                }
             };
             scroll.scroll_to_item(current.unwrap_or(0));
         }
@@ -1358,13 +1417,15 @@ impl SettingsDialog {
             .children(status)
     }
 
-    /// The editor theme picker, or — while the choice follows the chrome theme —
-    /// a single card showing what the app picked instead.
+    /// The editor theme dropdown, or — while the choice follows the chrome theme
+    /// — a dead trigger showing what the app picked instead.
     ///
     /// Disabled rather than merely ignored: the setting says the app decides, so
-    /// offering a grid whose every click would be silently discarded would be a
-    /// lie. Showing the resolved theme keeps the section informative, since that
-    /// answer moves as the chrome theme does.
+    /// offering a working dropdown whose every choice would be silently
+    /// discarded would be a lie. Showing the resolved theme keeps the row
+    /// informative, since that answer moves as the chrome theme does — and the
+    /// disabled trigger is the same line in the same place as the live one, so
+    /// ticking the box shifts nothing on screen but the colours.
     fn render_editor_theme(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
 
@@ -1383,28 +1444,36 @@ impl SettingsDialog {
                 .unwrap_or_else(|| resolved.clone());
             let palette = EditorThemeRegistry::resolve(&resolved, cx);
 
-            return EditorThemePicker::new("settings-editor-theme-followed")
-                .options([EditorThemeSwatch::new(resolved.clone(), name).preview(palette)])
+            return SchemeSelect::new("settings-editor-theme-followed")
+                .options([
+                    SchemeSwatch::new(resolved.clone(), name).preview(editor_preview(&palette))
+                ])
                 .selected(Some(resolved))
-                .columns(1)
-                .when_some(self.font_family.clone(), |picker, family| {
-                    picker.font_family(family)
-                })
+                .disabled(true)
                 .into_any_element();
         }
 
-        EditorThemePicker::new("settings-editor-theme")
+        let bar = self.hovering_scrollbar(SCROLLBARS[4].0, Surface::EditorTheme, cx);
+
+        SchemeSelect::new("settings-editor-theme")
             .options(editor_theme_swatches(cx))
             .selected(Some(self.editor_theme.clone()))
-            .columns(EDITOR_THEME_COLUMNS)
+            .open(self.open_list == Some(OpenList::EditorTheme))
             .tab_index(tab::EDITOR_THEME)
-            .when_some(self.font_family.clone(), |picker, family| {
-                picker.font_family(family)
+            .scroll_handle(self.editor_theme_scroll.clone())
+            .scrollbar(bar)
+            .on_select({
+                let this = this.clone();
+                move |id, _window, cx| {
+                    let id = SharedString::from(id.to_owned());
+                    this.update(cx, |dialog, cx| {
+                        dialog.select(Catalog::EditorTheme, id, cx);
+                    });
+                }
             })
-            .on_select(move |id, _window, cx| {
-                let id = SharedString::from(id.to_owned());
+            .on_open_change(move |open, _window, cx| {
                 this.update(cx, |dialog, cx| {
-                    dialog.select(Catalog::EditorTheme, id, cx);
+                    dialog.set_list_open(OpenList::EditorTheme, open, cx);
                 });
             })
             .into_any_element()
@@ -1414,6 +1483,7 @@ impl SettingsDialog {
     fn render_appearance(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let font_bar = self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Font, cx);
+        let ui_theme_bar = self.hovering_scrollbar(SCROLLBARS[3].0, Surface::UiTheme, cx);
         // Built before the section is assembled, because `section` borrows the
         // context to read the theme and these borrow it mutably to listen.
         let theme_actions = self.render_actions(Catalog::UiTheme, tab::UI_THEME_ACTIONS, cx);
@@ -1421,16 +1491,26 @@ impl SettingsDialog {
             self.render_actions(Catalog::EditorTheme, tab::EDITOR_THEME_ACTIONS, cx);
         let editor_theme = self.render_editor_theme(cx);
 
-        let theme_picker = ThemePicker::new("settings-ui-theme")
+        let theme_picker = SchemeSelect::new("settings-ui-theme")
             .options(ui_theme_swatches(cx))
             .selected(Some(self.ui_theme.clone()))
-            .columns(THEME_COLUMNS)
+            .open(self.open_list == Some(OpenList::UiTheme))
             .tab_index(tab::UI_THEME)
+            .scroll_handle(self.ui_theme_scroll.clone())
+            .scrollbar(ui_theme_bar)
             .on_select({
                 let this = this.clone();
                 move |id, _window, cx| {
                     let id = SharedString::from(id.to_owned());
                     this.update(cx, |dialog, cx| dialog.select(Catalog::UiTheme, id, cx));
+                }
+            })
+            .on_open_change({
+                let this = this.clone();
+                move |open, _window, cx| {
+                    this.update(cx, |dialog, cx| {
+                        dialog.set_list_open(OpenList::UiTheme, open, cx);
+                    });
                 }
             });
 
@@ -2133,7 +2213,7 @@ mod tests {
         cx.update(|cx| {
             dialog.update(cx, |dialog, cx| {
                 dialog.fill_form(&saved, cx);
-                // What clicking a card does.
+                // What picking a row of the theme dropdown does.
                 dialog.select(Catalog::UiTheme, "dracula", cx);
             });
         });
@@ -2276,6 +2356,27 @@ mod tests {
         // And the management rows stay with their pickers.
         assert_eq!(section_of(tab::UI_THEME_ACTIONS + 6), 0);
         assert_eq!(section_of(tab::EDITOR_THEME_ACTIONS + 6), 0);
+    }
+
+    #[test]
+    fn every_scrolling_surface_has_a_bar_of_its_own() {
+        // One drag listener tells the bars apart by id and looks the surface up
+        // in this table, so a duplicate on either side would scroll the wrong
+        // thing — and a surface listed twice would give two lists one bar.
+        let mut ids: Vec<&str> = SCROLLBARS.iter().map(|(id, _)| *id).collect();
+        let count = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "two bars share an element id");
+
+        for (index, (_, surface)) in SCROLLBARS.iter().enumerate() {
+            assert!(
+                !SCROLLBARS[..index]
+                    .iter()
+                    .any(|(_, earlier)| earlier == surface),
+                "{surface:?} is listed twice"
+            );
+        }
     }
 
     #[test]
