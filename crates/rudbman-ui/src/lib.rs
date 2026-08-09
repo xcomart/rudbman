@@ -3,10 +3,12 @@
 //! The crate is deliberately free of database concepts: it knows nothing of
 //! connections, catalogues, statements or result sets, and only about colors
 //! ([`theme`], [`editor_theme`]), text entry ([`text_input`]), buttons
-//! ([`button`]), session tabs ([`tab_bar`]), dropdown menus ([`menu`]), hover
-//! tooltips ([`tooltip`]), dialogs ([`modal`]), overlay scroll indicators
-//! ([`scrollbar`]), lazily filled trees ([`tree`]) and the caption buttons of a
-//! self-drawn title bar ([`window_controls`]). A widget that would need a result
+//! ([`button`]), session tabs ([`tab_bar`]), dropdown menus ([`menu`]),
+//! one-of-many dropdowns over plain strings ([`select`]) and over palettes
+//! ([`scheme_select`]), hover tooltips ([`tooltip`]), dialogs ([`modal`]),
+//! overlay scroll indicators ([`scrollbar`]), lazily filled trees ([`tree`])
+//! and the caption buttons of a self-drawn title bar ([`window_controls`]).
+//! A widget that would need a result
 //! set to draw itself belongs a layer up, not here — the tree included: it
 //! knows about ids the host invents and rows the host draws, and nothing about
 //! what a catalogue or a schema is.
@@ -27,6 +29,7 @@ pub mod editor_theme;
 pub mod editor_theme_picker;
 pub mod menu;
 pub mod modal;
+pub mod scheme_select;
 pub mod scrollbar;
 pub mod segmented;
 pub mod select;
@@ -47,6 +50,7 @@ pub use editor_theme::{
 pub use editor_theme_picker::{EditorThemePicker, EditorThemeSwatch};
 pub use menu::{ContextMenu, MenuButton, MenuEntry};
 pub use modal::{form_row, modal};
+pub use scheme_select::{SchemePreview, SchemeSelect, SchemeSwatch};
 pub use scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
     scrolled,

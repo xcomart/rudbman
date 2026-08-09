@@ -72,7 +72,8 @@ actions!(
         /// Close the selected node, or step out to its parent when it is
         /// already closed.
         Collapse,
-        /// Activate the selected node, which is what a double click does.
+        /// Activate the selected node, which is what a double click on a leaf
+        /// does.
         Activate,
         /// Move the selection to the first row.
         SelectFirst,
@@ -104,6 +105,17 @@ const ARROW_CLOSED: &str = "\u{25b8}";
 
 /// Arrow of a node that is open.
 const ARROW_OPEN: &str = "\u{25be}";
+
+/// Size the arrow glyph is drawn at.
+///
+/// Larger than the label would suggest, because the two glyphs differ only in
+/// which way a small triangle points: below about this size the difference
+/// between "right" and "down" is a couple of pixels of antialiasing, and a
+/// muted arrow that small reads as decoration rather than as the node's state.
+/// It is the largest that still sits inside the [`ARROW_WIDTH`] box with air
+/// around it, so the column stays a column and the row keeps its
+/// [`ROW_HEIGHT`].
+const ARROW_SIZE: f32 = 12.;
 
 /// What the placeholder row draws while children are on their way.
 ///
@@ -232,7 +244,13 @@ pub enum TreeEvent<Id> {
     /// source and calls [`TreeView::refresh`] (or mutates through
     /// [`TreeView::source_mut`], which refreshes for it).
     LoadChildren(Option<Id>),
-    /// A node was activated: `Enter`, `Space`, or a double click.
+    /// A node was activated: `Enter`, `Space`, or a double click on a leaf.
+    ///
+    /// The keys activate whatever is selected, branch or leaf, because the
+    /// keyboard already has `Left` and `Right` for opening and closing. The
+    /// pointer does not: a double click on a node with children opens or closes
+    /// it instead, and never arrives here. A host that shows leaves — a table,
+    /// a file — therefore gets exactly the rows it can show.
     Activated(Id),
     /// The selection moved.
     SelectionChanged(Option<Id>),
@@ -330,9 +348,10 @@ pub trait TreeSource: 'static {
 /// The keys are `Up`/`Down` to move, `Right` to open a node or step into it,
 /// `Left` to close it or step out to its parent, `Enter` and `Space` to
 /// activate, `Home` and `End` for the ends of the list. A click selects, a
-/// double click activates, and a click on the arrow opens or closes without
-/// disturbing the selection. A right-click anywhere on a row — the arrow
-/// included — selects it and asks the host for a menu.
+/// double click opens a node with children and activates one without, and a
+/// click on the arrow opens or closes without disturbing the selection. A
+/// right-click anywhere on a row — the arrow included — selects it and asks the
+/// host for a menu.
 pub struct TreeView<S: TreeSource> {
     source: S,
     focus_handle: FocusHandle,
@@ -813,7 +832,7 @@ impl<S: TreeSource> TreeView<S> {
             .justify_center()
             .w(px(ARROW_WIDTH))
             .h(px(ROW_HEIGHT))
-            .text_size(px(9.))
+            .text_size(px(ARROW_SIZE))
             .text_color(theme.text_muted)
             .when(has_children, |this| {
                 let id = id.clone();
@@ -848,7 +867,19 @@ impl<S: TreeSource> TreeView<S> {
                 tree.focus_handle.focus(window);
                 tree.set_selected(Some(id.clone()), cx);
                 if event.click_count() >= 2 {
-                    cx.emit(TreeEvent::Activated(id.clone()));
+                    // A double click means "open what I aimed at", and what
+                    // that is depends on the row. A branch is a container, so
+                    // opening it is opening it — the same thing the arrow does,
+                    // reachable without hitting a 16px target. A leaf is the
+                    // thing itself, and only the host knows what showing it
+                    // means, so that one travels on. Doing both would hand
+                    // every host branch activations it has to remember to
+                    // ignore.
+                    if has_children {
+                        tree.toggle(&id, cx);
+                    } else {
+                        cx.emit(TreeEvent::Activated(id.clone()));
+                    }
                 }
             }))
             // Taken on the press rather than on the click, which is gpui's name
@@ -1517,9 +1548,10 @@ mod tests {
         );
     }
 
-    /// A click picks a row; a second one in the same gesture opens it.
+    /// A click picks a row; a second one in the same gesture hands a leaf —
+    /// `b`, which has nothing under it — to the host.
     #[gpui::test]
-    fn a_click_selects_and_a_double_click_activates(cx: &mut TestAppContext) {
+    fn a_click_selects_and_a_double_click_activates_a_leaf(cx: &mut TestAppContext) {
         let (tree, mut cx) = open(three_deep(), cx);
 
         click(&mut cx, point(px(ON_THE_LABEL), px(FIRST_ROW)), 1);
@@ -1534,6 +1566,53 @@ mod tests {
         click(&mut cx, point(px(ON_THE_LABEL), px(SECOND_ROW)), 2);
         assert_eq!(tree.selected(&mut cx), Some("b"));
         assert!(tree.drain().contains(&TreeEvent::Activated("b")));
+    }
+
+    /// A node with children has somewhere to go of its own, so the second click
+    /// opens it rather than handing it over: the host hears nothing, and the
+    /// gesture reaches the same place as the arrow without aiming at it.
+    #[gpui::test]
+    fn a_double_click_on_a_node_with_children_opens_it_instead(cx: &mut TestAppContext) {
+        let (tree, mut cx) = open(three_deep(), cx);
+        let on_the_first = point(px(ON_THE_LABEL), px(FIRST_ROW));
+
+        click(&mut cx, on_the_first, 1);
+        tree.drain();
+
+        click(&mut cx, on_the_first, 2);
+        assert_eq!(
+            tree.shape(&mut cx),
+            vec![
+                (Some("a"), 0),
+                (Some("a1"), 1),
+                (Some("a2"), 1),
+                (Some("b"), 0)
+            ]
+        );
+        assert_eq!(tree.selected(&mut cx), Some("a"));
+        assert_eq!(
+            tree.drain(),
+            vec![],
+            "the host is not told a folder was opened"
+        );
+    }
+
+    /// And the gesture is a toggle, not an opening: the same node under the
+    /// same pointer closes again.
+    #[gpui::test]
+    fn a_second_double_click_closes_the_node_again(cx: &mut TestAppContext) {
+        let (tree, mut cx) = open(three_deep(), cx);
+        let on_the_first = point(px(ON_THE_LABEL), px(FIRST_ROW));
+
+        click(&mut cx, on_the_first, 1);
+        click(&mut cx, on_the_first, 2);
+        assert_eq!(tree.shape(&mut cx).len(), 4);
+        tree.drain();
+
+        click(&mut cx, on_the_first, 1);
+        click(&mut cx, on_the_first, 2);
+        assert_eq!(tree.shape(&mut cx), vec![(Some("a"), 0), (Some("b"), 0)]);
+        assert_eq!(tree.drain(), vec![]);
     }
 
     /// The arrow is its own control: pressing it opens the node and leaves the

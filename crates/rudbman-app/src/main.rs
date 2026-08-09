@@ -59,7 +59,6 @@ mod query_source;
 mod settings_dialog;
 mod table_detail;
 mod theme_editor;
-mod theme_picker;
 mod transfer_dialog;
 mod update;
 mod update_dialog;
