@@ -128,7 +128,12 @@ public final class Jobs {
     public static JsonObject poll(long handle) {
         Job job = Registry.get(handle, Job.class, "job");
         JsonObject progress = job.progress();
-        if (job.isTerminal()) {
+        // Judged from the snapshot the client is about to receive, not from a
+        // second reading of the job: the worker can reach a terminal state in
+        // the sliver between the two, and unregistering on that later reading
+        // would kill the handle behind a reply that still says "running" - the
+        // next poll then fails on a job the client was never told had ended.
+        if (!Job.RUNNING.equals(Json.str(progress, "state"))) {
             // The client has now been told; the handle has done its work.
             job.unregister();
         }
