@@ -6283,6 +6283,99 @@ mod tests {
     }
 
     /// Closing a tab is the same focus hazard as closing a pane: the view in it
+    /// A user's own reported order: the detail tab, the rows, a field opened
+    /// over a cell — and then a diagram of the schema asked for while all of
+    /// it is still open on the one session.
+    #[gpui::test]
+    fn a_diagram_loads_while_rows_are_open_for_editing(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2_with(
+            "erd-under-editing",
+            &[
+                "create table CUSTOMER (ID int primary key, NAME varchar(20))",
+                "insert into CUSTOMER values (1, 'a'), (2, 'b')",
+                "create table ORDERS (ID int primary key, \
+                 CUSTOMER_ID int references CUSTOMER(ID))",
+            ],
+            cx,
+        );
+        let target = object(id, "CUSTOMER");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_object(target.clone(), window, cx);
+                workspace.open_data(target.clone(), window, cx);
+                // A first diagram asked for while the detail's and the rows'
+                // own fetches are still out, so all three interleave on the
+                // one session worker...
+                workspace.open_erd(erd_target(id), window, cx);
+                active_pane(workspace)
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        // ...and a second asked for the way the report had it, over rows that
+        // have arrived and a field already open. Closed and reopened, because
+        // asking again while the tab exists is a navigation, not a fetch.
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                let (erd_pane, tab) = workspace
+                    .erd_tab(&erd_target(id), cx)
+                    .expect("the diagram tab is open");
+                if let Some(PaneItem::Erd(panel)) = area(workspace)
+                    .panes
+                    .get(erd_pane)
+                    .expect("the pane is in the tree")
+                    .get(tab)
+                {
+                    assert_eq!(
+                        panel.read(cx).failure(),
+                        None,
+                        "the diagram raced the other fetches and lost"
+                    );
+                }
+                workspace.close_tab(erd_pane, tab, window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                let Some(PaneItem::TableData(panel)) = area(workspace)
+                    .panes
+                    .get(pane)
+                    .expect("the pane is in the tree")
+                    .get(1)
+                else {
+                    panic!("the second tab is the rows");
+                };
+                panel.clone().update(cx, |panel, cx| {
+                    let grid = panel.grid().cloned().expect("the pane holds rows");
+                    let opened =
+                        grid.update(cx, |grid, cx| grid.begin_edit(0, 1, window, cx));
+                    assert!(opened, "no field opened over the cell");
+                });
+                workspace.open_erd(erd_target(id), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                let Some(PaneItem::Erd(panel)) = area(workspace)
+                    .panes
+                    .get(pane)
+                    .expect("the pane is in the tree")
+                    .get(2)
+                else {
+                    panic!("the third tab is the diagram");
+                };
+                let diagram = panel.read(cx);
+                assert_eq!(diagram.failure(), None, "the diagram did not load");
+                assert!(!diagram.is_loading(), "the fetch never came back");
+            })
+            .expect("the window is open");
+    }
+
     /// stops being rendered, and gpui resolves actions against the focused
     /// element of the last drawn frame. The keyboard has to land on the
     /// neighbour that took its place — or on the shell, when nothing did.

@@ -756,7 +756,7 @@ impl DataPane {
     }
 
     /// The grid, while there is one.
-    fn grid(&self) -> Option<&Entity<GridView<EditableSource>>> {
+    pub(crate) fn grid(&self) -> Option<&Entity<GridView<EditableSource>>> {
         match &self.load {
             Load::Ready(rows) => Some(&rows.grid),
             Load::Running | Load::Failed(_) => None,
