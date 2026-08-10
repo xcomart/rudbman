@@ -94,6 +94,28 @@ one next to its executable.
   ```sh
   xattr -r -d com.apple.quarantine /Applications/rudbman.app
   ```
+
+  On macOS 15 and later there is a second hurdle. The system asks each app
+  separately for permission to reach the local network, and because the
+  bundle is only ad-hoc signed it usually never gets the prompt and never
+  appears under **System Settings → Privacy & Security → Local Network**,
+  which offers no way to add an app by hand. The permission is then denied
+  silently: connections to a database on your LAN — a `192.168.x.x` or
+  `10.x.x.x` address, or a `.local` name — fail with "No route to host",
+  while `localhost` connections work as usual. The dependable way through is
+  to launch the binary from Terminal, whose execution context is always
+  allowed on the local network:
+
+  ```sh
+  /Applications/rudbman.app/Contents/MacOS/rudbman
+  ```
+
+  It has to be the executable itself; `open rudbman.app` hands the launch to
+  launchd and does not count. If you would rather try to get the prompt
+  back, run `tccutil reset All com.aihouse.rudbman`, delete every copy of
+  `rudbman.app` (empty the Trash too), reboot, then reinstall and launch —
+  with an ad-hoc signature it may or may not ask. Updating to macOS 15.2 or
+  newer, which fixed several of these cases, also helps.
 - **Linux** — unpack the `.tar.gz` and run `./install.sh`. It copies the tree
   to `~/.local/share/rudbman`, links it from `~/.local/bin/rudbman`, and
   installs the desktop entry and icons. Needs no root; make sure
