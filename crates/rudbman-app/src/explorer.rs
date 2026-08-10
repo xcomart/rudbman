@@ -894,7 +894,10 @@ pub struct Explorer {
 impl Explorer {
     /// Builds the panel around an empty tree.
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let tree = cx.new(|cx| TreeView::new(ExplorerSource::default(), cx));
+        let tree = cx.new(|cx| {
+            TreeView::new(ExplorerSource::default(), cx)
+                .with_arrow_icons(icons::CHEVRON_RIGHT, icons::CHEVRON_DOWN)
+        });
         let events = cx.subscribe(&tree, |explorer, _tree, event, cx| match event {
             // The widget deduplicates these, so a node is asked for once
             // however many times it is redrawn.

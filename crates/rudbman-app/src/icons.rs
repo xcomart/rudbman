@@ -136,8 +136,29 @@ pub const COPY: &str = "icons/copy.svg";
 /// Shows and hides the explorer.
 pub const SIDEBAR: &str = "icons/sidebar.svg";
 
+/// The explorer tree's disclosure mark on a closed node.
+///
+/// The tree used to draw `▸` and `▾` as text, and no font size rescued them:
+/// those code points fill a fraction of their em square, so the mark that
+/// reached the screen was a third of the space it was given and its direction
+/// was a couple of antialiased pixels. A chevron drawn as geometry spans the
+/// box it is handed, and the two directions differ by half the glyph.
+///
+/// Like the window controls, it carries a heavier stroke than the set's usual
+/// `1.8` — `2.4` here. The tree renders it at 14 px (`ARROW_ICON_SIZE` in
+/// [`rudbman_ui::tree`]) out of the 24 of the viewBox, so what reaches the
+/// screen is a little over half of what the file asks for: 1.4 px, which a row
+/// of pixels can hold, where `1.8` would have arrived as the same hairline the
+/// glyph was.
+pub const CHEVRON_RIGHT: &str = "icons/chevron-right.svg";
+
+/// The explorer tree's disclosure mark on an open node — [`CHEVRON_RIGHT`]
+/// turned a quarter turn, so that opening a node reads as the mark tipping over
+/// rather than as a different mark.
+pub const CHEVRON_DOWN: &str = "icons/chevron-down.svg";
+
 /// Every icon, paired with the bytes [`Icons`] hands back for it.
-const ICONS: [(&str, &[u8]); 17] = [
+const ICONS: [(&str, &[u8]); 19] = [
     (APP_ICON, include_bytes!("../../../assets/icon.svg")),
     (TAB_LIST, include_bytes!("../assets/icons/tab-list.svg")),
     (NEW_TAB, include_bytes!("../assets/icons/new-tab.svg")),
@@ -167,6 +188,14 @@ const ICONS: [(&str, &[u8]); 17] = [
     (REFRESH, include_bytes!("../assets/icons/refresh.svg")),
     (COPY, include_bytes!("../assets/icons/copy.svg")),
     (SIDEBAR, include_bytes!("../assets/icons/sidebar.svg")),
+    (
+        CHEVRON_RIGHT,
+        include_bytes!("../assets/icons/chevron-right.svg"),
+    ),
+    (
+        CHEVRON_DOWN,
+        include_bytes!("../assets/icons/chevron-down.svg"),
+    ),
 ];
 
 /// The asset source backing every [`svg`](gpui::svg) element in the app.
