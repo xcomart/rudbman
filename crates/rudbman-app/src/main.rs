@@ -6350,8 +6350,7 @@ mod tests {
                 };
                 panel.clone().update(cx, |panel, cx| {
                     let grid = panel.grid().cloned().expect("the pane holds rows");
-                    let opened =
-                        grid.update(cx, |grid, cx| grid.begin_edit(0, 1, window, cx));
+                    let opened = grid.update(cx, |grid, cx| grid.begin_edit(0, 1, window, cx));
                     assert!(opened, "no field opened over the cell");
                 });
                 workspace.open_erd(erd_target(id), window, cx);
