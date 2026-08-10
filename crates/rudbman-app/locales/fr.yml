@@ -412,6 +412,16 @@ data:
   delete_row: Supprimer la ligne
   undelete_row: Rétablir la ligne
   discard_row: Abandonner les modifications de cette ligne
+  apply_title: "Appliquer %{count} instructions"
+  apply_no_rollback: "Cette base de données n'a pas de transactions ; un échec en cours de route ne pourra pas être annulé."
+  applying: application…
+  applied: "%{count} instructions appliquées."
+  apply_stale: Une ligne a été modifiée ou supprimée par quelqu'un d'autre. Rien n'a été appliqué — rechargez et réessayez.
+  apply_half_applied: Une partie du lot est peut-être déjà dans la table. Rechargez et vérifiez avant de réappliquer.
+  apply_bad_value: "%{column} ne peut pas prendre la valeur « %{value} »."
+  apply_null_key: "Le %{column} de cette ligne est NULL ; aucune instruction ne peut la retrouver."
+  apply_unknown_key: "La colonne clé %{column} ne figure pas parmi les colonnes lues. Rechargez et réessayez."
+  apply_not_planned: "Ces modifications ne peuvent pas être écrites sous forme d'instructions : %{detail}"
 
 extract:
   title: Extraire un script

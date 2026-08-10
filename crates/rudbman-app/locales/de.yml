@@ -412,6 +412,16 @@ data:
   delete_row: Zeile löschen
   undelete_row: Zeile wiederherstellen
   discard_row: Änderungen dieser Zeile verwerfen
+  apply_title: "%{count} Anweisungen anwenden"
+  apply_no_rollback: "Diese Datenbank kennt keine Transaktionen; ein Fehler mittendrin lässt sich nicht rückgängig machen."
+  applying: wird angewendet …
+  applied: "%{count} Anweisungen angewendet."
+  apply_stale: Eine Zeile wurde von jemand anderem geändert oder gelöscht. Es wurde nichts angewendet – laden Sie neu und versuchen Sie es erneut.
+  apply_half_applied: Ein Teil des Stapels steht möglicherweise schon in der Tabelle. Laden Sie neu und prüfen Sie ihn, bevor Sie erneut anwenden.
+  apply_bad_value: "%{column} kann nicht auf „%{value}“ gesetzt werden."
+  apply_null_key: "Das %{column} dieser Zeile ist NULL, daher kann keine Anweisung sie wiederfinden."
+  apply_unknown_key: "Die Schlüsselspalte %{column} ist nicht unter den gelesenen Spalten. Laden Sie neu und versuchen Sie es erneut."
+  apply_not_planned: "Diese Änderungen lassen sich nicht als Anweisungen schreiben: %{detail}"
 
 extract:
   title: Skript extrahieren

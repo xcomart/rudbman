@@ -412,6 +412,16 @@ data:
   delete_row: 行を削除
   undelete_row: 行の削除を取り消す
   discard_row: この行の変更を取り消す
+  apply_title: "%{count} 件の文を適用"
+  apply_no_rollback: このデータベースはトランザクションに対応していないため、途中で失敗しても取り消せません。
+  applying: 適用中…
+  applied: "%{count} 件の文を適用しました。"
+  apply_stale: 他の誰かが行を変更または削除しました。何も適用していません。再読み込みしてやり直してください。
+  apply_half_applied: 一部がすでにテーブルに反映されている可能性があります。再読み込みして確認してから適用し直してください。
+  apply_bad_value: "%{column} に「%{value}」は設定できません。"
+  apply_null_key: "この行の %{column} が NULL のため、行を特定できません。"
+  apply_unknown_key: "読み込んだ列の中にキー列 %{column} がありません。再読み込みしてやり直してください。"
+  apply_not_planned: "この変更は文にできません: %{detail}"
 
 extract:
   title: スクリプトの抽出

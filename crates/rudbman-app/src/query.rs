@@ -48,9 +48,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Action, AnyElement, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Hsla, IntoElement, ParentElement, Pixels, Point, Render, SharedString, Styled,
-    Subscription, Window, div, prelude::*, px, relative,
+    Action, AnyElement, App, Context, Div, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Hsla, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
+    Styled, Subscription, Window, div, prelude::*, px, relative,
 };
 use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_editor::editor::{
@@ -1612,6 +1612,22 @@ pub fn note(text: SharedString, color: Hsla) -> AnyElement {
 /// reads the same wherever the statement came from, and the hint is chosen from
 /// the `SQLSTATE` class rather than from anything about the pane.
 pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
+    error_lines(error, chrome)
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .p(px(16.))
+        .into_any_element()
+}
+
+/// The lines an error envelope reads as, in a column and nothing else.
+///
+/// Split out of [`render_error`] because the data pane shows the same envelope
+/// somewhere else. A failed load has no rows to draw, so its error stands where
+/// they would have been; a failed *apply* leaves the rows — and everything
+/// staged against them — exactly where they are, so its error is a strip above
+/// them. Same three lines, two placements, one composition.
+pub fn error_lines(error: &QueryError, chrome: &Theme) -> Div {
     let state = error
         .sql_state
         .clone()
@@ -1619,11 +1635,7 @@ pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
     div()
         .flex()
         .flex_col()
-        .flex_1()
-        .min_w_0()
-        .min_h_0()
         .gap(px(6.))
-        .p(px(16.))
         .child(
             div()
                 .text_size(px(12.))
@@ -1642,7 +1654,6 @@ pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
                 .text_color(chrome.text_muted)
                 .child(hint)
         }))
-        .into_any_element()
 }
 
 impl Focusable for QueryPane {

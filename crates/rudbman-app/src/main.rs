@@ -1155,11 +1155,19 @@ impl Workspace {
         let dialect = Self::dialect_of(&profile);
         let settings = app_settings::current(cx);
         let connection = open.id;
+        // What `SESSION_INFO` said when this connection opened, rather than a
+        // round trip of the pane's own. A driver that would not answer is taken
+        // as having transactions: see `DataPane::with_transactions`.
+        let transactional = match &open.state {
+            ConnectionState::Open(connected) => connected.info.supports_transactions != Some(false),
+            _ => true,
+        };
 
         let panel = cx.new(|cx| {
             DataPane::new(
                 session, connection, target, &profile, &dialect, &settings, cx,
             )
+            .with_transactions(transactional)
         });
         // The pane owns its session, so nothing has to be subscribed for it to
         // load; it is asked *after* the tab exists, for the reason a detail

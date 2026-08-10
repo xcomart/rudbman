@@ -37,22 +37,39 @@
 //! grid seeded the field with, so the two can only agree or disagree for
 //! reasons the user can see.
 //!
-//! # Where this is going
+//! # From the buffer to the statements
 //!
-//! [`EditSet`] is shaped to fall into `rudbman_sql::TableEdits` with no
-//! rearranging: [`EditSet::deleted`] is one key lookup per entry away from
-//! `deletes`, [`EditSet::changed`] groups by row into `updates`, and
-//! [`EditSet::inserted`] is already one `Vec` per row with one cell per column,
-//! which is `inserts` once [`StagedCell`] is mapped onto `InsertCell` — `Unset`
-//! to `Unset`, the other two to `Set`. Generating and applying that is the
-//! milestone after this one; nothing here sends anything.
+//! [`EditSet`] is shaped to fall into [`TableEdits`] with no rearranging:
+//! [`EditSet::deleted`] is one key lookup per entry away from `deletes`,
+//! [`EditSet::changed`] groups by row into `updates`, and [`EditSet::inserted`]
+//! is already one `Vec` per row with one cell per column, which is `inserts`
+//! once [`StagedCell`] is mapped onto `InsertCell` — `Unset` to `Unset`, the
+//! other two to `Set`. [`plan_apply`] is that mapping, and it ends where the
+//! pane picks up: a list of [`PlannedStatement`]s, each carrying the SQL, the
+//! bind parameters, the values as the confirmation shows them, and whether the
+//! server has to report exactly one row for it.
+//!
+//! That the planning lives here rather than in the pane is the same choice the
+//! rest of this module makes. It has no window and no JVM in it: everything it
+//! decides — which rows become which statement, which key value goes in a
+//! `WHERE`, whether what the user typed can be bound to the column's type at
+//! all — is decidable from the buffer and the column metadata alone, and it is
+//! the half of the apply worth testing exhaustively. What is left for the pane
+//! is the part that genuinely needs a session: running the statements in order,
+//! counting the rows each one reached, and rolling back.
+//!
+//! Nothing here sends anything.
 
 use std::collections::{BTreeSet, HashMap};
+use std::fmt;
 
 use rudbman_grid::{GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
-use rudbman_jdbc::ColumnInfo;
+use rudbman_jdbc::{ColumnInfo, Param};
+use rudbman_sql::{
+    Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
+};
 
-use crate::query_source::ResultSource;
+use crate::query_source::{ResultSource, bit_is_boolean, sql_types};
 
 /// What has been staged into one cell.
 ///
@@ -349,6 +366,12 @@ struct ColumnRules {
     /// merely declined to describe would be a guess dressed as a rule, and the
     /// server rejects the statement if the guess was wrong.
     nullable: bool,
+    /// The form a value of this column is bound in.
+    ///
+    /// Resolved from the JDBC `sql_type` once, here, for the same reason the
+    /// other two are: it cannot change while the result stands, and the apply
+    /// asks it once per staged cell rather than once per frame.
+    kind: DmlKind,
 }
 
 /// `ResultSetMetaData.columnNoNulls`, the one answer that forbids NULL.
@@ -359,7 +382,40 @@ impl ColumnRules {
         Self {
             writable: !column.read_only && !column.auto_increment,
             nullable: column.nullable != COLUMN_NO_NULLS,
+            kind: dml_kind(column),
         }
+    }
+}
+
+/// The bind form a column's values take, from its `java.sql.Types` constant.
+///
+/// The mapping is written once, here, and everything about it is conservative:
+/// a type this version has never heard of becomes [`DmlKind::Str`], which is the
+/// form the driver is most likely to be able to read back into whatever the
+/// column really is, and the one that cannot lose anything on the way — the text
+/// bound is the text the user typed.
+///
+/// Two choices are worth their reasons. Everything numeric that is not an
+/// integer — `FLOAT`, `REAL` and `DOUBLE` as much as `DECIMAL` and `NUMERIC` —
+/// is [`DmlKind::Decimal`], because that is the kind that reaches
+/// `setBigDecimal` and arrives exact; routing a typed `0.1` through a double
+/// would round it on the way to the server, which is the one thing an editor
+/// must not do. And `BIT` splits on precision the way the grid's own column kind
+/// does, through [`bit_is_boolean`]: MySQL's `BIT(n)` for `n > 1` is a byte
+/// string and not a truth value.
+pub fn dml_kind(column: &ColumnInfo) -> DmlKind {
+    use sql_types::*;
+    match column.sql_type {
+        BIT if bit_is_boolean(column) => DmlKind::Bool,
+        BIT => DmlKind::Bytes,
+        BOOLEAN => DmlKind::Bool,
+        TINYINT | SMALLINT | INTEGER | BIGINT => DmlKind::I64,
+        NUMERIC | DECIMAL | FLOAT | REAL | DOUBLE => DmlKind::Decimal,
+        DATE => DmlKind::Date,
+        TIME | TIME_WITH_TIMEZONE => DmlKind::Time,
+        TIMESTAMP | TIMESTAMP_WITH_TIMEZONE => DmlKind::Timestamp,
+        BINARY | VARBINARY | LONGVARBINARY | BLOB => DmlKind::Bytes,
+        _ => DmlKind::Str,
     }
 }
 
@@ -441,7 +497,11 @@ impl EditableSource {
     }
 
     /// The base cell's text, in the form [`EditSet::stage`] compares against.
-    fn original_text(&self, row: usize, column: usize) -> Option<&str> {
+    ///
+    /// Also what a generated `WHERE` clause binds: the two are the same reading
+    /// on purpose, so that a cell the apply can identify a row by is exactly a
+    /// cell an edit can be compared against.
+    pub fn original_text(&self, row: usize, column: usize) -> Option<&str> {
         match self.original(row, column)? {
             GridCell::Text(text) => Some(text),
             // A LOB has no text here and is not editable anyway; treating it as
@@ -470,6 +530,18 @@ impl EditableSource {
     /// described it.
     pub fn nullable(&self, column: usize) -> bool {
         self.columns.get(column).is_some_and(|rules| rules.nullable)
+    }
+
+    /// The form values of `column` are bound in.
+    ///
+    /// [`DmlKind::Str`] for a column past the end, which is the same fallback
+    /// [`dml_kind`] gives a type it does not know: an index the result does not
+    /// have cannot reach a statement, and answering with the harmless kind keeps
+    /// this total.
+    pub fn kind(&self, column: usize) -> DmlKind {
+        self.columns
+            .get(column)
+            .map_or(DmlKind::Str, |rules| rules.kind)
     }
 
     /// Whether anything here may be changed at all.
@@ -543,6 +615,356 @@ impl GridSource for EditableSource {
             None => false,
         }
     }
+}
+
+/// One statement of an apply: ready to send, and ready to show.
+///
+/// The three parts are three audiences. `params` goes on the wire, `values` goes
+/// in the confirmation the user reads before it does, and `checked` is what the
+/// apply asks the server about afterwards. They are carried together because
+/// they are one decision: the statement the user approved must be the statement
+/// that runs, and pulling them apart is how a preview drifts from a batch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlannedStatement {
+    /// The SQL, with a `?` everywhere a value goes.
+    pub sql: String,
+    /// The bound parameters, in the order their `?`s appear.
+    pub params: Vec<Param>,
+    /// The same values as text, `None` for SQL NULL.
+    ///
+    /// What the confirmation lists under the statement. Kept beside `params`
+    /// rather than derived from it because a [`Param::Bytes`] is bytes by then
+    /// and the user typed hex.
+    pub values: Vec<Option<String>>,
+    /// Whether the server must report exactly one changed row.
+    ///
+    /// True for every `UPDATE` and `DELETE` and false for every `INSERT`, which
+    /// is §7.9's staleness guard: the `WHERE` clause names the primary key and
+    /// nothing else, and the row count is what says the row named is still the
+    /// row that was read. An `INSERT` reaches no existing row, so there is
+    /// nothing about it a count could tell us.
+    pub checked: bool,
+}
+
+/// Why a staged buffer could not be turned into statements.
+///
+/// All four are worth showing. Three are about one column the user can go and
+/// look at, and the fourth carries `rudbman-sql`'s own words for the shapes it
+/// refuses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlanError {
+    /// The table named no key columns, so no row can be identified.
+    ///
+    /// Unreachable from the pane, which draws no Apply button at all without a
+    /// key (§7.9), and kept as a value rather than an assertion because this
+    /// function is the one that knows.
+    NoKey,
+    /// A key column the metadata named is not among the result's columns.
+    UnknownKeyColumn {
+        /// The key column's name, as the catalogue spelled it.
+        column: String,
+    },
+    /// What is in a cell cannot be bound to that column's type.
+    BadValue {
+        /// The column's name.
+        column: String,
+        /// The form the column takes.
+        kind: DmlKind,
+        /// What was in the cell.
+        text: String,
+    },
+    /// `rudbman-sql` refused the edits.
+    Dml(DmlError),
+}
+
+impl fmt::Display for PlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlanError::NoKey => f.write_str("the table has no primary key"),
+            PlanError::UnknownKeyColumn { column } => {
+                write!(f, "key column `{column}` is not in the result")
+            }
+            PlanError::BadValue { column, kind, text } => write!(
+                f,
+                "`{text}` cannot be bound to column `{column}` as {kind:?}"
+            ),
+            PlanError::Dml(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for PlanError {}
+
+/// Turns everything staged against `source` into the statements that apply it.
+///
+/// `columns` is the result's column metadata — the same slice the source was
+/// built from — and `keys` the primary key's column names in key order.
+/// `table` is the name parts `crate::builder_sql::table_parts` produced for the
+/// `SELECT`, so the statements write back to the table the rows were read from.
+///
+/// Every value is checked here rather than at bind time, which is what lets the
+/// failure name a column: by the time a batch has been planned a value is a `?`
+/// in a string, and "the third parameter of statement two" is not something to
+/// show anybody. What is checked is only whether the text can *become* the bound
+/// form — an integer that parses, hex of an even length — and never whether the
+/// server will like it. That judgement is the server's, and its refusal says
+/// more than a guess made here would.
+pub fn plan_apply(
+    source: &EditableSource,
+    columns: &[ColumnInfo],
+    table: Vec<String>,
+    keys: &[String],
+    dialect: &Dialect,
+) -> Result<Vec<PlannedStatement>, PlanError> {
+    if keys.is_empty() {
+        return Err(PlanError::NoKey);
+    }
+    let names: Vec<String> = columns.iter().map(column_name).collect();
+    let key: Vec<usize> = keys
+        .iter()
+        .map(|wanted| {
+            key_index(&names, wanted).ok_or_else(|| PlanError::UnknownKeyColumn {
+                column: wanted.clone(),
+            })
+        })
+        .collect::<Result<_, _>>()?;
+
+    let edits = source.edits();
+    let mut planned = TableEdits {
+        table,
+        columns: names.clone(),
+        key: key.clone(),
+        ..TableEdits::default()
+    };
+
+    // `deleted` is a `BTreeSet`, so the statements read down the grid.
+    for row in &edits.deleted {
+        planned.deletes.push(row_key(source, &names, &key, *row)?);
+    }
+
+    // `changed` is a `HashMap`, so the rows it names have to be put back in
+    // order before anything is generated: a batch whose statements came out in
+    // a different order every time would be a preview nobody could check
+    // against what ran, and two tests of it would disagree with each other.
+    let mut changed: Vec<(usize, Vec<usize>)> = Vec::new();
+    {
+        let mut by_row: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (row, column) in edits.changed.keys() {
+            if edits.deleted.contains(row) {
+                // The row is going; §7.9 sends the `DELETE` and no `UPDATE`.
+                continue;
+            }
+            by_row.entry(*row).or_default().push(*column);
+        }
+        changed.extend(by_row);
+        changed.sort_by_key(|(row, _)| *row);
+        for (_, columns) in &mut changed {
+            columns.sort_unstable();
+        }
+    }
+    for (row, cells) in changed {
+        let mut set = Vec::with_capacity(cells.len());
+        for column in cells {
+            let Some(staged) = edits.staged(row, column) else {
+                continue;
+            };
+            let name = names.get(column).map_or("", String::as_str);
+            let kind = source.kind(column);
+            match staged {
+                // Never recorded against a base row (see `StagedCell::Unset`),
+                // and nothing to assign if it somehow were.
+                StagedCell::Unset => continue,
+                StagedCell::Null => set.push((column, DmlValue::null(kind))),
+                StagedCell::Text(text) => {
+                    set.push((column, checked_value(kind, text, name)?));
+                }
+            }
+        }
+        if set.is_empty() {
+            continue;
+        }
+        planned.updates.push(RowUpdate {
+            key: row_key(source, &names, &key, row)?,
+            set,
+        });
+    }
+
+    for row in &edits.inserted {
+        let mut cells = Vec::with_capacity(row.len());
+        for (column, staged) in row.iter().enumerate() {
+            let name = names.get(column).map_or("", String::as_str);
+            let kind = source.kind(column);
+            cells.push(match staged {
+                StagedCell::Unset => InsertCell::Unset,
+                StagedCell::Null => InsertCell::Set(DmlValue::null(kind)),
+                StagedCell::Text(text) => InsertCell::Set(checked_value(kind, text, name)?),
+            });
+        }
+        planned.inserts.push(cells);
+    }
+
+    // Everything before this line is `plan_edits`'s input; the SQL itself is
+    // that function's, and no identifier is spelled here.
+    let batch = plan_edits(&planned, dialect).map_err(PlanError::Dml)?;
+    // The batch is deletes, then updates, then inserts — `plan_edits` says so
+    // and its tests hold it — so the two lengths are where the checked
+    // statements end.
+    let checked = planned.deletes.len() + planned.updates.len();
+    Ok(batch
+        .into_iter()
+        .enumerate()
+        .map(|(index, statement)| PlannedStatement {
+            sql: statement.sql,
+            params: statement.values.iter().map(param).collect(),
+            values: statement
+                .values
+                .iter()
+                .map(|value| value.text().map(str::to_owned))
+                .collect(),
+            checked: index < checked,
+        })
+        .collect())
+}
+
+/// One row's key values, as the server gave them.
+///
+/// Original and never staged: a key column the user retyped is *set* to the new
+/// value and *found* by the old one, so a `WHERE` built from the overlay would
+/// name a row that does not exist.
+fn row_key(
+    source: &EditableSource,
+    names: &[String],
+    key: &[usize],
+    row: usize,
+) -> Result<Vec<DmlValue>, PlanError> {
+    key.iter()
+        .map(|column| {
+            let name = names.get(*column).map_or("", String::as_str);
+            let kind = source.kind(*column);
+            match source.original_text(row, *column) {
+                Some(text) => checked_value(kind, text, name),
+                // A NULL — or a LOB, which has no text and cannot be a key —
+                // becomes `DmlError::NullKey` in `plan_edits`, which names the
+                // column it could not identify the row by.
+                None => Ok(DmlValue::null(kind)),
+            }
+        })
+        .collect()
+}
+
+/// A value of `kind` spelling `text`, if the text can be bound as one.
+fn checked_value(kind: DmlKind, text: &str, column: &str) -> Result<DmlValue, PlanError> {
+    let readable = match kind {
+        DmlKind::I64 => text.trim().parse::<i64>().is_ok(),
+        DmlKind::Bool => parse_bool(text).is_some(),
+        DmlKind::Bytes => parse_hex(text).is_some(),
+        // Everything else travels as the text it is: this side has no business
+        // deciding what a server will make of a `DECIMAL` or a `TIMESTAMP`, and
+        // a parser here would refuse forms some product accepts.
+        DmlKind::Str | DmlKind::Decimal | DmlKind::Date | DmlKind::Time | DmlKind::Timestamp => {
+            true
+        }
+    };
+    if !readable {
+        return Err(PlanError::BadValue {
+            column: column.to_string(),
+            kind,
+            text: text.to_string(),
+        });
+    }
+    Ok(DmlValue::new(kind, text))
+}
+
+/// The bind parameter one planned value becomes.
+///
+/// Total, and it can be: every text that reaches here came through
+/// [`checked_value`], which refused anything the parses below cannot read. The
+/// fallbacks are what a kind added later without a check would land on — a bound
+/// string, which the driver judges for itself — rather than a panic in the
+/// middle of an apply.
+fn param(value: &DmlValue) -> Param {
+    let Some(text) = value.text() else {
+        return Param::Null;
+    };
+    match value.kind() {
+        DmlKind::Str => Param::Str(text.to_string()),
+        DmlKind::I64 => text
+            .trim()
+            .parse::<i64>()
+            .map_or_else(|_| Param::Str(text.to_string()), Param::I64),
+        // Typed, not a JSON number: a `DECIMAL(20,8)` sent as one goes through a
+        // double and arrives rounded (§4.4).
+        DmlKind::Decimal => Param::Decimal(text.to_string()),
+        DmlKind::Bool => parse_bool(text).map_or_else(|| Param::Str(text.to_string()), Param::Bool),
+        DmlKind::Date => Param::Date(text.to_string()),
+        DmlKind::Time => Param::Time(text.to_string()),
+        DmlKind::Timestamp => Param::Timestamp(text.to_string()),
+        DmlKind::Bytes => {
+            parse_hex(text).map_or_else(|| Param::Str(text.to_string()), Param::Bytes)
+        }
+    }
+}
+
+/// What the user may write into a boolean column.
+///
+/// More spellings than the grid renders, and deliberately: the grid draws
+/// `true`/`false`, but a user retyping a column they think of as a flag writes
+/// `1`, `Y` or `T` as readily, and refusing those would be pedantry with a
+/// modal on it. Anything else is [`PlanError::BadValue`] rather than a guess.
+fn parse_bool(text: &str) -> Option<bool> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "true" | "t" | "yes" | "y" | "1" => Some(true),
+        "false" | "f" | "no" | "n" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// Bytes from the hex the grid renders them as.
+///
+/// `Value::to_text` writes a binary cell as upper-case hex with no separator,
+/// which is the form the field is seeded with and therefore the form an edited
+/// one has to be read back from. Empty is a zero-length value and not an error;
+/// an odd length or a non-hex digit is.
+fn parse_hex(text: &str) -> Option<Vec<u8>> {
+    let text = text.trim();
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    text.as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).ok()?;
+            u8::from_str_radix(pair, 16).ok()
+        })
+        .collect()
+}
+
+/// The name a statement should spell a column with.
+///
+/// The catalogue's name and not [`ColumnInfo::display_name`]'s preference for
+/// the label: a `SELECT *` gives the two the same value, but where a driver
+/// reports a label of its own it is a heading, and a heading is not something
+/// an `UPDATE` can assign to.
+fn column_name(column: &ColumnInfo) -> String {
+    column
+        .name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| column.display_name(), str::to_string)
+}
+
+/// Which column of the result a key column's name refers to.
+///
+/// Exactly first, then ignoring case. The second pass is for the products that
+/// answer `getPrimaryKeys` in one case and `ResultSetMetaData` in another —
+/// which several do, and where the exact match would leave a keyed table looking
+/// keyless.
+fn key_index(names: &[String], wanted: &str) -> Option<usize> {
+    names.iter().position(|name| name == wanted).or_else(|| {
+        names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(wanted))
+    })
 }
 
 #[cfg(test)]
@@ -838,6 +1260,342 @@ mod tests {
         assert!(!source.column(1).primary_key);
         assert_eq!(source.column(0).kind, GridColumnKind::Number);
         assert_eq!(source.state(), GridSourceState::Complete);
+    }
+
+    /// `APP.PERSON(ID integer, NAME varchar, NOTE varchar)`, keyed by `ID`.
+    ///
+    /// Its own fixture rather than [`source`]'s, because the planning cares
+    /// about two things that one does not: the key column has to hold something
+    /// an `INTEGER` can be bound from, and the names have to be spelled the way
+    /// H2 stores them or every statement below would be quoted.
+    fn plan_columns() -> Vec<ColumnInfo> {
+        vec![
+            info(1, "ID", sql_types::INTEGER, 0),
+            info(2, "NAME", 12, 0),
+            info(3, "NOTE", 12, 0),
+        ]
+    }
+
+    /// Two rows of it: `(1, "a", "n1")` and `(2, "b", "")`.
+    fn plan_source() -> EditableSource {
+        let columns = plan_columns();
+        let mut base = ResultSource::new(&columns);
+        base.push(render_batch(
+            &batch(&[
+                &[Some("1"), Some("2")],
+                &[Some("a"), Some("b")],
+                &[Some("n1"), Some("")],
+            ]),
+            &columns,
+        ));
+        base.mark_primary_keys(&["ID".to_string()]);
+        EditableSource::new(base, &columns, true)
+    }
+
+    /// Plans what is staged against [`plan_source`].
+    fn plan(source: &EditableSource) -> Result<Vec<PlannedStatement>, PlanError> {
+        plan_apply(
+            source,
+            &plan_columns(),
+            vec!["APP".to_string(), "PERSON".to_string()],
+            &["ID".to_string()],
+            &Dialect::H2,
+        )
+    }
+
+    /// Every branch of the `sql_type` table, and the fallback for what is not
+    /// in it.
+    #[test]
+    fn a_columns_bind_form_comes_from_its_jdbc_type() {
+        use sql_types::*;
+        for (sql_type, precision, expected) in [
+            (BOOLEAN, 0, DmlKind::Bool),
+            // `BIT(1)` is a flag; `BIT(8)` is a byte string, and the split is
+            // the same one the grid draws on.
+            (BIT, 1, DmlKind::Bool),
+            (BIT, 8, DmlKind::Bytes),
+            (TINYINT, 0, DmlKind::I64),
+            (SMALLINT, 0, DmlKind::I64),
+            (INTEGER, 0, DmlKind::I64),
+            (BIGINT, 0, DmlKind::I64),
+            (DECIMAL, 0, DmlKind::Decimal),
+            (NUMERIC, 0, DmlKind::Decimal),
+            // Exact all the way to `setBigDecimal`, never through a double.
+            (FLOAT, 0, DmlKind::Decimal),
+            (REAL, 0, DmlKind::Decimal),
+            (DOUBLE, 0, DmlKind::Decimal),
+            (DATE, 0, DmlKind::Date),
+            (TIME, 0, DmlKind::Time),
+            (TIME_WITH_TIMEZONE, 0, DmlKind::Time),
+            (TIMESTAMP, 0, DmlKind::Timestamp),
+            (TIMESTAMP_WITH_TIMEZONE, 0, DmlKind::Timestamp),
+            (BINARY, 0, DmlKind::Bytes),
+            (VARBINARY, 0, DmlKind::Bytes),
+            (LONGVARBINARY, 0, DmlKind::Bytes),
+            (BLOB, 0, DmlKind::Bytes),
+            // `VARCHAR`, and then the exotics: an array, a vendor type, and a
+            // constant no version of this table has heard of. All text.
+            (12, 0, DmlKind::Str),
+            (2003, 0, DmlKind::Str),
+            (1111, 0, DmlKind::Str),
+            (31_337, 0, DmlKind::Str),
+        ] {
+            assert_eq!(
+                dml_kind(&info(1, "C", sql_type, precision)),
+                expected,
+                "type {sql_type}"
+            );
+        }
+    }
+
+    /// A change, a deletion and an insertion, in the order one transaction can
+    /// carry them.
+    #[test]
+    fn a_mixed_edit_set_becomes_a_delete_an_update_and_an_insert() {
+        let mut source = plan_source();
+        source.stage(0, 1, StagedCell::Text("A".into()));
+        source.stage(0, 2, StagedCell::Null);
+        source.edits_mut().toggle_deleted(1);
+        source.edits_mut().add_insert(3);
+        source.stage(2, 0, StagedCell::Text("9".into()));
+        source.stage(2, 1, StagedCell::Text("new".into()));
+        // NOTE is left alone, so the server supplies it.
+
+        let batch = plan(&source).expect("the edits plan");
+        let sql: Vec<&str> = batch.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(
+            sql,
+            [
+                "DELETE FROM APP.PERSON WHERE ID = ?",
+                "UPDATE APP.PERSON SET NAME = ?, NOTE = ? WHERE ID = ?",
+                "INSERT INTO APP.PERSON (ID, NAME) VALUES (?, ?)",
+            ]
+        );
+
+        // The `WHERE` binds the row's own key, typed as the column is.
+        assert_eq!(batch[0].params, [Param::I64(2)]);
+        // Assignments first, key second, and the deliberate NULL is a bound
+        // NULL rather than the word.
+        assert_eq!(
+            batch[1].params,
+            [Param::Str("A".into()), Param::Null, Param::I64(1)]
+        );
+        assert_eq!(batch[2].params, [Param::I64(9), Param::Str("new".into())]);
+
+        // Only the two statements that name an existing row are counted.
+        assert_eq!(
+            batch.iter().map(|s| s.checked).collect::<Vec<_>>(),
+            [true, true, false]
+        );
+        // And the confirmation reads the values as text, NULL included.
+        assert_eq!(
+            batch[1].values,
+            [Some("A".to_string()), None, Some("1".to_string())]
+        );
+    }
+
+    /// A row that is both typed into and struck out sends the `DELETE` alone.
+    #[test]
+    fn a_deleted_row_contributes_no_update() {
+        let mut source = plan_source();
+        source.stage(0, 1, StagedCell::Text("A".into()));
+        source.edits_mut().toggle_deleted(0);
+
+        let batch = plan(&source).expect("the edits plan");
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].sql, "DELETE FROM APP.PERSON WHERE ID = ?");
+    }
+
+    /// The `WHERE` clause is written from the row the server gave, even where
+    /// the key itself is what was retyped.
+    #[test]
+    fn a_retyped_key_is_set_to_the_new_value_and_found_by_the_old_one() {
+        let mut source = plan_source();
+        source.stage(0, 0, StagedCell::Text("7".into()));
+
+        let batch = plan(&source).expect("the edits plan");
+        assert_eq!(batch[0].sql, "UPDATE APP.PERSON SET ID = ? WHERE ID = ?");
+        assert_eq!(batch[0].params, [Param::I64(7), Param::I64(1)]);
+    }
+
+    /// Two changed rows come out in row order however the buffer happens to be
+    /// iterated, and so do a row's own columns.
+    #[test]
+    fn the_statements_come_out_in_a_settled_order() {
+        let mut source = plan_source();
+        source.stage(1, 2, StagedCell::Text("z2".into()));
+        source.stage(1, 1, StagedCell::Text("y2".into()));
+        source.stage(0, 1, StagedCell::Text("A".into()));
+
+        let batch = plan(&source).expect("the edits plan");
+        assert_eq!(
+            batch.iter().map(|s| s.sql.as_str()).collect::<Vec<_>>(),
+            [
+                "UPDATE APP.PERSON SET NAME = ? WHERE ID = ?",
+                "UPDATE APP.PERSON SET NAME = ?, NOTE = ? WHERE ID = ?",
+            ]
+        );
+        assert_eq!(batch[0].params[1], Param::I64(1), "row 0 came first");
+        assert_eq!(batch[1].params[2], Param::I64(2));
+    }
+
+    /// A value the column's type cannot take is refused here, naming the
+    /// column, rather than sent for the driver to reject halfway through a
+    /// batch.
+    #[test]
+    fn a_value_that_cannot_be_bound_is_refused_by_name() {
+        let mut source = plan_source();
+        source.stage(0, 0, StagedCell::Text("not a number".into()));
+
+        assert_eq!(
+            plan(&source),
+            Err(PlanError::BadValue {
+                column: "ID".to_string(),
+                kind: DmlKind::I64,
+                text: "not a number".to_string(),
+            })
+        );
+    }
+
+    /// The three kinds whose text is parsed on the way to a parameter, and the
+    /// spellings each accepts.
+    #[test]
+    fn the_parsed_kinds_read_what_the_grid_writes() {
+        assert_eq!(param(&DmlValue::new(DmlKind::I64, " 42 ")), Param::I64(42));
+        for text in ["true", "TRUE", "t", "yes", "Y", "1"] {
+            assert_eq!(
+                param(&DmlValue::new(DmlKind::Bool, text)),
+                Param::Bool(true)
+            );
+        }
+        for text in ["false", "F", "no", "n", "0"] {
+            assert_eq!(
+                param(&DmlValue::new(DmlKind::Bool, text)),
+                Param::Bool(false)
+            );
+        }
+        // Upper-case hex with no separator is what `Value::to_text` writes.
+        assert_eq!(
+            param(&DmlValue::new(DmlKind::Bytes, "DEADBEEF")),
+            Param::Bytes(vec![0xde, 0xad, 0xbe, 0xef])
+        );
+        assert_eq!(
+            param(&DmlValue::new(DmlKind::Bytes, "")),
+            Param::Bytes(Vec::new()),
+            "a zero-length value is not an error"
+        );
+
+        // And what none of them will read.
+        for (kind, text) in [
+            (DmlKind::I64, "1.5"),
+            (DmlKind::Bool, "maybe"),
+            (DmlKind::Bytes, "ABC"),
+            (DmlKind::Bytes, "ZZ"),
+        ] {
+            assert!(
+                checked_value(kind, text, "C").is_err(),
+                "{kind:?} accepted {text:?}"
+            );
+        }
+
+        // The typed forms travel verbatim: nothing here decides what a server
+        // will make of a decimal or a timestamp.
+        assert_eq!(
+            param(&DmlValue::new(DmlKind::Decimal, "1.500")),
+            Param::Decimal("1.500".into())
+        );
+        assert_eq!(
+            param(&DmlValue::new(DmlKind::Timestamp, "2026-08-10 09:30:00")),
+            Param::Timestamp("2026-08-10 09:30:00".into())
+        );
+        assert_eq!(param(&DmlValue::null(DmlKind::Date)), Param::Null);
+    }
+
+    /// A key column whose original is NULL cannot be found again, and the
+    /// refusal names it.
+    #[test]
+    fn a_null_key_is_refused_before_anything_is_sent() {
+        let columns = vec![info(1, "NAME", 12, 0), info(2, "NOTE", 12, 0)];
+        let mut base = ResultSource::new(&columns);
+        base.push(render_batch(&batch(&[&[None], &[Some("z")]]), &columns));
+        let mut source = EditableSource::new(base, &columns, true);
+        source.stage(0, 1, StagedCell::Text("Z".into()));
+
+        let planned = plan_apply(
+            &source,
+            &columns,
+            vec!["t".to_string()],
+            &["NAME".to_string()],
+            &Dialect::H2,
+        );
+        assert_eq!(
+            planned,
+            Err(PlanError::Dml(rudbman_sql::DmlError::NullKey {
+                column: "NAME".to_string()
+            }))
+        );
+    }
+
+    /// The two ways a key can fail to name a column of the result.
+    #[test]
+    fn a_key_the_result_does_not_carry_is_named_in_the_refusal() {
+        let mut source = plan_source();
+        source.stage(0, 1, StagedCell::Text("A".into()));
+
+        assert_eq!(
+            plan_apply(
+                &source,
+                &plan_columns(),
+                vec!["PERSON".to_string()],
+                &["ROWID".to_string()],
+                &Dialect::H2,
+            ),
+            Err(PlanError::UnknownKeyColumn {
+                column: "ROWID".to_string()
+            })
+        );
+        assert_eq!(
+            plan_apply(
+                &source,
+                &plan_columns(),
+                vec!["PERSON".to_string()],
+                &[],
+                &Dialect::H2,
+            ),
+            Err(PlanError::NoKey)
+        );
+
+        // A product that spells the key one way in the metadata and another in
+        // the result set is still keyed, not keyless.
+        let batch = plan_apply(
+            &source,
+            &plan_columns(),
+            vec!["PERSON".to_string()],
+            &["id".to_string()],
+            &Dialect::H2,
+        )
+        .expect("the case-insensitive pass found it");
+        assert_eq!(batch[0].sql, "UPDATE PERSON SET NAME = ? WHERE ID = ?");
+    }
+
+    /// A row of nothing but defaults is the dialect's empty insert, and it
+    /// binds nothing for the confirmation to list.
+    #[test]
+    fn an_insert_of_nothing_but_defaults_still_plans() {
+        let mut source = plan_source();
+        source.edits_mut().add_insert(3);
+
+        let batch = plan(&source).expect("the edits plan");
+        assert_eq!(batch[0].sql, "INSERT INTO APP.PERSON DEFAULT VALUES");
+        assert!(batch[0].params.is_empty());
+        assert!(batch[0].values.is_empty());
+        assert!(!batch[0].checked, "an INSERT reaches no existing row");
+    }
+
+    /// Nothing staged is nothing to send.
+    #[test]
+    fn an_empty_buffer_plans_no_statements() {
+        assert_eq!(plan(&plan_source()), Ok(Vec::new()));
     }
 
     /// Past the end answers rather than panicking: the grid can ask about a row

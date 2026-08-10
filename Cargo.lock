@@ -5662,6 +5662,7 @@ dependencies = [
  "log",
  "parking_lot",
  "rudbman-core",
+ "rudbman-sql",
  "serde",
  "serde_json",
  "tempfile",

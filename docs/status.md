@@ -6,7 +6,7 @@ the work up. The design and the contracts all live in
 work has come, what is left, and how work is done in this repository**. It is
 updated whenever a milestone ends.
 
-Last updated: 2026-08-06 (just after the first release, **v0.1.0**).
+Last updated: 2026-08-10 (after table data editing, §7.9).
 
 ## Where things stand
 
@@ -29,6 +29,7 @@ Last updated: 2026-08-06 (just after the first release, **v0.1.0**).
 | Builder drag-and-drop and a welcome screen (PR #6) | done | An explorer row naming a table or a view can be dragged onto a query builder canvas — the same gate and the same one-round-trip column load as the menu action, except the drop lands on the builder under the pointer. With no connections, the explorer sidebar stays out of the frame (without touching the saved preference) and a welcome screen offers the connection dialog and the saved connections, one click to connect |
 | Context menus (PR #7) | done | A right-click menu on every surface: the widgets learn only the gesture and emit an event, while the app owns the menu, the labels and the commands, because the widget layer carries no user-facing strings (§7.8). Rows that cannot run right now are drawn greyed rather than left out, so the menu doubles as the surface's documentation. Menus are described as MenuRow lists before they are drawn, and the tests read the description instead of clicking computed pixels. Escape closes a menu ahead of everything else — which uncovered and fixed the editor's find-bar binding swallowing the key with the bar shut |
 | Monospace font fix | done | The literal family `monospace` is a fontconfig generic that only Linux resolves; on Windows every surface asking for it logged an error and fell back to the proportional system font. The app now resolves the first installed candidate per OS (Windows: Cascadia Mono through Courier New) and falls back to the alias where nothing matches |
+| Table data editing, phase 1 (§7.9) | done | `PaneItem::TableData` plus `DataPane` — `SELECT *` at the settings' fetch size, paged by the query pane's own cursor walk (moved into `query_source` so both use one), sorted by an appended `ORDER BY`, opened from the explorer row and the detail header. `rudbman-sql::dml` (`plan_edits`: one `UPDATE`/`DELETE`/`INSERT` per row, deletes then updates then inserts, every value a bind parameter and every name through `quote_ident`). `data_edit` — the staging buffer keyed by base row index, the overlay the grid draws through, the `java.sql.Types` → bind-form table, and the planner that turns one into the other. The apply: the whole batch shown before any of it runs (which is the write confirmation, by superset), then autocommit off, one `execute` each, a row count of exactly 1 required of every `UPDATE` and `DELETE`, commit, reload — and on any failure a rollback *before* autocommit is restored. Proved end to end against H2 on both sides: the pane's own suite, and `rudbman-jdbc`'s `tests/h2.rs` for the wire mechanics |
 | First release, v0.1.0 (PR #8) | done | `release.yml` (every build job runs Gradle, then jlink, then cargo — in that order, because rudbman-jdbc's build script refuses to compile without the bridge JAR — plus a smoke step over the staged tree before anything is published), `packaging/` (a Linux desktop entry and an `install.sh` that installs the whole tree and symlinks it, a macOS `Info.plist`), `<exe_dir>/runtime` added to the bundled-runtime search, `jdk.charsets` in the jlink module list (with `--compress=2`, the JDK 17 spelling), and a README brought fully up to date with three screenshots (captured through the temporary env-gated hook, reverted before the commit) |
 
 - Repository: <https://github.com/xcomart/rudbman> (public, MIT).
@@ -52,6 +53,19 @@ out. What remains can be taken in any order:
 
 ### Open items not tied to a milestone
 
+- **Editing a query result** is not possible: only the data pane edits, and only
+  a table (or a view the driver reports a key for). A `SELECT` the user wrote
+  has no single table behind it in general, so the pane's `UPDATE ... WHERE
+  <key>` has nothing to be written from. The cases that *are* single-table are
+  recognisable — `ColumnInfo` carries `table` and `schema` per column — and that
+  is the shape a phase 2 would take: accept a result whose every column names
+  one table, look its key up, and reuse `data_edit` unchanged.
+- **Structure editing (`ALTER TABLE`) is deferred entirely.** The detail panel
+  shows a table's columns, keys and DDL and changes none of them. It is a
+  separate generator from `rudbman-sql::dml` and a per-product one — every
+  product spells a column rename, a type change and a constraint drop
+  differently, and several cannot do some of them at all — so it wants its own
+  design pass rather than an extension of the row editor.
 - LOB_READ(0x25) is not implemented in the bridge, so there is no LOB viewer.
   Candidate re-read strategies are in §12.7.
 - PL/SQL blocks and MySQL DELIMITER are not handled by statement splitting

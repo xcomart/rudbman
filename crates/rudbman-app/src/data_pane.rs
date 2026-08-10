@@ -36,11 +36,20 @@
 //! the toolbar, and guards the three paths — sort, refresh and closing the tab
 //! — that would take the indices out from under it.
 //!
-//! # What is not here yet
+//! # The apply
 //!
-//! [`DataPane::apply`]. Generating the DML from the staging buffer and running
-//! it in one transaction is the milestone after this one; everything up to the
-//! button is wired, and the button calls a function whose body is a comment.
+//! [`DataPane::apply`] plans, [`DataPane::confirm_apply`] sends. The planning is
+//! [`crate::data_edit::plan_apply`]'s and happens on this thread, because it is
+//! pure and because its failures are about a column the user can go and look at.
+//! What comes back is a list of statements, and they are *shown* before any of
+//! them runs: the preview is this pane's write confirmation, always drawn, which
+//! is a superset of what the profile's `confirm_writes` asks for and therefore
+//! answers it.
+//!
+//! Sending is [`apply_batch`], on the session's own worker thread. Its one
+//! ordering rule is worth stating here as well as there: on any failure the
+//! rollback goes out **before** autocommit is restored, because restoring
+//! autocommit first is what commits the half-applied batch on several products.
 
 use std::sync::Arc;
 
@@ -55,16 +64,16 @@ use rudbman_grid::{
 use rudbman_jdbc::{
     ColumnInfo, Cursor, DescribeRequest, Error as JdbcError, Session, StatementSpec,
 };
-use rudbman_sql::Dialect;
+use rudbman_sql::{Dialect, DmlError};
 use rudbman_ui::{Button, ButtonVariant, ContextMenu, Theme, modal, theme};
 
 use crate::builder_sql;
 use crate::connection::SessionHandle;
 use crate::context_menu::{self, MenuRow};
-use crate::data_edit::{EditableSource, StagedCell};
+use crate::data_edit::{EditableSource, PlanError, PlannedStatement, StagedCell, plan_apply};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
-use crate::query::{QueryError, note, render_error};
+use crate::query::{QueryError, error_lines, note, render_error};
 use crate::query_source::{Paged, RenderedBatch, ResultSource, Step, advance, page};
 use crate::table_detail::{number, text};
 
@@ -150,6 +159,22 @@ pub struct DataPane {
     /// The profile refuses writes outright (§8), which is one of the two
     /// reasons this pane can only ever browse.
     read_only: bool,
+    /// Whether the product behind this session has transactions.
+    ///
+    /// From `SessionInfo::supports_transactions`, and a driver that would not
+    /// say is taken as having them: `set_auto_commit(false)` against a product
+    /// that has none fails loudly and visibly, while skipping the transaction on
+    /// one that has them gives up the guarantee in silence. False makes the
+    /// apply run statement by statement under autocommit, and makes the
+    /// confirmation say so.
+    transactional: bool,
+    /// The autocommit setting the session was opened with (§8).
+    ///
+    /// What the apply puts *back*, rather than a flat `true`: a profile opened
+    /// with autocommit off is a session the user asked to be in a transaction,
+    /// and an apply that handed it back in the other mode would be an edit to
+    /// the connection nobody made.
+    restore_auto_commit: bool,
     /// Rows per `FETCH`, from the settings. Read once, when the pane opens.
     fetch_rows: u32,
     /// The primary key's columns, in key order.
@@ -186,7 +211,53 @@ pub struct DataPane {
     /// lives in one tab — so the sheet belongs over that tab, and the pane can
     /// be tested without a workspace around it.
     confirm_discard: bool,
+    /// The statements an apply would send, while they are being shown.
+    ///
+    /// This pane's write confirmation, and the one modal it always raises: the
+    /// question "are you sure" is worth very little next to the statements
+    /// themselves, and a user who can read the `UPDATE` can see the `WHERE`
+    /// clause that decides how much of their table it reaches.
+    preview: Option<Vec<PlannedStatement>>,
+    /// Whether a batch is out on the session.
+    ///
+    /// Not a state of [`DataPane::load`] because the rows are still there and
+    /// still readable while it runs; what it gates is a second Apply on top of
+    /// the first.
+    applying: bool,
+    /// Why the last apply did not happen.
+    ///
+    /// Held apart from [`DataPane::notice`] and drawn in the danger colour: a
+    /// failed apply leaves every staged change exactly where it was, and a line
+    /// that faded in with the other passing remarks would be the wrong weight
+    /// for "nothing you asked for has happened".
+    apply_error: Option<Box<ApplyProblem>>,
     focus_handle: FocusHandle,
+}
+
+/// What a failed apply left behind, and what to say about it.
+///
+/// Three parts because the failures are three shapes: the driver refused a
+/// statement, this pane refused to send one, or — the one that needs saying
+/// loudest — the unwind itself failed and the batch may be half in.
+struct ApplyProblem {
+    /// The driver's own envelope, when a statement is what failed.
+    error: Option<Box<QueryError>>,
+    /// This pane's own words, when the refusal is the pane's.
+    message: Option<SharedString>,
+    /// Whether the rollback failed too, so the table may hold part of the
+    /// batch. The one case where the user has to go and look.
+    half_applied: bool,
+}
+
+impl ApplyProblem {
+    /// A refusal this side made, in words of its own.
+    fn local(message: SharedString) -> Box<Self> {
+        Box::new(Self {
+            error: None,
+            message: Some(message),
+            half_applied: false,
+        })
+    }
 }
 
 impl DataPane {
@@ -211,6 +282,8 @@ impl DataPane {
             session: Some(session),
             dialect: Dialect::from_id(driver_dialect),
             read_only: profile.read_only,
+            transactional: true,
+            restore_auto_commit: profile.auto_commit,
             fetch_rows: settings.fetch_batch_rows,
             keys: Vec::new(),
             keys_read: false,
@@ -220,8 +293,24 @@ impl DataPane {
             generation: 0,
             context_menu: None,
             confirm_discard: false,
+            preview: None,
+            applying: false,
+            apply_error: None,
             focus_handle: cx.focus_handle(),
         }
+    }
+
+    /// Records whether the product behind the session has transactions.
+    ///
+    /// A builder step rather than another constructor argument, and for a
+    /// reason of its own: everything [`DataPane::new`] takes is a fact about the
+    /// *object* being browsed or about the settings it is browsed under, and
+    /// this is a fact about the product. It is passed in rather than asked for
+    /// because the host already has the `SESSION_INFO` this pane would otherwise
+    /// spend a round trip on.
+    pub fn with_transactions(mut self, supported: bool) -> Self {
+        self.transactional = supported;
+        self
     }
 
     /// The object whose rows these are.
@@ -387,6 +476,11 @@ impl DataPane {
         self.notice = None;
         self.context_menu = None;
         self.confirm_discard = false;
+        // The rows a plan was made against are on their way out, so the plan
+        // goes with them: every statement in it is keyed to a row of the source
+        // being replaced.
+        self.preview = None;
+        self.apply_error = None;
 
         let target = self.target.clone();
         let sql = self.select_sql();
@@ -778,6 +872,10 @@ impl DataPane {
     /// Throws away everything staged, and puts the confirmation away with it.
     fn discard_all(&mut self, cx: &mut Context<Self>) {
         self.confirm_discard = false;
+        // A plan describes changes that are about to stop existing, and a
+        // failure describes an attempt to send them.
+        self.preview = None;
+        self.apply_error = None;
         let Some(grid) = self.grid().cloned() else {
             return;
         };
@@ -788,22 +886,157 @@ impl DataPane {
         cx.notify();
     }
 
-    /// Sends the staged changes to the server in one transaction.
+    /// Plans the staged changes and puts the statements up for confirmation.
     ///
-    /// **Not implemented yet, and deliberately left as one function to fill
-    /// in.** What goes here is §7.9's apply: read the staging buffer and the
-    /// original key values out of [`EditableSource`] into a
-    /// `rudbman_sql::TableEdits` — [`crate::data_edit`]'s module documentation
-    /// says which field maps onto which — plan it with `plan_edits`, show the
-    /// statements for confirmation, then `set_auto_commit(false)`, one
-    /// `execute` per statement checking that each `UPDATE` and `DELETE`
-    /// reported exactly one row, `commit`, and a refresh. Any failure rolls
-    /// back *before* autocommit goes back on.
+    /// Half of §7.9's apply, and the half that sends nothing: what it produces
+    /// is a list of statements and a modal over them. [`DataPane::confirm_apply`]
+    /// is what runs them.
     ///
-    /// Everything up to that is done: the button below is live exactly when
-    /// there is something to send, the buffer it would read is complete, and
-    /// nothing else in this pane has to move for the body to be written.
-    fn apply(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    /// The read-only check is made again here even though the button that calls
+    /// it is not drawn on a pane that has one. Both of §7.9's reasons are
+    /// permanent, so this cannot fire — which is the point: this is the only
+    /// function in the pane that leads to a write, and it is worth its two lines
+    /// to have the refusal stated where the write is rather than only where the
+    /// button is.
+    fn apply(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only_reason().is_some() || self.applying || self.preview.is_some() {
+            return;
+        }
+        // One modal at a time: the two are irreversible in opposite directions
+        // and stacking them would leave the user answering the wrong one.
+        self.confirm_discard = false;
+        self.apply_error = None;
+
+        let planned = {
+            let Load::Ready(rows) = &self.load else {
+                return;
+            };
+            let source = rows.grid.read(cx).source();
+            if source.edits().is_empty() {
+                return;
+            }
+            let table = builder_sql::table_parts(
+                self.target.catalog.as_deref(),
+                self.target.schema.as_deref(),
+                &self.target.name,
+            );
+            plan_apply(source, &rows.columns, table, &self.keys, &self.dialect)
+        };
+
+        match planned {
+            // Nothing to send, which only a buffer that counted as non-empty
+            // and generated no statement can produce. Saying nothing is right:
+            // there is no failure and no change.
+            Ok(statements) if statements.is_empty() => {}
+            Ok(statements) => self.preview = Some(statements),
+            Err(error) => self.apply_error = Some(ApplyProblem::local(plan_message(&error))),
+        }
+        cx.notify();
+    }
+
+    /// Runs the statements the confirmation showed.
+    ///
+    /// The batch goes out on the session's own worker thread, so it queues
+    /// behind whatever else this connection is doing rather than racing it, and
+    /// the whole of the transaction — the autocommit flip, every statement, the
+    /// row counts, the commit or the rollback — happens inside that one
+    /// background call. Splitting it across awaits would leave the connection
+    /// mid-transaction between them, which is a state no other pane on this
+    /// session could safely be allowed to find.
+    fn confirm_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(statements) = self.preview.take() else {
+            return;
+        };
+        if self.read_only_reason().is_some() {
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            self.notice = Some(ts!("explorer.disconnected"));
+            cx.notify();
+            return;
+        };
+
+        self.applying = true;
+        self.apply_error = None;
+        self.notice = Some(ts!("data.applying"));
+        let generation = self.generation;
+        let transactional = self.transactional;
+        let restore = self.restore_auto_commit;
+
+        cx.spawn_in(window, async move |pane, cx| {
+            let outcome = cx
+                .background_spawn(async move {
+                    apply_batch(session.session(), &statements, transactional, restore)
+                })
+                .await;
+            pane.update_in(cx, |pane, window, cx| {
+                pane.applied(generation, outcome, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Records what one apply did.
+    ///
+    /// Success throws the staging buffer away and reloads, which is §7.9's
+    /// answer to generated keys and triggers: what the server now holds is a
+    /// question only the server can answer, and a full reload is the one reading
+    /// that cannot be wrong. Failure keeps every staged change exactly where it
+    /// was — nothing reached the table, so there is nothing to reconcile — and
+    /// says why.
+    fn applied(
+        &mut self,
+        generation: u64,
+        outcome: Result<usize, Box<ApplyFailure>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.applying = false;
+        if generation != self.generation {
+            // The rows this batch was staged against have been replaced. A
+            // refresh refuses while anything is staged, so this is only
+            // reachable through a discard that raced the batch; either way the
+            // indices the buffer holds are not these rows'.
+            cx.notify();
+            return;
+        }
+        match outcome {
+            Ok(applied) => {
+                // Cleared before the reload, not after: `refresh` refuses while
+                // anything is staged, and there is nothing left worth keeping —
+                // the server has all of it.
+                self.discard_all(cx);
+                self.refresh(window, cx);
+                self.notice = Some(ts!("data.applied", count = applied));
+            }
+            Err(failure) => {
+                self.notice = None;
+                let half_applied = failure.half_applied;
+                if let Some(error) = failure.rollback {
+                    // The user is told that the batch may be half in; the
+                    // driver's account of *why the unwind failed* is a second
+                    // envelope with nowhere to go on screen, and losing it
+                    // silently would make the report unanswerable.
+                    log::error!("rolling back a failed apply failed: {error}");
+                }
+                let (error, message) = match failure.stop {
+                    ApplyStop::Driver(error) => (Some(Box::new(QueryError::new(error))), None),
+                    // §7.9's own words rather than a driver's: no statement
+                    // failed, and what happened — a row somebody else has since
+                    // moved — is not something a `SQLSTATE` describes.
+                    ApplyStop::Stale => (None, Some(ts!("data.apply_stale"))),
+                };
+                self.apply_error = Some(Box::new(ApplyProblem {
+                    error,
+                    message,
+                    half_applied,
+                }));
+            }
+        }
+        cx.notify();
+    }
 
     /// Puts the grid's right-click menu away, and says whether there was one.
     ///
@@ -1004,6 +1237,152 @@ impl DataPane {
         )
     }
 
+    /// The statements an apply is about to send, while they are being shown.
+    ///
+    /// The whole batch, in the order it will run, each statement over the values
+    /// its `?`s will take. That is a deliberately literal confirmation: the
+    /// question worth asking before a write is not "are you sure" but "is this
+    /// what you meant", and only the `WHERE` clause can answer it.
+    ///
+    /// A pane whose product has no transactions says so here, in red, because
+    /// the guarantee the rest of this modal implies is the one thing that does
+    /// not hold for it: a batch that fails half way stays half applied.
+    fn render_apply_preview(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let statements = self.preview.as_ref()?;
+        let chrome = theme(cx);
+        let this = cx.entity();
+        let dismiss = this.clone();
+        let mono = crate::app_settings::monospace_family(cx);
+
+        let listing = statements.iter().enumerate().map(|(index, statement)| {
+            let values = render_values(&statement.values);
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .when(index > 0, |row| row.mt(px(8.)))
+                .child(
+                    div()
+                        .font_family(mono.clone())
+                        .text_size(px(11.))
+                        .text_color(chrome.text)
+                        .child(SharedString::from(statement.sql.clone())),
+                )
+                .children(values.map(|values| {
+                    div()
+                        .text_size(px(11.))
+                        .text_color(chrome.text_muted)
+                        .child(values)
+                }))
+        });
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .children((!self.transactional).then(|| {
+                div()
+                    .text_size(px(11.))
+                    .text_color(chrome.danger)
+                    .child(ts!("data.apply_no_rollback"))
+            }))
+            .child(
+                div()
+                    .id("data-apply-preview")
+                    .max_h(px(260.))
+                    .overflow_y_scroll()
+                    .p(px(8.))
+                    .rounded_md()
+                    .bg(chrome.surface)
+                    .border_1()
+                    .border_color(chrome.border)
+                    .children(listing),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("data-apply-cancel", ts!("common.cancel"))
+                            .variant(ButtonVariant::Secondary)
+                            .on_click({
+                                let this = this.clone();
+                                move |_, _window, cx| {
+                                    this.update(cx, |pane, cx| {
+                                        pane.preview = None;
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("data-apply-run", ts!("data.apply"))
+                            .variant(ButtonVariant::Primary)
+                            .on_click(move |_, window, cx| {
+                                this.update(cx, |pane, cx| pane.confirm_apply(window, cx));
+                            }),
+                    ),
+            );
+
+        Some(
+            modal(
+                "data-apply",
+                ts!("data.apply_title", count = statements.len()),
+                px(560.),
+                body,
+                move |_window, cx| {
+                    dismiss.update(cx, |pane, cx| {
+                        pane.preview = None;
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// Why the last apply did not happen, above the rows it did not change.
+    ///
+    /// A strip and not the body: [`render_error`] draws a failure *in place of*
+    /// the rows, which is right for a load that produced none and wrong here —
+    /// the rows are still on screen and still hold everything the user staged
+    /// against them.
+    fn render_apply_error(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+        let problem = self.apply_error.as_ref()?;
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap(px(4.))
+                .px(px(10.))
+                .py(px(6.))
+                .border_b_1()
+                .border_color(chrome.border)
+                .bg(chrome.surface)
+                .children(problem.message.clone().map(|message| {
+                    div()
+                        .text_size(px(12.))
+                        .text_color(chrome.danger)
+                        .child(message)
+                }))
+                .children(
+                    problem
+                        .error
+                        .as_ref()
+                        .map(|error| error_lines(error, chrome)),
+                )
+                .children(problem.half_applied.then(|| {
+                    div()
+                        .text_size(px(11.))
+                        .text_color(chrome.danger)
+                        .child(ts!("data.apply_half_applied"))
+                })),
+        )
+    }
+
     /// How much is staged, or `None` while nothing is.
     fn counts(&self, cx: &App) -> Option<crate::data_edit::EditCounts> {
         let counts = self.grid()?.read(cx).source().edits().counts();
@@ -1093,7 +1472,7 @@ impl DataPane {
                 let this = this.clone();
                 Button::new("data-apply", ts!("data.apply"))
                     .variant(ButtonVariant::Primary)
-                    .disabled(!staged || loading)
+                    .disabled(!staged || loading || self.applying)
                     .on_click(move |_, window, cx| {
                         this.update(cx, |pane, cx| pane.apply(window, cx));
                     })
@@ -1102,10 +1481,11 @@ impl DataPane {
                 let this = this.clone();
                 Button::new("data-discard", ts!("data.discard"))
                     .variant(ButtonVariant::Secondary)
-                    .disabled(!staged || loading)
+                    .disabled(!staged || loading || self.applying)
                     .on_click(move |_, _window, cx| {
                         this.update(cx, |pane, cx| {
                             pane.confirm_discard = true;
+                            pane.preview = None;
                             cx.notify();
                         });
                     })
@@ -1113,7 +1493,7 @@ impl DataPane {
             .child(
                 Button::new("data-refresh", ts!("data.refresh"))
                     .variant(ButtonVariant::Secondary)
-                    .disabled(loading)
+                    .disabled(loading || self.applying)
                     .on_click(move |_, window, cx| {
                         this.update(cx, |pane, cx| pane.refresh(window, cx));
                     }),
@@ -1174,9 +1554,11 @@ impl Render for DataPane {
         let chrome = theme(cx);
         let toolbar = self.render_toolbar(&chrome, cx);
         let banner = self.render_banner(&chrome);
+        let failure = self.render_apply_error(&chrome);
         let body = self.render_body(&chrome, cx);
         let menu = self.render_context_menu(cx);
         let confirm = self.render_discard_confirm(cx);
+        let preview = self.render_apply_preview(cx);
 
         div()
             .id("data-pane")
@@ -1189,6 +1571,7 @@ impl Render for DataPane {
             .relative()
             .child(toolbar)
             .children(banner)
+            .children(failure)
             .child(body)
             .children(self.notice.clone().map(|notice| {
                 div()
@@ -1206,9 +1589,12 @@ impl Render for DataPane {
                     .text_color(chrome.text_muted)
                     .child(notice)
             }))
-            // Both last, and the menu last of all: a context menu paints above
-            // even a modal (architecture document, §7.8).
+            // All last, and the menu last of all: a context menu paints above
+            // even a modal (architecture document, §7.8). The two modals never
+            // stand at once — raising either puts the other away — so their
+            // order between themselves decides nothing.
             .children(confirm)
+            .children(preview)
             .children(menu)
     }
 }
@@ -1292,6 +1678,200 @@ fn primary_key(session: &Session, target: &ObjectTarget) -> Result<Vec<String>, 
         .collect();
     found.sort_by_key(|(seq, _)| *seq);
     Ok(found.into_iter().map(|(_, column)| column).collect())
+}
+
+/// One statement's bound values, as the confirmation lists them.
+///
+/// `None` for a statement that binds nothing — an `INSERT ... DEFAULT VALUES` —
+/// so that the line is left out rather than drawn empty. NULL is spelled `NULL`
+/// and not translated: it is the value's SQL name, and a localised one would
+/// stop matching the statement above it.
+fn render_values(values: &[Option<String>]) -> Option<SharedString> {
+    if values.is_empty() {
+        return None;
+    }
+    // A middle dot rather than a comma, because a comma is a character the
+    // values themselves very often contain.
+    let joined = values
+        .iter()
+        .map(|value| value.as_deref().unwrap_or("NULL"))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    Some(SharedString::from(joined))
+}
+
+/// Why a staged buffer could not be turned into statements, in the user's
+/// language.
+///
+/// Three of the four cases name a column, which is the whole reason the planning
+/// checks values before anything is generated. The fourth carries
+/// `rudbman-sql`'s own sentence: its remaining variants describe shapes this
+/// pane does not build, so a translated line per variant would be eight strings
+/// nobody can reach in exchange for one that would then say nothing useful.
+fn plan_message(error: &PlanError) -> SharedString {
+    match error {
+        PlanError::NoKey => ts!("data.no_primary_key"),
+        PlanError::UnknownKeyColumn { column } => {
+            ts!("data.apply_unknown_key", column = column.clone())
+        }
+        PlanError::BadValue { column, text, .. } => ts!(
+            "data.apply_bad_value",
+            column = column.clone(),
+            value = text.clone()
+        ),
+        PlanError::Dml(DmlError::NullKey { column }) => {
+            ts!("data.apply_null_key", column = column.clone())
+        }
+        PlanError::Dml(other) => ts!("data.apply_not_planned", detail = other.to_string()),
+    }
+}
+
+/// Why an apply stopped.
+enum ApplyStop {
+    /// The driver refused a statement, in its own words.
+    Driver(JdbcError),
+    /// An `UPDATE` or a `DELETE` reached a number of rows that was not one, so
+    /// the row it named is not the row that was read (§7.9).
+    Stale,
+}
+
+/// A failed apply: what stopped it, and what it left in the table.
+struct ApplyFailure {
+    stop: ApplyStop,
+    /// The rollback's own failure, when even that did not go through. Logged
+    /// rather than shown: what the user needs is [`ApplyFailure::half_applied`],
+    /// and a second driver envelope beside the first says nothing they can act
+    /// on.
+    rollback: Option<JdbcError>,
+    /// Whether part of the batch may already be in the table.
+    ///
+    /// Two ways to get here, and the user's next move is the same for both: a
+    /// rollback that failed, and a product with no transactions to roll back,
+    /// where every statement before the one that failed is simply in.
+    half_applied: bool,
+}
+
+/// Runs one batch of statements, in one transaction, and reports what happened.
+///
+/// **Blocks**, and is called from `cx.background_spawn` with a
+/// [`SessionHandle`]: every call in here goes through the session's own worker
+/// thread, so the transaction is opened, filled and closed without anything else
+/// on this connection getting in between.
+///
+/// The shape is §7.9's:
+///
+/// * `set_auto_commit(false)`, then one `execute` per statement in the order
+///   they were planned — deletes, updates, inserts — then `commit`, then
+///   autocommit back to what the session was opened with.
+/// * Every `UPDATE` and `DELETE` has to report exactly one row. A count that is
+///   not one means the `WHERE` clause reached a row somebody else has already
+///   moved, and the whole apply is abandoned; that is what makes a `WHERE` over
+///   the primary key alone safe.
+/// * On **any** failure the rollback goes out first and autocommit is restored
+///   second. The order is not cosmetic: several products treat
+///   `setAutoCommit(true)` as an implicit commit, so restoring it first is
+///   exactly what would commit the half-applied batch this is trying to undo.
+///   The bridge's `TransferJob` documents the same trap.
+///
+/// `transactional == false` — a product that has no transactions — runs the
+/// statements under autocommit, count checks and all. The row counts still say
+/// whether each statement reached what it meant to; what is missing is any way
+/// to put the earlier ones back, which is why the confirmation says so before
+/// the user reaches this.
+fn apply_batch(
+    session: &Session,
+    statements: &[PlannedStatement],
+    transactional: bool,
+    restore: bool,
+) -> Result<usize, Box<ApplyFailure>> {
+    if transactional {
+        // Nothing has run, so a failure here needs no unwind: the session is
+        // still in whatever mode it was opened in.
+        session.set_auto_commit(false).map_err(|error| {
+            Box::new(ApplyFailure {
+                stop: ApplyStop::Driver(error),
+                rollback: None,
+                half_applied: false,
+            })
+        })?;
+    }
+
+    for (done, statement) in statements.iter().enumerate() {
+        if let Err(stop) = run_one(session, statement) {
+            return Err(unwind(session, stop, transactional, restore, done));
+        }
+    }
+
+    if transactional {
+        if let Err(error) = session.commit() {
+            // A driver that failed a commit has usually rolled back already,
+            // but "usually" is not a guarantee worth resting a table on, and a
+            // rollback of nothing costs a round trip.
+            return Err(unwind(
+                session,
+                ApplyStop::Driver(error),
+                transactional,
+                restore,
+                0,
+            ));
+        }
+        if let Err(error) = session.set_auto_commit(restore) {
+            // The work is committed and the user's changes are in. Leaving the
+            // session in the wrong mode is a real problem, but it is not this
+            // apply's failure and reporting it as one would have the pane keep
+            // changes the server already took.
+            log::warn!("restoring auto-commit after an apply failed: {error}");
+        }
+    }
+    Ok(statements.len())
+}
+
+/// Runs one statement and checks what it reached.
+fn run_one(session: &Session, statement: &PlannedStatement) -> Result<(), ApplyStop> {
+    let spec =
+        StatementSpec::new(statement.sql.clone()).with_params(statement.params.iter().cloned());
+    let cursor = session.execute(&spec).map_err(ApplyStop::Driver)?;
+    // Dropping the cursor closes it; a DML statement holds nothing worth paging.
+    if statement.checked && cursor.result().update_count != 1 {
+        return Err(ApplyStop::Stale);
+    }
+    Ok(())
+}
+
+/// Puts the connection back after a failure: rollback first, autocommit second.
+///
+/// See [`apply_batch`] for why that order is the whole point of this function
+/// existing rather than the two calls being written inline. `done` is how many
+/// statements had already gone through, which decides nothing under a
+/// transaction and decides everything without one.
+fn unwind(
+    session: &Session,
+    stop: ApplyStop,
+    transactional: bool,
+    restore: bool,
+    done: usize,
+) -> Box<ApplyFailure> {
+    if !transactional {
+        // Nothing was held back, so there is nothing to put back: whatever ran
+        // before the statement that failed is in the table.
+        return Box::new(ApplyFailure {
+            stop,
+            rollback: None,
+            half_applied: done > 0,
+        });
+    }
+    let rollback = session.rollback().err();
+    // Attempted whatever the rollback did: a session left with autocommit off
+    // is a session every later statement on this connection silently joins an
+    // open transaction on.
+    if let Err(error) = session.set_auto_commit(restore) {
+        log::warn!("restoring auto-commit after a failed apply failed: {error}");
+    }
+    Box::new(ApplyFailure {
+        half_applied: rollback.is_some(),
+        stop,
+        rollback,
+    })
 }
 
 #[cfg(test)]
@@ -2087,6 +2667,363 @@ mod tests {
         connected.close().expect("close");
     }
 
+    /// The table as the server holds it, read straight off the session and not
+    /// through the pane.
+    ///
+    /// Every apply assertion needs both readings: what the pane shows is the
+    /// staging buffer over whatever it last fetched, and the question a rollback
+    /// test asks is about the table itself.
+    fn server_rows(connected: &Connected, sql: &str) -> Vec<String> {
+        let cursor = connected
+            .session()
+            .execute(&StatementSpec::new(sql))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"));
+        let batch = cursor.fetch(500).expect("the batch decodes");
+        // `to_text` needs a column to know whether a float is single precision,
+        // and nothing read here is one.
+        let described = crate::query_source::tests::info(1, "C", 12, 0);
+        (0..batch.rows())
+            .map(|row| {
+                (0..batch.column_count())
+                    .map(|column| {
+                        batch
+                            .value(row, column)
+                            .and_then(|value| value.to_text(&described))
+                            .unwrap_or_else(|| "NULL".to_string())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("|")
+            })
+            .collect()
+    }
+
+    /// The statements the pane's confirmation is showing.
+    fn preview(window: &WindowHandle<DataPane>, cx: &mut TestAppContext) -> Vec<String> {
+        window
+            .update(cx, |pane, _window, _cx| {
+                pane.preview
+                    .as_ref()
+                    .map(|statements| {
+                        statements
+                            .iter()
+                            .map(|statement| statement.sql.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .expect("the window is open")
+    }
+
+    /// A mixed batch — one changed cell, one deleted row, one new row whose
+    /// key the server generates — goes out as three statements, and the pane
+    /// comes back showing what the server now holds.
+    #[gpui::test]
+    fn a_mixed_edit_set_is_applied_and_the_rows_are_read_back(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-apply",
+            &[
+                "create schema if not exists APP",
+                "create table APP.PERSON (ID int auto_increment primary key, NAME varchar(20))",
+                "insert into APP.PERSON (NAME) values ('a'), ('b'), ('c')",
+            ],
+        );
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert_eq!(column(&window, 1, cx), ["a", "b", "c"]);
+
+        // A cell, a deletion and a new row. The key column is auto-increment,
+        // so the grid refuses to type into it and the `INSERT` leaves it out —
+        // which is what makes the server generate one.
+        assert!(type_into(&window, 0, 1, "A", cx));
+        window
+            .update(cx, |pane, window, cx| {
+                pane.toggle_delete(1, cx);
+                pane.insert_row(window, cx);
+            })
+            .expect("the window is open");
+        assert!(type_into(&window, 3, 1, "d", cx));
+
+        // Apply plans and shows; nothing has gone out yet.
+        window
+            .update(cx, |pane, window, cx| pane.apply(window, cx))
+            .expect("the window is open");
+        assert_eq!(
+            preview(&window, cx),
+            [
+                "DELETE FROM APP.PERSON WHERE ID = ?",
+                "UPDATE APP.PERSON SET NAME = ? WHERE ID = ?",
+                "INSERT INTO APP.PERSON (NAME) VALUES (?)",
+            ]
+        );
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["a", "b", "c"],
+            "the preview sent something"
+        );
+
+        window
+            .update(cx, |pane, window, cx| pane.confirm_apply(window, cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(!pane.has_pending_edits(cx), "the buffer outlived the apply");
+                assert!(pane.apply_error.is_none());
+                assert!(pane.preview.is_none());
+                assert_eq!(pane.notice, Some(ts!("data.applied", count = 3)));
+            })
+            .expect("the window is open");
+        // The reload is what makes the generated key visible: it is 4, and
+        // nothing on this side could have known that.
+        assert_eq!(column(&window, 0, cx), ["1", "3", "4"]);
+        assert_eq!(column(&window, 1, cx), ["A", "c", "d"]);
+        connected.close().expect("close");
+    }
+
+    /// Cancelling the confirmation sends nothing and keeps everything staged.
+    #[gpui::test]
+    fn the_confirmation_can_be_turned_down(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-apply-cancel");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert!(type_into(&window, 0, 1, "A", cx));
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply(window, cx);
+                assert_eq!(pane.preview.as_ref().map(Vec::len), Some(1));
+                // What the modal's Cancel button and its dismiss both do.
+                pane.preview = None;
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(pane.has_pending_edits(cx), "the edit was thrown away");
+            })
+            .expect("the window is open");
+        assert_eq!(
+            column(&window, 1, cx),
+            ["A", "b"],
+            "the overlay still holds"
+        );
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["a", "b"]
+        );
+        connected.close().expect("close");
+    }
+
+    /// A row somebody else moved stops the whole batch, and the transaction
+    /// takes the statements that had already run back out with it.
+    #[gpui::test]
+    fn a_row_that_moved_underneath_stops_the_apply(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-apply-stale",
+            &[
+                "create schema if not exists APP",
+                "create table APP.PERSON (ID int primary key, NAME varchar(20))",
+                "insert into APP.PERSON values (1, 'a'), (2, 'b')",
+            ],
+        );
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert!(type_into(&window, 0, 1, "A", cx));
+        assert!(type_into(&window, 1, 1, "B", cx));
+
+        // Behind the pane's back, between the read and the apply. The pane's
+        // second `UPDATE` will find nothing, and the first has already run.
+        connected
+            .session()
+            .execute(&StatementSpec::new("delete from APP.PERSON where ID = 2"))
+            .expect("the row goes");
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply(window, cx);
+                pane.confirm_apply(window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                let problem = pane.apply_error.as_ref().expect("the apply failed");
+                assert_eq!(problem.message, Some(ts!("data.apply_stale")));
+                assert!(problem.error.is_none(), "no driver refused anything");
+                assert!(!problem.half_applied, "the rollback went through");
+                assert!(pane.has_pending_edits(cx), "the staging was thrown away");
+            })
+            .expect("the window is open");
+        // The `UPDATE` that did reach its row was rolled back with the rest.
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["a"]
+        );
+        assert_eq!(
+            column(&window, 1, cx),
+            ["A", "B"],
+            "the edits are still here"
+        );
+        connected.close().expect("close");
+    }
+
+    /// A statement the server refuses rolls the batch back and says why in the
+    /// driver's own words.
+    #[gpui::test]
+    fn a_driver_refusal_rolls_the_whole_batch_back(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-apply-refused",
+            &[
+                "create schema if not exists APP",
+                "create table APP.PERSON (ID int primary key, NAME varchar(20) not null)",
+                "insert into APP.PERSON values (1, 'a'), (2, 'b')",
+            ],
+        );
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+
+        // The first row's `UPDATE` is fine; the second sets a NOT NULL column
+        // to NULL. Row order is the buffer's, so the good one runs first.
+        assert!(type_into(&window, 0, 1, "A", cx));
+        window
+            .update(cx, |pane, _window, cx| pane.set_null(1, 1, cx))
+            .expect("the window is open");
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply(window, cx);
+                assert_eq!(pane.preview.as_ref().map(Vec::len), Some(2));
+                pane.confirm_apply(window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                let problem = pane.apply_error.as_ref().expect("the apply failed");
+                assert!(problem.error.is_some(), "the driver said nothing");
+                assert!(problem.message.is_none(), "this is not the staleness");
+                assert!(!problem.half_applied);
+                assert!(pane.has_pending_edits(cx));
+            })
+            .expect("the window is open");
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["a", "b"],
+            "the statement before the refused one stayed"
+        );
+
+        // And autocommit is back on: a statement run now needs no commit to be
+        // seen by the next reader.
+        connected
+            .session()
+            .execute(&StatementSpec::new(
+                "insert into APP.PERSON values (3, 'c')",
+            ))
+            .expect("the insert runs");
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["a", "b", "c"]
+        );
+        connected.close().expect("close");
+    }
+
+    /// A value the column's type cannot take is refused before anything is
+    /// sent, and the refusal names the column.
+    #[gpui::test]
+    fn a_value_the_column_cannot_take_never_reaches_a_statement(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-apply-bad",
+            &[
+                "create schema if not exists APP",
+                "create table APP.PERSON (ID int primary key, AGE int)",
+                "insert into APP.PERSON values (1, 30)",
+            ],
+        );
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert!(type_into(&window, 0, 1, "thirty", cx));
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply(window, cx);
+                assert!(pane.preview.is_none(), "an unbindable value was planned");
+                let problem = pane.apply_error.as_ref().expect("the plan failed");
+                assert_eq!(
+                    problem.message,
+                    Some(ts!(
+                        "data.apply_bad_value",
+                        column = "AGE",
+                        value = "thirty"
+                    ))
+                );
+                assert!(pane.has_pending_edits(cx));
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A pane that may not be written to refuses an apply even with something
+    /// staged in it, which is only reachable by going round the grid.
+    #[gpui::test]
+    fn a_read_only_pane_refuses_to_apply(cx: &mut TestAppContext) {
+        let (connected, mut profile) = person("data-apply-read-only");
+        profile.read_only = true;
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+
+        window
+            .update(cx, |pane, window, cx| {
+                assert_eq!(pane.read_only_reason(), Some(ts!("data.read_only")));
+                // Past the grid, which would refuse: what is under test is the
+                // check `apply` makes for itself.
+                let grid = pane.grid().cloned().expect("the pane holds rows");
+                grid.update(cx, |grid, cx| {
+                    grid.source_mut(cx).edits_mut().toggle_deleted(0);
+                });
+                assert!(pane.has_pending_edits(cx));
+
+                pane.apply(window, cx);
+                assert!(pane.preview.is_none(), "a read-only pane planned a batch");
+                assert!(pane.apply_error.is_none());
+
+                // And so does the second half, in case the first were ever
+                // reached with a plan already in hand.
+                pane.preview = Some(Vec::new());
+                pane.confirm_apply(window, cx);
+                assert!(!pane.applying);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["a", "b"]
+        );
+        connected.close().expect("close");
+    }
+
+    /// A product with no transactions says so in the confirmation, because the
+    /// guarantee the rest of it implies is the one thing that does not hold.
+    #[gpui::test]
+    fn a_product_without_transactions_warns_in_the_confirmation(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-apply-no-txn");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert!(pane.transactional, "H2 has transactions");
+                pane.transactional = false;
+            })
+            .expect("the window is open");
+        assert!(type_into(&window, 0, 1, "A", cx));
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply(window, cx);
+                assert!(pane.preview.is_some());
+                // The line the modal draws for exactly this case.
+                assert!(!ts!("data.apply_no_rollback").is_empty());
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
     #[test]
     fn every_label_the_pane_draws_has_a_translation() {
         for label in [
@@ -2107,6 +3044,16 @@ mod tests {
             ts!("data.delete_row"),
             ts!("data.undelete_row"),
             ts!("data.discard_row"),
+            ts!("data.apply_title", count = 3),
+            ts!("data.apply_no_rollback"),
+            ts!("data.applying"),
+            ts!("data.applied", count = 3),
+            ts!("data.apply_stale"),
+            ts!("data.apply_half_applied"),
+            ts!("data.apply_bad_value", column = "AGE", value = "x"),
+            ts!("data.apply_null_key", column = "ID"),
+            ts!("data.apply_unknown_key", column = "ID"),
+            ts!("data.apply_not_planned", detail = "why"),
             ts!("menu.view_data"),
         ] {
             assert!(!label.is_empty(), "empty label");

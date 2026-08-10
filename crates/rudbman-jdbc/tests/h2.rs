@@ -34,6 +34,12 @@ use rudbman_jdbc::{
     JobProgress, JobState, Jvm, JvmConfig, ObjectRef, OnError, Op, Param, Session, StatementSpec,
     TransferMode, TransferSpec, Value, default_bridge_jar,
 };
+// A dev-dependency, for the editing section at the bottom of this file: what it
+// tests is that the statements one crate plans and the parameters this one binds
+// fit together against a real driver.
+use rudbman_sql::{
+    Dialect, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
+};
 
 /// The process-wide JVM, started by whichever test needs it first.
 fn jvm() -> &'static Jvm {
@@ -1815,5 +1821,231 @@ fn a_damaged_batch_is_an_error_and_never_a_panic() {
     assert!(
         Batch::decode(&damaged).is_err(),
         "an offset outside the buffer has to be refused, not indexed with"
+    );
+}
+
+// --- editing: planned DML applied in one transaction -----------------------
+//
+// The data pane stages a user's edits, `rudbman-sql` turns them into statements
+// with bind parameters, and this crate runs them. Each half has tests of its
+// own and neither can prove the seam: the planner never sees a driver, and this
+// crate never sees an edit. What follows drives the whole way through against
+// real H2 — including the two failures the design turns on, a statement the
+// server refuses and a row that moved underneath the batch.
+//
+// The apply loop below is the application's, reproduced rather than called: it
+// lives in `rudbman-app`, which depends on this crate and cannot be depended on
+// back. What is under test here is therefore the wire mechanics — that
+// `update_count` really comes back as the row count, that a rollback really
+// undoes the statements before the failure, that auto-commit really returns —
+// and the *decision* those mechanics feed is tested where it lives, in
+// `rudbman-app`'s own suite.
+
+/// The bind parameter one planned value becomes.
+///
+/// The application's own mapping, in miniature. None of these fixtures has a
+/// binary column, so `Bytes` shares the text arm rather than carrying a hex
+/// decoder nothing here would exercise.
+fn bind(value: &DmlValue) -> Param {
+    let Some(text) = value.text() else {
+        return Param::Null;
+    };
+    match value.kind() {
+        DmlKind::I64 => Param::I64(text.parse().expect("the planner was given an integer")),
+        DmlKind::Decimal => Param::Decimal(text.to_string()),
+        DmlKind::Bool => Param::Bool(text == "true"),
+        DmlKind::Date => Param::Date(text.to_string()),
+        DmlKind::Time => Param::Time(text.to_string()),
+        DmlKind::Timestamp => Param::Timestamp(text.to_string()),
+        DmlKind::Str | DmlKind::Bytes => Param::Str(text.to_string()),
+    }
+}
+
+/// Runs a planned batch the way the data pane does, and says why if it stopped.
+///
+/// `checked` is how many leading statements have to report exactly one changed
+/// row — the deletes and the updates, which `plan_edits` puts first. The
+/// ordering rule in [`unwind`] is the point of the whole function.
+fn apply(session: &Session, batch: &[DmlStatement], checked: usize) -> Result<(), String> {
+    session.set_auto_commit(false).expect("auto-commit off");
+
+    for (index, statement) in batch.iter().enumerate() {
+        let spec = StatementSpec::new(statement.sql.clone())
+            .with_params(statement.values.iter().map(bind));
+        let stopped = match session.execute(&spec) {
+            Err(error) => Some(error.to_string()),
+            Ok(cursor) if index < checked && cursor.result().update_count != 1 => Some(format!(
+                "statement {index} reached {} rows",
+                cursor.result().update_count
+            )),
+            Ok(_) => None,
+        };
+        if let Some(why) = stopped {
+            return Err(unwind(session, why));
+        }
+    }
+
+    if let Err(error) = session.commit() {
+        return Err(unwind(session, error.to_string()));
+    }
+    session.set_auto_commit(true).expect("auto-commit back on");
+    Ok(())
+}
+
+/// Rolls back, **then** restores auto-commit, and hands the reason back.
+///
+/// The order is the whole reason this is a function. Several products treat
+/// `setAutoCommit(true)` as an implicit commit, so putting it back first is
+/// exactly what would commit the half-applied batch — the trap the bridge's
+/// `TransferJob` documents on its own path.
+fn unwind(session: &Session, why: String) -> String {
+    session.rollback().expect("the rollback goes through");
+    session.set_auto_commit(true).expect("auto-commit back on");
+    why
+}
+
+/// Every column of `sql`'s rows, as text, one joined string per row.
+fn read_back(session: &Session, sql: &str) -> Vec<String> {
+    let batch = fetch_one(session, sql, 100);
+    (0..batch.rows())
+        .map(|row| {
+            (0..batch.column_count())
+                .map(|column| match batch.value(row, column) {
+                    None | Some(Value::Null) => "NULL".to_string(),
+                    Some(Value::I64(value)) => value.to_string(),
+                    Some(Value::Str(text)) => text.to_string(),
+                    Some(other) => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        })
+        .collect()
+}
+
+#[test]
+fn a_planned_batch_of_edits_applies_in_one_transaction() {
+    let session = session();
+    exec(
+        &session,
+        "create table t (id integer auto_increment primary key,
+                         name varchar(20),
+                         qty integer)",
+    );
+    exec(
+        &session,
+        "insert into t (name, qty) values ('a', 1), ('b', 2), ('c', 3)",
+    );
+
+    // One of each: the row `b` goes, `c`'s quantity changes, and a row is added
+    // whose key the server generates — which is what `InsertCell::Unset` on the
+    // auto-increment column means.
+    let mut edits = TableEdits::new(["T"], ["ID", "NAME", "QTY"]).with_key([0]);
+    edits.deletes.push(vec![DmlValue::new(DmlKind::I64, "2")]);
+    edits.updates.push(RowUpdate {
+        key: vec![DmlValue::new(DmlKind::I64, "3")],
+        set: vec![(2, DmlValue::new(DmlKind::I64, "30"))],
+    });
+    edits.inserts.push(vec![
+        InsertCell::Unset,
+        InsertCell::Set(DmlValue::new(DmlKind::Str, "d")),
+        InsertCell::Set(DmlValue::new(DmlKind::I64, "4")),
+    ]);
+
+    let batch = plan_edits(&edits, &Dialect::H2).expect("the edits plan");
+    assert_eq!(
+        batch.iter().map(|s| s.sql.as_str()).collect::<Vec<_>>(),
+        [
+            "DELETE FROM T WHERE ID = ?",
+            "UPDATE T SET QTY = ? WHERE ID = ?",
+            "INSERT INTO T (NAME, QTY) VALUES (?, ?)",
+        ],
+        "no value was spliced into the SQL"
+    );
+
+    apply(&session, &batch, 2).expect("the batch applies");
+
+    // The generated key is 4, and nothing on the planning side could have known
+    // that: it is exactly why an apply is followed by a full reload.
+    assert_eq!(
+        read_back(&session, "select id, name, qty from t order by id"),
+        ["1|a|1", "3|c|30", "4|d|4"]
+    );
+}
+
+#[test]
+fn a_batch_that_fails_part_way_leaves_the_table_as_it_was() {
+    let url = fresh_url();
+    let session = Session::open(jvm(), &spec(&url, "sa", "")).expect("connects");
+    exec(
+        &session,
+        "create table t (id integer primary key, name varchar(20) not null)",
+    );
+    exec(&session, "insert into t values (1, 'a'), (2, 'b')");
+
+    // The first update is fine; the second sets a NOT NULL column to NULL.
+    let mut edits = TableEdits::new(["T"], ["ID", "NAME"]).with_key([0]);
+    for (id, name) in [
+        (1, DmlValue::new(DmlKind::Str, "A")),
+        (2, DmlValue::null(DmlKind::Str)),
+    ] {
+        edits.updates.push(RowUpdate {
+            key: vec![DmlValue::new(DmlKind::I64, id.to_string())],
+            set: vec![(1, name)],
+        });
+    }
+    let batch = plan_edits(&edits, &Dialect::H2).expect("the edits plan");
+
+    let why = apply(&session, &batch, batch.len()).expect_err("the second update is refused");
+    assert!(
+        why.to_lowercase().contains("null"),
+        "the driver's own words are what surfaces: {why}"
+    );
+    assert_eq!(
+        read_back(&session, "select id, name from t order by id"),
+        ["1|a", "2|b"],
+        "the update that did go through was not rolled back"
+    );
+
+    // And auto-commit really is back on, which is the half of the unwind a
+    // reading of this connection alone cannot prove: a second connection sees
+    // the row only if nothing is holding it in an open transaction.
+    exec(&session, "insert into t values (3, 'c')");
+    let observer = Session::open(jvm(), &spec(&url, "sa", "")).expect("connects");
+    assert_eq!(
+        read_back(&observer, "select id, name from t order by id"),
+        ["1|a", "2|b", "3|c"],
+        "the insert after the failed batch was still inside a transaction"
+    );
+}
+
+#[test]
+fn an_update_that_reaches_no_row_is_reported_as_a_row_count_of_zero() {
+    let session = session();
+    exec(
+        &session,
+        "create table t (id integer primary key, name varchar(20))",
+    );
+    exec(&session, "insert into t values (1, 'a'), (2, 'b')");
+
+    let mut edits = TableEdits::new(["T"], ["ID", "NAME"]).with_key([0]);
+    for (id, name) in [(1, "A"), (2, "B")] {
+        edits.updates.push(RowUpdate {
+            key: vec![DmlValue::new(DmlKind::I64, id.to_string())],
+            set: vec![(1, DmlValue::new(DmlKind::Str, name))],
+        });
+    }
+    let batch = plan_edits(&edits, &Dialect::H2).expect("the edits plan");
+
+    // Behind the batch's back, after the rows were read and before they are
+    // written. This is the whole reason a `WHERE` clause naming the key alone is
+    // safe: the row count is what notices.
+    exec(&session, "delete from t where id = 2");
+
+    let why = apply(&session, &batch, batch.len()).expect_err("the second update reaches nothing");
+    assert_eq!(why, "statement 1 reached 0 rows");
+    assert_eq!(
+        read_back(&session, "select id, name from t order by id"),
+        ["1|a"],
+        "the first update stood after a row-count abort"
     );
 }

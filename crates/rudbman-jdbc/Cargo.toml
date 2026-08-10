@@ -22,6 +22,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# The statement planner, for the editing tests only — never in `src`. What those
+# tests prove is that the SQL `rudbman-sql` writes and the parameters this crate
+# binds fit together against a real driver, which neither crate can prove alone,
+# and writing the `UPDATE`s out by hand in the test would prove it about a
+# different string than the one the application sends. The dependency is
+# acyclic: `rudbman-sql` has none at all.
+rudbman-sql.workspace = true
 # The extraction tests need a directory to write a script into and to have it
 # removed again however the test ends.
 tempfile.workspace = true

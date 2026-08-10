@@ -51,11 +51,16 @@
 use rudbman_grid::{GridCell, GridColumn, GridColumnKind, GridSource, GridSourceState};
 use rudbman_jdbc::{Batch, ColumnInfo, ColumnKind, Cursor, Error as JdbcError, Value};
 
-/// `java.sql.Types` constants this module branches on.
+/// `java.sql.Types` constants the app branches on.
 ///
-/// Only the ones that decide a [`GridColumnKind`]; the rest fall through to
-/// [`GridColumnKind::Text`], which is the safe answer for anything unknown.
-mod sql_types {
+/// The ones that decide a [`GridColumnKind`] here, and the same ones decide a
+/// `DmlKind` in [`crate::data_edit`] — one table of magic numbers rather than
+/// two, because the two questions are asked of the same `sql_type` and a
+/// constant that drifted between them would map a column one way on screen and
+/// another way on the wire. Anything not listed falls through to
+/// [`GridColumnKind::Text`], which is the safe answer for a type this version
+/// does not know.
+pub(crate) mod sql_types {
     pub const BIT: i32 = -7;
     pub const TINYINT: i32 = -6;
     pub const BIGINT: i32 = -5;
@@ -78,6 +83,15 @@ mod sql_types {
     pub const TIMESTAMP_WITH_TIMEZONE: i32 = 2014;
 }
 
+/// Whether `BIT` on this column is a truth value rather than a byte string.
+///
+/// MySQL's `BIT(n)` for `n > 1` is a bit *string*, and the codec packs it as
+/// bytes. The split is on precision, and it is made in one place because both
+/// the grid's column kind and the bound-parameter kind turn on it.
+pub(crate) fn bit_is_boolean(column: &ColumnInfo) -> bool {
+    column.precision <= 1
+}
+
 /// The shape the grid draws a column in, from its logical JDBC type.
 ///
 /// `BIT` splits on precision for the same reason the codec does: MySQL's
@@ -86,7 +100,7 @@ pub fn column_kind(column: &ColumnInfo) -> GridColumnKind {
     use sql_types::*;
     match column.sql_type {
         BIT => {
-            if column.precision <= 1 {
+            if bit_is_boolean(column) {
                 GridColumnKind::Boolean
             } else {
                 GridColumnKind::Binary

@@ -922,19 +922,44 @@ underneath for a second one to collide with.
   every product. What makes the short clause safe is that each statement is
   checked as it runs: an `UPDATE` or a `DELETE` whose update count is not
   exactly 1 has reached a row somebody else has already moved, and the whole
-  apply is abandoned.
+  apply is abandoned. That case is said in a line of its own, apart from any
+  driver's refusal, because nothing was written wrongly — the row simply is not
+  the row that was read, and the answer is to refresh.
 - **The apply is one transaction**, over the session calls that already exist:
-  `set_auto_commit(false)`, one `execute` per statement, then `commit`. Any
-  failure — a driver error, or a count that is not 1 — rolls back **before**
-  autocommit is restored, because putting autocommit back first is what commits
-  the half-applied batch on several products.
+  `set_auto_commit(false)`, one `execute` per statement, then `commit`, then
+  autocommit back to whatever the profile opened the session with — *restored*
+  rather than set to `true`, since a profile with `auto_commit` off asked for a
+  connection that stays in a transaction. Any failure — a driver error, or a
+  count that is not 1 — rolls back **before** autocommit is restored, because
+  putting autocommit back first is what commits the half-applied batch on
+  several products. A product whose `SESSION_INFO` reports no transaction
+  support runs the same statements under autocommit with the same count checks:
+  what is missing is the undo, and the confirmation says so before the user
+  reaches it. Success clears the staging buffer and re-runs the `SELECT` in full
+  — which is how a generated key and a trigger's work become visible — while a
+  failure leaves every staged change exactly where it was.
+- **Every statement is shown before any of them runs**, each over the values its
+  `?`s will take. That preview *is* the write confirmation: it is always raised,
+  which satisfies the profile's `confirm_writes` (§8) by superset, and it is
+  deliberately literal. The question worth asking before a write is not "are you
+  sure" but "is this what you meant", and only the `WHERE` clause can answer it.
 - **Statements are generated with bind parameters** by a new `rudbman-sql::dml`
   module: one typed value per column (§4.4's `params`, with `decimal`, `date`,
   `time`, `timestamp` and `bytes` in their typed form), never a literal spliced
   into the text. The bridge's `Literals.java` already writes literals for the
   extract and backup jobs; a second copy of that judgement in Rust would be a
   second place for a quoting bug to live, and the wire already carries the form
-  that does not ask the question.
+  that does not ask the question. Which form a column takes is resolved once from
+  its `java.sql.Types` constant, and conservatively: anything not in the table is
+  bound as text, and anything numeric that is not an integer is a decimal, since
+  routing a typed `0.1` through a double would round it on the way out.
+- **A value is checked against its column's bind form before anything is
+  planned**, so that a refusal can name the column: by the time a batch exists a
+  value is a `?` in a string, and "the third parameter of statement two" is not
+  something to show anybody. Only whether the text can *become* the bound form
+  is checked — an integer that parses, hex of an even length. Whether the server
+  will accept it is the server's judgement, and its refusal says more than a
+  guess made here would.
 - **A table with no primary key stays read-only**, and says so in one line above
   the grid rather than by refusing a keystroke later: with no key there is no
   `WHERE` clause that names exactly one row. A profile marked `read_only` (§8)

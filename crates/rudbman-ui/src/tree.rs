@@ -860,7 +860,11 @@ impl<S: TreeSource> TreeView<S> {
             Some((closed, open)) => svg()
                 .size(px(ARROW_ICON_SIZE))
                 .flex_none()
-                .path(if expanded { open.clone() } else { closed.clone() })
+                .path(if expanded {
+                    open.clone()
+                } else {
+                    closed.clone()
+                })
                 // An SVG takes its tint from the element itself; unlike text it
                 // does not inherit the one the box below sets.
                 .text_color(theme.text_muted)

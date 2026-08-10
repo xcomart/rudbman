@@ -412,6 +412,16 @@ data:
   delete_row: 删除行
   undelete_row: 恢复行
   discard_row: 放弃此行的更改
+  apply_title: "应用 %{count} 条语句"
+  apply_no_rollback: 该数据库不支持事务，中途失败将无法回滚。
+  applying: 正在应用…
+  applied: "已应用 %{count} 条语句。"
+  apply_stale: 有人已修改或删除了某一行。未应用任何更改，请刷新后重试。
+  apply_half_applied: 部分语句可能已经写入表中。请刷新确认后再重新应用。
+  apply_bad_value: "%{column} 无法设为“%{value}”。"
+  apply_null_key: "该行的 %{column} 为 NULL，无法再次定位该行。"
+  apply_unknown_key: "读取到的列中没有键列 %{column}。请刷新后重试。"
+  apply_not_planned: "这些更改无法转换为语句：%{detail}"
 
 extract:
   title: 提取脚本
