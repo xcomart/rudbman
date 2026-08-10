@@ -64,6 +64,10 @@ out. What remains can be taken in any order:
   wrong — low priority).
 - Settling the level of formality in the Spanish and German UI (waiting on
   the user's answer), plus other terminology flags.
+- The macOS bundle is ad-hoc signed, so macOS 15's Local Network permission
+  is often denied silently — no prompt, and the app is never listed in
+  System Settings. The README documents the Terminal-launch workaround; the
+  real fix is Developer ID signing.
 
 ## How work is done in this repository
 

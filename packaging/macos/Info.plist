@@ -23,6 +23,12 @@
     <string>11.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- macOS 15+ gates connections to private-range addresses behind a
+         per-app "Local Network" permission; this string is what its prompt
+         shows. Without the key an ad-hoc-signed app is often denied silently,
+         never appearing in the settings list at all. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>rudbman connects to database servers and SSH hosts on your local network.</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
 </dict>
