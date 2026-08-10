@@ -770,8 +770,10 @@ is written fresh.
 - Cell selection, range selection, copy (TSV/CSV/INSERT statements/JSON)
 - NULL and the empty string are visually distinguished. Far too many tools
   cannot do this
-- Cell editing generates an `UPDATE` (only for single-table queries that have a
-  primary key)
+- Cell editing lives in the table data pane (§7.9), which is the one place the
+  single table and its primary key are known. The query result grid stays
+  read-only: it carries no key metadata and no table to attribute a column to,
+  and editing one is deferred
 - A LOB cell shows only its size and loads in chunks in a viewer when clicked
 - Infinite scroll: hitting the bottom fetches another `FETCH` batch. Default
   batch size 500 rows
@@ -877,6 +879,67 @@ list. The discipline:
   is exposed, and what only the menu needs (close other tabs, close tabs to the
   right, remove a builder table, show all columns) is added to that surface's
   API.
+
+### 7.9 Table data editing
+
+Reading a table's rows, and changing them in place, is **a pane of its own** —
+`PaneItem::TableData`, a sibling of the query pane — rather than a fifth tab of
+the detail panel. The detail panel is one load and one refresh of presentation:
+it fetches everything it shows the moment it opens, holds no cursor, and owns
+nothing of the session (§7.5's grid is where rows live). A surface that pages a
+result set, re-runs it to sort it, keeps edits the user has not applied yet and
+then runs a transaction is none of those things, and hanging it off the panel
+would give every metadata tab the lifetime of an open `ResultSet`. The ways in
+are the explorer's "view data" row on a table or a view and the same row on the
+detail panel's header; opening the same object twice moves to the tab already
+open, exactly as activating an object does.
+
+The rows arrive through the pipeline that already exists: `SELECT * FROM
+<qualified name>` at the settings' fetch size, paged on the grid's `NearEnd`
+event by the same cursor walk the query pane uses — which is why that walk lives
+in `query_source` rather than in `query`. Every identifier is written by
+`rudbman-sql`'s quoting API (§7.7) and never by hand. Sorting appends an
+`ORDER BY` instead of wrapping the statement in a derived table the way the
+query pane must: this statement is the pane's own, so there is no `ORDER BY`
+underneath for a second one to collide with.
+
+- **Staging is keyed by the base row index.** The source under the grid is
+  append-only — a page adds a batch and nothing already in it moves — so a row's
+  index is stable for as long as that source is, and an edit is recorded as
+  (row, column) → value *beside* the rows rather than written into them. Rows
+  the user inserts are a list of their own after the last fetched row, and a
+  deleted row is a marker rather than a hole: the grid goes on drawing it,
+  struck through, until the change is applied or discarded.
+- **A sort or a refresh replaces that source wholesale**, which is the one thing
+  those indices cannot survive, so both ask first while anything is staged.
+  Edits are not carried across a reload by primary key: an edit that comes back
+  attached to a different row than the one it was typed on is worse than being
+  asked to apply or discard.
+- **Staleness is treated optimistically, and the update count is the guard.**
+  The `WHERE` clause of a generated `UPDATE` or `DELETE` names the primary key
+  and nothing else. The alternative — repeating every column the row was read
+  with — cannot be written for a NULL or a LOB and is a different statement on
+  every product. What makes the short clause safe is that each statement is
+  checked as it runs: an `UPDATE` or a `DELETE` whose update count is not
+  exactly 1 has reached a row somebody else has already moved, and the whole
+  apply is abandoned.
+- **The apply is one transaction**, over the session calls that already exist:
+  `set_auto_commit(false)`, one `execute` per statement, then `commit`. Any
+  failure — a driver error, or a count that is not 1 — rolls back **before**
+  autocommit is restored, because putting autocommit back first is what commits
+  the half-applied batch on several products.
+- **Statements are generated with bind parameters** by a new `rudbman-sql::dml`
+  module: one typed value per column (§4.4's `params`, with `decimal`, `date`,
+  `time`, `timestamp` and `bytes` in their typed form), never a literal spliced
+  into the text. The bridge's `Literals.java` already writes literals for the
+  extract and backup jobs; a second copy of that judgement in Rust would be a
+  second place for a quoting bug to live, and the wire already carries the form
+  that does not ask the question.
+- **A table with no primary key stays read-only**, and says so in one line above
+  the grid rather than by refusing a keystroke later: with no key there is no
+  `WHERE` clause that names exactly one row. A profile marked `read_only` (§8)
+  refuses in the same words and in the same place. A view is browsed like a
+  table and edited only where the driver reports a key for it.
 
 ---
 

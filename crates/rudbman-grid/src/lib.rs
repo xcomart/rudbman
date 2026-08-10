@@ -28,16 +28,26 @@
 //!   server holds all of, so ordering is a round trip the host makes; a header
 //!   click raises [`GridEvent::SortRequested`] and nothing moves until the host
 //!   comes back with new rows.
+//! * **The grid does not stage an edit either.** It draws which rows and cells
+//!   have been changed ([`GridSource::row_status`], [`GridSource::cell_dirty`])
+//!   and it hosts the field the user types into, because only it knows where a
+//!   cell is; what a typed value *becomes* is the host's, and reaches it as
+//!   [`GridEvent::EditCommitted`]. See [`grid`] for what a close does and why
+//!   it commits.
 //!
 //! Call [`init`] once during application start-up so the key bindings are
 //! registered.
 //!
 //! ```ignore
 //! let grid = cx.new(|cx| GridView::new(results, cx).insert_table("app.orders"));
-//! cx.subscribe(&grid, |view, grid, event, cx| match event {
+//! cx.subscribe_in(&grid, window, |view, grid, event, window, cx| match event {
 //!     GridEvent::NearEnd => view.fetch_next_batch(cx),
 //!     GridEvent::SortRequested { column, direction } => view.reorder(*column, *direction, cx),
-//!     GridEvent::CellActivated { row, column } => view.open_lob(*row, *column, cx),
+//!     GridEvent::CellActivated { row, column } => {
+//!         // Either a viewer or the editor, depending on what the cell holds.
+//!         grid.update(cx, |grid, cx| grid.begin_edit(*row, *column, window, cx));
+//!     }
+//!     GridEvent::EditCommitted { row, column, value } => view.stage(*row, *column, value, cx),
 //!     GridEvent::ContextMenu { target, position } => view.open_menu(*target, *position, cx),
 //! })
 //! .detach();
@@ -51,11 +61,11 @@ pub mod selection;
 pub mod source;
 
 pub use copy::{CopyFormat, DEFAULT_INSERT_TABLE, copy_payload};
-pub use grid::{GridEvent, GridView, MenuTarget, SortDirection};
+pub use grid::{EditValue, GridEvent, GridView, MenuTarget, SortDirection};
 pub use selection::{CellAddress, CellRange, Selection};
 pub use source::{
     CellLabel, GridCell, GridColumn, GridColumnAlign, GridColumnKind, GridSource, GridSourceState,
-    NULL_TEXT, cell_label, lob_label,
+    NULL_TEXT, RowStatus, cell_label, lob_label,
 };
 
 use gpui::App;

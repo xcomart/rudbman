@@ -18,6 +18,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 查询所选对象
+  view_data: 查看数据
   open_sql_file: 打开 SQL 文件…
   extract_script: 提取脚本…
   transfer_table: 传输数据行…
@@ -392,6 +393,15 @@ query:
   hint_network: 与数据库的连接已断开。
   hint_cancelled: 语句已被取消。
   open_file_select: 选择 SQL 文件
+
+data:
+  loading: 正在加载…
+  refresh: 刷新
+  empty: 该表没有任何行。
+  row_count: "%{count} 行"
+  no_primary_key: 该表没有主键，只能查看行而不能修改。
+  read_only: 此连接为只读，只能查看行而不能修改。
+  discard_first: 请先应用或放弃待处理的更改。
 
 extract:
   title: 提取脚本

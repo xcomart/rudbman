@@ -18,6 +18,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Consultar el objeto seleccionado
+  view_data: Ver datos
   open_sql_file: Abrir archivo SQL…
   extract_script: Extraer script…
   transfer_table: Transferir filas…
@@ -392,6 +393,15 @@ query:
   hint_network: Se perdió la conexión con la base de datos.
   hint_cancelled: La sentencia se canceló.
   open_file_select: Elija un archivo SQL
+
+data:
+  loading: cargando…
+  refresh: Recargar
+  empty: Esta tabla no tiene filas.
+  row_count: "%{count} filas"
+  no_primary_key: "Esta tabla no tiene clave primaria; sus filas se pueden leer pero no modificar."
+  read_only: "Esta conexión es de solo lectura; sus filas se pueden leer pero no modificar."
+  discard_first: Aplique o descarte primero los cambios pendientes.
 
 extract:
   title: Extraer script

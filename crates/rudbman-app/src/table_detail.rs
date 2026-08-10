@@ -153,6 +153,12 @@ enum Load {
 pub enum TableDetailEvent {
     /// Describe this object; the workspace has the session.
     Load(Box<ObjectTarget>),
+    /// Open this object's rows in a data pane.
+    ///
+    /// The workspace's, not the panel's, because opening a tab is: the panel
+    /// knows which object it is describing and nothing about where a tab would
+    /// go (architecture document, §7.9).
+    ViewData(Box<ObjectTarget>),
 }
 
 /// The panel.
@@ -260,6 +266,16 @@ impl TableDetail {
         cx.notify();
     }
 
+    /// Asks for this object's rows.
+    ///
+    /// The reader who has just looked at the columns of a table very often
+    /// wants to see what is in it, and the alternative from here is finding the
+    /// row again in the tree. Only offered for a relation: a routine has no
+    /// rows to show.
+    fn view_data(&mut self, cx: &mut Context<Self>) {
+        cx.emit(TableDetailEvent::ViewData(Box::new(self.target.clone())));
+    }
+
     /// The tabs this object gets.
     fn tabs(&self) -> &'static [Tab] {
         if self.target.folder.is_relation() {
@@ -322,6 +338,14 @@ impl TableDetail {
                         .child(ts!("detail.loading")),
                 )
             })
+            .children(self.target.folder.is_relation().then(|| {
+                let this = this.clone();
+                Button::new("detail-view-data", ts!("menu.view_data"))
+                    .variant(ButtonVariant::Secondary)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |detail, cx| detail.view_data(cx));
+                    })
+            }))
             .child(
                 Button::new("detail-refresh", ts!("detail.refresh"))
                     .variant(ButtonVariant::Secondary)
@@ -1401,9 +1425,13 @@ mod tests {
 
         let recorder = std::rc::Rc::clone(&seen);
         let _subscription = cx.update(|cx| {
-            cx.subscribe(&panel, move |_panel, event, _cx| {
-                let TableDetailEvent::Load(target) = event;
-                recorder.borrow_mut().push(target.name.clone());
+            cx.subscribe(&panel, move |_panel, event, _cx| match event {
+                TableDetailEvent::Load(target) => {
+                    recorder.borrow_mut().push(format!("load {}", target.name));
+                }
+                TableDetailEvent::ViewData(target) => {
+                    recorder.borrow_mut().push(format!("data {}", target.name));
+                }
             })
         });
         cx.update(|cx| panel.update(cx, |panel, cx| panel.refresh(cx)));
@@ -1411,8 +1439,17 @@ mod tests {
 
         assert_eq!(
             seen.borrow().as_slice(),
-            ["PERSON".to_string()],
+            ["load PERSON".to_string()],
             "the panel asked for its metadata exactly once"
+        );
+
+        // The header's second button, which hands the same object on to
+        // whoever opens tabs rather than opening one itself.
+        cx.update(|cx| panel.update(cx, |panel, cx| panel.view_data(cx)));
+        cx.run_until_parked();
+        assert_eq!(
+            seen.borrow().as_slice(),
+            ["load PERSON".to_string(), "data PERSON".to_string()]
         );
     }
 

@@ -27,6 +27,22 @@
 //! you (architecture document, §7.5), and a source that flattens the two here
 //! has already lost the distinction whatever the widget does.
 //!
+//! ## What has been changed is the source's business too
+//!
+//! A grid that can be edited has to draw three more things: which rows have
+//! been touched ([`GridSource::row_status`]), which individual cells carry the
+//! change ([`GridSource::cell_dirty`]), and which cells will accept one at all
+//! ([`GridSource::cell_editable`]). None of that is state the widget keeps.
+//! Staging an edit means knowing the table behind the result and the key that
+//! aims an `UPDATE` at a row, which is knowledge this crate deliberately does
+//! not have (architecture document, §7.5) — so the host wraps its result in
+//! something that stages, and answers these three the way it already answers
+//! [`GridSource::cell`].
+//!
+//! All three are defaulted to "nothing has been changed and nothing may be",
+//! which is the truth for the read-only sources — a plan, a `DESCRIBE`, a diff
+//! — that are half of what the grid is pointed at.
+//!
 //! [`Theme::grid_null`]: rudbman_ui::Theme#structfield.grid_null
 
 use gpui::SharedString;
@@ -104,9 +120,14 @@ pub struct GridColumn<'a> {
     pub align: GridColumnAlign,
     /// Whether the column is part of the table's primary key.
     ///
-    /// Drawn in [`Theme::grid_pk`](rudbman_ui::Theme#structfield.grid_pk), and
-    /// later the thing that decides whether a cell can be edited at all — an
-    /// `UPDATE` needs a key to aim at (architecture document, §7.5).
+    /// Drawn in [`Theme::grid_pk`](rudbman_ui::Theme#structfield.grid_pk). It is
+    /// also half of what decides whether a cell can be edited — an `UPDATE`
+    /// needs a key to aim at (architecture document, §7.5) — but only half, and
+    /// not the half the grid reads: whether a *particular* cell will take an
+    /// edit is [`GridSource::cell_editable`], because the answer depends on the
+    /// query behind the result and not on the column alone. A result with no key
+    /// column at all is a result no cell of which can be edited, and the source
+    /// is the only thing that can say so.
     pub primary_key: bool,
 }
 
@@ -174,6 +195,37 @@ pub enum GridSourceState {
     Loading,
 }
 
+/// What has been staged against one row, and therefore how it is marked.
+///
+/// The grid draws a marker for anything but [`RowStatus::Unchanged`] and asks
+/// no further questions: whether the change can be applied, what SQL it becomes
+/// and when it is sent are the staging layer's, which is the only thing that
+/// knows the table behind the result.
+///
+/// The four are the four a `DELETE`/`INSERT`/`UPDATE` batch can be in, and they
+/// do not overlap: a row that was inserted and then changed again is still
+/// [`RowStatus::Inserted`], because that is the statement it will become.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowStatus {
+    /// Nothing has been staged against it. The overwhelming majority, and the
+    /// answer every read-only source gives.
+    #[default]
+    Unchanged,
+    /// At least one of its cells holds a value the server has not seen.
+    ///
+    /// Which cells is [`GridSource::cell_dirty`]; this only says that some are,
+    /// so that the row can be found without reading every column of it.
+    Modified,
+    /// The row is not in the table yet.
+    Inserted,
+    /// The row is in the table and is staged to go.
+    ///
+    /// Still drawn, and drawn in its place, rather than taken out of the
+    /// result: a deletion that made the row vanish would renumber everything
+    /// under it and leave the user nothing to change their mind about.
+    Deleted,
+}
+
 /// Where a [`GridView`](crate::GridView) gets its columns and rows.
 ///
 /// Implemented on whatever the host already keeps the result in, so that there
@@ -209,6 +261,48 @@ pub trait GridSource: 'static {
     /// that was handed a finished list.
     fn state(&self) -> GridSourceState {
         GridSourceState::Complete
+    }
+
+    /// What has been staged against `row`.
+    ///
+    /// Asked once per *visible* row per frame — the same budget
+    /// [`GridSource::cell`] is held to, and for the same reason: a source that
+    /// answered this by walking a million rows would undo the virtualisation on
+    /// its own. A staging layer keeps its changes in a map keyed by row, so the
+    /// answer is a lookup.
+    ///
+    /// Defaults to [`RowStatus::Unchanged`], which is the whole truth for a
+    /// source nothing can be staged against.
+    fn row_status(&self, _row: usize) -> RowStatus {
+        RowStatus::Unchanged
+    }
+
+    /// Whether the value at `row` and `column` is one the server has not seen.
+    ///
+    /// The per-cell half of [`RowStatus::Modified`]: the row marker says the row
+    /// was touched, this says where. Asked once per visible cell per frame.
+    ///
+    /// `column` is a source column, exactly as in [`GridSource::cell`], and the
+    /// value [`GridSource::cell`] returns for a dirty cell is the *staged* one —
+    /// the grid draws what it is given and knows nothing of what was there
+    /// before.
+    fn cell_dirty(&self, _row: usize, _column: usize) -> bool {
+        false
+    }
+
+    /// Whether the cell at `row` and `column` will accept an edit.
+    ///
+    /// The gate on [`GridView::begin_edit`](crate::GridView::begin_edit) and on
+    /// where `Tab` lands while editing, so it is asked per gesture rather than
+    /// per frame — the grid never scans a row for it while drawing.
+    ///
+    /// A source says `false` for anything it could not turn into SQL it would be
+    /// willing to send: a result with no key to aim an `UPDATE` at, a
+    /// computed column, a `GridCell::Lob` whose body is not even here. Defaults
+    /// to `false`, so a source that has not thought about editing cannot be
+    /// edited by accident.
+    fn cell_editable(&self, _row: usize, _column: usize) -> bool {
+        false
     }
 }
 
@@ -318,6 +412,41 @@ mod tests {
         }
         assert!(GridColumnKind::Temporal.quoted_in_sql());
         assert!(GridColumnKind::Binary.quoted_in_sql());
+    }
+
+    /// A source written before there was any such thing as an edit still
+    /// compiles, and answers the three new questions the only way it could:
+    /// nothing has been changed, and nothing may be.
+    #[test]
+    fn a_source_that_knows_nothing_of_editing_still_implements_the_trait() {
+        struct Ancient;
+
+        impl GridSource for Ancient {
+            fn column_count(&self) -> usize {
+                1
+            }
+
+            fn column(&self, _: usize) -> GridColumn<'_> {
+                GridColumn::new("id", GridColumnKind::Number)
+            }
+
+            fn row_count(&self) -> usize {
+                1
+            }
+
+            fn cell(&self, _: usize, _: usize) -> GridCell<'_> {
+                GridCell::Text("1")
+            }
+        }
+
+        let source = Ancient;
+        assert_eq!(source.row_status(0), RowStatus::Unchanged);
+        assert_eq!(RowStatus::default(), RowStatus::Unchanged);
+        assert!(!source.cell_dirty(0, 0));
+        assert!(
+            !source.cell_editable(0, 0),
+            "a source that never opted in was made editable"
+        );
     }
 
     /// A column takes its alignment from its kind unless the source says

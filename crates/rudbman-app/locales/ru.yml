@@ -18,6 +18,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Запросить выбранный объект
+  view_data: Показать данные
   open_sql_file: Открыть файл SQL…
   extract_script: Извлечь скрипт…
   transfer_table: Перенести строки…
@@ -392,6 +393,15 @@ query:
   hint_network: Соединение с базой данных потеряно.
   hint_cancelled: Выполнение инструкции отменено.
   open_file_select: Выберите файл SQL
+
+data:
+  loading: загрузка…
+  refresh: Обновить
+  empty: В этой таблице нет строк.
+  row_count: "%{count} строк"
+  no_primary_key: У этой таблицы нет первичного ключа, поэтому строки можно только читать.
+  read_only: Соединение доступно только для чтения, поэтому строки можно только читать.
+  discard_first: Сначала примените или отмените несохранённые изменения.
 
 extract:
   title: Извлечение скрипта

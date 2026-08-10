@@ -36,20 +36,13 @@
 //! flight when the next run starts, and the number is what stops it landing in
 //! the new run's grid. Nothing here relies on a task being dropped in time.
 //!
-//! # `may_have_more` is a contract, not a field
-//!
-//! JDBC has no lookahead: asking whether another result exists consumes the
-//! current one (architecture document, §4.4). [`advance`] therefore keeps
-//! calling `MORE_RESULTS` until the three-part exhaustion holds, and stops the
-//! moment a result set still has rows in it — because advancing past it would
-//! close the very `ResultSet` the grid is paging. Paging that result to its end
-//! resumes the walk, so the later results of a multi-result statement appear
-//! when the earlier one is finished with, and never before.
+//! # One cursor per statement
 //!
 //! A script is split into statements first, so each statement gets a cursor of
 //! its own and two `SELECT`s are two independently pageable grids. The
-//! `MORE_RESULTS` walk is what a stored procedure needs, not what a script
-//! needs.
+//! `MORE_RESULTS` walk — [`advance`], which the data pane shares and which is
+//! therefore in [`crate::query_source`] — is what a stored procedure needs, not
+//! what a script needs.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -80,7 +73,7 @@ use crate::connection::{ConnectError, SessionHandle};
 use crate::context_menu::{self, MenuRow};
 use crate::explorer::ConnectionId;
 use crate::i18n::ts;
-use crate::query_source::{RenderedBatch, ResultSource, render_batch};
+use crate::query_source::{Paged, RenderedBatch, ResultSource, Step, advance, page};
 
 /// The statement keywords that read rather than write.
 ///
@@ -250,26 +243,6 @@ impl QueryError {
     }
 }
 
-/// One thing a statement produced.
-#[derive(Debug)]
-enum Step {
-    /// A result set, and its first batch.
-    Rows {
-        /// The result's logical column types.
-        columns: Vec<ColumnInfo>,
-        /// The first batch, already rendered.
-        batch: RenderedBatch,
-        /// Whether the driver had run out of rows.
-        complete: bool,
-    },
-    /// An update count.
-    Message {
-        /// Rows the statement changed, or zero for a statement that changes
-        /// none — a `CREATE TABLE`, say.
-        update_count: i64,
-    },
-}
-
 /// One executed statement, handed back from the background thread.
 struct Executed {
     /// The SQL, kept for the sort round trip.
@@ -280,87 +253,6 @@ struct Executed {
     steps: Vec<Step>,
     /// Whether the cursor is parked on a result set that can still be paged.
     pageable: bool,
-}
-
-/// One page of an already-open result.
-struct Paged {
-    batch: RenderedBatch,
-    /// Whether that batch was the last of this result set.
-    complete: bool,
-    /// Further results of the same statement, picked up once this one ended.
-    steps: Vec<Step>,
-    /// Whether the cursor is parked on a result set that can still be paged.
-    pageable: bool,
-}
-
-/// Walks a cursor's results, stopping at the first one that can still be paged.
-///
-/// `fresh` says whether the cursor is already sitting on a result nobody has
-/// read — true straight after `EXECUTE`, false when resuming after a result set
-/// ran out. Blocks; only ever called from a background thread.
-fn advance(
-    cursor: &mut Cursor,
-    mut fresh: bool,
-    fetch_rows: u32,
-    steps: &mut Vec<Step>,
-) -> Result<bool, JdbcError> {
-    loop {
-        if !fresh && cursor.more_results()?.is_exhausted() {
-            return Ok(false);
-        }
-        fresh = false;
-
-        let (has_result_set, update_count, exhausted, columns) = {
-            let result = cursor.result();
-            (
-                result.has_result_set,
-                result.update_count,
-                result.is_exhausted(),
-                result.columns.clone(),
-            )
-        };
-
-        if has_result_set {
-            let raw = cursor.fetch(fetch_rows)?;
-            let complete = raw.is_last();
-            let batch = render_batch(&raw, &columns);
-            steps.push(Step::Rows {
-                columns,
-                batch,
-                complete,
-            });
-            if !complete {
-                // Advancing now would close the `ResultSet` the grid is about
-                // to page. The walk resumes when the rows run out.
-                return Ok(true);
-            }
-        } else if update_count >= 0 {
-            steps.push(Step::Message { update_count });
-        }
-
-        if exhausted {
-            return Ok(false);
-        }
-    }
-}
-
-/// Fetches one more batch of an open result, and walks on if it was the last.
-fn page(cursor: &mut Cursor, columns: &[ColumnInfo], fetch_rows: u32) -> Result<Paged, JdbcError> {
-    let raw = cursor.fetch(fetch_rows)?;
-    let complete = raw.is_last();
-    let batch = render_batch(&raw, columns);
-    let mut steps = Vec::new();
-    let pageable = if complete {
-        advance(cursor, false, fetch_rows, &mut steps)?
-    } else {
-        true
-    };
-    Ok(Paged {
-        batch,
-        complete,
-        steps,
-        pageable,
-    })
 }
 
 /// One result of one statement, as a tab of the result area.
@@ -1032,6 +924,11 @@ impl QueryPane {
                 pane.reorder(id, *column, *direction, cx);
             }
             GridEvent::CellActivated { row, column } => pane.open_cell(id, *row, *column, cx),
+            // Unreachable rather than unimplemented: a query result opts no
+            // cell into `GridSource::cell_editable`, so no field is ever opened
+            // over one and nothing can be committed. Editing rows belongs to
+            // the data pane, which knows the table and its key (§7.5, §7.9).
+            GridEvent::EditCommitted { .. } => {}
             // The grid holds no strings, so its menu is drawn here
             // (architecture document, §7.8).
             GridEvent::ContextMenu { target, position } => {
@@ -1781,7 +1678,11 @@ fn preview(sql: &str) -> SharedString {
 }
 
 /// A centred line of text, for the states that have no rows to draw.
-fn note(text: SharedString, color: Hsla) -> AnyElement {
+///
+/// Shared with the data pane, which has the same four states to say something
+/// in — loading, empty, failed, nothing run yet — and no reason to draw them
+/// differently.
+pub fn note(text: SharedString, color: Hsla) -> AnyElement {
     div()
         .flex()
         .flex_1()
@@ -1798,7 +1699,11 @@ fn note(text: SharedString, color: Hsla) -> AnyElement {
 
 /// The error envelope: what failed, its `SQLSTATE`, and a hint when the class
 /// affords one.
-fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
+///
+/// Shared with the data pane for the reason [`note`] is: a driver's refusal
+/// reads the same wherever the statement came from, and the hint is chosen from
+/// the `SQLSTATE` class rather than from anything about the pane.
+pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
     let state = error
         .sql_state
         .clone()

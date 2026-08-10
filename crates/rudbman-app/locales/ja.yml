@@ -18,6 +18,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 選択したオブジェクトを照会
+  view_data: データを表示
   open_sql_file: SQL ファイルを開く…
   extract_script: スクリプトを抽出…
   transfer_table: 行を転送…
@@ -392,6 +393,15 @@ query:
   hint_network: データベースとの接続が失われました。
   hint_cancelled: 文の実行はキャンセルされました。
   open_file_select: SQL ファイルを選択
+
+data:
+  loading: 読み込み中…
+  refresh: 再読み込み
+  empty: このテーブルに行はありません。
+  row_count: "%{count} 行"
+  no_primary_key: このテーブルには主キーがないため、行の閲覧のみできます。
+  read_only: 読み取り専用の接続のため、行の閲覧のみできます。
+  discard_first: 保留中の変更を先に適用するか取り消してください。
 
 extract:
   title: スクリプトの抽出
