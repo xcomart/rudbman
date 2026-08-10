@@ -163,7 +163,11 @@ where
         return Copied::Null;
     }
     match source.cell(row, column) {
-        GridCell::Null => Copied::Null,
+        // A cell nobody has typed into yet copies as nothing at all. It has no
+        // value to carry, and writing the word `DEFAULT` into a TSV column
+        // would put a plausible-looking string where the absence of one is the
+        // truth.
+        GridCell::Null | GridCell::Default => Copied::Null,
         GridCell::Text(text) => Copied::Text(Cow::Borrowed(text)),
         GridCell::Lob { size } => Copied::Text(Cow::Owned(lob_label(size))),
     }

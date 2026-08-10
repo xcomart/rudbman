@@ -48,9 +48,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Action, AnyElement, App, ClipboardItem, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Hsla, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
-    Styled, Subscription, Window, div, prelude::*, px, relative,
+    Action, AnyElement, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Hsla, IntoElement, ParentElement, Pixels, Point, Render, SharedString, Styled,
+    Subscription, Window, div, prelude::*, px, relative,
 };
 use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_editor::editor::{
@@ -59,8 +59,7 @@ use rudbman_editor::editor::{
 };
 use rudbman_editor::{EditorEvent, EditorView};
 use rudbman_grid::{
-    CopyFormat, GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget,
-    SortDirection,
+    GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget, SortDirection,
 };
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
@@ -1486,17 +1485,12 @@ impl QueryPane {
 
     /// A result grid's right-click menu: the cell menu, or the heading one.
     ///
-    /// The cell menu is about the *selection*, not about the cell that was
-    /// pressed — the grid has already moved the selection onto it unless the
-    /// press landed inside one — so the four copy formats and "clear" all read
-    /// the same block the user can see.
-    ///
-    /// The heading menu is about one column, and its sort rows go through
-    /// [`QueryPane::reorder`] rather than through the grid: the grid holds only
-    /// the first n rows of an answer the server has all of, so ordering it is a
-    /// re-run and not a shuffle. "Show every column" is the one row here that
-    /// no other gesture offers — a hidden column has no heading left to
-    /// right-click.
+    /// Both lists are [`crate::context_menu`]'s, because both are the same
+    /// lists the data pane's grid draws (architecture document, §7.8) — the
+    /// cell menu is about the *selection* rather than about the cell that was
+    /// pressed, and the heading menu is about one column. What is this pane's
+    /// own is where a sort goes: [`QueryPane::reorder`] wraps whatever the user
+    /// wrote in a derived table, which no other pane has to do.
     fn grid_rows(&self, id: u64, target: MenuTarget, cx: &mut Context<Self>) -> Vec<MenuRow> {
         let Some(grid) = self.grid_of(id) else {
             return Vec::new();
@@ -1505,97 +1499,11 @@ impl QueryPane {
         let grid = grid.clone();
 
         match target {
-            MenuTarget::Cell => {
-                let empty = grid.read(cx).selection().is_empty();
-                let mut rows: Vec<MenuRow> = CopyFormat::ALL
-                    .into_iter()
-                    .map(|format| {
-                        let grid = grid.clone();
-                        let row = MenuRow::new(ts!("context.copy_as", format = format.label()))
-                            .enabled(!empty)
-                            .on_activate(move |_window, cx| {
-                                grid.update(cx, |grid, cx| grid.copy(format, cx));
-                            });
-                        // Only the default format carries the hint: `Ctrl+C` is
-                        // one chord and copies TSV, and repeating it on four
-                        // rows would say it does all four.
-                        if format == CopyFormat::default() {
-                            row.shortcut(format!("{SHORTCUT_MODIFIER}+C"))
-                        } else {
-                            row
-                        }
-                    })
-                    .collect();
-                rows.push(MenuRow::separator());
-                rows.push({
-                    let grid = grid.clone();
-                    MenuRow::new(ts!("context.select_all"))
-                        .shortcut(format!("{SHORTCUT_MODIFIER}+A"))
-                        .on_activate(move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.select_all(cx));
-                        })
-                });
-                rows.push(
-                    MenuRow::new(ts!("context.clear_selection"))
-                        .enabled(!empty)
-                        .on_activate(move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.clear_selection(cx));
-                        }),
-                );
-                rows
-            }
+            MenuTarget::Cell => context_menu::grid_copy_rows(&grid, cx),
             MenuTarget::Header { column } => {
-                let sort = grid.read(cx).sort();
-                let nothing_hidden = grid.read(cx).hidden_column_count() == 0;
-                let name = grid.read(cx).column_name(column).map(str::to_owned);
-                let sorted = |direction: SortDirection| sort == Some((column, direction));
-                let order = |direction: Option<SortDirection>| {
-                    let this = this.clone();
-                    move |_window: &mut Window, cx: &mut App| {
-                        this.update(cx, |pane, cx| pane.reorder(id, column, direction, cx));
-                    }
-                };
-
-                vec![
-                    MenuRow::new(ts!("context.sort_asc"))
-                        .checked(sorted(SortDirection::Ascending))
-                        .on_activate(order(Some(SortDirection::Ascending))),
-                    MenuRow::new(ts!("context.sort_desc"))
-                        .checked(sorted(SortDirection::Descending))
-                        .on_activate(order(Some(SortDirection::Descending))),
-                    MenuRow::new(ts!("context.sort_clear"))
-                        .enabled(sort.is_some())
-                        .on_activate(order(None)),
-                    MenuRow::separator(),
-                    MenuRow::new(ts!("context.autofit")).on_activate({
-                        let grid = grid.clone();
-                        move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.autofit_column(column, cx));
-                        }
-                    }),
-                    MenuRow::new(ts!("context.hide_column")).on_activate({
-                        let grid = grid.clone();
-                        move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.set_column_hidden(column, true, cx));
-                        }
-                    }),
-                    MenuRow::new(ts!("context.show_columns"))
-                        .enabled(!nothing_hidden)
-                        .on_activate({
-                            let grid = grid.clone();
-                            move |_window, cx| {
-                                grid.update(cx, |grid, cx| grid.show_all_columns(cx));
-                            }
-                        }),
-                    MenuRow::separator(),
-                    MenuRow::new(ts!("context.copy_column_name"))
-                        .enabled(name.is_some())
-                        .on_activate(move |_window, cx| {
-                            if let Some(name) = name.clone() {
-                                cx.write_to_clipboard(ClipboardItem::new_string(name));
-                            }
-                        }),
-                ]
+                context_menu::grid_header_rows(&grid, column, cx, move |direction, _window, cx| {
+                    this.update(cx, |pane, cx| pane.reorder(id, column, direction, cx));
+                })
             }
         }
     }
@@ -1942,6 +1850,10 @@ mod tests {
                     .map(|row| match source.cell(row, 0) {
                         GridCell::Text(text) => text.to_string(),
                         GridCell::Null => "NULL".to_string(),
+                        // Unreachable over a query result, which stages
+                        // nothing: only the data pane's overlay can leave a
+                        // column to the server (§7.9).
+                        GridCell::Default => "DEFAULT".to_string(),
                         GridCell::Lob { size } => format!("lob {size:?}"),
                     })
                     .collect()

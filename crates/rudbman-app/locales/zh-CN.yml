@@ -402,6 +402,16 @@ data:
   no_primary_key: 该表没有主键，只能查看行而不能修改。
   read_only: 此连接为只读，只能查看行而不能修改。
   discard_first: 请先应用或放弃待处理的更改。
+  pending: "已改 %{changed} · 新增 %{inserted} · 删除 %{deleted}"
+  apply: 应用
+  discard: 放弃
+  discard_title: 放弃更改
+  discard_body: "将丢弃已修改的 %{changed} 行、新增的 %{inserted} 行和标记删除的 %{deleted} 行。此操作无法撤销。"
+  set_null: 设为 NULL
+  insert_row: 插入行
+  delete_row: 删除行
+  undelete_row: 恢复行
+  discard_row: 放弃此行的更改
 
 extract:
   title: 提取脚本

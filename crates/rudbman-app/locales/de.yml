@@ -402,6 +402,16 @@ data:
   no_primary_key: "Diese Tabelle hat keinen Primärschlüssel; ihre Zeilen lassen sich lesen, aber nicht ändern."
   read_only: "Diese Verbindung ist schreibgeschützt; ihre Zeilen lassen sich lesen, aber nicht ändern."
   discard_first: Wenden Sie die ausstehenden Änderungen zuerst an oder verwerfen Sie sie.
+  pending: "%{changed} geändert · %{inserted} eingefügt · %{deleted} gelöscht"
+  apply: Anwenden
+  discard: Verwerfen
+  discard_title: Änderungen verwerfen
+  discard_body: "%{changed} geänderte, %{inserted} eingefügte und %{deleted} gelöschte Zeilen gehen verloren. Das lässt sich nicht rückgängig machen."
+  set_null: Auf NULL setzen
+  insert_row: Zeile einfügen
+  delete_row: Zeile löschen
+  undelete_row: Zeile wiederherstellen
+  discard_row: Änderungen dieser Zeile verwerfen
 
 extract:
   title: Skript extrahieren

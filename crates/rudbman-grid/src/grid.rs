@@ -87,8 +87,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::copy::{CopyFormat, DEFAULT_INSERT_TABLE, copy_payload};
 use crate::selection::{CellAddress, Selection};
 use crate::source::{
-    GridCell, GridColumnAlign, GridSource, GridSourceState, NULL_TEXT, RowStatus, cell_label,
-    lob_label,
+    DEFAULT_TEXT, GridCell, GridColumnAlign, GridSource, GridSourceState, NULL_TEXT, RowStatus,
+    cell_label, lob_label,
 };
 
 actions!(
@@ -805,6 +805,7 @@ impl<S: GridSource> GridView<S> {
         for row in 0..rows {
             let width = match self.source.cell(row, column) {
                 GridCell::Null => NULL_TEXT.width(),
+                GridCell::Default => DEFAULT_TEXT.width(),
                 GridCell::Text(text) => text.width(),
                 GridCell::Lob { size } => lob_label(size).width(),
             };
@@ -978,7 +979,11 @@ impl<S: GridSource> GridView<S> {
             return false;
         }
         let (seeded, was_null) = match self.source.cell(row, column) {
-            GridCell::Null => (String::new(), true),
+            // A cell the server is going to fill in seeds the same empty field
+            // a null does, and for the same reason: leaving it as it was found
+            // must commit nothing, or opening a `DEFAULT` cell and thinking
+            // better of it would turn it into the empty string.
+            GridCell::Null | GridCell::Default => (String::new(), true),
             GridCell::Text(text) => (text.to_string(), false),
             GridCell::Lob { .. } => return false,
         };

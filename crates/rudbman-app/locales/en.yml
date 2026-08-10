@@ -603,6 +603,22 @@ data:
   # A sort or a refresh throws the rows away and asks the server again, which
   # is exactly what changes staged against them cannot survive.
   discard_first: Apply or discard the pending changes first.
+  # What is staged but not yet sent, in the pane's toolbar. Rows, not cells:
+  # each count is a statement an apply would send.
+  pending: "%{changed} changed · %{inserted} inserted · %{deleted} deleted"
+  apply: Apply
+  discard: Discard
+  # The confirmation the Discard button raises. Irreversible in the opposite
+  # direction from Apply, which is why it is asked about at all.
+  discard_title: Discard changes
+  discard_body: "%{changed} changed, %{inserted} inserted and %{deleted} deleted rows will be thrown away. This cannot be undone."
+  # The grid's right-click menu, on a cell. Clearing a cell is a command of its
+  # own because an empty field over a null cell commits nothing.
+  set_null: Set to NULL
+  insert_row: Insert row
+  delete_row: Delete row
+  undelete_row: Restore row
+  discard_row: Discard this row's changes
 
 # The script extraction dialog: one explorer object written out to a file. The
 # form half describes the job; the card that replaces it reports the job.

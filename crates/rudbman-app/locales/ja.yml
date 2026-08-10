@@ -402,6 +402,16 @@ data:
   no_primary_key: このテーブルには主キーがないため、行の閲覧のみできます。
   read_only: 読み取り専用の接続のため、行の閲覧のみできます。
   discard_first: 保留中の変更を先に適用するか取り消してください。
+  pending: "変更 %{changed} · 追加 %{inserted} · 削除 %{deleted}"
+  apply: 適用
+  discard: 取り消し
+  discard_title: 変更の取り消し
+  discard_body: "変更した %{changed} 行、追加した %{inserted} 行、削除予定の %{deleted} 行をすべて破棄します。元に戻せません。"
+  set_null: NULL にする
+  insert_row: 行を追加
+  delete_row: 行を削除
+  undelete_row: 行の削除を取り消す
+  discard_row: この行の変更を取り消す
 
 extract:
   title: スクリプトの抽出

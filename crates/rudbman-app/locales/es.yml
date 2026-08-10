@@ -402,6 +402,16 @@ data:
   no_primary_key: "Esta tabla no tiene clave primaria; sus filas se pueden leer pero no modificar."
   read_only: "Esta conexión es de solo lectura; sus filas se pueden leer pero no modificar."
   discard_first: Aplique o descarte primero los cambios pendientes.
+  pending: "%{changed} modificadas · %{inserted} insertadas · %{deleted} eliminadas"
+  apply: Aplicar
+  discard: Descartar
+  discard_title: Descartar los cambios
+  discard_body: "Se perderán %{changed} filas modificadas, %{inserted} insertadas y %{deleted} eliminadas. Esto no se puede deshacer."
+  set_null: Poner en NULL
+  insert_row: Insertar fila
+  delete_row: Eliminar la fila
+  undelete_row: Restaurar la fila
+  discard_row: Descartar los cambios de esta fila
 
 extract:
   title: Extraer script

@@ -50,6 +50,13 @@ use gpui::SharedString;
 /// The text drawn in a cell that holds no value.
 pub const NULL_TEXT: &str = "NULL";
 
+/// The text drawn in a cell of a staged row the server will fill in itself.
+///
+/// Untranslated, exactly as [`NULL_TEXT`] is: both stand for a piece of SQL
+/// rather than for a word, and a `DEFAULT` that read differently per locale
+/// would stop naming the clause it means.
+pub const DEFAULT_TEXT: &str = "DEFAULT";
+
 /// Which way the values of a column line up in their cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GridColumnAlign {
@@ -158,14 +165,30 @@ impl<'a> GridColumn<'a> {
 
 /// What one cell holds.
 ///
-/// Three variants and not more, because a grid draws text: the codec decodes on
+/// Four variants and not more, because a grid draws text: the codec decodes on
 /// the way in, and what is left to decide here is only how a value is *shown*.
+/// Three of them are a value the server has (or has not) got; the fourth is the
+/// one thing a staging layer can put in a cell that no result set ever holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GridCell<'a> {
     /// No value at all. Drawn as [`NULL_TEXT`] in the null colour, which is
     /// what tells it apart from `Text("")` — an empty cell that really does
     /// hold the empty string.
     Null,
+    /// No value **yet**: the column has been left out of a row that is staged
+    /// to be inserted, and the server will supply it.
+    ///
+    /// Drawn as [`DEFAULT_TEXT`], muted, the way a null is — and drawn
+    /// differently from one on purpose. `DEFAULT` and `NULL` are the two things
+    /// an omitted column can mean and they are not the same: leaving an
+    /// auto-increment key out gets a key, writing NULL over it gets a rejected
+    /// statement. A staging layer that could not tell the user which of the two
+    /// a cell holds would have lost the distinction before the `INSERT` is even
+    /// written (architecture document, §7.9).
+    ///
+    /// Never returned by a source over a result set. A row that exists on the
+    /// server has a value in every column, and the value may be [`GridCell::Null`].
+    Default,
     /// The value, already a string. May be empty, and an empty one is not null.
     Text(&'a str),
     /// A large object, whose body is not here.
@@ -342,6 +365,10 @@ pub fn cell_label(cell: &GridCell<'_>) -> CellLabel {
             text: SharedString::new_static(NULL_TEXT),
             muted: true,
         },
+        GridCell::Default => CellLabel {
+            text: SharedString::new_static(DEFAULT_TEXT),
+            muted: true,
+        },
         GridCell::Text(text) => CellLabel {
             text: SharedString::from(text.to_string()),
             muted: false,
@@ -369,6 +396,19 @@ mod tests {
         assert_eq!(empty.text, "");
         assert!(!empty.muted, "the empty string is a value");
         assert_ne!(null, empty);
+    }
+
+    /// And the third empty-looking thing is not either of them: a column the
+    /// server is going to fill in says so, rather than borrowing the null
+    /// marker and claiming an `INSERT` will write NULL over a default.
+    #[test]
+    fn a_default_is_neither_null_nor_empty() {
+        let default = cell_label(&GridCell::Default);
+
+        assert_eq!(default.text, DEFAULT_TEXT);
+        assert!(default.muted, "a default is not a value either");
+        assert_ne!(default, cell_label(&GridCell::Null));
+        assert_ne!(default, cell_label(&GridCell::Text("")));
     }
 
     /// And a cell holding the *string* `NULL` is not the null marker either:

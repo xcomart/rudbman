@@ -182,6 +182,30 @@ impl PaneItem {
             PaneItem::QueryBuilder { pane, .. } => pane.read(cx).connection(),
         }
     }
+
+    /// Whether closing this tab would throw away work the user has not sent
+    /// anywhere.
+    ///
+    /// The one tab that can say yes is a data pane holding staged edits: those
+    /// live in the source under its grid, and dropping the tab drops them with
+    /// no way back (architecture document, §7.9). Everything else either holds
+    /// nothing (a detail panel, a diagram, a builder — all of them views of
+    /// something the database still has) or holds something a close does not
+    /// destroy: a query pane's SQL is the user's text, and closing the tab is
+    /// how one gets rid of it.
+    ///
+    /// A question and not a veto: the caller decides what to do about it, and
+    /// the shell answers by refusing the close and saying why
+    /// ([`DataPane::warn_pending`]).
+    pub fn blocks_close(&self, cx: &App) -> bool {
+        match self {
+            PaneItem::TableData(panel) => panel.read(cx).has_pending_edits(cx),
+            PaneItem::TableDetail(_)
+            | PaneItem::Query { .. }
+            | PaneItem::Erd(_)
+            | PaneItem::QueryBuilder { .. } => false,
+        }
+    }
 }
 
 /// One pane of the work area: its tabs, and which of them is on top.

@@ -64,8 +64,8 @@ pub use copy::{CopyFormat, DEFAULT_INSERT_TABLE, copy_payload};
 pub use grid::{EditValue, GridEvent, GridView, MenuTarget, SortDirection};
 pub use selection::{CellAddress, CellRange, Selection};
 pub use source::{
-    CellLabel, GridCell, GridColumn, GridColumnAlign, GridColumnKind, GridSource, GridSourceState,
-    NULL_TEXT, RowStatus, cell_label, lob_label,
+    CellLabel, DEFAULT_TEXT, GridCell, GridColumn, GridColumnAlign, GridColumnKind, GridSource,
+    GridSourceState, NULL_TEXT, RowStatus, cell_label, lob_label,
 };
 
 use gpui::App;

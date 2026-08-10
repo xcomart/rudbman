@@ -402,6 +402,16 @@ data:
   no_primary_key: Cette table n'a pas de clé primaire ; ses lignes peuvent être lues mais pas modifiées.
   read_only: Cette connexion est en lecture seule ; ses lignes peuvent être lues mais pas modifiées.
   discard_first: Appliquez ou abandonnez d'abord les modifications en attente.
+  pending: "%{changed} modifiées · %{inserted} insérées · %{deleted} supprimées"
+  apply: Appliquer
+  discard: Abandonner
+  discard_title: Abandonner les modifications
+  discard_body: "%{changed} lignes modifiées, %{inserted} insérées et %{deleted} supprimées seront perdues. Cette action est irréversible."
+  set_null: Mettre à NULL
+  insert_row: Insérer une ligne
+  delete_row: Supprimer la ligne
+  undelete_row: Rétablir la ligne
+  discard_row: Abandonner les modifications de cette ligne
 
 extract:
   title: Extraire un script

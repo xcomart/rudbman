@@ -40,6 +40,7 @@ mod caption;
 mod connection;
 mod connection_dialog;
 mod context_menu;
+mod data_edit;
 mod data_pane;
 mod driver_manager;
 mod erd_layout;
@@ -1165,7 +1166,7 @@ impl Workspace {
         // panel is asked after its subscription is registered — a fetch started
         // from inside `cx.new` would be racing the tab that is meant to show
         // it.
-        panel.update(cx, |panel, cx| panel.refresh(cx));
+        panel.update(cx, |panel, cx| panel.refresh(window, cx));
         self.append_tab(PaneItem::TableData(panel.clone()), window, cx);
         // Opened with a keyboard gesture as often as with the mouse, and the
         // arrows and the copy chord are the grid's own.
@@ -1680,6 +1681,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_close(pane, &[index], window, cx) {
+            return;
+        }
         let active = self
             .work_area()
             .and_then(|area| area.panes.get(pane))
@@ -1702,6 +1706,51 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Whether any of `victims` is holding work a close would destroy, and —
+    /// when one is — says so in the tab it is holding it in.
+    ///
+    /// The close guard §7.9 asks for, and the whole of it: a data pane's staged
+    /// edits are keyed to the rows under its grid, so closing the tab throws
+    /// them away with no way back. Refusing rather than asking, because the two
+    /// answers the user needs are already in the pane and neither of them is a
+    /// dialog: apply the changes, or discard them. So the tab is brought to the
+    /// front, the pane says what has to happen first, and the close does not.
+    ///
+    /// All the victims are asked before any is refused, and the first blocker
+    /// is the one shown — "close the other tabs" over three dirty panes should
+    /// close none of them and land on one, rather than close two and stop.
+    fn refuse_close(
+        &mut self,
+        pane: PaneId,
+        victims: &[usize],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.work_area().and_then(|area| area.panes.get(pane)) else {
+            return false;
+        };
+        let mut blocked = None;
+        for index in victims {
+            match target.items().get(*index) {
+                Some(PaneItem::TableData(panel)) if panel.read(cx).has_pending_edits(cx) => {
+                    blocked = Some((*index, panel.clone()));
+                    break;
+                }
+                // Asked through the same seam every other tab answers, so that
+                // a kind of tab that grows unsaved work later has one place to
+                // say so.
+                Some(item) => debug_assert!(!item.blocks_close(cx)),
+                None => {}
+            }
+        }
+        let Some((index, panel)) = blocked else {
+            return false;
+        };
+        self.activate_tab(pane, index, window, cx);
+        panel.update(cx, |panel, cx| panel.warn_pending(cx));
+        true
+    }
+
     /// Closes several tabs of `pane` at once.
     ///
     /// `victims` are tab indices into the strip as it stands, in any order.
@@ -1722,6 +1771,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if victims.is_empty() {
+            return;
+        }
+        if self.refuse_close(pane, victims, window, cx) {
             return;
         }
         let held = self.pane_holds_focus(pane, window, cx);
@@ -2432,16 +2484,17 @@ impl Workspace {
         let mut queries = Vec::new();
         let mut diagrams = Vec::new();
         let mut builders = Vec::new();
+        let mut data = Vec::new();
         for (_, pane) in area.panes.leaves() {
             for item in pane.items() {
                 match item {
                     PaneItem::Query { pane, .. } => queries.push(pane.clone()),
                     PaneItem::Erd(panel) => diagrams.push(panel.clone()),
                     PaneItem::QueryBuilder { pane, .. } => builders.push(pane.clone()),
-                    // Neither draws a menu of its own: the detail panel holds
-                    // nothing to act on, and the data pane's grid menu arrives
-                    // with the editing commands that fill it (§7.9).
-                    PaneItem::TableDetail(_) | PaneItem::TableData(_) => {}
+                    PaneItem::TableData(panel) => data.push(panel.clone()),
+                    // The one surface with nothing to act on: the detail panel
+                    // is four tabs of read-only presentation.
+                    PaneItem::TableDetail(_) => {}
                 }
             }
         }
@@ -2454,6 +2507,9 @@ impl Workspace {
             closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         for panel in builders {
+            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+        }
+        for panel in data {
             closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         closed

@@ -1,21 +1,16 @@
-//! The data pane: one table's rows, paged into a grid.
+//! The data pane: one table's rows, paged into a grid, and changed in place.
 //!
-//! What the architecture document's §7.9 draws, in the state this milestone
-//! leaves it: browsing. The pane runs `SELECT * FROM <table>` of its own accord,
-//! pages it as the grid nears the end, and re-runs it in a new order when a
-//! heading is clicked. Editing — staging changes, generating the DML and
-//! applying it in one transaction — is the work that comes next, and the shape
-//! here is arranged so that it can be added without moving anything: the key
-//! columns are already read before the rows are, the source under the grid is
-//! already append-only and index-addressable, and every path that would replace
-//! that source already asks [`DataPane::has_pending_edits`] first.
+//! What the architecture document's §7.9 draws. The pane runs
+//! `SELECT * FROM <table>` of its own accord, pages it as the grid nears the
+//! end, re-runs it in a new order when a heading is clicked, and holds whatever
+//! the user has typed into it until they apply it or throw it away.
 //!
 //! # Why a pane and not a fifth detail tab
 //!
 //! The detail panel is one load of presentation and holds nothing of the
-//! session; this holds a cursor, a generation counter and — soon — a staging
-//! buffer, and a re-sort throws its whole result away. Those are different
-//! lifetimes, and §7.9 keeps them in different tabs.
+//! session; this holds a cursor, a generation counter and a staging buffer, and
+//! a re-sort throws its whole result away. Those are different lifetimes, and
+//! §7.9 keeps them in different tabs.
 //!
 //! # What it borrows and what it owns
 //!
@@ -24,23 +19,49 @@
 //! own is the statement: it is assembled here from the target and the dialect,
 //! never typed, which is why sorting can append an `ORDER BY` where the query
 //! pane has to wrap what the user wrote in a derived table.
+//!
+//! # Where an edit lives
+//!
+//! Not here. The staging buffer sits in [`crate::data_edit`]'s
+//! [`EditableSource`], which is the source the grid is pointed at: a grid draws
+//! what its source says, so the one way for a staged value to be on screen is
+//! for the source to answer with it. That also puts the buffer inside the thing
+//! a sort or a refresh throws away, which is exactly the lifetime it has —
+//! §7.9 refuses to carry edits across a reload, because an edit that came back
+//! attached to a different row than the one it was typed on is worse than being
+//! asked to apply or discard.
+//!
+//! So the pane's own job is gestures and words: it turns a committed field into
+//! a staged cell, draws the menu the grid asks for, counts what is staged for
+//! the toolbar, and guards the three paths — sort, refresh and closing the tab
+//! — that would take the indices out from under it.
+//!
+//! # What is not here yet
+//!
+//! [`DataPane::apply`]. Generating the DML from the staging buffer and running
+//! it in one transaction is the milestone after this one; everything up to the
+//! button is wired, and the button calls a function whose body is a comment.
 
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Pixels,
+    Point, Render, SharedString, Styled, Subscription, Window, div, prelude::*, px,
 };
 use rudbman_core::{AppSettings, ConnectionProfile};
-use rudbman_grid::{GridEvent, GridSource, GridSourceState, GridView, SortDirection};
+use rudbman_grid::{
+    GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
+};
 use rudbman_jdbc::{
     ColumnInfo, Cursor, DescribeRequest, Error as JdbcError, Session, StatementSpec,
 };
 use rudbman_sql::Dialect;
-use rudbman_ui::{Button, ButtonVariant, Theme, theme};
+use rudbman_ui::{Button, ButtonVariant, ContextMenu, Theme, modal, theme};
 
 use crate::builder_sql;
 use crate::connection::SessionHandle;
+use crate::context_menu::{self, MenuRow};
+use crate::data_edit::{EditableSource, StagedCell};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::{QueryError, note, render_error};
@@ -79,9 +100,17 @@ struct Order {
     direction: SortDirection,
 }
 
+/// A right-click in the grid, while the menu it asked for is open.
+struct GridMenu {
+    /// A cell or a heading, as the grid read the press.
+    target: MenuTarget,
+    /// Where the pointer was, in window coordinates.
+    position: Point<Pixels>,
+}
+
 /// The rows on screen, and everything needed to go on reading them.
 struct Rows {
-    grid: Entity<GridView<ResultSource>>,
+    grid: Entity<GridView<EditableSource>>,
     /// The result's logical column types, for rendering later batches.
     columns: Arc<Vec<ColumnInfo>>,
     /// The cursor, while this result is still ours to page. `None` once the
@@ -129,6 +158,14 @@ pub struct DataPane {
     /// edited by primary key — and, from the next milestone, what the generated
     /// `WHERE` clause is written from.
     keys: Vec<String>,
+    /// Whether [`DataPane::keys`] is an answer rather than a starting value.
+    ///
+    /// A table whose key is still on its way has not said it has none, so the
+    /// read-only banner and the writability of the grid both wait for this. It
+    /// is a flag of its own rather than "the rows have arrived" because the
+    /// grid is built — and must already know whether it is writable — inside
+    /// the same delivery that sets the key.
+    keys_read: bool,
     load: Load,
     /// The order the rows were asked in, when one was asked for.
     order: Option<Order>,
@@ -137,6 +174,18 @@ pub struct DataPane {
     /// The generation of the newest load. Every delivery carries one, and one
     /// that is not this is an answer a later load has already replaced.
     generation: u64,
+    /// The grid's right-click menu, while one is open.
+    context_menu: Option<GridMenu>,
+    /// Whether "discard everything" is waiting to be confirmed.
+    ///
+    /// A modal of the pane's own rather than the shell's, and the one place
+    /// this pane departs from how the query pane asks (`PendingConfirm` in
+    /// `main`). The reason is what the confirmation is *about*: a query pane
+    /// asks before touching the database and the shell is the thing that must
+    /// not be usable meanwhile, while this asks before throwing away work that
+    /// lives in one tab — so the sheet belongs over that tab, and the pane can
+    /// be tested without a workspace around it.
+    confirm_discard: bool,
     focus_handle: FocusHandle,
 }
 
@@ -164,10 +213,13 @@ impl DataPane {
             read_only: profile.read_only,
             fetch_rows: settings.fetch_batch_rows,
             keys: Vec::new(),
+            keys_read: false,
             load: Load::Running,
             order: None,
             notice: None,
             generation: 0,
+            context_menu: None,
+            confirm_discard: false,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -237,13 +289,26 @@ impl DataPane {
 
     /// Whether the pane is holding changes the user has not applied.
     ///
-    /// Always false while the pane only browses. It is asked anyway, by every
-    /// path that replaces the rows wholesale, because those paths are exactly
-    /// the ones §7.9 says must ask once there is a staging buffer to ask about
-    /// — and a guard added after the fact is a guard somebody has to remember
-    /// to add in three places.
-    fn has_pending_edits(&self) -> bool {
-        false
+    /// Asked by every path that replaces the rows wholesale — a sort, a
+    /// refresh, and closing the tab — because a staged edit is keyed to a row
+    /// index of the source it was typed on and nothing else (§7.9). Public
+    /// because the last of those three is the shell's: the tab strip is what
+    /// closes a tab, so the tab strip is what has to ask.
+    pub fn has_pending_edits(&self, cx: &App) -> bool {
+        match &self.load {
+            Load::Ready(rows) => !rows.grid.read(cx).source().edits().is_empty(),
+            Load::Running | Load::Failed(_) => false,
+        }
+    }
+
+    /// Says, in the pane itself, why the gesture that was just tried is being
+    /// refused while changes are staged.
+    ///
+    /// The counterpart of [`DataPane::has_pending_edits`] for the shell: a tab
+    /// that simply would not close, with nothing said, would read as a bug.
+    pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
+        self.notice = Some(ts!("data.discard_first"));
+        cx.notify();
     }
 
     /// Whether the rows may only be read.
@@ -258,7 +323,7 @@ impl DataPane {
         }
         // Only once the metadata has answered: a table whose key is still on
         // its way has not said it has none.
-        if matches!(self.load, Load::Ready(_)) && self.keys.is_empty() {
+        if self.keys_read && self.keys.is_empty() {
             return Some(ts!("data.no_primary_key"));
         }
         None
@@ -302,8 +367,8 @@ impl DataPane {
     /// Both together on one background task: they are wanted at the same
     /// moment, and the key has to be known before the grid is built or the key
     /// columns would draw unmarked for a frame and then jump.
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.has_pending_edits() {
+    pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_pending_edits(cx) {
             self.notice = Some(ts!("data.discard_first"));
             cx.notify();
             return;
@@ -318,18 +383,27 @@ impl DataPane {
         let generation = self.generation;
         // Dropping what was there drops its cursor, which closes it.
         self.load = Load::Running;
+        self.keys_read = false;
         self.notice = None;
+        self.context_menu = None;
+        self.confirm_discard = false;
 
         let target = self.target.clone();
         let sql = self.select_sql();
         let fetch_rows = self.fetch_rows;
 
-        cx.spawn(async move |pane, cx| {
+        // `spawn_in` rather than `spawn`: the grid this load ends in is
+        // subscribed to with a window, because answering a double click with
+        // [`GridView::begin_edit`] means putting the keyboard in a field and
+        // there is no window to be had inside a plain `cx.subscribe`.
+        cx.spawn_in(window, async move |pane, cx| {
             let outcome = cx
                 .background_spawn(async move { open(session.session(), &target, &sql, fetch_rows) })
                 .await;
-            pane.update(cx, |pane, cx| pane.deliver(generation, outcome, cx))
-                .ok();
+            pane.update_in(cx, |pane, window, cx| {
+                pane.deliver(generation, outcome, window, cx);
+            })
+            .ok();
         })
         .detach();
         cx.notify();
@@ -340,6 +414,7 @@ impl DataPane {
         &mut self,
         generation: u64,
         outcome: Result<Opened, JdbcError>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if generation != self.generation {
@@ -356,6 +431,7 @@ impl DataPane {
                     cursor,
                 } = opened;
                 self.keys = keys;
+                self.keys_read = true;
 
                 let mut source = ResultSource::new(&columns);
                 source.mark_primary_keys(&self.keys);
@@ -367,6 +443,12 @@ impl DataPane {
                 } else {
                     GridSourceState::HasMore
                 });
+                // Whether anything here may be written is settled now and not
+                // again: both of §7.9's reasons — a read-only profile and a
+                // table with no key — are facts about the object, and `keys`
+                // has just been set from the metadata this same load read.
+                let writable = self.read_only_reason().is_none();
+                let source = EditableSource::new(source, &columns, writable);
 
                 let table = self.qualified();
                 let grid = cx.new(|cx| GridView::new(source, cx).insert_table(table));
@@ -376,22 +458,36 @@ impl DataPane {
                     let sort = Some((order.column, order.direction));
                     grid.update(cx, |grid, cx| grid.set_sort(sort, cx));
                 }
-                let events = cx.subscribe(&grid, |pane, _grid, event, cx| match event {
-                    GridEvent::NearEnd => pane.fetch_more(cx),
-                    GridEvent::SortRequested { column, direction } => {
-                        pane.reorder(*column, *direction, cx);
-                    }
-                    // Nothing yet, and nothing by accident: no cell of this
-                    // pane is editable until a staging layer answers
-                    // `GridSource::cell_editable`, so the grid opens no field
-                    // and commits nothing. Activating a cell will open the
-                    // editor or a LOB viewer, and the grid's own menu arrives
-                    // with the editing rows that fill it — all of which is the
-                    // milestone that makes this pane writable (§7.9).
-                    GridEvent::CellActivated { .. }
-                    | GridEvent::EditCommitted { .. }
-                    | GridEvent::ContextMenu { .. } => {}
-                });
+                let events =
+                    cx.subscribe_in(&grid, window, |pane, grid, event, window, cx| match event {
+                        GridEvent::NearEnd => pane.fetch_more(cx),
+                        GridEvent::SortRequested { column, direction } => {
+                            pane.reorder(*column, *direction, window, cx);
+                        }
+                        // A double click or `Enter` opens the field. The grid
+                        // refuses on its own for a cell that cannot take one —
+                        // a LOB, a hidden column, anything the source says is
+                        // not editable — so there is nothing to check here that
+                        // is not already checked where it is known.
+                        GridEvent::CellActivated { row, column } => {
+                            grid.update(cx, |grid, cx| {
+                                grid.begin_edit(*row, *column, window, cx);
+                            });
+                        }
+                        GridEvent::EditCommitted { row, column, value } => {
+                            let rudbman_grid::EditValue::Text(text) = value;
+                            pane.stage(*row, *column, StagedCell::Text(text.clone()), cx);
+                        }
+                        // The grid holds no strings, so its menu is drawn here
+                        // (architecture document, §7.8).
+                        GridEvent::ContextMenu { target, position } => {
+                            pane.context_menu = Some(GridMenu {
+                                target: *target,
+                                position: *position,
+                            });
+                            cx.notify();
+                        }
+                    });
 
                 self.load = Load::Ready(Box::new(Rows {
                     grid,
@@ -486,7 +582,10 @@ impl DataPane {
                 let grid = rows.grid.clone();
                 grid.update(cx, |grid, cx| {
                     let source = grid.source_mut(cx);
-                    source.push(paged.batch);
+                    // Into the rows the server sent, under the overlay: the
+                    // staged edits are keyed to base row indices, and appending
+                    // moves none of them.
+                    source.base_mut().push(paged.batch);
                     source.set_state(state);
                 });
             }
@@ -506,13 +605,19 @@ impl DataPane {
     }
 
     /// A heading was clicked: run the same `SELECT` in that order.
-    fn reorder(&mut self, column: usize, direction: Option<SortDirection>, cx: &mut Context<Self>) {
+    fn reorder(
+        &mut self,
+        column: usize,
+        direction: Option<SortDirection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.session.is_none() {
             self.notice = Some(ts!("explorer.disconnected"));
             cx.notify();
             return;
         }
-        if self.has_pending_edits() {
+        if self.has_pending_edits(cx) {
             // A re-run replaces the source the edits are keyed to; §7.9.
             self.notice = Some(ts!("data.discard_first"));
             cx.notify();
@@ -537,7 +642,7 @@ impl DataPane {
             name,
             direction,
         });
-        self.refresh(cx);
+        self.refresh(window, cx);
     }
 
     /// How many rows are on screen, which is however many have been paged in.
@@ -547,19 +652,388 @@ impl DataPane {
     /// toolbar says so by drawing nothing.
     pub fn row_count(&self, cx: &App) -> Option<usize> {
         match &self.load {
-            Load::Ready(rows) => Some(rows.grid.read(cx).source().row_count()),
+            // The rows the *server* has, not the ones the grid draws: a row the
+            // user is adding is not yet a row of the table, and counting it
+            // here would have the toolbar report a table one row longer than
+            // the one the next refresh reads back.
+            Load::Ready(rows) => Some(rows.grid.read(cx).source().base_rows()),
             Load::Running | Load::Failed(_) => None,
         }
     }
 
-    /// The strip above the rows: what is being shown, how much of it, and the
-    /// button that reads it again.
+    /// The grid, while there is one.
+    fn grid(&self) -> Option<&Entity<GridView<EditableSource>>> {
+        match &self.load {
+            Load::Ready(rows) => Some(&rows.grid),
+            Load::Running | Load::Failed(_) => None,
+        }
+    }
+
+    /// Records `value` against a cell, through the overlay that knows which row
+    /// space the index falls in.
+    ///
+    /// The one way anything is staged. A value equal to the one the server gave
+    /// un-stages the cell instead, which is why this goes through
+    /// [`EditableSource::stage`] rather than writing into the buffer directly.
+    fn stage(&mut self, row: usize, column: usize, value: StagedCell, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        grid.update(cx, |grid, cx| {
+            grid.source_mut(cx).stage(row, column, value);
+        });
+        cx.notify();
+    }
+
+    /// The cell the grid's menu should act on: wherever the caret was left.
+    ///
+    /// A right click has already moved the selection onto the pressed cell
+    /// unless it landed inside one, so the cursor is the cell the user means.
+    /// The answer is a *source* column: the selection is kept in display
+    /// positions, and everything on this side of the grid — the staging buffer,
+    /// the column rules, [`GridSource::cell`] — is addressed in source ones.
+    fn menu_cell(&self, cx: &App) -> Option<(usize, usize)> {
+        let grid = self.grid()?.read(cx);
+        let cursor = grid.selection().cursor()?;
+        let column = grid.visible_column_indices().get(cursor.column).copied()?;
+        Some((cursor.row, column))
+    }
+
+    /// Puts NULL into a cell, deliberately.
+    ///
+    /// The gesture the inline editor cannot offer: an empty field over a null
+    /// cell commits nothing (that is what keeps opening one and thinking better
+    /// of it from writing `''`), so clearing a cell has to be a command of its
+    /// own. Doing it to a cell that is already NULL stages nothing, by the same
+    /// rule that un-stages an edit that walked back to where it started.
+    fn set_null(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
+        self.stage(row, column, StagedCell::Null, cx);
+    }
+
+    /// Adds a row after the last one, and starts typing into it.
+    ///
+    /// Scrolled to and opened rather than merely appended: a new row a hundred
+    /// screens down that the user has to go and find is a row they will type
+    /// into the wrong place.
+    fn insert_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only_reason().is_some() {
+            return;
+        }
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        let row = grid.update(cx, |grid, cx| {
+            let source = grid.source_mut(cx);
+            let columns = source.column_count();
+            source.edits_mut().add_insert(columns);
+            source.row_count() - 1
+        });
+        grid.update(cx, |grid, cx| {
+            grid.scroll_to_row(row, cx);
+            // The first column that will take a value *and* has somewhere to
+            // draw a field: a hidden column is neither.
+            let first = (0..grid.source().column_count()).find(|column| {
+                grid.source().cell_editable(row, *column) && !grid.is_column_hidden(*column)
+            });
+            if let Some(column) = first {
+                grid.begin_edit(row, column, window, cx);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Marks a row to be deleted, or takes the mark off.
+    ///
+    /// Only a base row: an inserted row is not in the table, so there is
+    /// nothing to delete — discarding it is what takes it away.
+    fn toggle_delete(&mut self, row: usize, cx: &mut Context<Self>) {
+        if self.read_only_reason().is_some() {
+            return;
+        }
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        grid.update(cx, |grid, cx| {
+            let source = grid.source_mut(cx);
+            if row < source.base_rows() {
+                source.edits_mut().toggle_deleted(row);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Throws away everything staged against one row.
+    fn discard_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        grid.update(cx, |grid, cx| {
+            let source = grid.source_mut(cx);
+            let base = source.base_rows();
+            source.edits_mut().discard_row(row, base);
+        });
+        cx.notify();
+    }
+
+    /// Throws away everything staged, and puts the confirmation away with it.
+    fn discard_all(&mut self, cx: &mut Context<Self>) {
+        self.confirm_discard = false;
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        grid.update(cx, |grid, cx| {
+            grid.source_mut(cx).edits_mut().discard_all();
+        });
+        self.notice = None;
+        cx.notify();
+    }
+
+    /// Sends the staged changes to the server in one transaction.
+    ///
+    /// **Not implemented yet, and deliberately left as one function to fill
+    /// in.** What goes here is §7.9's apply: read the staging buffer and the
+    /// original key values out of [`EditableSource`] into a
+    /// `rudbman_sql::TableEdits` — [`crate::data_edit`]'s module documentation
+    /// says which field maps onto which — plan it with `plan_edits`, show the
+    /// statements for confirmation, then `set_auto_commit(false)`, one
+    /// `execute` per statement checking that each `UPDATE` and `DELETE`
+    /// reported exactly one row, `commit`, and a refresh. Any failure rolls
+    /// back *before* autocommit goes back on.
+    ///
+    /// Everything up to that is done: the button below is live exactly when
+    /// there is something to send, the buffer it would read is complete, and
+    /// nothing else in this pane has to move for the body to be written.
+    fn apply(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+    /// Puts the grid's right-click menu away, and says whether there was one.
+    ///
+    /// What `Escape` reaches through the workspace, which closes the menu on
+    /// top of everything before it closes anything else (architecture document,
+    /// §7.8). The answer is what tells the workspace the key was spent here.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        let had = self.context_menu.take().is_some();
+        if had {
+            cx.notify();
+        }
+        had
+    }
+
+    /// The grid's right-click menu: the cell menu, or the heading one.
+    ///
+    /// The heading half is [`crate::context_menu`]'s, shared with the query
+    /// pane; only where a sort goes differs, and here it is the pane's own
+    /// `ORDER BY` rather than a derived table.
+    ///
+    /// The cell half is that crate's copy rows plus the five commands only a
+    /// writable grid has. They are drawn even where they cannot be run, greyed:
+    /// a menu that changed shape between a keyed table and a keyless one would
+    /// make the user work out which of the two they were looking at, and the
+    /// banner above the grid has already said.
+    fn grid_rows(&self, target: MenuTarget, cx: &mut Context<Self>) -> Vec<MenuRow> {
+        let Some(grid) = self.grid().cloned() else {
+            return Vec::new();
+        };
+        let this = cx.entity();
+
+        let MenuTarget::Cell = target else {
+            let MenuTarget::Header { column } = target else {
+                unreachable!("the grid has two menu targets");
+            };
+            return context_menu::grid_header_rows(
+                &grid,
+                column,
+                cx,
+                move |direction, window, cx| {
+                    this.update(cx, |pane, cx| pane.reorder(column, direction, window, cx));
+                },
+            );
+        };
+
+        let mut rows = context_menu::grid_copy_rows(&grid, cx);
+        let cell = self.menu_cell(cx);
+        let source = grid.read(cx).source();
+        let writable = source.writable();
+        let base_rows = source.base_rows();
+        let deleted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Deleted);
+        let inserted = cell.is_some_and(|(row, _)| row >= base_rows);
+        // A cell may take a NULL when it may take anything at all *and* the
+        // catalogue lets the column hold one. Both halves are the source's:
+        // this side only asks.
+        let nullable = cell.is_some_and(|(row, column)| {
+            source.cell_editable(row, column) && source.nullable(column)
+        });
+        let staged = cell.is_some_and(|(row, _)| source.row_status(row) != RowStatus::Unchanged);
+
+        rows.push(MenuRow::separator());
+        rows.push({
+            let this = this.clone();
+            MenuRow::new(ts!("data.set_null"))
+                .enabled(writable && nullable)
+                .on_activate(move |_window, cx| {
+                    let Some((row, column)) = cell else {
+                        return;
+                    };
+                    this.update(cx, |pane, cx| pane.set_null(row, column, cx));
+                })
+        });
+        rows.push(MenuRow::separator());
+        rows.push({
+            let this = this.clone();
+            MenuRow::new(ts!("data.insert_row"))
+                .enabled(writable)
+                .on_activate(move |window, cx| {
+                    this.update(cx, |pane, cx| pane.insert_row(window, cx));
+                })
+        });
+        rows.push({
+            let this = this.clone();
+            // One row, two words: the label says what the command will do, so
+            // it flips on a row that is already struck out.
+            let label = if deleted {
+                ts!("data.undelete_row")
+            } else {
+                ts!("data.delete_row")
+            };
+            MenuRow::new(label)
+                .enabled(writable && cell.is_some() && !inserted)
+                .on_activate(move |_window, cx| {
+                    let Some((row, _)) = cell else {
+                        return;
+                    };
+                    this.update(cx, |pane, cx| pane.toggle_delete(row, cx));
+                })
+        });
+        rows.push(MenuRow::separator());
+        rows.push(
+            MenuRow::new(ts!("data.discard_row"))
+                .enabled(staged)
+                .on_activate(move |_window, cx| {
+                    let Some((row, _)) = cell else {
+                        return;
+                    };
+                    this.update(cx, |pane, cx| pane.discard_row(row, cx));
+                }),
+        );
+        rows
+    }
+
+    /// The grid's right-click menu, while one is open.
+    fn render_context_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let menu = self.context_menu.as_ref()?;
+        let position = menu.position;
+        let rows = self.grid_rows(menu.target, cx);
+        let this = cx.entity();
+
+        Some(
+            ContextMenu::new("data-context")
+                .position(position)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.close_context_menu(cx);
+                    });
+                }),
+        )
+    }
+
+    /// The "throw it all away" confirmation, while it is up.
+    ///
+    /// Asked rather than done, because the button is next to the one that
+    /// applies and the two are irreversible in opposite directions.
+    fn render_discard_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.confirm_discard {
+            return None;
+        }
+        let chrome = theme(cx);
+        let counts = self.counts(cx)?;
+        let this = cx.entity();
+        let dismiss = this.clone();
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(div().text_size(px(12.)).text_color(chrome.text).child(ts!(
+                "data.discard_body",
+                changed = counts.changed,
+                inserted = counts.inserted,
+                deleted = counts.deleted
+            )))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("data-discard-cancel", ts!("common.cancel"))
+                            .variant(ButtonVariant::Secondary)
+                            .on_click({
+                                let this = this.clone();
+                                move |_, _window, cx| {
+                                    this.update(cx, |pane, cx| {
+                                        pane.confirm_discard = false;
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("data-discard-confirm", ts!("data.discard"))
+                            .variant(ButtonVariant::Danger)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| pane.discard_all(cx));
+                            }),
+                    ),
+            );
+
+        Some(
+            modal(
+                "data-discard",
+                ts!("data.discard_title"),
+                px(420.),
+                body,
+                move |_window, cx| {
+                    dismiss.update(cx, |pane, cx| {
+                        pane.confirm_discard = false;
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// How much is staged, or `None` while nothing is.
+    fn counts(&self, cx: &App) -> Option<crate::data_edit::EditCounts> {
+        let counts = self.grid()?.read(cx).source().edits().counts();
+        (counts != crate::data_edit::EditCounts::default()).then_some(counts)
+    }
+
+    /// The strip above the rows: what is being shown, how much of it, what is
+    /// staged against it, and the three buttons that act on all of that.
+    ///
+    /// The two editing buttons are drawn only on a pane that can be written to.
+    /// A read-only one cannot stage anything, so an "Apply" that could never
+    /// light up would be furniture — the banner underneath is where that pane
+    /// says what it is.
     fn render_toolbar(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let loading = matches!(self.load, Load::Running);
         let count = self
             .row_count(cx)
             .map(|count| ts!("data.row_count", count = count));
+        let writable = self.read_only_reason().is_none();
+        let counts = self.counts(cx);
+        let pending = counts.map(|counts| {
+            ts!(
+                "data.pending",
+                changed = counts.changed,
+                inserted = counts.inserted,
+                deleted = counts.deleted
+            )
+        });
+        let staged = counts.is_some();
 
         div()
             .flex()
@@ -584,6 +1058,16 @@ impl DataPane {
                     .child(SharedString::from(self.target.qualified())),
             )
             .child(div().flex_1().min_w_0())
+            .children(pending.map(|pending| {
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(px(11.))
+                    // In the accent the grid marks a changed row with, so that
+                    // the line and the markers under it read as one thing.
+                    .text_color(chrome.accent)
+                    .child(pending)
+            }))
             .children(count.map(|count| {
                 div()
                     .flex_none()
@@ -592,12 +1076,46 @@ impl DataPane {
                     .text_color(chrome.text_muted)
                     .child(count)
             }))
+            .children(writable.then(|| {
+                let this = this.clone();
+                // Also in the grid's own menu, and here as well for the one
+                // case that menu cannot reach: a table with no rows in it has
+                // no cell to right-click, and a table nobody can put the first
+                // row into would be a strange thing to ship.
+                Button::new("data-insert", ts!("data.insert_row"))
+                    .variant(ButtonVariant::Secondary)
+                    .disabled(loading)
+                    .on_click(move |_, window, cx| {
+                        this.update(cx, |pane, cx| pane.insert_row(window, cx));
+                    })
+            }))
+            .children(writable.then(|| {
+                let this = this.clone();
+                Button::new("data-apply", ts!("data.apply"))
+                    .variant(ButtonVariant::Primary)
+                    .disabled(!staged || loading)
+                    .on_click(move |_, window, cx| {
+                        this.update(cx, |pane, cx| pane.apply(window, cx));
+                    })
+            }))
+            .children(writable.then(|| {
+                let this = this.clone();
+                Button::new("data-discard", ts!("data.discard"))
+                    .variant(ButtonVariant::Secondary)
+                    .disabled(!staged || loading)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |pane, cx| {
+                            pane.confirm_discard = true;
+                            cx.notify();
+                        });
+                    })
+            }))
             .child(
                 Button::new("data-refresh", ts!("data.refresh"))
                     .variant(ButtonVariant::Secondary)
                     .disabled(loading)
-                    .on_click(move |_, _window, cx| {
-                        this.update(cx, |pane, cx| pane.refresh(cx));
+                    .on_click(move |_, window, cx| {
+                        this.update(cx, |pane, cx| pane.refresh(window, cx));
                     }),
             )
     }
@@ -657,6 +1175,8 @@ impl Render for DataPane {
         let toolbar = self.render_toolbar(&chrome, cx);
         let banner = self.render_banner(&chrome);
         let body = self.render_body(&chrome, cx);
+        let menu = self.render_context_menu(cx);
+        let confirm = self.render_discard_confirm(cx);
 
         div()
             .id("data-pane")
@@ -686,6 +1206,10 @@ impl Render for DataPane {
                     .text_color(chrome.text_muted)
                     .child(notice)
             }))
+            // Both last, and the menu last of all: a context menu paints above
+            // even a modal (architecture document, §7.8).
+            .children(confirm)
+            .children(menu)
     }
 }
 
@@ -774,6 +1298,7 @@ fn primary_key(session: &Session, target: &ObjectTarget) -> Result<Vec<String>, 
 mod tests {
     use gpui::{TestAppContext, WindowHandle};
     use rudbman_grid::GridCell;
+    use rudbman_ui::TextInput;
 
     use super::*;
     use crate::app_settings;
@@ -848,7 +1373,7 @@ mod tests {
             )
         });
         window
-            .update(cx, |pane, _window, cx| pane.refresh(cx))
+            .update(cx, |pane, window, cx| pane.refresh(window, cx))
             .expect("the window is open");
         cx.run_until_parked();
         window
@@ -871,6 +1396,7 @@ mod tests {
                     .map(|row| match source.cell(row, column) {
                         GridCell::Text(text) => text.to_string(),
                         GridCell::Null => "NULL".to_string(),
+                        GridCell::Default => "DEFAULT".to_string(),
                         GridCell::Lob { size } => format!("lob {size:?}"),
                     })
                     .collect()
@@ -1064,8 +1590,8 @@ mod tests {
         // the marker comes back with it, on the grid that replaced the one the
         // header click was on.
         window
-            .update(cx, |pane, _window, cx| {
-                pane.reorder(0, Some(SortDirection::Descending), cx);
+            .update(cx, |pane, window, cx| {
+                pane.reorder(0, Some(SortDirection::Descending), window, cx);
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -1101,7 +1627,7 @@ mod tests {
         assert_eq!(column(&window, 0, cx), ["1", "2"]);
 
         window
-            .update(cx, |pane, _window, cx| {
+            .update(cx, |pane, window, cx| {
                 pane.detach(cx);
                 assert!(!pane.is_attached());
 
@@ -1109,11 +1635,11 @@ mod tests {
                 assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
 
                 pane.notice = None;
-                pane.reorder(0, Some(SortDirection::Ascending), cx);
+                pane.reorder(0, Some(SortDirection::Ascending), window, cx);
                 assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
 
                 pane.notice = None;
-                pane.refresh(cx);
+                pane.refresh(window, cx);
                 assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
             })
             .expect("the window is open");
@@ -1121,6 +1647,443 @@ mod tests {
 
         // The rows the live load produced are still there to read.
         assert_eq!(column(&window, 0, cx), ["1", "2"]);
+        connected.close().expect("close");
+    }
+
+    /// Opens the field over a cell, puts `text` in it and closes it — which is
+    /// the whole gesture, and the only route by which anything is staged.
+    ///
+    /// Answers whether the field opened at all, so that the refusals can be
+    /// asserted through the same helper the successes go through.
+    fn type_into(
+        window: &WindowHandle<DataPane>,
+        row: usize,
+        column: usize,
+        text: &str,
+        cx: &mut TestAppContext,
+    ) -> bool {
+        let opened = window
+            .update(cx, |pane, window, cx| {
+                let grid = pane.grid().cloned().expect("the pane holds rows");
+                grid.update(cx, |grid, cx| {
+                    if !grid.begin_edit(row, column, window, cx) {
+                        return false;
+                    }
+                    let input = grid.editor().cloned().expect("the field is open");
+                    input.update(cx, |input: &mut TextInput, cx| {
+                        input.set_content(text.to_owned(), cx);
+                    });
+                    grid.commit_edit(cx);
+                    true
+                })
+            })
+            .expect("the window is open");
+        // `EditCommitted` is emitted, not called: the pane hears it on the next
+        // turn of the loop.
+        cx.run_until_parked();
+        opened
+    }
+
+    /// Puts the caret on a cell, which is where the right-click menu reads the
+    /// row and column it acts on from.
+    fn select(window: &WindowHandle<DataPane>, row: usize, column: usize, cx: &mut TestAppContext) {
+        window
+            .update(cx, |pane, _window, cx| {
+                let grid = pane.grid().cloned().expect("the pane holds rows");
+                grid.update(cx, |grid, cx| grid.select_cell(row, column, cx));
+            })
+            .expect("the window is open");
+    }
+
+    /// The pane's cell menu, over whatever the caret is on.
+    fn cell_menu(window: &WindowHandle<DataPane>, cx: &mut TestAppContext) -> Vec<MenuRow> {
+        window
+            .update(cx, |pane, _window, cx| pane.grid_rows(MenuTarget::Cell, cx))
+            .expect("the window is open")
+    }
+
+    /// Runs the cell menu's row labelled `label`, as clicking it would.
+    ///
+    /// From outside the pane's own update, because that is where the click
+    /// happens: every row's callback reaches back into the pane, and running
+    /// one from inside a borrow of it would be a re-entry the interface cannot
+    /// produce.
+    fn run(window: &WindowHandle<DataPane>, label: &str, cx: &mut gpui::VisualTestContext) {
+        let rows = cell_menu(window, cx);
+        cx.update(|window, cx| context_menu::row(&rows, label).activate(window, cx));
+    }
+
+    /// How a row is marked.
+    fn status(window: &WindowHandle<DataPane>, row: usize, cx: &mut TestAppContext) -> RowStatus {
+        window
+            .update(cx, |pane, _window, cx| {
+                pane.grid()
+                    .expect("the pane holds rows")
+                    .read(cx)
+                    .source()
+                    .row_status(row)
+            })
+            .expect("the window is open")
+    }
+
+    /// A table with two rows to type into, one NULL and one empty string among
+    /// them so that the two can be told apart in every assertion below.
+    fn person(name: &str) -> (Connected, ConnectionProfile) {
+        h2(
+            name,
+            &[
+                "create schema if not exists APP",
+                "create table APP.PERSON (ID int primary key, NAME varchar(20), NOTE varchar(20))",
+                "insert into APP.PERSON values (1, 'a', null), (2, 'b', '')",
+            ],
+        )
+    }
+
+    /// Typing into a cell stages it, marks the row, and says so in the toolbar
+    /// — and typing the old value back in takes all of that away again.
+    #[gpui::test]
+    fn a_committed_field_is_staged_and_marks_its_row(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-stage");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+
+        assert!(type_into(&window, 0, 1, "A", cx), "the field refused");
+        assert_eq!(column(&window, 1, cx), ["A", "b"], "the overlay is on top");
+        assert_eq!(status(&window, 0, cx), RowStatus::Modified);
+        assert_eq!(status(&window, 1, cx), RowStatus::Unchanged);
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(pane.has_pending_edits(cx));
+                let counts = pane.counts(cx).expect("something is staged");
+                assert_eq!(counts.changed, 1);
+                assert_eq!(counts.inserted, 0);
+                assert_eq!(counts.deleted, 0);
+                assert_eq!(
+                    pane.row_count(cx),
+                    Some(2),
+                    "the toolbar counts the table's rows"
+                );
+            })
+            .expect("the window is open");
+
+        // A to B to A. The grid raises nothing at all for a field left as it
+        // was found, so the second edit has to be a real one that happens to
+        // spell what the server gave.
+        assert!(type_into(&window, 0, 1, "a", cx));
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(!pane.has_pending_edits(cx), "the round trip left a change");
+                assert!(pane.counts(cx).is_none());
+            })
+            .expect("the window is open");
+        assert_eq!(status(&window, 0, cx), RowStatus::Unchanged);
+        connected.close().expect("close");
+    }
+
+    /// NULL is a command rather than an empty field, and running it on a cell
+    /// that is already NULL stages nothing.
+    #[gpui::test]
+    fn setting_null_is_a_command_and_a_null_cell_is_left_alone(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-null");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        // Row 0's NOTE is NULL, row 1's is the empty string. Neither is the
+        // other, here or anywhere else.
+        assert_eq!(column(&window, 2, cx), ["NULL", ""]);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        select(&window, 0, 2, &mut cx);
+        run(&window, &ts!("data.set_null"), &mut cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                assert!(
+                    !pane.has_pending_edits(cx),
+                    "NULL over NULL was staged as a change"
+                );
+            })
+            .expect("the window is open");
+
+        // The empty string is a value, so clearing it is a change — and it
+        // becomes the marker rather than staying empty.
+        select(&window, 1, 2, &mut cx);
+        run(&window, &ts!("data.set_null"), &mut cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                assert!(pane.has_pending_edits(cx));
+            })
+            .expect("the window is open");
+        assert_eq!(column(&window, 2, &mut cx), ["NULL", "NULL"]);
+        assert_eq!(status(&window, 1, &mut cx), RowStatus::Modified);
+        connected.close().expect("close");
+    }
+
+    /// Deleting keeps the row where it is, flips the label that would put it
+    /// back, and takes the row's cells out of reach while it stands.
+    #[gpui::test]
+    fn a_deleted_row_stays_on_screen_and_can_be_put_back(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-delete");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        select(&window, 0, 0, &mut cx);
+        run(&window, &ts!("data.delete_row"), &mut cx);
+
+        assert_eq!(status(&window, 0, &mut cx), RowStatus::Deleted);
+        assert_eq!(
+            column(&window, 0, &mut cx),
+            ["1", "2"],
+            "still in its place"
+        );
+        assert!(
+            !type_into(&window, 0, 1, "A", &mut cx),
+            "a row on its way out took an edit"
+        );
+
+        // The label is the command, so it now says the opposite.
+        let rows = cell_menu(&window, &mut cx);
+        assert!(!context_menu::labels(&rows).contains(&ts!("data.delete_row").to_string()));
+        run(&window, &ts!("data.undelete_row"), &mut cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                assert!(!pane.has_pending_edits(cx));
+            })
+            .expect("the window is open");
+        assert_eq!(status(&window, 0, &mut cx), RowStatus::Unchanged);
+        connected.close().expect("close");
+    }
+
+    /// A new row appears after the last one, is scrolled to, and is already
+    /// taking a value — with the columns nobody typed into left to the server.
+    #[gpui::test]
+    fn an_inserted_row_appears_at_the_end_and_opens_a_field(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-insert");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.insert_row(window, cx);
+                let grid = pane.grid().expect("the pane holds rows").read(cx);
+                assert_eq!(grid.source().row_count(), 3, "the row is not there");
+                assert_eq!(
+                    grid.editing(),
+                    Some((2, 0)),
+                    "the field did not open on the new row's first column"
+                );
+            })
+            .expect("the window is open");
+
+        assert_eq!(status(&window, 2, cx), RowStatus::Inserted);
+        // Every column of it is the server's until something is typed in, and
+        // that is not the same thing as NULL.
+        assert_eq!(column(&window, 0, cx), ["1", "2", "DEFAULT"]);
+        assert_eq!(column(&window, 2, cx), ["NULL", "", "DEFAULT"]);
+
+        assert!(type_into(&window, 2, 1, "c", cx));
+        assert_eq!(column(&window, 1, cx), ["a", "b", "c"]);
+        assert_eq!(
+            column(&window, 0, cx),
+            ["1", "2", "DEFAULT"],
+            "an untyped column is still the server's"
+        );
+        window
+            .update(cx, |pane, _window, cx| {
+                let counts = pane.counts(cx).expect("something is staged");
+                assert_eq!(counts.inserted, 1);
+                assert_eq!(counts.changed, 0, "a new row is not a changed one");
+                assert_eq!(
+                    pane.row_count(cx),
+                    Some(2),
+                    "a row nobody has sent yet is not a row of the table"
+                );
+            })
+            .expect("the window is open");
+
+        // Discarding an inserted row takes the row itself: it *is* the change.
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        select(&window, 2, 0, &mut cx);
+        let rows = cell_menu(&window, &mut cx);
+        assert!(
+            !context_menu::row(&rows, &ts!("data.delete_row")).is_enabled(),
+            "a row the server has never seen was offered a DELETE"
+        );
+        run(&window, &ts!("data.discard_row"), &mut cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                assert!(!pane.has_pending_edits(cx));
+            })
+            .expect("the window is open");
+        assert_eq!(column(&window, 1, &mut cx), ["a", "b"]);
+        connected.close().expect("close");
+    }
+
+    /// A table with nothing in it can still be typed into.
+    ///
+    /// The one case the grid's own menu cannot reach — there is no cell to
+    /// right-click — which is why the toolbar carries the command too.
+    #[gpui::test]
+    fn the_first_row_of_an_empty_table_can_be_added(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-empty-insert",
+            &[
+                "create schema if not exists APP",
+                "create table APP.PERSON (ID int primary key, NAME varchar(20))",
+            ],
+        );
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        window
+            .update(cx, |pane, _window, cx| {
+                assert_eq!(pane.row_count(cx), Some(0));
+                assert!(pane.read_only_reason().is_none());
+            })
+            .expect("the window is open");
+
+        window
+            .update(cx, |pane, window, cx| pane.insert_row(window, cx))
+            .expect("the window is open");
+        assert_eq!(status(&window, 0, cx), RowStatus::Inserted);
+        assert!(type_into(&window, 0, 1, "first", cx));
+        assert_eq!(column(&window, 1, cx), ["first"]);
+        window
+            .update(cx, |pane, _window, cx| {
+                assert_eq!(pane.counts(cx).expect("staged").inserted, 1);
+                assert_eq!(pane.row_count(cx), Some(0), "the server still has none");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A sort and a refresh both throw the rows away, so both refuse while
+    /// anything is staged — and both go through once it is discarded.
+    #[gpui::test]
+    fn a_sort_and_a_refresh_wait_for_the_edits_to_be_dealt_with(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-guard");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert!(type_into(&window, 0, 1, "A", cx));
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.reorder(0, Some(SortDirection::Descending), window, cx);
+                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert!(pane.order.is_none(), "the ordering was taken anyway");
+
+                pane.notice = None;
+                pane.refresh(window, cx);
+                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert!(
+                    matches!(pane.load, Load::Ready(_)),
+                    "the rows were thrown away anyway"
+                );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(column(&window, 1, cx), ["A", "b"], "the edit survived");
+
+        // Discarding everything puts the rows back as the server has them and
+        // lets the guarded paths through.
+        window
+            .update(cx, |pane, _window, cx| pane.discard_all(cx))
+            .expect("the window is open");
+        assert_eq!(column(&window, 1, cx), ["a", "b"]);
+        window
+            .update(cx, |pane, window, cx| {
+                assert!(!pane.has_pending_edits(cx));
+                pane.reorder(0, Some(SortDirection::Descending), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(column(&window, 0, cx), ["2", "1"], "the sort ran");
+        connected.close().expect("close");
+    }
+
+    /// Neither of §7.9's two read-only reasons lets a keystroke through, and
+    /// the menu that would go round the field is greyed for both.
+    #[gpui::test]
+    fn a_pane_that_may_not_be_written_to_opens_no_field(cx: &mut TestAppContext) {
+        for (name, table, setup, read_only) in [
+            (
+                "data-ro-nokey",
+                "LOG",
+                "create table APP.LOG (LINE varchar(20), NOTE varchar(20))",
+                false,
+            ),
+            (
+                "data-ro-profile",
+                "PERSON",
+                "create table APP.PERSON (ID int primary key, NAME varchar(20))",
+                true,
+            ),
+        ] {
+            let (connected, mut profile) = h2(name, &["create schema if not exists APP", setup]);
+            profile.read_only = read_only;
+            let window = pane(&connected, &profile, target(table), 500, cx);
+
+            window
+                .update(cx, |pane, _window, _cx| {
+                    assert!(pane.read_only_reason().is_some(), "{name} is writable");
+                })
+                .expect("the window is open");
+
+            // Through the event a double click raises, so that the pane's own
+            // handler is what is under test, and then directly — the refusal
+            // has to happen before a field opens, not after the user has typed.
+            let opened = window
+                .update(cx, |pane, window, cx| {
+                    let grid = pane.grid().cloned().expect("the pane holds rows");
+                    grid.update(cx, |_grid, cx| {
+                        cx.emit(GridEvent::CellActivated { row: 0, column: 0 });
+                    });
+                    grid.update(cx, |grid, cx| grid.begin_edit(0, 0, window, cx))
+                })
+                .expect("the window is open");
+            cx.run_until_parked();
+            assert!(!opened, "{name} opened a field");
+            window
+                .update(cx, |pane, _window, cx| {
+                    assert!(
+                        pane.grid().expect("rows").read(cx).editing().is_none(),
+                        "{name} opened a field from the activation"
+                    );
+                    assert!(!pane.has_pending_edits(cx));
+                })
+                .expect("the window is open");
+
+            select(&window, 0, 0, cx);
+            let rows = cell_menu(&window, cx);
+            for label in [
+                ts!("data.set_null"),
+                ts!("data.insert_row"),
+                ts!("data.delete_row"),
+                ts!("data.discard_row"),
+            ] {
+                assert!(
+                    !context_menu::row(&rows, &label).is_enabled(),
+                    "{name} offered {label}"
+                );
+            }
+            connected.close().expect("close");
+        }
+    }
+
+    /// Closing a tab holding staged changes is refused, and the pane says why.
+    ///
+    /// Asserted at the seam rather than through the workspace: what the shell
+    /// asks is `PaneItem::blocks_close`, and what it does about a yes is to
+    /// bring the tab forward and call this.
+    #[gpui::test]
+    fn a_tab_holding_changes_refuses_to_close(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-close");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert!(type_into(&window, 0, 1, "A", cx));
+
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(pane.has_pending_edits(cx));
+                pane.warn_pending(cx);
+                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+
+                pane.discard_all(cx);
+                assert!(!pane.has_pending_edits(cx));
+                assert!(pane.notice.is_none(), "the refusal outlived the reason");
+            })
+            .expect("the window is open");
         connected.close().expect("close");
     }
 
@@ -1134,6 +2097,16 @@ mod tests {
             ts!("data.no_primary_key"),
             ts!("data.read_only"),
             ts!("data.discard_first"),
+            ts!("data.pending", changed = 1, inserted = 2, deleted = 3),
+            ts!("data.apply"),
+            ts!("data.discard"),
+            ts!("data.discard_title"),
+            ts!("data.discard_body", changed = 1, inserted = 2, deleted = 3),
+            ts!("data.set_null"),
+            ts!("data.insert_row"),
+            ts!("data.delete_row"),
+            ts!("data.undelete_row"),
+            ts!("data.discard_row"),
             ts!("menu.view_data"),
         ] {
             assert!(!label.is_empty(), "empty label");
