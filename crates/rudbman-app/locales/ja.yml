@@ -18,6 +18,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 選択したオブジェクトを照会
+  view_data: データを表示
   open_sql_file: SQL ファイルを開く…
   extract_script: スクリプトを抽出…
   transfer_table: 行を転送…
@@ -392,6 +393,35 @@ query:
   hint_network: データベースとの接続が失われました。
   hint_cancelled: 文の実行はキャンセルされました。
   open_file_select: SQL ファイルを選択
+
+data:
+  loading: 読み込み中…
+  refresh: 再読み込み
+  empty: このテーブルに行はありません。
+  row_count: "%{count} 行"
+  no_primary_key: このテーブルには主キーがないため、行の閲覧のみできます。
+  read_only: 読み取り専用の接続のため、行の閲覧のみできます。
+  discard_first: 保留中の変更を先に適用するか取り消してください。
+  pending: "変更 %{changed} · 追加 %{inserted} · 削除 %{deleted}"
+  apply: 適用
+  discard: 取り消し
+  discard_title: 変更の取り消し
+  discard_body: "変更した %{changed} 行、追加した %{inserted} 行、削除予定の %{deleted} 行をすべて破棄します。元に戻せません。"
+  set_null: NULL にする
+  insert_row: 行を追加
+  delete_row: 行を削除
+  undelete_row: 行の削除を取り消す
+  discard_row: この行の変更を取り消す
+  apply_title: "%{count} 件の文を適用"
+  apply_no_rollback: このデータベースはトランザクションに対応していないため、途中で失敗しても取り消せません。
+  applying: 適用中…
+  applied: "%{count} 件の文を適用しました。"
+  apply_stale: 他の誰かが行を変更または削除しました。何も適用していません。再読み込みしてやり直してください。
+  apply_half_applied: 一部がすでにテーブルに反映されている可能性があります。再読み込みして確認してから適用し直してください。
+  apply_bad_value: "%{column} に「%{value}」は設定できません。"
+  apply_null_key: "この行の %{column} が NULL のため、行を特定できません。"
+  apply_unknown_key: "読み込んだ列の中にキー列 %{column} がありません。再読み込みしてやり直してください。"
+  apply_not_planned: "この変更は文にできません: %{detail}"
 
 extract:
   title: スクリプトの抽出

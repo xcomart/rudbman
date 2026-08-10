@@ -18,6 +18,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Ausgewähltes Objekt abfragen
+  view_data: Daten ansehen
   open_sql_file: SQL-Datei öffnen…
   extract_script: Skript extrahieren…
   transfer_table: Zeilen übertragen…
@@ -392,6 +393,35 @@ query:
   hint_network: Die Verbindung zur Datenbank ging verloren.
   hint_cancelled: Die Anweisung wurde abgebrochen.
   open_file_select: SQL-Datei auswählen
+
+data:
+  loading: wird geladen …
+  refresh: Neu laden
+  empty: Diese Tabelle hat keine Zeilen.
+  row_count: "%{count} Zeilen"
+  no_primary_key: "Diese Tabelle hat keinen Primärschlüssel; ihre Zeilen lassen sich lesen, aber nicht ändern."
+  read_only: "Diese Verbindung ist schreibgeschützt; ihre Zeilen lassen sich lesen, aber nicht ändern."
+  discard_first: Wenden Sie die ausstehenden Änderungen zuerst an oder verwerfen Sie sie.
+  pending: "%{changed} geändert · %{inserted} eingefügt · %{deleted} gelöscht"
+  apply: Anwenden
+  discard: Verwerfen
+  discard_title: Änderungen verwerfen
+  discard_body: "%{changed} geänderte, %{inserted} eingefügte und %{deleted} gelöschte Zeilen gehen verloren. Das lässt sich nicht rückgängig machen."
+  set_null: Auf NULL setzen
+  insert_row: Zeile einfügen
+  delete_row: Zeile löschen
+  undelete_row: Zeile wiederherstellen
+  discard_row: Änderungen dieser Zeile verwerfen
+  apply_title: "%{count} Anweisungen anwenden"
+  apply_no_rollback: "Diese Datenbank kennt keine Transaktionen; ein Fehler mittendrin lässt sich nicht rückgängig machen."
+  applying: wird angewendet …
+  applied: "%{count} Anweisungen angewendet."
+  apply_stale: Eine Zeile wurde von jemand anderem geändert oder gelöscht. Es wurde nichts angewendet – laden Sie neu und versuchen Sie es erneut.
+  apply_half_applied: Ein Teil des Stapels steht möglicherweise schon in der Tabelle. Laden Sie neu und prüfen Sie ihn, bevor Sie erneut anwenden.
+  apply_bad_value: "%{column} kann nicht auf „%{value}“ gesetzt werden."
+  apply_null_key: "Das %{column} dieser Zeile ist NULL, daher kann keine Anweisung sie wiederfinden."
+  apply_unknown_key: "Die Schlüsselspalte %{column} ist nicht unter den gelesenen Spalten. Laden Sie neu und versuchen Sie es erneut."
+  apply_not_planned: "Diese Änderungen lassen sich nicht als Anweisungen schreiben: %{detail}"
 
 extract:
   title: Skript extrahieren

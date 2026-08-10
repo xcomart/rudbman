@@ -336,6 +336,10 @@ impl ErdPane {
                 });
             }
             Err(message) => {
+                // The notice is the only place the driver's words appear, and a
+                // notice is gone the moment the tab is; the log is what can
+                // still be quoted after the fact.
+                log::error!("the diagram could not be loaded: {message}");
                 self.load = Load::Failed(message);
                 self.tables.clear();
             }

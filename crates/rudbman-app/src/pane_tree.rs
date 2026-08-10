@@ -50,6 +50,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gpui::{App, Entity, ScrollHandle, SharedString};
 
 use crate::builder_pane::BuilderPane;
+use crate::data_pane::DataPane;
 use crate::erd_pane::{ErdPane, ErdTarget};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
@@ -123,6 +124,14 @@ pub enum PaneItem {
     /// Holds only the panel, because the panel knows what it is drawing: a
     /// scope, which is also what tells two ERD tabs apart.
     Erd(Entity<ErdPane>),
+    /// One table's rows, in a grid of their own.
+    ///
+    /// A sibling of the query pane rather than a fifth tab of the detail
+    /// panel, for the lifetime reason the architecture document's §7.9 gives:
+    /// this one holds a cursor and, from the next milestone, edits nobody has
+    /// applied yet. Holds only the panel, because the panel knows which object
+    /// it is showing — which is also what tells two of them apart.
+    TableData(Entity<DataPane>),
     /// A canvas of tables, the form under it, and the `SELECT` they describe.
     ///
     /// Numbered like a query pane and for the same reason: several at once is
@@ -145,12 +154,16 @@ impl PaneItem {
     /// A detail panel is named after the object it describes, qualified by its
     /// schema; a query pane has no name of its own, so it takes its number; a
     /// diagram is named after the scope it covers; a builder takes its number,
-    /// as the query pane does and for the same reason.
+    /// as the query pane does and for the same reason. A data pane is named
+    /// after its table, exactly as the detail panel is: the two never sit in
+    /// one pane without the user having opened both on purpose, and the icons
+    /// in the strip are what tell them apart.
     pub fn title(&self, cx: &App) -> SharedString {
         match self {
             PaneItem::TableDetail(panel) => SharedString::from(panel.read(cx).target().qualified()),
             PaneItem::Query { number, .. } => ts!("query.tab", index = number),
             PaneItem::Erd(panel) => panel.read(cx).target().title(),
+            PaneItem::TableData(panel) => SharedString::from(panel.read(cx).target().qualified()),
             PaneItem::QueryBuilder { number, .. } => ts!("builder.tab", index = number),
         }
     }
@@ -165,7 +178,32 @@ impl PaneItem {
             PaneItem::TableDetail(panel) => panel.read(cx).target().connection,
             PaneItem::Query { pane, .. } => pane.read(cx).connection(),
             PaneItem::Erd(panel) => panel.read(cx).target().connection,
+            PaneItem::TableData(panel) => panel.read(cx).connection(),
             PaneItem::QueryBuilder { pane, .. } => pane.read(cx).connection(),
+        }
+    }
+
+    /// Whether closing this tab would throw away work the user has not sent
+    /// anywhere.
+    ///
+    /// The one tab that can say yes is a data pane holding staged edits: those
+    /// live in the source under its grid, and dropping the tab drops them with
+    /// no way back (architecture document, §7.9). Everything else either holds
+    /// nothing (a detail panel, a diagram, a builder — all of them views of
+    /// something the database still has) or holds something a close does not
+    /// destroy: a query pane's SQL is the user's text, and closing the tab is
+    /// how one gets rid of it.
+    ///
+    /// A question and not a veto: the caller decides what to do about it, and
+    /// the shell answers by refusing the close and saying why
+    /// ([`DataPane::warn_pending`]).
+    pub fn blocks_close(&self, cx: &App) -> bool {
+        match self {
+            PaneItem::TableData(panel) => panel.read(cx).has_pending_edits(cx),
+            PaneItem::TableDetail(_)
+            | PaneItem::Query { .. }
+            | PaneItem::Erd(_)
+            | PaneItem::QueryBuilder { .. } => false,
         }
     }
 }
@@ -266,7 +304,25 @@ impl Pane {
     pub fn detail_of(&self, target: &ObjectTarget, cx: &App) -> Option<usize> {
         self.items.iter().position(|item| match item {
             PaneItem::TableDetail(panel) => panel.read(cx).target() == target,
-            PaneItem::Query { .. } | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => false,
+            PaneItem::Query { .. }
+            | PaneItem::Erd(_)
+            | PaneItem::TableData(_)
+            | PaneItem::QueryBuilder { .. } => false,
+        })
+    }
+
+    /// The index of the tab showing `target`'s rows, if one is open here.
+    ///
+    /// The counterpart of [`Pane::detail_of`], kept apart from it because the
+    /// two are different tabs over the same object: a data pane and a detail
+    /// panel of one table are both ordinary, and each must find its own.
+    pub fn data_of(&self, target: &ObjectTarget, cx: &App) -> Option<usize> {
+        self.items.iter().position(|item| match item {
+            PaneItem::TableData(panel) => panel.read(cx).target() == target,
+            PaneItem::TableDetail(_)
+            | PaneItem::Query { .. }
+            | PaneItem::Erd(_)
+            | PaneItem::QueryBuilder { .. } => false,
         })
     }
 
@@ -278,9 +334,10 @@ impl Pane {
     pub fn erd_of(&self, target: &ErdTarget, cx: &App) -> Option<usize> {
         self.items.iter().position(|item| match item {
             PaneItem::Erd(panel) => panel.read(cx).target() == target,
-            PaneItem::TableDetail(_) | PaneItem::Query { .. } | PaneItem::QueryBuilder { .. } => {
-                false
-            }
+            PaneItem::TableDetail(_)
+            | PaneItem::Query { .. }
+            | PaneItem::TableData(_)
+            | PaneItem::QueryBuilder { .. } => false,
         })
     }
 

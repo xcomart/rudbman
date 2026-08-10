@@ -18,6 +18,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Запросить выбранный объект
+  view_data: Показать данные
   open_sql_file: Открыть файл SQL…
   extract_script: Извлечь скрипт…
   transfer_table: Перенести строки…
@@ -392,6 +393,35 @@ query:
   hint_network: Соединение с базой данных потеряно.
   hint_cancelled: Выполнение инструкции отменено.
   open_file_select: Выберите файл SQL
+
+data:
+  loading: загрузка…
+  refresh: Обновить
+  empty: В этой таблице нет строк.
+  row_count: "%{count} строк"
+  no_primary_key: У этой таблицы нет первичного ключа, поэтому строки можно только читать.
+  read_only: Соединение доступно только для чтения, поэтому строки можно только читать.
+  discard_first: Сначала примените или отмените несохранённые изменения.
+  pending: "изменено %{changed} · добавлено %{inserted} · удалено %{deleted}"
+  apply: Применить
+  discard: Отменить
+  discard_title: Отмена изменений
+  discard_body: "Будут отброшены изменённые строки (%{changed}), добавленные (%{inserted}) и помеченные к удалению (%{deleted}). Отменить это нельзя."
+  set_null: Установить NULL
+  insert_row: Добавить строку
+  delete_row: Удалить строку
+  undelete_row: Вернуть строку
+  discard_row: Отменить изменения этой строки
+  apply_title: "Применить операторов: %{count}"
+  apply_no_rollback: Эта СУБД не поддерживает транзакции, поэтому сбой на середине откатить не удастся.
+  applying: применение…
+  applied: "Применено операторов: %{count}."
+  apply_stale: Строку изменил или удалил кто-то другой. Ничего не применено — обновите и повторите попытку.
+  apply_half_applied: Часть операторов, возможно, уже записана в таблицу. Обновите, проверьте и только затем применяйте снова.
+  apply_bad_value: "Столбцу %{column} нельзя присвоить «%{value}»."
+  apply_null_key: "Значение %{column} в этой строке равно NULL, поэтому найти её снова невозможно."
+  apply_unknown_key: "Ключевого столбца %{column} нет среди прочитанных столбцов. Обновите и повторите попытку."
+  apply_not_planned: "Эти изменения нельзя записать в виде операторов: %{detail}"
 
 extract:
   title: Извлечение скрипта

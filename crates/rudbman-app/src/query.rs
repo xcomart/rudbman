@@ -36,26 +36,19 @@
 //! flight when the next run starts, and the number is what stops it landing in
 //! the new run's grid. Nothing here relies on a task being dropped in time.
 //!
-//! # `may_have_more` is a contract, not a field
-//!
-//! JDBC has no lookahead: asking whether another result exists consumes the
-//! current one (architecture document, §4.4). [`advance`] therefore keeps
-//! calling `MORE_RESULTS` until the three-part exhaustion holds, and stops the
-//! moment a result set still has rows in it — because advancing past it would
-//! close the very `ResultSet` the grid is paging. Paging that result to its end
-//! resumes the walk, so the later results of a multi-result statement appear
-//! when the earlier one is finished with, and never before.
+//! # One cursor per statement
 //!
 //! A script is split into statements first, so each statement gets a cursor of
 //! its own and two `SELECT`s are two independently pageable grids. The
-//! `MORE_RESULTS` walk is what a stored procedure needs, not what a script
-//! needs.
+//! `MORE_RESULTS` walk — [`advance`], which the data pane shares and which is
+//! therefore in [`crate::query_source`] — is what a stored procedure needs, not
+//! what a script needs.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Action, AnyElement, App, ClipboardItem, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
+    Action, AnyElement, App, Context, Div, DragMoveEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, Hsla, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
     Styled, Subscription, Window, div, prelude::*, px, relative,
 };
@@ -66,8 +59,7 @@ use rudbman_editor::editor::{
 };
 use rudbman_editor::{EditorEvent, EditorView};
 use rudbman_grid::{
-    CopyFormat, GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget,
-    SortDirection,
+    GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget, SortDirection,
 };
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
@@ -80,7 +72,7 @@ use crate::connection::{ConnectError, SessionHandle};
 use crate::context_menu::{self, MenuRow};
 use crate::explorer::ConnectionId;
 use crate::i18n::ts;
-use crate::query_source::{RenderedBatch, ResultSource, render_batch};
+use crate::query_source::{Paged, RenderedBatch, ResultSource, Step, advance, page};
 
 /// The statement keywords that read rather than write.
 ///
@@ -250,26 +242,6 @@ impl QueryError {
     }
 }
 
-/// One thing a statement produced.
-#[derive(Debug)]
-enum Step {
-    /// A result set, and its first batch.
-    Rows {
-        /// The result's logical column types.
-        columns: Vec<ColumnInfo>,
-        /// The first batch, already rendered.
-        batch: RenderedBatch,
-        /// Whether the driver had run out of rows.
-        complete: bool,
-    },
-    /// An update count.
-    Message {
-        /// Rows the statement changed, or zero for a statement that changes
-        /// none — a `CREATE TABLE`, say.
-        update_count: i64,
-    },
-}
-
 /// One executed statement, handed back from the background thread.
 struct Executed {
     /// The SQL, kept for the sort round trip.
@@ -280,87 +252,6 @@ struct Executed {
     steps: Vec<Step>,
     /// Whether the cursor is parked on a result set that can still be paged.
     pageable: bool,
-}
-
-/// One page of an already-open result.
-struct Paged {
-    batch: RenderedBatch,
-    /// Whether that batch was the last of this result set.
-    complete: bool,
-    /// Further results of the same statement, picked up once this one ended.
-    steps: Vec<Step>,
-    /// Whether the cursor is parked on a result set that can still be paged.
-    pageable: bool,
-}
-
-/// Walks a cursor's results, stopping at the first one that can still be paged.
-///
-/// `fresh` says whether the cursor is already sitting on a result nobody has
-/// read — true straight after `EXECUTE`, false when resuming after a result set
-/// ran out. Blocks; only ever called from a background thread.
-fn advance(
-    cursor: &mut Cursor,
-    mut fresh: bool,
-    fetch_rows: u32,
-    steps: &mut Vec<Step>,
-) -> Result<bool, JdbcError> {
-    loop {
-        if !fresh && cursor.more_results()?.is_exhausted() {
-            return Ok(false);
-        }
-        fresh = false;
-
-        let (has_result_set, update_count, exhausted, columns) = {
-            let result = cursor.result();
-            (
-                result.has_result_set,
-                result.update_count,
-                result.is_exhausted(),
-                result.columns.clone(),
-            )
-        };
-
-        if has_result_set {
-            let raw = cursor.fetch(fetch_rows)?;
-            let complete = raw.is_last();
-            let batch = render_batch(&raw, &columns);
-            steps.push(Step::Rows {
-                columns,
-                batch,
-                complete,
-            });
-            if !complete {
-                // Advancing now would close the `ResultSet` the grid is about
-                // to page. The walk resumes when the rows run out.
-                return Ok(true);
-            }
-        } else if update_count >= 0 {
-            steps.push(Step::Message { update_count });
-        }
-
-        if exhausted {
-            return Ok(false);
-        }
-    }
-}
-
-/// Fetches one more batch of an open result, and walks on if it was the last.
-fn page(cursor: &mut Cursor, columns: &[ColumnInfo], fetch_rows: u32) -> Result<Paged, JdbcError> {
-    let raw = cursor.fetch(fetch_rows)?;
-    let complete = raw.is_last();
-    let batch = render_batch(&raw, columns);
-    let mut steps = Vec::new();
-    let pageable = if complete {
-        advance(cursor, false, fetch_rows, &mut steps)?
-    } else {
-        true
-    };
-    Ok(Paged {
-        batch,
-        complete,
-        steps,
-        pageable,
-    })
 }
 
 /// One result of one statement, as a tab of the result area.
@@ -1032,6 +923,11 @@ impl QueryPane {
                 pane.reorder(id, *column, *direction, cx);
             }
             GridEvent::CellActivated { row, column } => pane.open_cell(id, *row, *column, cx),
+            // Unreachable rather than unimplemented: a query result opts no
+            // cell into `GridSource::cell_editable`, so no field is ever opened
+            // over one and nothing can be committed. Editing rows belongs to
+            // the data pane, which knows the table and its key (§7.5, §7.9).
+            GridEvent::EditCommitted { .. } => {}
             // The grid holds no strings, so its menu is drawn here
             // (architecture document, §7.8).
             GridEvent::ContextMenu { target, position } => {
@@ -1589,17 +1485,12 @@ impl QueryPane {
 
     /// A result grid's right-click menu: the cell menu, or the heading one.
     ///
-    /// The cell menu is about the *selection*, not about the cell that was
-    /// pressed — the grid has already moved the selection onto it unless the
-    /// press landed inside one — so the four copy formats and "clear" all read
-    /// the same block the user can see.
-    ///
-    /// The heading menu is about one column, and its sort rows go through
-    /// [`QueryPane::reorder`] rather than through the grid: the grid holds only
-    /// the first n rows of an answer the server has all of, so ordering it is a
-    /// re-run and not a shuffle. "Show every column" is the one row here that
-    /// no other gesture offers — a hidden column has no heading left to
-    /// right-click.
+    /// Both lists are [`crate::context_menu`]'s, because both are the same
+    /// lists the data pane's grid draws (architecture document, §7.8) — the
+    /// cell menu is about the *selection* rather than about the cell that was
+    /// pressed, and the heading menu is about one column. What is this pane's
+    /// own is where a sort goes: [`QueryPane::reorder`] wraps whatever the user
+    /// wrote in a derived table, which no other pane has to do.
     fn grid_rows(&self, id: u64, target: MenuTarget, cx: &mut Context<Self>) -> Vec<MenuRow> {
         let Some(grid) = self.grid_of(id) else {
             return Vec::new();
@@ -1608,97 +1499,11 @@ impl QueryPane {
         let grid = grid.clone();
 
         match target {
-            MenuTarget::Cell => {
-                let empty = grid.read(cx).selection().is_empty();
-                let mut rows: Vec<MenuRow> = CopyFormat::ALL
-                    .into_iter()
-                    .map(|format| {
-                        let grid = grid.clone();
-                        let row = MenuRow::new(ts!("context.copy_as", format = format.label()))
-                            .enabled(!empty)
-                            .on_activate(move |_window, cx| {
-                                grid.update(cx, |grid, cx| grid.copy(format, cx));
-                            });
-                        // Only the default format carries the hint: `Ctrl+C` is
-                        // one chord and copies TSV, and repeating it on four
-                        // rows would say it does all four.
-                        if format == CopyFormat::default() {
-                            row.shortcut(format!("{SHORTCUT_MODIFIER}+C"))
-                        } else {
-                            row
-                        }
-                    })
-                    .collect();
-                rows.push(MenuRow::separator());
-                rows.push({
-                    let grid = grid.clone();
-                    MenuRow::new(ts!("context.select_all"))
-                        .shortcut(format!("{SHORTCUT_MODIFIER}+A"))
-                        .on_activate(move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.select_all(cx));
-                        })
-                });
-                rows.push(
-                    MenuRow::new(ts!("context.clear_selection"))
-                        .enabled(!empty)
-                        .on_activate(move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.clear_selection(cx));
-                        }),
-                );
-                rows
-            }
+            MenuTarget::Cell => context_menu::grid_copy_rows(&grid, cx),
             MenuTarget::Header { column } => {
-                let sort = grid.read(cx).sort();
-                let nothing_hidden = grid.read(cx).hidden_column_count() == 0;
-                let name = grid.read(cx).column_name(column).map(str::to_owned);
-                let sorted = |direction: SortDirection| sort == Some((column, direction));
-                let order = |direction: Option<SortDirection>| {
-                    let this = this.clone();
-                    move |_window: &mut Window, cx: &mut App| {
-                        this.update(cx, |pane, cx| pane.reorder(id, column, direction, cx));
-                    }
-                };
-
-                vec![
-                    MenuRow::new(ts!("context.sort_asc"))
-                        .checked(sorted(SortDirection::Ascending))
-                        .on_activate(order(Some(SortDirection::Ascending))),
-                    MenuRow::new(ts!("context.sort_desc"))
-                        .checked(sorted(SortDirection::Descending))
-                        .on_activate(order(Some(SortDirection::Descending))),
-                    MenuRow::new(ts!("context.sort_clear"))
-                        .enabled(sort.is_some())
-                        .on_activate(order(None)),
-                    MenuRow::separator(),
-                    MenuRow::new(ts!("context.autofit")).on_activate({
-                        let grid = grid.clone();
-                        move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.autofit_column(column, cx));
-                        }
-                    }),
-                    MenuRow::new(ts!("context.hide_column")).on_activate({
-                        let grid = grid.clone();
-                        move |_window, cx| {
-                            grid.update(cx, |grid, cx| grid.set_column_hidden(column, true, cx));
-                        }
-                    }),
-                    MenuRow::new(ts!("context.show_columns"))
-                        .enabled(!nothing_hidden)
-                        .on_activate({
-                            let grid = grid.clone();
-                            move |_window, cx| {
-                                grid.update(cx, |grid, cx| grid.show_all_columns(cx));
-                            }
-                        }),
-                    MenuRow::separator(),
-                    MenuRow::new(ts!("context.copy_column_name"))
-                        .enabled(name.is_some())
-                        .on_activate(move |_window, cx| {
-                            if let Some(name) = name.clone() {
-                                cx.write_to_clipboard(ClipboardItem::new_string(name));
-                            }
-                        }),
-                ]
+                context_menu::grid_header_rows(&grid, column, cx, move |direction, _window, cx| {
+                    this.update(cx, |pane, cx| pane.reorder(id, column, direction, cx));
+                })
             }
         }
     }
@@ -1781,7 +1586,11 @@ fn preview(sql: &str) -> SharedString {
 }
 
 /// A centred line of text, for the states that have no rows to draw.
-fn note(text: SharedString, color: Hsla) -> AnyElement {
+///
+/// Shared with the data pane, which has the same four states to say something
+/// in — loading, empty, failed, nothing run yet — and no reason to draw them
+/// differently.
+pub fn note(text: SharedString, color: Hsla) -> AnyElement {
     div()
         .flex()
         .flex_1()
@@ -1798,7 +1607,27 @@ fn note(text: SharedString, color: Hsla) -> AnyElement {
 
 /// The error envelope: what failed, its `SQLSTATE`, and a hint when the class
 /// affords one.
-fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
+///
+/// Shared with the data pane for the reason [`note`] is: a driver's refusal
+/// reads the same wherever the statement came from, and the hint is chosen from
+/// the `SQLSTATE` class rather than from anything about the pane.
+pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
+    error_lines(error, chrome)
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .p(px(16.))
+        .into_any_element()
+}
+
+/// The lines an error envelope reads as, in a column and nothing else.
+///
+/// Split out of [`render_error`] because the data pane shows the same envelope
+/// somewhere else. A failed load has no rows to draw, so its error stands where
+/// they would have been; a failed *apply* leaves the rows — and everything
+/// staged against them — exactly where they are, so its error is a strip above
+/// them. Same three lines, two placements, one composition.
+pub fn error_lines(error: &QueryError, chrome: &Theme) -> Div {
     let state = error
         .sql_state
         .clone()
@@ -1806,11 +1635,7 @@ fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
     div()
         .flex()
         .flex_col()
-        .flex_1()
-        .min_w_0()
-        .min_h_0()
         .gap(px(6.))
-        .p(px(16.))
         .child(
             div()
                 .text_size(px(12.))
@@ -1829,7 +1654,6 @@ fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
                 .text_color(chrome.text_muted)
                 .child(hint)
         }))
-        .into_any_element()
 }
 
 impl Focusable for QueryPane {
@@ -2037,6 +1861,10 @@ mod tests {
                     .map(|row| match source.cell(row, 0) {
                         GridCell::Text(text) => text.to_string(),
                         GridCell::Null => "NULL".to_string(),
+                        // Unreachable over a query result, which stages
+                        // nothing: only the data pane's overlay can leave a
+                        // column to the server (§7.9).
+                        GridCell::Default => "DEFAULT".to_string(),
                         GridCell::Lob { size } => format!("lob {size:?}"),
                     })
                     .collect()

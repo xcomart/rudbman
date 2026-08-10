@@ -41,6 +41,10 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Query the selected object
+  # Opens the rows of the table or view selected in the explorer in a data
+  # pane. Also the label of the button that does the same from the detail
+  # panel's header: one command, one wording.
+  view_data: View data
   # Reads a .sql file into a new query pane on the connection showing.
   open_sql_file: Open SQL file…
   # Opens the extraction dialog over the object selected in the explorer.
@@ -579,6 +583,62 @@ query:
   hint_cancelled: The statement was cancelled.
   # Title of the file picker the "Open SQL file…" row opens.
   open_file_select: Choose a SQL file
+
+# The data pane: one table's rows, in a grid. Opened with the explorer's "view
+# data" row or the detail panel's button of the same name.
+#
+# Never translated: the table's own name, which titles the tab.
+data:
+  loading: loading…
+  refresh: Refresh
+  # A table that has no rows at all, as against one that could not be read.
+  empty: This table has no rows.
+  # How much of the table has been paged in so far, in the pane's own toolbar.
+  row_count: "%{count} rows"
+  # The one line above the grid that says why nothing here can be changed.
+  # Neither is a failure: both are standing facts about what is being shown, so
+  # they are stated once rather than raised when a key is pressed.
+  no_primary_key: This table has no primary key, so its rows can be read but not changed.
+  read_only: This connection is read-only, so its rows can be read but not changed.
+  # A sort or a refresh throws the rows away and asks the server again, which
+  # is exactly what changes staged against them cannot survive.
+  discard_first: Apply or discard the pending changes first.
+  # What is staged but not yet sent, in the pane's toolbar. Rows, not cells:
+  # each count is a statement an apply would send.
+  pending: "%{changed} changed · %{inserted} inserted · %{deleted} deleted"
+  apply: Apply
+  discard: Discard
+  # The confirmation the Discard button raises. Irreversible in the opposite
+  # direction from Apply, which is why it is asked about at all.
+  discard_title: Discard changes
+  discard_body: "%{changed} changed, %{inserted} inserted and %{deleted} deleted rows will be thrown away. This cannot be undone."
+  # The grid's right-click menu, on a cell. Clearing a cell is a command of its
+  # own because an empty field over a null cell commits nothing.
+  set_null: Set to NULL
+  insert_row: Insert row
+  delete_row: Delete row
+  undelete_row: Restore row
+  discard_row: Discard this row's changes
+  # The confirmation Apply raises: the statements themselves, over the values
+  # they bind. Always shown, which is a superset of the profile's "ask before a
+  # write" and therefore answers it.
+  apply_title: "Apply %{count} statements"
+  # Shown in the confirmation only on a product with no transactions, where the
+  # guarantee the rest of the batch implies does not hold.
+  apply_no_rollback: This database has no transactions, so a failure part way through cannot be undone.
+  applying: applying…
+  applied: "%{count} statements applied."
+  # The staleness guard: an UPDATE or a DELETE whose WHERE clause reached a
+  # number of rows that was not one. Nothing was applied.
+  apply_stale: A row was changed or deleted by somebody else. Nothing has been applied — refresh and try again.
+  # The rollback failed too, or there was no transaction to roll back.
+  apply_half_applied: Part of the batch may already be in the table. Refresh and check it before applying again.
+  # Refusals made before anything is sent, each naming what could not be
+  # written.
+  apply_bad_value: "%{column} cannot be set to “%{value}”."
+  apply_null_key: "The row's %{column} is NULL, so no statement can find it again."
+  apply_unknown_key: "The key column %{column} is not among the columns that were read. Refresh and try again."
+  apply_not_planned: "These changes cannot be written as statements: %{detail}"
 
 # The script extraction dialog: one explorer object written out to a file. The
 # form half describes the job; the card that replaces it reports the job.

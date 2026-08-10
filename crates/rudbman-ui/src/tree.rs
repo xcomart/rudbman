@@ -51,7 +51,8 @@ use std::hash::Hash;
 use gpui::{
     AnyElement, App, ClickEvent, Context, DragMoveEvent, ElementId, EventEmitter, FocusHandle,
     Focusable, KeyBinding, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
-    ScrollStrategy, UniformListScrollHandle, Window, actions, div, prelude::*, px, uniform_list,
+    ScrollStrategy, SharedString, UniformListScrollHandle, Window, actions, div, prelude::*, px,
+    svg, uniform_list,
 };
 
 use crate::scrollbar::{
@@ -100,22 +101,28 @@ const ARROW_WIDTH: f32 = 16.;
 /// Padding at both ends of a row, before the indent is added.
 const ROW_PADDING: f32 = 4.;
 
-/// Arrow of a node that is closed.
+/// Fallback arrow of a node that is closed, for a host without icons.
 const ARROW_CLOSED: &str = "\u{25b8}";
 
-/// Arrow of a node that is open.
+/// Fallback arrow of a node that is open, for a host without icons.
 const ARROW_OPEN: &str = "\u{25be}";
 
-/// Size the arrow glyph is drawn at.
+/// Size the fallback arrow glyph is drawn at.
 ///
-/// Larger than the label would suggest, because the two glyphs differ only in
-/// which way a small triangle points: below about this size the difference
-/// between "right" and "down" is a couple of pixels of antialiasing, and a
-/// muted arrow that small reads as decoration rather than as the node's state.
-/// It is the largest that still sits inside the [`ARROW_WIDTH`] box with air
-/// around it, so the column stays a column and the row keeps its
-/// [`ROW_HEIGHT`].
+/// The largest that still sits inside the [`ARROW_WIDTH`] box with air around
+/// it, so the column stays a column and the row keeps its [`ROW_HEIGHT`]. It
+/// cannot be pushed much further: U+25B8 and U+25BE fill only a fraction of
+/// their em square, so the triangle is always smaller than the size asks for —
+/// which is the whole reason [`TreeView::with_arrow_icons`] exists.
 const ARROW_SIZE: f32 = 12.;
+
+/// Edge length of the arrow icon, when the host has supplied one.
+///
+/// Nearly the full width of the [`ARROW_WIDTH`] box, where the glyph had to
+/// leave room around itself: a drawn chevron carries its own inset inside its
+/// viewBox, so running it edge to edge here is what makes it the size the glyph
+/// only claimed to be.
+const ARROW_ICON_SIZE: f32 = 14.;
 
 /// What the placeholder row draws while children are on their way.
 ///
@@ -373,6 +380,9 @@ pub struct TreeView<S: TreeSource> {
     /// Id of the overlay bar, made unique per entity so that two trees in one
     /// window do not answer each other's drags.
     bar_id: ElementId,
+    /// Asset paths of the disclosure marks — closed, then open — or `None` for
+    /// the text glyphs. See [`TreeView::with_arrow_icons`].
+    arrow_icons: Option<(SharedString, SharedString)>,
 }
 
 impl<S: TreeSource> TreeView<S> {
@@ -394,7 +404,27 @@ impl<S: TreeSource> TreeView<S> {
             scroll: UniformListScrollHandle::new(),
             bar: ScrollbarState::new(),
             bar_id: ElementId::from(("rudbman-tree-scrollbar", cx.entity_id())),
+            arrow_icons: None,
         }
+    }
+
+    /// Draws the assets at `closed` and `open` as the disclosure marks instead
+    /// of the text glyphs.
+    ///
+    /// The paths come in from the host rather than being named here, the way
+    /// [`crate::WindowControls`] and [`crate::TabBar`] take theirs: the asset
+    /// namespace belongs to the application that installed the
+    /// [`AssetSource`](gpui::AssetSource), and this layer owns no icons it could
+    /// reach for. Leaving them out is a working tree either way — the glyphs are
+    /// the fallback, which is also what keeps a host that has not got as far as
+    /// an icon set from drawing a column of blanks.
+    pub fn with_arrow_icons(
+        mut self,
+        closed: impl Into<SharedString>,
+        open: impl Into<SharedString>,
+    ) -> Self {
+        self.arrow_icons = Some((closed.into(), open.into()));
+        self
     }
 
     /// Places the tree at `index` in the window's tab order.
@@ -824,6 +854,24 @@ impl<S: TreeSource> TreeView<S> {
         let content = self.source.render_row(&id, info, window, cx);
         let menu_id = id.clone();
 
+        // Picked before the row is built, because the closure below cannot
+        // borrow the tree while `cx.listener` is handing it back mutably.
+        let mark = match &self.arrow_icons {
+            Some((closed, open)) => svg()
+                .size(px(ARROW_ICON_SIZE))
+                .flex_none()
+                .path(if expanded {
+                    open.clone()
+                } else {
+                    closed.clone()
+                })
+                // An SVG takes its tint from the element itself; unlike text it
+                // does not inherit the one the box below sets.
+                .text_color(theme.text_muted)
+                .into_any_element(),
+            None => if expanded { ARROW_OPEN } else { ARROW_CLOSED }.into_any_element(),
+        };
+
         let arrow = div()
             .id(ElementId::from(("tree-arrow", ix)))
             .flex()
@@ -848,7 +896,7 @@ impl<S: TreeSource> TreeView<S> {
                         tree.toggle(&id, cx);
                         cx.stop_propagation();
                     }))
-                    .child(if expanded { ARROW_OPEN } else { ARROW_CLOSED })
+                    .child(mark)
             });
 
         div()

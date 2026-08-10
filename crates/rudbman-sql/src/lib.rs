@@ -61,6 +61,16 @@
 //! the crate's one output-side API, and [`mod@ident`] explains why it is not
 //! simply "quote everything".
 //!
+//! # Writing DML
+//!
+//! The other output-side module is [`mod@dml`], which the result grid's editing
+//! mode uses: hand it one table's staged changes and [`plan_edits`] answers with
+//! the `DELETE`, `UPDATE` and `INSERT` statements that apply them, in the order
+//! a transaction can run them. Every value in those statements is a `?` and
+//! travels beside the SQL — a literal cannot be undone, and the one component
+//! that knows how to format one is on the far side of the bridge. That module
+//! documents the reasoning.
+//!
 //! # Known limitations
 //!
 //! Written down rather than half-implemented:
@@ -85,6 +95,8 @@
 //!   what the vendors disagree about.
 //! * [`mod@ident`] — [`Dialect::quote_ident`] and [`Dialect::qualify`], for the
 //!   callers that write SQL rather than read it.
+//! * [`mod@dml`] — [`plan_edits`], [`TableEdits`], [`DmlStatement`],
+//!   [`DmlValue`]: the grid's staged edits turned into parameterized SQL.
 //! * [`mod@lexer`] — [`Token`], [`TokenKind`], [`LineState`], [`lex_line`],
 //!   [`lex`], [`Lexer`].
 //! * [`mod@statement`] — [`StatementSpan`], [`split_statements`],
@@ -94,6 +106,7 @@
 #![warn(missing_docs)]
 
 pub mod dialect;
+pub mod dml;
 pub mod ident;
 pub mod lexer;
 pub mod statement;
@@ -101,5 +114,8 @@ pub mod statement;
 mod keywords;
 
 pub use dialect::{Dialect, DialectId, Syntax};
+pub use dml::{
+    DmlError, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
+};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
 pub use statement::{StatementSpan, split_statements, statement_at};

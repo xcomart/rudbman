@@ -40,6 +40,8 @@ mod caption;
 mod connection;
 mod connection_dialog;
 mod context_menu;
+mod data_edit;
+mod data_pane;
 mod driver_manager;
 mod erd_layout;
 mod erd_pane;
@@ -98,6 +100,7 @@ use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent, profile_rows};
 use context_menu::MenuRow;
+use data_pane::DataPane;
 use erd_layout::ErdLayouts;
 use erd_pane::{ErdDiagram, ErdPane, ErdPaneEvent, ErdTarget};
 use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
@@ -447,6 +450,24 @@ impl WorkArea {
         }
         found
     }
+
+    /// Every data pane in the area, in layout order.
+    ///
+    /// The other half of what a connection's death is applied to, and for the
+    /// same reason: a data pane holds a session handle and a cursor, so one
+    /// left attached to a dead connection would keep the session — and the
+    /// tunnel under it — standing (§9.3).
+    fn data_panes(&self) -> Vec<Entity<DataPane>> {
+        let mut found = Vec::new();
+        for (_, pane) in self.panes.leaves() {
+            for item in pane.items() {
+                if let PaneItem::TableData(panel) = item {
+                    found.push(panel.clone());
+                }
+            }
+        }
+        found
+    }
 }
 
 /// One connection tab: the profile it was opened from, where it has got to, and
@@ -509,6 +530,8 @@ enum FocusTarget {
     Erd(Entity<ErdPane>),
     /// A query builder; the keyboard goes onto its canvas too, once it has one.
     Builder(Entity<BuilderPane>),
+    /// A data pane; the keyboard goes onto its grid.
+    Data(Entity<DataPane>),
     /// Anything with nothing to type into, and the empty pane.
     Shell,
 }
@@ -1084,13 +1107,78 @@ impl Workspace {
         // Subscribe first, *then* ask. A panel that requested its own metadata
         // from its constructor would emit into an empty room and sit at
         // "loading…" for ever; see `TableDetail::new`.
-        cx.subscribe(&panel, |workspace, panel, event, cx| {
-            let TableDetailEvent::Load(target) = event;
-            workspace.load_details(panel.clone(), (**target).clone(), cx);
+        cx.subscribe_in(&panel, window, |workspace, panel, event, window, cx| {
+            match event {
+                TableDetailEvent::Load(target) => {
+                    workspace.load_details(panel.clone(), (**target).clone(), cx);
+                }
+                // Through the same gate the explorer's own row goes through, so
+                // the rows of a table whose columns are already open land on
+                // the data tab that is already open for it.
+                TableDetailEvent::ViewData(target) => {
+                    workspace.open_data((**target).clone(), window, cx);
+                }
+            }
         })
         .detach();
         panel.update(cx, |panel, cx| panel.refresh(cx));
         self.append_tab(PaneItem::TableDetail(panel), window, cx);
+    }
+
+    /// Opens `target`'s rows in a data pane, or brings the open one to the
+    /// front.
+    ///
+    /// The same navigation rule a detail panel follows, and kept separate from
+    /// it: the rows and the columns of one table are two tabs a user may
+    /// perfectly well want at once, so each deduplicates against its own kind
+    /// (architecture document, §7.9).
+    ///
+    /// Nothing happens without a live session. Unlike a detail panel, whose
+    /// whole content is one fetch that can fail visibly, a data pane over a
+    /// dead connection could not even name its columns.
+    fn open_data(&mut self, target: ObjectTarget, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((pane, index)) = self.data_tab(&target, cx) {
+            self.activate_tab(pane, index, window, cx);
+            return;
+        }
+        let Some(session) = self.session_of(target.connection) else {
+            return;
+        };
+        let Some(open) = self
+            .connections
+            .iter()
+            .find(|open| open.id == target.connection)
+        else {
+            return;
+        };
+        let profile = open.profile.clone();
+        let dialect = Self::dialect_of(&profile);
+        let settings = app_settings::current(cx);
+        let connection = open.id;
+        // What `SESSION_INFO` said when this connection opened, rather than a
+        // round trip of the pane's own. A driver that would not answer is taken
+        // as having transactions: see `DataPane::with_transactions`.
+        let transactional = match &open.state {
+            ConnectionState::Open(connected) => connected.info.supports_transactions != Some(false),
+            _ => true,
+        };
+
+        let panel = cx.new(|cx| {
+            DataPane::new(
+                session, connection, target, &profile, &dialect, &settings, cx,
+            )
+            .with_transactions(transactional)
+        });
+        // The pane owns its session, so nothing has to be subscribed for it to
+        // load; it is asked *after* the tab exists, for the reason a detail
+        // panel is asked after its subscription is registered — a fetch started
+        // from inside `cx.new` would be racing the tab that is meant to show
+        // it.
+        panel.update(cx, |panel, cx| panel.refresh(window, cx));
+        self.append_tab(PaneItem::TableData(panel.clone()), window, cx);
+        // Opened with a keyboard gesture as often as with the mouse, and the
+        // arrows and the copy chord are the grid's own.
+        panel.update(cx, |panel, cx| panel.take_focus(window, cx));
     }
 
     /// Draws the ERD of one scope, or brings the open one to the front.
@@ -1336,7 +1424,10 @@ impl Workspace {
         let area = self.work_area()?;
         match area.panes.get(area.active())?.active()? {
             PaneItem::Query { pane, .. } => Some(pane),
-            PaneItem::TableDetail(_) | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => None,
+            PaneItem::TableDetail(_)
+            | PaneItem::Erd(_)
+            | PaneItem::TableData(_)
+            | PaneItem::QueryBuilder { .. } => None,
         }
     }
 
@@ -1513,6 +1604,15 @@ impl Workspace {
             .find_map(|(id, pane)| pane.detail_of(target, cx).map(|index| (id, index)))
     }
 
+    /// Where `target`'s rows are already open, if they are.
+    fn data_tab(&self, target: &ObjectTarget, cx: &App) -> Option<(PaneId, usize)> {
+        self.work_area()?
+            .panes
+            .leaves()
+            .into_iter()
+            .find_map(|(id, pane)| pane.data_of(target, cx).map(|index| (id, index)))
+    }
+
     /// Where `target`'s diagram is already open, if it is.
     fn erd_tab(&self, target: &ErdTarget, cx: &App) -> Option<(PaneId, usize)> {
         self.work_area()?
@@ -1589,6 +1689,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_close(pane, &[index], window, cx) {
+            return;
+        }
         let active = self
             .work_area()
             .and_then(|area| area.panes.get(pane))
@@ -1611,6 +1714,51 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Whether any of `victims` is holding work a close would destroy, and —
+    /// when one is — says so in the tab it is holding it in.
+    ///
+    /// The close guard §7.9 asks for, and the whole of it: a data pane's staged
+    /// edits are keyed to the rows under its grid, so closing the tab throws
+    /// them away with no way back. Refusing rather than asking, because the two
+    /// answers the user needs are already in the pane and neither of them is a
+    /// dialog: apply the changes, or discard them. So the tab is brought to the
+    /// front, the pane says what has to happen first, and the close does not.
+    ///
+    /// All the victims are asked before any is refused, and the first blocker
+    /// is the one shown — "close the other tabs" over three dirty panes should
+    /// close none of them and land on one, rather than close two and stop.
+    fn refuse_close(
+        &mut self,
+        pane: PaneId,
+        victims: &[usize],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.work_area().and_then(|area| area.panes.get(pane)) else {
+            return false;
+        };
+        let mut blocked = None;
+        for index in victims {
+            match target.items().get(*index) {
+                Some(PaneItem::TableData(panel)) if panel.read(cx).has_pending_edits(cx) => {
+                    blocked = Some((*index, panel.clone()));
+                    break;
+                }
+                // Asked through the same seam every other tab answers, so that
+                // a kind of tab that grows unsaved work later has one place to
+                // say so.
+                Some(item) => debug_assert!(!item.blocks_close(cx)),
+                None => {}
+            }
+        }
+        let Some((index, panel)) = blocked else {
+            return false;
+        };
+        self.activate_tab(pane, index, window, cx);
+        panel.update(cx, |panel, cx| panel.warn_pending(cx));
+        true
+    }
+
     /// Closes several tabs of `pane` at once.
     ///
     /// `victims` are tab indices into the strip as it stands, in any order.
@@ -1631,6 +1779,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if victims.is_empty() {
+            return;
+        }
+        if self.refuse_close(pane, victims, window, cx) {
             return;
         }
         let held = self.pane_holds_focus(pane, window, cx);
@@ -1702,7 +1853,8 @@ impl Workspace {
     /// A query pane takes the caret into its editor, which is what makes closing
     /// the tab in front of one leave the user typing where they were. An ERD
     /// takes the keyboard onto its canvas, where the zoom and auto-arrange
-    /// chords are bound. A detail panel and an empty pane fall back to the
+    /// chords are bound, and a data pane onto its grid, where the arrows and
+    /// the copy chord are. A detail panel and an empty pane fall back to the
     /// shell, whose handlers are what keep the menu rows and the shortcuts
     /// alive.
     fn focus_active_tab(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
@@ -1713,12 +1865,16 @@ impl Workspace {
         {
             Some(PaneItem::Query { pane, .. }) => FocusTarget::Query(pane.clone()),
             Some(PaneItem::Erd(panel)) => FocusTarget::Erd(panel.clone()),
+            Some(PaneItem::TableData(panel)) => FocusTarget::Data(panel.clone()),
             Some(PaneItem::QueryBuilder { pane, .. }) => FocusTarget::Builder(pane.clone()),
             Some(PaneItem::TableDetail(_)) | None => FocusTarget::Shell,
         };
         match target {
             FocusTarget::Query(pane) => pane.update(cx, |pane, cx| pane.focus_editor(window, cx)),
             FocusTarget::Erd(panel) => panel.update(cx, |panel, cx| panel.take_focus(window, cx)),
+            FocusTarget::Data(panel) => {
+                panel.update(cx, |panel, cx| panel.take_focus(window, cx));
+            }
             FocusTarget::Builder(panel) => {
                 panel.update(cx, |panel, cx| panel.take_focus(window, cx));
             }
@@ -1902,13 +2058,15 @@ impl Workspace {
     /// session nobody can use, and §9.3's rule that a tunnel dies with its
     /// session would hold only until someone had opened an editor.
     ///
-    /// The two kinds of tab part company here, because what the user would lose
+    /// The kinds of tab part company here, because what the user would lose
     /// differs. A query pane holds the statement they typed, so its tab stays
     /// and is detached: the SQL and the rows already fetched remain readable and
-    /// copyable, and every path that would talk to the database refuses. A
-    /// detail panel shows what the database already said and nothing the user
-    /// wrote, so it is simply left alone — a refresh of one finds no session and
-    /// says so, the same way the explorer does.
+    /// copyable, and every path that would talk to the database refuses. A data
+    /// pane is detached for the same reason — it holds rows and a cursor, and
+    /// the rows are worth keeping on screen. A detail panel shows what the
+    /// database already said and nothing the user wrote, so it is simply left
+    /// alone — a refresh of one finds no session and says so, the same way the
+    /// explorer does.
     ///
     /// Nothing is closed and no pane is removed. The connection's tab and its
     /// whole work area stay reachable until the user closes the tab themselves;
@@ -1930,6 +2088,9 @@ impl Workspace {
         // actually close rather than outliving its own tab.
         for pane in connection.work.queries() {
             pane.update(cx, |pane, cx| pane.detach(cx));
+        }
+        for panel in connection.work.data_panes() {
+            panel.update(cx, |panel, cx| panel.detach(cx));
         }
 
         let Some(connection) = self.connections.get_mut(index) else {
@@ -2184,8 +2345,10 @@ impl Workspace {
             // [`Workspace::reclaim_focus`] describes.
             Some(PaneItem::Erd(panel)) => panel.read(cx).contains_focus(window, cx),
             // Two handles again, and for the same reason: the builder's canvas
-            // takes the focus when a box or a column row is pressed.
+            // takes the focus when a box or a column row is pressed, and the
+            // data pane's grid when a cell is clicked.
             Some(PaneItem::QueryBuilder { pane, .. }) => pane.read(cx).contains_focus(window, cx),
+            Some(PaneItem::TableData(panel)) => panel.read(cx).contains_focus(window, cx),
             None => false,
         }
     }
@@ -2329,12 +2492,16 @@ impl Workspace {
         let mut queries = Vec::new();
         let mut diagrams = Vec::new();
         let mut builders = Vec::new();
+        let mut data = Vec::new();
         for (_, pane) in area.panes.leaves() {
             for item in pane.items() {
                 match item {
                     PaneItem::Query { pane, .. } => queries.push(pane.clone()),
                     PaneItem::Erd(panel) => diagrams.push(panel.clone()),
                     PaneItem::QueryBuilder { pane, .. } => builders.push(pane.clone()),
+                    PaneItem::TableData(panel) => data.push(panel.clone()),
+                    // The one surface with nothing to act on: the detail panel
+                    // is four tabs of read-only presentation.
                     PaneItem::TableDetail(_) => {}
                 }
             }
@@ -2348,6 +2515,9 @@ impl Workspace {
             closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         for panel in builders {
+            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+        }
+        for panel in data {
             closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         closed
@@ -2725,6 +2895,14 @@ impl Workspace {
                         this.update(cx, |workspace, cx| run(workspace, target, window, cx));
                     }
                 };
+            // First, because it is the shortest question a table can be asked:
+            // what is in it. Only relations get it — a routine has no rows —
+            // which the `relation` filter above has already settled.
+            rows.push(
+                MenuRow::new(ts!("menu.view_data"))
+                    .enabled(live)
+                    .on_activate(object(Workspace::open_data)),
+            );
             rows.push(
                 MenuRow::new(ts!("menu.query_object"))
                     .shortcut(format!("{SHORTCUT_MODIFIER}+Enter"))
@@ -4183,6 +4361,7 @@ fn render_pane(
                 Some(PaneItem::TableDetail(panel)) => panel.clone().into_any_element(),
                 Some(PaneItem::Query { pane, .. }) => pane.clone().into_any_element(),
                 Some(PaneItem::Erd(panel)) => panel.clone().into_any_element(),
+                Some(PaneItem::TableData(panel)) => panel.clone().into_any_element(),
                 Some(PaneItem::QueryBuilder { pane, .. }) => pane.clone().into_any_element(),
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
@@ -5890,7 +6069,26 @@ mod tests {
         name: &str,
         cx: &mut gpui::TestAppContext,
     ) -> (gpui::WindowHandle<Workspace>, ConnectionId) {
+        workspace_over_h2_with(name, &[], cx)
+    }
+
+    /// The same, with `setup` already run against the database.
+    ///
+    /// For the tabs that fetch something of their own: a pane over a table
+    /// that does not exist would be asserting about an error message rather
+    /// than about the rows.
+    fn workspace_over_h2_with(
+        name: &str,
+        setup: &[&str],
+        cx: &mut gpui::TestAppContext,
+    ) -> (gpui::WindowHandle<Workspace>, ConnectionId) {
         let (profile, connected) = h2_connection(name);
+        for sql in setup {
+            connected
+                .session()
+                .execute(&rudbman_jdbc::StatementSpec::new(*sql))
+                .unwrap_or_else(|error| panic!("{sql}: {error}"));
+        }
 
         cx.update(|cx| {
             app_settings::init(cx);
@@ -6023,7 +6221,160 @@ mod tests {
         cx.run_until_parked();
     }
 
+    /// The rows of a table and its columns are two tabs over one object, and
+    /// each way in deduplicates against its own kind rather than against the
+    /// other (architecture document, §7.9).
+    #[gpui::test]
+    fn view_data_opens_one_tab_of_rows_per_table(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2_with(
+            "view-data",
+            &[
+                "create table CUSTOMER (ID int primary key, NAME varchar(20))",
+                "insert into CUSTOMER values (1, 'a'), (2, 'b')",
+            ],
+            cx,
+        );
+        let target = object(id, "CUSTOMER");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_data(target.clone(), window, cx);
+                let pane = active_pane(workspace);
+                assert_eq!(tab_titles(workspace, pane, cx), ["PUBLIC.CUSTOMER"]);
+
+                // The detail panel of the same table is a second tab: the
+                // columns and the rows are different questions.
+                workspace.open_object(target.clone(), window, cx);
+                assert_eq!(
+                    tab_titles(workspace, pane, cx),
+                    ["PUBLIC.CUSTOMER", "PUBLIC.CUSTOMER"]
+                );
+                assert_eq!(active_tab(workspace, pane), 1);
+
+                // Asking for the rows again is a navigation, not a second copy.
+                workspace.open_data(target.clone(), window, cx);
+                assert_eq!(
+                    tab_titles(workspace, pane, cx).len(),
+                    2,
+                    "the rows were opened twice"
+                );
+                assert_eq!(active_tab(workspace, pane), 0);
+                pane
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // And the pane really ran its own statement: nothing above it fetched
+        // anything on its behalf.
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                let Some(PaneItem::TableData(panel)) = area(workspace)
+                    .panes
+                    .get(pane)
+                    .expect("the pane is in the tree")
+                    .get(0)
+                else {
+                    panic!("the first tab is the rows");
+                };
+                assert_eq!(panel.read(cx).row_count(cx), Some(2));
+            })
+            .expect("the window is open");
+    }
+
     /// Closing a tab is the same focus hazard as closing a pane: the view in it
+    /// A user's own reported order: the detail tab, the rows, a field opened
+    /// over a cell — and then a diagram of the schema asked for while all of
+    /// it is still open on the one session.
+    #[gpui::test]
+    fn a_diagram_loads_while_rows_are_open_for_editing(cx: &mut gpui::TestAppContext) {
+        let (window, id) = workspace_over_h2_with(
+            "erd-under-editing",
+            &[
+                "create table CUSTOMER (ID int primary key, NAME varchar(20))",
+                "insert into CUSTOMER values (1, 'a'), (2, 'b')",
+                "create table ORDERS (ID int primary key, \
+                 CUSTOMER_ID int references CUSTOMER(ID))",
+            ],
+            cx,
+        );
+        let target = object(id, "CUSTOMER");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        let pane = window
+            .update(&mut cx, |workspace, window, cx| {
+                workspace.open_object(target.clone(), window, cx);
+                workspace.open_data(target.clone(), window, cx);
+                // A first diagram asked for while the detail's and the rows'
+                // own fetches are still out, so all three interleave on the
+                // one session worker...
+                workspace.open_erd(erd_target(id), window, cx);
+                active_pane(workspace)
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        // ...and a second asked for the way the report had it, over rows that
+        // have arrived and a field already open. Closed and reopened, because
+        // asking again while the tab exists is a navigation, not a fetch.
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                let (erd_pane, tab) = workspace
+                    .erd_tab(&erd_target(id), cx)
+                    .expect("the diagram tab is open");
+                if let Some(PaneItem::Erd(panel)) = area(workspace)
+                    .panes
+                    .get(erd_pane)
+                    .expect("the pane is in the tree")
+                    .get(tab)
+                {
+                    assert_eq!(
+                        panel.read(cx).failure(),
+                        None,
+                        "the diagram raced the other fetches and lost"
+                    );
+                }
+                workspace.close_tab(erd_pane, tab, window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                let Some(PaneItem::TableData(panel)) = area(workspace)
+                    .panes
+                    .get(pane)
+                    .expect("the pane is in the tree")
+                    .get(1)
+                else {
+                    panic!("the second tab is the rows");
+                };
+                panel.clone().update(cx, |panel, cx| {
+                    let grid = panel.grid().cloned().expect("the pane holds rows");
+                    let opened = grid.update(cx, |grid, cx| grid.begin_edit(0, 1, window, cx));
+                    assert!(opened, "no field opened over the cell");
+                });
+                workspace.open_erd(erd_target(id), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                let Some(PaneItem::Erd(panel)) = area(workspace)
+                    .panes
+                    .get(pane)
+                    .expect("the pane is in the tree")
+                    .get(2)
+                else {
+                    panic!("the third tab is the diagram");
+                };
+                let diagram = panel.read(cx);
+                assert_eq!(diagram.failure(), None, "the diagram did not load");
+                assert!(!diagram.is_loading(), "the fetch never came back");
+            })
+            .expect("the window is open");
+    }
+
     /// stops being rendered, and gpui resolves actions against the focused
     /// element of the last drawn frame. The keyboard has to land on the
     /// neighbour that took its place — or on the shell, when nothing did.
@@ -6993,6 +7344,7 @@ mod tests {
     /// The four rows only a table or a view offers, and the rule under them.
     fn relation_labels() -> Vec<String> {
         vec![
+            ts!("menu.view_data").to_string(),
             ts!("menu.query_object").to_string(),
             ts!("menu.add_to_builder").to_string(),
             ts!("menu.extract_script").to_string(),

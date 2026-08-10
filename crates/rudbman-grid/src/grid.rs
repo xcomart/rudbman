@@ -32,36 +32,63 @@
 //!
 //! ## What the grid asks the host to do
 //!
-//! Four things, all of them round trips the widget has no business making:
+//! Five things, all of them round trips the widget has no business making:
 //! fetching the next batch ([`GridEvent::NearEnd`]), re-running the query in a
 //! different order ([`GridEvent::SortRequested`] — the grid never sorts what it
 //! holds, because it holds only the first n rows of an answer the server has all
 //! of), opening a cell ([`GridEvent::CellActivated`], which is how a LOB
-//! reaches a viewer), and drawing the right-click menu
-//! ([`GridEvent::ContextMenu`] — the grid has no strings to name items with,
-//! architecture document §7.8). Copying is *not* among them: gpui owns the
-//! clipboard and the grid owns the selection, so the grid does it itself.
+//! reaches a viewer), staging a typed value ([`GridEvent::EditCommitted`]), and
+//! drawing the right-click menu ([`GridEvent::ContextMenu`] — the grid has no
+//! strings to name items with, architecture document §7.8). Copying is *not*
+//! among them: gpui owns the clipboard and the grid owns the selection, so the
+//! grid does it itself.
+//!
+//! ## Editing, and the little of it that lives here
+//!
+//! The grid draws edit state and hosts the field the user types into; it stages
+//! nothing and sends nothing. Which rows are marked and which cells are tinted
+//! come from [`GridSource::row_status`] and [`GridSource::cell_dirty`], asked
+//! only about what is on screen; whether a cell can be typed into at all comes
+//! from [`GridSource::cell_editable`].
+//!
+//! The field itself has to be here for one reason: it is placed over a cell, and
+//! nothing else knows where a cell is. A cell's rectangle falls out of
+//! `laid_out`, `h_offset`, the row height and the list's scroll offset — four
+//! numbers the grid keeps and nobody else sees — so [`GridView::begin_edit`]
+//! owns the [`TextInput`] rather than the host owning it and asking where to put
+//! it.
+//!
+//! **A close commits.** `Enter`, focus going elsewhere, a sort, a refresh, a
+//! scroll, a column dragged — all of them end the edit by raising
+//! [`GridEvent::EditCommitted`], and only `Escape` throws the typing away. The
+//! asymmetry is deliberate: what is committed is *staged*, not sent, so the cost
+//! of committing something the user did not mean is one undo in the pending
+//! changes, while the cost of discarding is the typing. Committing an unchanged
+//! field raises nothing at all, so the common case — open a cell, look at it,
+//! move on — is silent either way.
 
 use std::ops::Range;
 
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, DragMoveEvent,
-    ElementId, EventEmitter, FocusHandle, Focusable, IsZero, KeyBinding, MouseButton,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, Hsla, IsZero, KeyBinding, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollStrategy,
-    ScrollWheelEvent, SharedString, Size, UniformListScrollHandle, Window, actions, canvas, div,
-    point, prelude::*, px, size, uniform_list,
+    ScrollWheelEvent, SharedString, Size, Subscription, UniformListScrollHandle, Window, actions,
+    canvas, div, point, prelude::*, px, size, uniform_list,
 };
 use rudbman_ui::scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
     scrolled,
 };
+use rudbman_ui::text_input::TextInput;
 use rudbman_ui::theme::{Theme, theme, window_translucent};
 use unicode_width::UnicodeWidthStr;
 
 use crate::copy::{CopyFormat, DEFAULT_INSERT_TABLE, copy_payload};
 use crate::selection::{CellAddress, Selection};
 use crate::source::{
-    GridCell, GridColumnAlign, GridSource, GridSourceState, NULL_TEXT, cell_label, lob_label,
+    DEFAULT_TEXT, GridCell, GridColumnAlign, GridSource, GridSourceState, NULL_TEXT, RowStatus,
+    cell_label, lob_label,
 };
 
 actions!(
@@ -105,11 +132,33 @@ actions!(
         CopyCells,
         /// Open the cell under the cursor, which is what a double click does.
         Activate,
+        /// Throw away what has been typed into the inline editor and close it.
+        CancelEdit,
+        /// Commit the inline editor and open the next editable cell of the row.
+        EditNext,
+        /// Commit the inline editor and open the previous editable cell of the
+        /// row.
+        EditPrevious,
     ]
 );
 
 /// Key context that [`init`] binds the keys above to.
 const KEY_CONTEXT: &str = "GridView";
+
+/// Key context that exists only while the inline editor is open.
+///
+/// Its three keys — `Escape`, `Tab`, `Shift+Tab` — mean nothing to a grid that
+/// is merely focused, and binding them on [`KEY_CONTEXT`] would take them away
+/// from the app for as long as a grid has the focus: an `Escape` that closed a
+/// dialog would close nothing while the user's eye was on a result. A context
+/// that only exists for the frames the editor does cannot do that.
+///
+/// It is a context on the editor's own wrapper, *inside* the grid's, so the
+/// stack while typing reads `GridView > GridCellEditor > TextInput`. The field's
+/// own bindings sit deepest and therefore win: `Enter` is the field's `Submit`
+/// and never the grid's `Activate`, and the arrows walk the caret rather than
+/// the selection.
+const EDITOR_KEY_CONTEXT: &str = "GridCellEditor";
 
 /// Height of one body row, and therefore the unit [`uniform_list`] measures in.
 const ROW_HEIGHT: f32 = 24.;
@@ -164,6 +213,32 @@ const NEAR_END_ROWS: usize = 100;
 /// user is looking at anyway.
 const AUTOFIT_SAMPLE: usize = 500;
 
+/// Width of the strip down the gutter's left edge that marks a changed row.
+///
+/// Narrow on purpose: the row number has to stay readable beside it, and the
+/// mark is answering "which rows did I touch?" at a glance down the column
+/// rather than being read one row at a time.
+const STATUS_WIDTH: f32 = 3.;
+
+/// How hard a dirty cell is tinted.
+///
+/// Low enough that the text on top keeps the contrast the palette promised it,
+/// and that a whole dirty row does not out-shout the selection drawn over it.
+const DIRTY_TINT: f32 = 0.16;
+
+/// How hard a whole inserted or deleted row is tinted.
+///
+/// Weaker than a dirty cell: this one covers the full width of the result, so
+/// the same alpha would read as a change of theme rather than a change of row.
+const ROW_TINT: f32 = 0.10;
+
+/// How tall the inline editor is.
+///
+/// [`TextInput`] renders at a fixed height, which is taller than a row; the
+/// field is centred on the cell rather than squeezed into it, so it reads as
+/// something laid *over* the grid — which is what it is.
+const EDITOR_HEIGHT: f32 = 32.;
+
 /// Marker drawn in the header of an ascending column.
 const SORT_ASCENDING: &str = "\u{25b4}";
 
@@ -201,6 +276,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-a"), SelectAll, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{modifier}-c"), CopyCells, Some(KEY_CONTEXT)),
         KeyBinding::new("enter", Activate, Some(KEY_CONTEXT)),
+        KeyBinding::new("escape", CancelEdit, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("tab", EditNext, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("shift-tab", EditPrevious, Some(EDITOR_KEY_CONTEXT)),
     ]);
 }
 
@@ -233,8 +311,30 @@ pub enum MenuTarget {
     },
 }
 
+/// A value the user typed, on its way to whatever stages it.
+///
+/// One variant, because one is what a line of text can produce, and an enum
+/// rather than a bare `String` because the next ones are already visible: a
+/// `Null` for the gesture that clears a cell rather than emptying it — the
+/// distinction the whole crate is built around (architecture document, §7.5) —
+/// and a `Lob` for a body that arrives from a file instead of a keyboard.
+/// Matching on it now costs a host nothing and saves it a signature change
+/// later.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditValue {
+    /// What was in the field, verbatim.
+    ///
+    /// Not parsed and not trimmed: the grid has no idea what the column's type
+    /// will make of it, and a layer that silently trimmed a `CHAR(10)` would be
+    /// wrong in a way nobody could see.
+    Text(String),
+}
+
 /// What the grid asks its host for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// [`Clone`] but not [`Copy`], since [`GridEvent::EditCommitted`] carries the
+/// text the user typed. Every other variant is still four words of nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GridEvent {
     /// The viewport has come within a hundred rows of the last row the source
     /// holds, and the source said there are more.
@@ -261,12 +361,38 @@ pub enum GridEvent {
     },
     /// A cell was double clicked or `Enter` was pressed on it.
     ///
-    /// How a LOB reaches its viewer, and later how a cell reaches the editor.
+    /// How a LOB reaches its viewer, and how a cell reaches the editor: a host
+    /// that answers this with [`GridView::begin_edit`] has DBeaver's gesture,
+    /// and one that answers it with a viewer has the old one. The grid raises
+    /// the same event either way, because which of the two a cell deserves
+    /// depends on the column's type and on whether the result can be written
+    /// to — neither of which is the widget's to judge.
     CellActivated {
         /// The row.
         row: usize,
         /// The source column index.
         column: usize,
+    },
+    /// The user finished typing into the inline editor, and the value is
+    /// different from the one that was in the cell.
+    ///
+    /// Raised by `Enter`, by `Tab`, by the focus going elsewhere and by anything
+    /// that moves the cell out from under the field — see the module docs on why
+    /// a close commits. *Not* raised when the field was left as it was found,
+    /// which is what keeps opening a null cell and thinking better of it from
+    /// turning `NULL` into the empty string.
+    ///
+    /// The grid has staged nothing and changed nothing by raising this: the
+    /// value it holds is what was typed, and the cell goes on drawing whatever
+    /// [`GridSource::cell`] returns until the host's staging layer says
+    /// otherwise.
+    EditCommitted {
+        /// The row.
+        row: usize,
+        /// The source column index, unaffected by hiding or by column widths.
+        column: usize,
+        /// What was typed.
+        value: EditValue,
     },
     /// The user right clicked, and wants the menu for what is under the
     /// pointer.
@@ -329,6 +455,61 @@ struct Resize {
     width: f32,
 }
 
+/// The inline editor, while it is open.
+///
+/// Holds the field and the three things needed to decide what its content
+/// *means* when it closes — which cell it was opened over, what was in that cell
+/// and whether that was a value at all.
+struct Editing {
+    /// The row being edited.
+    row: usize,
+    /// The **source** column being edited, which is what the event names.
+    column: usize,
+    /// The field. Rebuilt per edit rather than kept and re-seeded: a field
+    /// carries a caret, a selection and an in-flight IME composition, and none
+    /// of those mean anything in the next cell.
+    input: Entity<TextInput>,
+    /// What the field was seeded with, so that a close can tell a value the user
+    /// changed from one they only looked at.
+    seeded: String,
+    /// Whether the cell held no value.
+    ///
+    /// Kept apart from `seeded` being empty, because the two are different
+    /// cells: leaving an emptied field on a cell that was `NULL` leaves it
+    /// `NULL`, while leaving it on a cell that held the empty string leaves the
+    /// empty string. Flattening them here would lose exactly the distinction
+    /// [`crate::source`] exists to keep.
+    was_null: bool,
+    /// Whether a frame has been drawn since the field opened.
+    ///
+    /// Opening one can scroll the result to bring its row into view, and until
+    /// the list has laid itself out again the grid's idea of which rows are on
+    /// screen is the one from before that scroll. Asking "has my row scrolled
+    /// away?" against it would close the field on the frame it opened, so the
+    /// first frame is not asked.
+    settled: bool,
+    /// The focus-out subscription. Dropped with the rest of this struct, which
+    /// is what keeps closing an editor from being heard as the editor blurring.
+    _blur: Subscription,
+}
+
+impl Editing {
+    /// Whether `typed` is something other than what the cell held.
+    ///
+    /// The whole of "was the field actually changed?", and the reason opening a
+    /// cell and pressing `Enter` stages nothing. A cell that held no value is
+    /// changed the moment anything is typed into it and not before: an empty
+    /// field over a null cell is still the null, which is why `was_null` is a
+    /// field of its own rather than `seeded.is_empty()`.
+    fn modified(&self, typed: &str) -> bool {
+        if self.was_null {
+            !typed.is_empty()
+        } else {
+            typed != self.seeded
+        }
+    }
+}
+
 /// What the pointer landed on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hit {
@@ -379,6 +560,17 @@ pub struct GridView<S: GridSource> {
     resizing: Option<Resize>,
     /// Whether the pointer is dragging a selection out.
     dragging: bool,
+    /// The inline editor, when one is open.
+    editing: Option<Editing>,
+    /// Whether the next frame has to take the focus back.
+    ///
+    /// Closing the editor drops the field, and with it the focus handle the
+    /// keyboard was pointing at; something has to catch it or the grid goes
+    /// deaf. It cannot be done where the closing happens — a host that calls
+    /// [`GridView::refresh`] has no [`Window`] to hand — so the draw that
+    /// notices the editor is gone does it instead. Not set by the one close
+    /// that starts with the focus already having left.
+    refocus: bool,
     scroll: UniformListScrollHandle,
     v_bar: ScrollbarState,
     h_bar: ScrollbarState,
@@ -404,6 +596,8 @@ impl<S: GridSource> GridView<S> {
             insert_table: None,
             resizing: None,
             dragging: false,
+            editing: None,
+            refocus: false,
             scroll: UniformListScrollHandle::new(),
             v_bar: ScrollbarState::new(),
             h_bar: ScrollbarState::new(),
@@ -442,14 +636,18 @@ impl<S: GridSource> GridView<S> {
     /// The source, to change — dropping a fetched batch in, most of the time.
     ///
     /// Re-reads the shape on the next draw, so the caller has nothing to
-    /// remember.
+    /// remember. Ends any edit in progress first: the rows are about to be
+    /// something else, and a field left hanging over the y coordinate its cell
+    /// used to be at is a field over the wrong cell.
     pub fn source_mut(&mut self, cx: &mut Context<Self>) -> &mut S {
+        self.commit_edit(cx);
         cx.notify();
         &mut self.source
     }
 
     /// Re-reads the source, for a change the grid cannot have seen.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         cx.notify();
     }
@@ -458,6 +656,7 @@ impl<S: GridSource> GridView<S> {
     /// selection, which is what a *new* result — as opposed to another batch of
     /// the same one — deserves.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.columns.clear();
         self.laid_out.clear();
         self.selection.clear();
@@ -510,6 +709,7 @@ impl<S: GridSource> GridView<S> {
     /// Sets how wide `column` is, clamped to something that can still be found
     /// and dragged.
     pub fn set_column_width(&mut self, column: usize, width: f32, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         let Some(state) = self.columns.get_mut(column) else {
             return;
@@ -552,6 +752,7 @@ impl<S: GridSource> GridView<S> {
     /// in, and hiding a column renumbers every one after it (see
     /// [`crate::selection`]).
     pub fn set_column_hidden(&mut self, column: usize, hidden: bool, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         let Some(state) = self.columns.get_mut(column) else {
             return;
@@ -573,6 +774,7 @@ impl<S: GridSource> GridView<S> {
     /// heading to right click. Clears the selection for the same reason hiding
     /// one does — every display position after the first restored column moves.
     pub fn show_all_columns(&mut self, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         if self.hidden_column_count() == 0 {
             return;
@@ -603,6 +805,7 @@ impl<S: GridSource> GridView<S> {
         for row in 0..rows {
             let width = match self.source.cell(row, column) {
                 GridCell::Null => NULL_TEXT.width(),
+                GridCell::Default => DEFAULT_TEXT.width(),
                 GridCell::Text(text) => text.width(),
                 GridCell::Lob { size } => lob_label(size).width(),
             };
@@ -618,6 +821,7 @@ impl<S: GridSource> GridView<S> {
     /// What a header click does. Raises [`GridEvent::SortRequested`] and moves
     /// the marker; the rows do not move until the host re-runs the query.
     pub fn toggle_sort(&mut self, column: usize, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         let direction = match self.sort {
             Some((sorted, SortDirection::Ascending)) if sorted == column => {
                 Some(SortDirection::Descending)
@@ -636,6 +840,7 @@ impl<S: GridSource> GridView<S> {
     /// For a host that ordered the query itself — a table opened with a default
     /// `ORDER BY`, say — so that the header agrees with the rows.
     pub fn set_sort(&mut self, sort: Option<(usize, SortDirection)>, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.sort = sort;
         cx.notify();
     }
@@ -643,6 +848,7 @@ impl<S: GridSource> GridView<S> {
     /// Picks the cell at `row` and display position `column`, dropping whatever
     /// was picked.
     pub fn select_cell(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         let Some(cell) = self.clamped(row, column) else {
             return;
@@ -654,6 +860,7 @@ impl<S: GridSource> GridView<S> {
 
     /// Stretches the selection out to the cell at `row` and `column`.
     pub fn extend_selection(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         let Some(cell) = self.clamped(row, column) else {
             return;
@@ -665,6 +872,7 @@ impl<S: GridSource> GridView<S> {
 
     /// Picks a whole row, as a click on its row number does.
     pub fn select_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         if row >= self.source.row_count() {
             return;
@@ -676,6 +884,7 @@ impl<S: GridSource> GridView<S> {
 
     /// Picks everything.
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         self.selection
             .select_all(self.source.row_count(), self.laid_out.len());
@@ -708,16 +917,225 @@ impl<S: GridSource> GridView<S> {
 
     /// Brings `row` into view.
     pub fn scroll_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.scroll.scroll_to_item(row, ScrollStrategy::Top);
         cx.notify();
     }
 
-    // TODO(M3): cell editing. A cell of a single-table query with a primary key
-    // becomes an `UPDATE`; the widget needs an edit mode, a per-cell dirty mark
-    // and a `GridEvent::CellEdited`. Nothing here forecloses it — the selection
-    // already names a cell, and `GridSource` already says which columns are key
-    // columns.
-    //
+    /// Which cell the inline editor is open over, as `(row, source column)`.
+    ///
+    /// `None` while nobody is typing, which is nearly always.
+    pub fn editing(&self) -> Option<(usize, usize)> {
+        self.editing
+            .as_ref()
+            .map(|editing| (editing.row, editing.column))
+    }
+
+    /// The field the user is typing into, while there is one.
+    ///
+    /// For a host that wants to read the half-typed value — a live validation
+    /// hint beside the grid, say. Nothing about the edit is settled until
+    /// [`GridEvent::EditCommitted`] arrives.
+    pub fn editor(&self) -> Option<&Entity<TextInput>> {
+        self.editing.as_ref().map(|editing| &editing.input)
+    }
+
+    /// Opens the inline editor over the cell at `row` and *source* `column`.
+    ///
+    /// `column` is a source column, the same numbering
+    /// [`GridEvent::CellActivated`] hands out and [`GridSource::cell`] takes, so
+    /// a host that answers an activation with this needs no translation. Answers
+    /// whether the editor opened; it refuses when
+    ///
+    /// * the cell is not there,
+    /// * its column is hidden — a field has to be drawn somewhere,
+    /// * [`GridSource::cell_editable`] says no, which is the default and
+    ///   therefore the answer for every source that has not opted in,
+    /// * or the cell holds a [`GridCell::Lob`], whose body is not in the grid to
+    ///   be seeded into a field or replaced from one.
+    ///
+    /// The field is seeded with the cell's text and a null cell seeds an empty
+    /// one, so that the caret starts where typing starts. What the emptiness
+    /// *means* is remembered separately: leaving an empty field on a cell that
+    /// was null commits nothing, rather than quietly turning `NULL` into `''`.
+    ///
+    /// Any editor already open is committed first, and the selection moves onto
+    /// the cell — a field is a strange place for the cursor not to be.
+    pub fn begin_edit(
+        &mut self,
+        row: usize,
+        column: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.ensure_layout();
+        if row >= self.source.row_count() || column >= self.source.column_count() {
+            return false;
+        }
+        let Some(display) = self.display_of(column) else {
+            return false;
+        };
+        if !self.source.cell_editable(row, column) {
+            return false;
+        }
+        let (seeded, was_null) = match self.source.cell(row, column) {
+            // A cell the server is going to fill in seeds the same empty field
+            // a null does, and for the same reason: leaving it as it was found
+            // must commit nothing, or opening a `DEFAULT` cell and thinking
+            // better of it would turn it into the empty string.
+            GridCell::Null | GridCell::Default => (String::new(), true),
+            GridCell::Text(text) => (text.to_string(), false),
+            GridCell::Lob { .. } => return false,
+        };
+
+        self.commit_edit(cx);
+
+        let cell = CellAddress::new(row, display);
+        self.selection.replace(cell);
+        self.reveal(cell);
+
+        let grid = cx.entity().downgrade();
+        let content = seeded.clone();
+        let input = cx.new(|cx| {
+            // `Enter` is the field's own action, bound in the field's own
+            // deeper key context, so the grid's `Activate` never sees it and
+            // this callback is the only way the keystroke comes back. It is
+            // handed the content because the field is mid-update while it runs
+            // and cannot be read out of the entity map.
+            let mut input = TextInput::new(cx).on_submit(move |typed, _window, cx| {
+                let typed = typed.to_string();
+                grid.update(cx, |grid, cx| grid.close_edit(Some(&typed), true, cx))
+                    .ok();
+            });
+            input.set_content(content, cx);
+            input
+        });
+
+        let handle = input.read(cx).focus_handle(cx);
+        let blur = cx.on_focus_out(&handle, window, |grid, _event, _window, cx| {
+            // The focus has gone somewhere deliberate. Committing is right;
+            // taking the focus back is not, which is the one close that leaves
+            // `refocus` alone.
+            let Some(typed) = grid.typed(cx) else {
+                return;
+            };
+            grid.close_edit(Some(&typed), false, cx);
+        });
+
+        self.editing = Some(Editing {
+            row,
+            column,
+            input,
+            seeded,
+            was_null,
+            settled: false,
+            _blur: blur,
+        });
+        self.refocus = false;
+        handle.focus(window);
+        cx.notify();
+        true
+    }
+
+    /// Closes the editor, staging whatever is in it.
+    ///
+    /// What every gesture but `Escape` ends up in — see the module docs on why a
+    /// close commits. Raises nothing when the field holds what the cell already
+    /// held.
+    pub fn commit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(typed) = self.typed(cx) else {
+            return;
+        };
+        self.close_edit(Some(&typed), true, cx);
+    }
+
+    /// Closes the editor and throws away what was typed.
+    ///
+    /// `Escape`, and the only way back out of a field without staging anything.
+    pub fn cancel_edit(&mut self, cx: &mut Context<Self>) {
+        self.close_edit(None, true, cx);
+    }
+
+    /// What is in the field, while there is one.
+    ///
+    /// Reads the field out of the entity map, so it must not be called while the
+    /// field itself is being updated — which is why the submit callback is
+    /// handed its content instead of asking for it.
+    fn typed(&self, cx: &App) -> Option<String> {
+        self.editing
+            .as_ref()
+            .map(|editing| editing.input.read(cx).content().to_string())
+    }
+
+    /// Takes the editor down, raising [`GridEvent::EditCommitted`] when `typed`
+    /// is something other than what the cell held.
+    ///
+    /// `refocus` is false for exactly one caller — the focus having left of its
+    /// own accord — because taking the focus back from wherever the user just
+    /// put it would be worse than the edit ending quietly.
+    fn close_edit(&mut self, typed: Option<&str>, refocus: bool, cx: &mut Context<Self>) {
+        let Some(editing) = self.editing.take() else {
+            return;
+        };
+        self.refocus = refocus;
+        if let Some(typed) = typed
+            && editing.modified(typed)
+        {
+            cx.emit(GridEvent::EditCommitted {
+                row: editing.row,
+                column: editing.column,
+                value: EditValue::Text(typed.to_string()),
+            });
+        }
+        cx.notify();
+    }
+
+    /// Commits the editor and opens the next — or previous — cell of the row
+    /// that will take one.
+    ///
+    /// What `Tab` does. Stops at the ends of the row rather than wrapping onto
+    /// the next one: a `Tab` that fell off the end and landed on a different
+    /// row would be a keystroke that moved the edit somewhere the user was not
+    /// looking. Nothing to move to leaves the commit standing and the editor
+    /// closed, which is what `Tab` out of the last field of anything does.
+    fn step_edit(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((row, column)) = self.editing() else {
+            return;
+        };
+        self.commit_edit(cx);
+        let Some(display) = self.display_of(column) else {
+            return;
+        };
+        let Some(next) = self.next_editable(row, display, forward) else {
+            return;
+        };
+        self.begin_edit(row, next, window, cx);
+    }
+
+    /// The source column of the next cell of `row` that will take an edit,
+    /// starting one display position beyond `from`.
+    ///
+    /// Walks display positions rather than source columns, so `Tab` follows the
+    /// order the columns are drawn in and steps over the hidden ones — which
+    /// have nowhere to put a field anyway.
+    fn next_editable(&self, row: usize, from: usize, forward: bool) -> Option<usize> {
+        let range: Box<dyn Iterator<Item = usize>> = if forward {
+            Box::new(from + 1..self.laid_out.len())
+        } else {
+            Box::new((0..from).rev())
+        };
+        range
+            .map(|display| self.laid_out[display].column)
+            .find(|&column| self.source.cell_editable(row, column))
+    }
+
+    /// Where source column `column` sits along the header, if it is showing.
+    fn display_of(&self, column: usize) -> Option<usize> {
+        self.laid_out
+            .iter()
+            .position(|placed| placed.column == column)
+    }
+
     // TODO(M3): a filter row under the header, and pinned columns. The filter
     // row is one more fixed band drawn like the header; a pinned column is one
     // drawn in the gutter's strip instead of the scrolling one, which is why
@@ -809,6 +1227,11 @@ impl<S: GridSource> GridView<S> {
         if offset == self.h_offset {
             return;
         }
+        // A sideways scroll is the user looking at another part of the row, and
+        // a field that rode along would end up over a cell nobody is looking
+        // at. `reveal` moves the offset by hand rather than through here, so
+        // opening a field off the right-hand edge does not close it again.
+        self.commit_edit(cx);
         self.h_offset = offset;
         cx.notify();
     }
@@ -833,6 +1256,20 @@ impl<S: GridSource> GridView<S> {
     fn note_visible(&mut self, rows: Range<usize>, cx: &mut Context<Self>) {
         self.visible_rows = rows;
 
+        // The field is placed from the list's scroll offset every frame, so a
+        // scroll that keeps its row on screen carries it along with the cell
+        // and there is nothing to do here. A scroll that takes the row off
+        // screen would leave the user typing into something they cannot see,
+        // and the edit ends with the row. The wheel is why this is checked here
+        // at all: the list owns the vertical axis, so a wheel scroll never
+        // passes through any of the grid's own methods.
+        if let Some(editing) = self.editing.as_ref()
+            && editing.settled
+            && !self.row_on_screen(editing.row)
+        {
+            self.commit_edit(cx);
+        }
+
         let count = self.source.row_count();
         if self.source.state() != GridSourceState::HasMore {
             // A source that has stopped growing — or is already fetching —
@@ -849,6 +1286,21 @@ impl<S: GridSource> GridView<S> {
         }
         self.asked_at = Some(count);
         cx.emit(GridEvent::NearEnd);
+    }
+
+    /// Whether any part of `row` is inside the body.
+    ///
+    /// Worked out from the list's scroll offset rather than from the range the
+    /// list last reported, because that range is not to be trusted at every
+    /// point in a frame: the list renders one row on its own to find out how
+    /// tall a row is, and reports `0..1` while it does.
+    fn row_on_screen(&self, row: usize) -> bool {
+        let height = f32::from(self.base_handle().bounds().size.height);
+        if height <= 0. {
+            return true;
+        }
+        let top = row as f32 * ROW_HEIGHT + f32::from(self.base_handle().offset().y);
+        top + ROW_HEIGHT > 0. && top < height
     }
 
     /// `row` and `column` as a cell, or `None` when there is no such cell.
@@ -888,6 +1340,11 @@ impl<S: GridSource> GridView<S> {
     /// Moves the cursor by `rows` and `columns`, stretching the selection or
     /// replacing it.
     fn step(&mut self, rows: isize, columns: isize, extend: bool, cx: &mut Context<Self>) {
+        // Only the keys the field does not want reach here while one is open:
+        // `Left` and `Right` are the field's, `Up` and `Down` are not, so an
+        // arrow out of a field commits it and walks on, which is what a
+        // spreadsheet does.
+        self.commit_edit(cx);
         self.ensure_layout();
         let (last_row, last_column) = match (
             self.source.row_count().checked_sub(1),
@@ -918,6 +1375,7 @@ impl<S: GridSource> GridView<S> {
 
     /// Moves the cursor to an absolute cell.
     fn jump(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
         self.ensure_layout();
         let Some(cell) = self.clamped(row, column) else {
             return;
@@ -1021,6 +1479,18 @@ impl<S: GridSource> GridView<S> {
         });
     }
 
+    fn cancel_editing(&mut self, _: &CancelEdit, _: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_edit(cx);
+    }
+
+    fn edit_next(&mut self, _: &EditNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_edit(true, window, cx);
+    }
+
+    fn edit_previous(&mut self, _: &EditPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_edit(false, window, cx);
+    }
+
     /// What the pointer is over, worked out from the grid's own geometry.
     ///
     /// Done arithmetically rather than with a listener per cell: a cell that
@@ -1062,6 +1532,7 @@ impl<S: GridSource> GridView<S> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.commit_edit(cx);
         self.ensure_layout();
         let Some(hit) = self.hit(event.position) else {
             return;
@@ -1148,6 +1619,7 @@ impl<S: GridSource> GridView<S> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.commit_edit(cx);
         self.ensure_layout();
         let Some(hit) = self.hit(event.position) else {
             return;
@@ -1461,8 +1933,13 @@ impl<S: GridSource> GridView<S> {
             .laid_out
             .get(visible.start)
             .map_or(0., |placed| placed.x);
+        // Asked once for the whole row, here, rather than once per cell: the
+        // marker is the row's and the cells only need to know whether they are
+        // being struck through.
+        let status = self.source.row_status(row);
+        let marker = status_color(status, theme);
         let cells: Vec<AnyElement> = visible
-            .map(|display| self.render_cell(row, display, theme))
+            .map(|display| self.render_cell(row, display, status, theme))
             .collect();
 
         div()
@@ -1473,8 +1950,20 @@ impl<S: GridSource> GridView<S> {
             .w_full()
             // Zebra striping is a hint and nothing more; see the token's docs.
             .when(row % 2 == 1, |stripe| stripe.bg(theme.grid_row_alt))
+            // A row that is going or that was never there is tinted whole,
+            // because the change is the *row* and not any value in it. Weakly:
+            // a wash across the full width at the strength a single dirty cell
+            // is tinted at would read as a change of theme.
+            .when_some(
+                match status {
+                    RowStatus::Inserted | RowStatus::Deleted => marker,
+                    _ => None,
+                },
+                |row, colour| row.bg(colour.opacity(ROW_TINT)),
+            )
             .child(
                 div()
+                    .relative()
                     .flex_none()
                     .w(px(GUTTER_WIDTH))
                     .h_full()
@@ -1487,7 +1976,22 @@ impl<S: GridSource> GridView<S> {
                     .border_b_1()
                     .border_color(theme.border)
                     .text_color(theme.text_muted)
-                    .child(SharedString::from((row + 1).to_string())),
+                    .child(SharedString::from((row + 1).to_string()))
+                    // The whole of the row marker: a bar on the outer edge of
+                    // the gutter, in the colour the status derives from. It is
+                    // on the edge rather than beside the number so that a
+                    // column of them can be read down at a glance, and it is
+                    // three pixels wide so that the number it shares the gutter
+                    // with is still the thing being read.
+                    .children(marker.map(|colour| {
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(STATUS_WIDTH))
+                            .bg(colour)
+                    })),
             )
             .child(
                 div()
@@ -1513,10 +2017,17 @@ impl<S: GridSource> GridView<S> {
     ///
     /// Plain divs with no id and no listeners: the whole of the pointer
     /// behaviour is [`GridView::hit`], so a cell is only a box with text in it.
-    fn render_cell(&self, row: usize, display: usize, theme: &Theme) -> AnyElement {
+    fn render_cell(
+        &self,
+        row: usize,
+        display: usize,
+        status: RowStatus,
+        theme: &Theme,
+    ) -> AnyElement {
         let placed = self.laid_out[display];
         let column = self.source.column(placed.column);
         let label = cell_label(&self.source.cell(row, placed.column));
+        let dirty = self.source.cell_dirty(row, placed.column);
         let selected = self.selection.contains(row, display);
         let cursor = self.selection.cursor() == Some(CellAddress::new(row, display));
 
@@ -1536,7 +2047,32 @@ impl<S: GridSource> GridView<S> {
             .border_color(theme.border)
             .when(selected, |cell| cell.bg(theme.grid_selection))
             .when(label.muted, |cell| cell.text_color(theme.grid_null))
-            .child(div().truncate().child(label.text))
+            // A child rather than a background, for the same reason the cursor
+            // outline is one: the background is the selection's, and a dirty
+            // cell that stopped looking dirty the moment it was picked would
+            // hide the thing the user is about to copy or revert. Drawn before
+            // the text so the text sits on top of it.
+            .when(dirty, |cell| {
+                cell.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .bg(theme.accent.opacity(DIRTY_TINT)),
+                )
+            })
+            .child(
+                div()
+                    .truncate()
+                    // A deleted row is still shown in its place — see
+                    // `RowStatus::Deleted` — so its values need to say that
+                    // they are on their way out rather than merely that
+                    // something happened to the row.
+                    .when(status == RowStatus::Deleted, |text| text.line_through())
+                    .child(label.text),
+            )
             // The cursor outline is a child rather than a border, so that the
             // cell it is on stays exactly as wide as the others and the text
             // under it does not shift by a pixel as the cursor arrives.
@@ -1553,6 +2089,76 @@ impl<S: GridSource> GridView<S> {
                 )
             })
             .into_any_element()
+    }
+
+    /// Draws the inline editor over the cell it was opened on.
+    ///
+    /// The only place in the crate that turns a cell address back into a
+    /// rectangle, and it does it from the four numbers the grid already keeps:
+    /// `laid_out` for the column's left edge, `h_offset` for how far the strip
+    /// has slid, `ROW_HEIGHT` for the row's top and the list's own scroll offset
+    /// for where that row has been carried to. The same arithmetic
+    /// [`GridView::hit`] runs backwards, which is what makes a field land on
+    /// exactly the cell a click would have found.
+    ///
+    /// Everything is recomputed per frame rather than remembered, so a resize, a
+    /// scroll or a column dragged out from under the field moves the field with
+    /// it instead of stranding it.
+    fn render_editor(&self) -> Option<AnyElement> {
+        let editing = self.editing.as_ref()?;
+        let display = self.display_of(editing.column)?;
+        let placed = self.laid_out[display];
+        let scrolled_by = f32::from(self.base_handle().offset().y);
+
+        let field = div()
+            .key_context(EDITOR_KEY_CONTEXT)
+            .absolute()
+            .left(px(placed.x - self.h_offset))
+            // Centred on the row rather than fitted into it: the field is
+            // taller than a row and squeezing it would clip its own border.
+            .top(px(
+                editing.row as f32 * ROW_HEIGHT + scrolled_by - (EDITOR_HEIGHT - ROW_HEIGHT) / 2.
+            ))
+            .w(px(self.column_width(editing.column)))
+            // Without this the grid's own arithmetic hit test would see every
+            // press meant for the field, move the selection and — since moving
+            // the selection commits — close the field the user was aiming at.
+            .occlude()
+            .child(editing.input.clone());
+
+        Some(
+            // Clipped to the content area, so a field on a column half off the
+            // right-hand edge is half drawn rather than painted over the
+            // gutter and the scrollbar.
+            div()
+                .absolute()
+                .left(px(GUTTER_WIDTH))
+                .top(px(HEADER_HEIGHT))
+                .right_0()
+                .bottom_0()
+                .overflow_hidden()
+                .child(field)
+                .into_any_element(),
+        )
+    }
+}
+
+/// The colour a row's marker is drawn in, or `None` for a row nothing has been
+/// staged against.
+///
+/// Derived from the palette rather than added to it, exactly as the grid's own
+/// tokens are (architecture document, §7.2): a theme file written by hand knows
+/// nothing about staged edits and gains nothing it has to know. The three
+/// meanings map onto the three the palette already carries — a change is the
+/// accent, something new is a success, something going is a danger — so a theme
+/// that made its danger colour green would mark deletions green, which is what
+/// its author asked for.
+fn status_color(status: RowStatus, theme: &Theme) -> Option<Hsla> {
+    match status {
+        RowStatus::Unchanged => None,
+        RowStatus::Modified => Some(theme.accent),
+        RowStatus::Inserted => Some(theme.success),
+        RowStatus::Deleted => Some(theme.danger),
     }
 }
 
@@ -1571,8 +2177,30 @@ impl<S: GridSource> Focusable for GridView<S> {
 }
 
 impl<S: GridSource> Render for GridView<S> {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_layout();
+
+        // A result the host swapped out from under an open field: the cell the
+        // field was over is not there any more, so there is nothing to commit
+        // it *to*. Every route a host actually takes to swap a result commits
+        // first; this is the backstop for the one it does not.
+        if let Some((row, column)) = self.editing()
+            && (row >= self.source.row_count() || self.display_of(column).is_none())
+        {
+            self.close_edit(None, true, cx);
+        }
+        // From here on the field's row can be judged against where the list
+        // actually is; see the flag's docs for what the first frame is spared.
+        if let Some(editing) = self.editing.as_mut() {
+            editing.settled = true;
+        }
+        // Closing dropped the field, and the focus was in it. Done here because
+        // this is the first place after a close that has a window to hand — see
+        // the field's docs.
+        if std::mem::take(&mut self.refocus) {
+            self.focus_handle.focus(window);
+        }
+
         let palette = theme(cx);
         let rows = self.source.row_count();
         let grid = cx.entity();
@@ -1682,6 +2310,9 @@ impl<S: GridSource> Render for GridView<S> {
             .on_action(cx.listener(Self::select_everything))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::activate))
+            .on_action(cx.listener(Self::cancel_editing))
+            .on_action(cx.listener(Self::edit_next))
+            .on_action(cx.listener(Self::edit_previous))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -1713,6 +2344,9 @@ impl<S: GridSource> Render for GridView<S> {
                     .child(self.render_header(&palette, cx))
                     .child(body),
             )
+            // Last, and absolutely positioned, so it is painted over the rows
+            // rather than between them.
+            .children(self.render_editor())
     }
 }
 
@@ -1756,6 +2390,10 @@ mod tests {
         max_row: Cell<usize>,
         min_column: Cell<usize>,
         max_column: Cell<usize>,
+        /// The same two numbers for the edit-state questions, which are drawn
+        /// per row and per cell and are therefore held to the same budget.
+        marks: Cell<usize>,
+        max_mark_row: Cell<usize>,
     }
 
     impl Probe {
@@ -1766,11 +2404,18 @@ mod tests {
             self.max_column.set(self.max_column.get().max(column));
         }
 
+        fn note_mark(&self, row: usize) {
+            self.marks.set(self.marks.get() + 1);
+            self.max_mark_row.set(self.max_mark_row.get().max(row));
+        }
+
         fn forget(&self) {
             self.reads.set(0);
             self.max_row.set(0);
             self.min_column.set(usize::MAX);
             self.max_column.set(0);
+            self.marks.set(0);
+            self.max_mark_row.set(0);
         }
     }
 
@@ -1780,6 +2425,7 @@ mod tests {
         rows: Cell<usize>,
         columns: usize,
         state: Cell<GridSourceState>,
+        editable: bool,
         probe: Rc<Probe>,
     }
 
@@ -1789,12 +2435,20 @@ mod tests {
                 rows: Cell::new(rows),
                 columns,
                 state: Cell::new(GridSourceState::Complete),
+                editable: false,
                 probe,
             }
         }
 
         fn growing(mut self) -> Self {
             self.state = Cell::new(GridSourceState::HasMore);
+            self
+        }
+
+        /// Every cell of it takes an edit, for the tests about what happens to
+        /// a field rather than about which cells may have one.
+        fn editable(mut self) -> Self {
+            self.editable = true;
             self
         }
     }
@@ -1822,6 +2476,23 @@ mod tests {
 
         fn state(&self) -> GridSourceState {
             self.state.get()
+        }
+
+        // Every row of the fixture claims to have been changed, so that a grid
+        // that asked about one it cannot see would be caught by the counting
+        // rather than by the answers happening to be cheap.
+        fn row_status(&self, row: usize) -> RowStatus {
+            self.probe.note_mark(row);
+            RowStatus::Modified
+        }
+
+        fn cell_dirty(&self, row: usize, _column: usize) -> bool {
+            self.probe.note_mark(row);
+            true
+        }
+
+        fn cell_editable(&self, _row: usize, _column: usize) -> bool {
+            self.editable
         }
     }
 
@@ -1851,6 +2522,68 @@ mod tests {
                 Some(text) => GridCell::Text(text),
                 None => GridCell::Null,
             }
+        }
+    }
+
+    /// A result something has been staged against, which is the shape of the
+    /// overlay a host wraps a real one in: it knows which rows were touched,
+    /// which cells carry the change, and which columns will take one.
+    ///
+    /// Column 0 is the key and refuses edits; 1 and 2 take them, and column 1 of
+    /// row 0 holds no value at all — the cell that must not turn into the empty
+    /// string by being looked at.
+    struct Staged {
+        rows: Vec<Vec<Option<&'static str>>>,
+        status: Vec<RowStatus>,
+        dirty: Vec<(usize, usize)>,
+        editable: Vec<usize>,
+    }
+
+    impl Staged {
+        fn new() -> Self {
+            Self {
+                rows: vec![
+                    vec![Some("1"), None, Some("here")],
+                    vec![Some("2"), Some(""), Some("there")],
+                ],
+                status: vec![RowStatus::Unchanged, RowStatus::Unchanged],
+                dirty: Vec::new(),
+                editable: vec![1, 2],
+            }
+        }
+    }
+
+    impl GridSource for Staged {
+        fn column_count(&self) -> usize {
+            3
+        }
+
+        fn column(&self, index: usize) -> GridColumn<'_> {
+            GridColumn::new(["id", "nothing", "note"][index], GridColumnKind::Text)
+                .primary_key(index == 0)
+        }
+
+        fn row_count(&self) -> usize {
+            self.rows.len()
+        }
+
+        fn cell(&self, row: usize, column: usize) -> GridCell<'_> {
+            match self.rows[row][column] {
+                Some(text) => GridCell::Text(text),
+                None => GridCell::Null,
+            }
+        }
+
+        fn row_status(&self, row: usize) -> RowStatus {
+            self.status[row]
+        }
+
+        fn cell_dirty(&self, row: usize, column: usize) -> bool {
+            self.dirty.contains(&(row, column))
+        }
+
+        fn cell_editable(&self, _row: usize, column: usize) -> bool {
+            self.editable.contains(&column)
         }
     }
 
@@ -1908,6 +2641,28 @@ mod tests {
             cx.run_until_parked();
         }
 
+        /// Changes the grid where a window is needed too, which everything
+        /// about the inline editor is: it has a focus to take.
+        fn update_in<R>(
+            &self,
+            cx: &mut VisualTestContext,
+            f: impl FnOnce(&mut GridView<S>, &mut Window, &mut Context<GridView<S>>) -> R,
+        ) -> R {
+            let out = cx.update(|window, cx| self.grid.update(cx, |grid, cx| f(grid, window, cx)));
+            cx.run_until_parked();
+            out
+        }
+
+        /// What is in the inline editor, if one is open.
+        fn typed(&self, cx: &mut VisualTestContext) -> Option<String> {
+            cx.update(|_, cx| {
+                self.grid
+                    .read(cx)
+                    .editor()
+                    .map(|input| input.read(cx).content().to_string())
+            })
+        }
+
         /// The cells the selection covers, as `(row, display column)`.
         fn selected(
             &self,
@@ -1934,8 +2689,10 @@ mod tests {
             let events = events.clone();
             move |_, cx| {
                 let grid = cx.new(|cx| GridView::new(source, cx));
+                // Cloned rather than copied: `GridEvent::EditCommitted` carries
+                // the text that was typed.
                 cx.subscribe(&grid, move |_: &mut Harness<S>, _, event: &GridEvent, _| {
-                    events.borrow_mut().push(*event);
+                    events.borrow_mut().push(event.clone());
                 })
                 .detach();
                 Harness { grid }
@@ -2046,6 +2803,21 @@ mod tests {
             probe.max_column.get()
         );
 
+        // The edit markers are on the same budget as the values, and were the
+        // easiest thing in the crate to get wrong: a row marker asked for down
+        // the whole result would read a million rows to draw forty.
+        assert!(
+            probe.marks.get() < 2_000,
+            "one frame asked about {} marks",
+            probe.marks.get()
+        );
+        assert!(
+            probe.max_mark_row.get() < 60,
+            "the mark of row {} was asked for a viewport of {} rows",
+            probe.max_mark_row.get(),
+            visible_rows.len()
+        );
+
         // And scrolling moves the window of reads rather than widening it: the
         // rows around row 900,000 are read, and none of the ones before them.
         probe.forget();
@@ -2064,6 +2836,15 @@ mod tests {
         assert!(
             probe.max_row.get() > 800_000,
             "the reads did not follow the viewport"
+        );
+        assert!(
+            probe.max_mark_row.get() > 800_000,
+            "the marks did not follow the viewport"
+        );
+        assert!(
+            probe.marks.get() < 2_000,
+            "the scrolled frame asked about {} marks",
+            probe.marks.get()
         );
     }
 
@@ -2614,5 +3395,447 @@ mod tests {
         grid.update(&mut cx, |grid, cx| grid.reset(cx));
         assert!(grid.read(&mut cx, |grid| grid.selection().is_empty()));
         assert_eq!(grid.read(&mut cx, |grid| grid.sort()), None);
+    }
+
+    /// A source that never opted in cannot be typed into, however the host
+    /// asks: the default `cell_editable` is what stands between a read-only
+    /// result and an editor over it.
+    #[gpui::test]
+    fn a_source_that_did_not_opt_in_cannot_be_edited(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(6, 4, probe), cx);
+
+        assert!(!grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(1, 1, window, cx)
+        }));
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+        assert_eq!(grid.drain(), vec![], "a refused edit announced something");
+    }
+
+    /// The whole round trip: the field opens over the cell holding what the cell
+    /// holds, what is typed goes into it, and `Enter` hands the host the value
+    /// and the *source* column it belongs to.
+    #[gpui::test]
+    fn typing_into_a_cell_and_pressing_enter_stages_the_value(cx: &mut TestAppContext) {
+        let (grid, mut cx) = open(Staged::new(), cx);
+
+        assert!(grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(1, 2, window, cx)
+        }));
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), Some((1, 2)));
+        assert_eq!(
+            grid.typed(&mut cx).as_deref(),
+            Some("there"),
+            "the field was not seeded with what the cell held"
+        );
+        // The cursor followed the field, which is where a user would expect it.
+        assert_eq!(grid.selected(&mut cx, 2, 3), vec![(1, 2)]);
+
+        cx.simulate_input("!");
+        cx.simulate_keystrokes("enter");
+
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 1,
+                column: 2,
+                value: EditValue::Text("there!".to_owned()),
+            }]
+        );
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.editing()),
+            None,
+            "the field outlived the commit"
+        );
+        // Nothing was staged *here*: the grid changed no value of its own, and
+        // goes on drawing whatever the source returns.
+        assert_eq!(
+            grid.read(&mut cx, |grid| match grid.source().cell(1, 2) {
+                GridCell::Text(text) => text.to_owned(),
+                other => panic!("{other:?}"),
+            }),
+            "there",
+            "the grid wrote the typed value into the result"
+        );
+        // And the keyboard came back to the grid, rather than being left on a
+        // field that no longer exists.
+        cx.simulate_keystrokes("down");
+        assert_eq!(grid.selected(&mut cx, 2, 3), vec![(1, 2)]);
+    }
+
+    /// `Escape` is the one way out that stages nothing, however much was typed.
+    #[gpui::test]
+    fn escape_throws_the_typing_away(cx: &mut TestAppContext) {
+        let (grid, mut cx) = open(Staged::new(), cx);
+
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(0, 2, window, cx)
+        });
+        cx.simulate_input("rewritten");
+        assert_eq!(grid.typed(&mut cx).as_deref(), Some("hererewritten"));
+
+        cx.simulate_keystrokes("escape");
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+        assert_eq!(
+            grid.drain(),
+            vec![],
+            "escape staged what it was supposed to throw away"
+        );
+    }
+
+    /// Opening a null cell and thinking better of it leaves it null.
+    ///
+    /// The trap this whole crate is built to avoid (architecture document,
+    /// §7.5): a field seeded empty because there was no value, committed
+    /// unchanged, must not become an `UPDATE … SET x = ''`. The same holds for a
+    /// cell that really does hold the empty string, and for one with a value in
+    /// it that nobody touched.
+    #[gpui::test]
+    fn a_field_nobody_changed_stages_nothing(cx: &mut TestAppContext) {
+        let (grid, mut cx) = open(Staged::new(), cx);
+
+        // Row 0, column 1 is null.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(0, 1, window, cx)
+        });
+        assert_eq!(grid.typed(&mut cx).as_deref(), Some(""));
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            grid.drain(),
+            vec![],
+            "a null cell was turned into the empty string by being looked at"
+        );
+
+        // Row 1, column 1 really does hold the empty string.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(1, 1, window, cx)
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(grid.drain(), vec![]);
+
+        // And a value left exactly as it was found.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(1, 2, window, cx)
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(grid.drain(), vec![]);
+
+        // Typing into the null one, though, is a change — and the emptiness it
+        // started from is not the value it commits.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(0, 1, window, cx)
+        });
+        cx.simulate_input("x");
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 0,
+                column: 1,
+                value: EditValue::Text("x".to_owned()),
+            }]
+        );
+    }
+
+    /// `Tab` commits and walks on to the next cell of the row that will take an
+    /// edit — stepping over the key column, which will not — and `Shift+Tab`
+    /// walks back. Falling off the end leaves the commit standing and the field
+    /// closed.
+    #[gpui::test]
+    fn tab_commits_and_opens_the_next_editable_cell(cx: &mut TestAppContext) {
+        let (grid, mut cx) = open(Staged::new(), cx);
+
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(1, 1, window, cx)
+        });
+        cx.simulate_input("typed");
+        cx.simulate_keystrokes("tab");
+
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 1,
+                column: 1,
+                value: EditValue::Text("typed".to_owned()),
+            }]
+        );
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.editing()),
+            Some((1, 2)),
+            "tab did not reopen on the next editable cell"
+        );
+        assert_eq!(grid.typed(&mut cx).as_deref(), Some("there"));
+
+        // Backwards, over the same gap, and stopping at column 1 rather than
+        // landing on the key column.
+        cx.simulate_keystrokes("shift-tab");
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), Some((1, 1)));
+        assert_eq!(
+            grid.drain(),
+            vec![],
+            "a field nobody touched was staged on the way back"
+        );
+
+        cx.simulate_keystrokes("shift-tab");
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.editing()),
+            None,
+            "shift-tab opened the key column"
+        );
+
+        // And off the far end: the last editable cell of the row has nowhere to
+        // hand the field on to.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(1, 2, window, cx)
+        });
+        cx.simulate_input("!");
+        cx.simulate_keystrokes("tab");
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 1,
+                column: 2,
+                value: EditValue::Text("there!".to_owned()),
+            }]
+        );
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+    }
+
+    /// Everything that moves the cell out from under the field ends the edit,
+    /// and ends it by committing — see the module docs on why that way round.
+    #[gpui::test]
+    fn anything_that_moves_the_cell_commits_the_field(cx: &mut TestAppContext) {
+        let (grid, mut cx) = open(Staged::new(), cx);
+
+        // A sort: the rows are about to be a different set of rows.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(1, 2, window, cx)
+        });
+        cx.simulate_input("?");
+        grid.update(&mut cx, |grid, cx| grid.toggle_sort(0, cx));
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+        assert_eq!(
+            grid.drain(),
+            vec![
+                GridEvent::EditCommitted {
+                    row: 1,
+                    column: 2,
+                    value: EditValue::Text("there?".to_owned()),
+                },
+                GridEvent::SortRequested {
+                    column: 0,
+                    direction: Some(SortDirection::Ascending),
+                },
+            ],
+            "the commit did not come before the thing that caused it"
+        );
+
+        // A column hidden out from under it: there would be nowhere left to
+        // draw the field.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(0, 2, window, cx)
+        });
+        cx.simulate_input("!");
+        grid.update(&mut cx, |grid, cx| grid.set_column_hidden(2, true, cx));
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 0,
+                column: 2,
+                value: EditValue::Text("here!".to_owned()),
+            }]
+        );
+
+        // An arrow key, which the field does not want and the grid does.
+        grid.update(&mut cx, |grid, cx| grid.set_column_hidden(2, false, cx));
+        grid.drain();
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(0, 1, window, cx)
+        });
+        cx.simulate_input("q");
+        cx.simulate_keystrokes("down");
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 0,
+                column: 1,
+                value: EditValue::Text("q".to_owned()),
+            }]
+        );
+        assert_eq!(
+            grid.selected(&mut cx, 2, 3),
+            vec![(1, 1)],
+            "the arrow committed but did not move"
+        );
+
+        // And the host dropping a batch in, which is the same problem arriving
+        // from the other side.
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(0, 2, window, cx)
+        });
+        cx.simulate_input("z");
+        grid.update(&mut cx, |grid, cx| {
+            grid.source_mut(cx).status[0] = RowStatus::Modified;
+        });
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 0,
+                column: 2,
+                value: EditValue::Text("herez".to_owned()),
+            }]
+        );
+    }
+
+    /// A wheel is the one scroll the grid does not run itself — the list owns
+    /// the vertical axis — so the field has to notice on its own that its row
+    /// has gone, rather than being told.
+    #[gpui::test]
+    fn a_row_scrolled_out_of_sight_takes_its_field_with_it(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(10_000, 4, probe).editable(), cx);
+
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(0, 1, window, cx)
+        });
+        cx.simulate_input("typed");
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), Some((0, 1)));
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(column_x(1)), px(row_y(2))),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-4_000.))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        assert!(
+            grid.read(&mut cx, |grid| grid.visible_rows().start) > 0,
+            "the wheel scrolled nothing, so the test proves nothing"
+        );
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.editing()),
+            None,
+            "the field was left over a row that is no longer on screen"
+        );
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 0,
+                column: 1,
+                value: EditValue::Text("valuetyped".to_owned()),
+            }]
+        );
+    }
+
+    /// The focus going somewhere else commits, and — alone among the closes —
+    /// does not drag it back.
+    #[gpui::test]
+    fn the_focus_leaving_commits_without_taking_itself_back(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(20, 4, probe).editable(), cx);
+
+        // gpui reports a focus change only while the window is active, and a
+        // test window is inactive until it is told otherwise.
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+
+        grid.update_in(&mut cx, |grid, window, cx| {
+            grid.begin_edit(2, 1, window, cx)
+        });
+        cx.simulate_input("!");
+
+        // Somewhere else in the window, which for a grid on its own is the grid
+        // itself — what matters is that the field is not it.
+        cx.update(|window, cx| {
+            let handle = grid.grid.read(cx).focus_handle(cx);
+            handle.focus(window);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(grid.read(&mut cx, |grid| grid.editing()), None);
+        assert_eq!(
+            grid.drain(),
+            vec![GridEvent::EditCommitted {
+                row: 2,
+                column: 1,
+                value: EditValue::Text("value!".to_owned()),
+            }]
+        );
+    }
+
+    /// The markers are drawn from what the source says, and the grid asks it
+    /// only about the rows and cells it is drawing.
+    #[gpui::test]
+    fn the_markers_read_only_what_is_drawn(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(500_000, 40, probe.clone()), cx);
+
+        probe.forget();
+        grid.update(&mut cx, |grid, cx| grid.refresh(cx));
+        assert!(probe.marks.get() > 0, "nothing asked about the markers");
+        assert!(
+            probe.max_mark_row.get() < 60,
+            "the marker of row {} was asked for",
+            probe.max_mark_row.get()
+        );
+
+        // And the dirty marks are a question per *drawn* cell: hiding all but
+        // two columns cuts the count to what two columns and a row marker
+        // cost, rather than leaving it at what forty would.
+        let before = probe.marks.get();
+        for column in 2..40 {
+            grid.update(&mut cx, |grid, cx| {
+                grid.set_column_hidden(column, true, cx);
+            });
+        }
+        probe.forget();
+        grid.update(&mut cx, |grid, cx| grid.refresh(cx));
+        assert!(
+            probe.marks.get() * 3 < before,
+            "hiding thirty-eight of forty columns left {} of {before} marks",
+            probe.marks.get()
+        );
+    }
+
+    /// A staged result draws its markers and its tints, and an unstaged one
+    /// draws neither — the whole of what the defaults buy a read-only source.
+    #[gpui::test]
+    fn a_row_is_marked_only_when_the_source_says_so(cx: &mut TestAppContext) {
+        let (grid, mut cx) = open(Staged::new(), cx);
+        let palette = cx.update(|_, cx| rudbman_ui::theme::theme(cx));
+
+        assert_eq!(status_color(RowStatus::Unchanged, &palette), None);
+        assert_eq!(
+            status_color(RowStatus::Modified, &palette),
+            Some(palette.accent)
+        );
+        assert_eq!(
+            status_color(RowStatus::Inserted, &palette),
+            Some(palette.success)
+        );
+        assert_eq!(
+            status_color(RowStatus::Deleted, &palette),
+            Some(palette.danger)
+        );
+
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.source().row_status(0)),
+            RowStatus::Unchanged
+        );
+        grid.update(&mut cx, |grid, cx| {
+            let source = grid.source_mut(cx);
+            source.status[0] = RowStatus::Deleted;
+            source.dirty.push((1, 2));
+        });
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.source().row_status(0)),
+            RowStatus::Deleted
+        );
+        assert!(grid.read(&mut cx, |grid| grid.source().cell_dirty(1, 2)));
+        assert!(!grid.read(&mut cx, |grid| grid.source().cell_dirty(1, 1)));
     }
 }

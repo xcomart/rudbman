@@ -168,28 +168,44 @@ pub fn unique_alias(name: &str, taken: &[String]) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-/// One table's qualified name, quoted as the dialect requires.
+/// One table's name parts, most significant first and with the absent ones
+/// dropped.
 ///
 /// The schema wins when there is one, the catalogue stands in for it when there
 /// is not — which is MySQL, where the catalogue *is* the database — and a
-/// product with neither gets the bare name. Shared with the explorer's "query
-/// this object", so the two agree on how a name is written.
+/// product with neither gives one bare part. Naming *one* qualification rule is
+/// the point: [`table_ref`] writes the `SELECT`'s table and the data pane's
+/// apply hands the same parts to `rudbman_sql::plan_edits`, and a statement that
+/// read a row from one table and wrote it back to another would be the worst bug
+/// this pane could have.
+pub fn table_parts(catalog: Option<&str>, schema: Option<&str>, name: &str) -> Vec<String> {
+    fn present(part: Option<&str>) -> Option<&str> {
+        part.filter(|part| !part.is_empty())
+    }
+    let qualifier = present(schema).or_else(|| present(catalog));
+    qualifier
+        .into_iter()
+        .chain(std::iter::once(name))
+        .map(str::to_string)
+        .collect()
+}
+
+/// One table's qualified name, quoted as the dialect requires.
+///
+/// [`table_parts`] decides which parts there are; this only spells them. Shared
+/// with the explorer's "query this object", so the two agree on how a name is
+/// written.
 pub fn table_ref(
     dialect: &Dialect,
     catalog: Option<&str>,
     schema: Option<&str>,
     name: &str,
 ) -> String {
-    fn present(part: Option<&str>) -> Option<&str> {
-        part.filter(|part| !part.is_empty())
-    }
-    if let Some(schema) = present(schema) {
-        dialect.qualify([schema, name])
-    } else if let Some(catalog) = present(catalog) {
-        dialect.qualify([catalog, name])
-    } else {
-        dialect.quote_ident(name).into_owned()
-    }
+    dialect.qualify(
+        table_parts(catalog, schema, name)
+            .iter()
+            .map(String::as_str),
+    )
 }
 
 /// The `SELECT` the builder's state describes.

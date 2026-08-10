@@ -32,15 +32,35 @@
 //! the wire. The validity bitmap is the only thing that tells them apart, here
 //! as there, and it is what decides between [`GridCell::Null`] and
 //! `GridCell::Text("")`.
+//!
+//! # `may_have_more` is a contract, not a field
+//!
+//! JDBC has no lookahead: asking whether another result exists consumes the
+//! current one (architecture document, §4.4). [`advance`] therefore keeps
+//! calling `MORE_RESULTS` until the three-part exhaustion holds, and stops the
+//! moment a result set still has rows in it — because advancing past it would
+//! close the very `ResultSet` the grid is paging. Paging that result to its end
+//! resumes the walk, so the later results of a multi-result statement appear
+//! when the earlier one is finished with, and never before.
+//!
+//! The walk lives here rather than beside the pane that first needed it because
+//! two panes now need it: the query pane runs whatever was typed, and the data
+//! pane (architecture document, §7.9) runs a `SELECT` of its own, and both page
+//! the answer the same way.
 
 use rudbman_grid::{GridCell, GridColumn, GridColumnKind, GridSource, GridSourceState};
-use rudbman_jdbc::{Batch, ColumnInfo, ColumnKind, Value};
+use rudbman_jdbc::{Batch, ColumnInfo, ColumnKind, Cursor, Error as JdbcError, Value};
 
-/// `java.sql.Types` constants this module branches on.
+/// `java.sql.Types` constants the app branches on.
 ///
-/// Only the ones that decide a [`GridColumnKind`]; the rest fall through to
-/// [`GridColumnKind::Text`], which is the safe answer for anything unknown.
-mod sql_types {
+/// The ones that decide a [`GridColumnKind`] here, and the same ones decide a
+/// `DmlKind` in [`crate::data_edit`] — one table of magic numbers rather than
+/// two, because the two questions are asked of the same `sql_type` and a
+/// constant that drifted between them would map a column one way on screen and
+/// another way on the wire. Anything not listed falls through to
+/// [`GridColumnKind::Text`], which is the safe answer for a type this version
+/// does not know.
+pub(crate) mod sql_types {
     pub const BIT: i32 = -7;
     pub const TINYINT: i32 = -6;
     pub const BIGINT: i32 = -5;
@@ -63,6 +83,15 @@ mod sql_types {
     pub const TIMESTAMP_WITH_TIMEZONE: i32 = 2014;
 }
 
+/// Whether `BIT` on this column is a truth value rather than a byte string.
+///
+/// MySQL's `BIT(n)` for `n > 1` is a bit *string*, and the codec packs it as
+/// bytes. The split is on precision, and it is made in one place because both
+/// the grid's column kind and the bound-parameter kind turn on it.
+pub(crate) fn bit_is_boolean(column: &ColumnInfo) -> bool {
+    column.precision <= 1
+}
+
 /// The shape the grid draws a column in, from its logical JDBC type.
 ///
 /// `BIT` splits on precision for the same reason the codec does: MySQL's
@@ -71,7 +100,7 @@ pub fn column_kind(column: &ColumnInfo) -> GridColumnKind {
     use sql_types::*;
     match column.sql_type {
         BIT => {
-            if column.precision <= 1 {
+            if bit_is_boolean(column) {
                 GridColumnKind::Boolean
             } else {
                 GridColumnKind::Binary
@@ -247,11 +276,121 @@ pub fn render_batch(batch: &Batch, columns: &[ColumnInfo]) -> RenderedBatch {
     }
 }
 
+/// One thing a statement produced.
+#[derive(Debug)]
+pub enum Step {
+    /// A result set, and its first batch.
+    Rows {
+        /// The result's logical column types.
+        columns: Vec<ColumnInfo>,
+        /// The first batch, already rendered.
+        batch: RenderedBatch,
+        /// Whether the driver had run out of rows.
+        complete: bool,
+    },
+    /// An update count.
+    Message {
+        /// Rows the statement changed, or zero for a statement that changes
+        /// none — a `CREATE TABLE`, say.
+        update_count: i64,
+    },
+}
+
+/// One page of an already-open result.
+pub struct Paged {
+    /// The rows that came back, already rendered.
+    pub batch: RenderedBatch,
+    /// Whether that batch was the last of this result set.
+    pub complete: bool,
+    /// Further results of the same statement, picked up once this one ended.
+    pub steps: Vec<Step>,
+    /// Whether the cursor is parked on a result set that can still be paged.
+    pub pageable: bool,
+}
+
+/// Walks a cursor's results, stopping at the first one that can still be paged.
+///
+/// `fresh` says whether the cursor is already sitting on a result nobody has
+/// read — true straight after `EXECUTE`, false when resuming after a result set
+/// ran out. Blocks; only ever called from a background thread.
+pub fn advance(
+    cursor: &mut Cursor,
+    mut fresh: bool,
+    fetch_rows: u32,
+    steps: &mut Vec<Step>,
+) -> Result<bool, JdbcError> {
+    loop {
+        if !fresh && cursor.more_results()?.is_exhausted() {
+            return Ok(false);
+        }
+        fresh = false;
+
+        let (has_result_set, update_count, exhausted, columns) = {
+            let result = cursor.result();
+            (
+                result.has_result_set,
+                result.update_count,
+                result.is_exhausted(),
+                result.columns.clone(),
+            )
+        };
+
+        if has_result_set {
+            let raw = cursor.fetch(fetch_rows)?;
+            let complete = raw.is_last();
+            let batch = render_batch(&raw, &columns);
+            steps.push(Step::Rows {
+                columns,
+                batch,
+                complete,
+            });
+            if !complete {
+                // Advancing now would close the `ResultSet` the grid is about
+                // to page. The walk resumes when the rows run out.
+                return Ok(true);
+            }
+        } else if update_count >= 0 {
+            steps.push(Step::Message { update_count });
+        }
+
+        if exhausted {
+            return Ok(false);
+        }
+    }
+}
+
+/// Fetches one more batch of an open result, and walks on if it was the last.
+pub fn page(
+    cursor: &mut Cursor,
+    columns: &[ColumnInfo],
+    fetch_rows: u32,
+) -> Result<Paged, JdbcError> {
+    let raw = cursor.fetch(fetch_rows)?;
+    let complete = raw.is_last();
+    let batch = render_batch(&raw, columns);
+    let mut steps = Vec::new();
+    let pageable = if complete {
+        advance(cursor, false, fetch_rows, &mut steps)?
+    } else {
+        true
+    };
+    Ok(Paged {
+        batch,
+        complete,
+        steps,
+        pageable,
+    })
+}
+
 /// One column's heading, as the grid needs it.
 #[derive(Clone, Debug)]
 struct SourceColumn {
     name: String,
     kind: GridColumnKind,
+    /// Whether the grid emphasises it as part of the primary key. False unless
+    /// somebody who knows the key said otherwise; see
+    /// [`ResultSource::mark_primary_keys`].
+    primary_key: bool,
 }
 
 /// The rows of one result, batch by batch.
@@ -278,6 +417,7 @@ impl ResultSource {
                 .map(|column| SourceColumn {
                     name: column.display_name(),
                     kind: column_kind(column),
+                    primary_key: false,
                 })
                 .collect(),
             batches: Vec::new(),
@@ -302,6 +442,23 @@ impl ResultSource {
         self.state = state;
     }
 
+    /// Marks the columns `keys` names as the primary key.
+    ///
+    /// Nothing here can work this out on its own — a result carries no key
+    /// metadata — so it is told, by the one caller that asked the driver first:
+    /// the data pane, which reads `DESCRIBE primary_keys` before it runs its
+    /// `SELECT` (architecture document, §7.9). A query result never calls this
+    /// and keeps the honest answer, which is "no key".
+    ///
+    /// Names are compared exactly, because both sides come from the same
+    /// catalogue and a case-insensitive match would mark the wrong column on
+    /// the products where two can differ by case alone.
+    pub fn mark_primary_keys(&mut self, keys: &[String]) {
+        for column in &mut self.columns {
+            column.primary_key = keys.contains(&column.name);
+        }
+    }
+
     /// Which batch global row `row` is in, and where it is inside it.
     fn locate(&self, row: usize) -> Option<(&RenderedBatch, usize)> {
         if row >= self.row_count() {
@@ -322,10 +479,14 @@ impl GridSource for ResultSource {
 
     fn column(&self, index: usize) -> GridColumn<'_> {
         match self.columns.get(index) {
-            // No primary key marking: a query result carries no key metadata,
-            // and inventing one from the column name would be a guess the user
-            // could not see through. See the architecture document, §7.5.
-            Some(column) => GridColumn::new(&column.name, column.kind),
+            // The key marking is whatever [`ResultSource::mark_primary_keys`]
+            // was told, which for a query result is nothing: it carries no key
+            // metadata, and inventing one from the column name would be a guess
+            // the user could not see through. See the architecture document,
+            // §7.5 and §7.9.
+            Some(column) => {
+                GridColumn::new(&column.name, column.kind).primary_key(column.primary_key)
+            }
             None => GridColumn::new("", GridColumnKind::Text),
         }
     }
