@@ -966,6 +966,58 @@ underneath for a second one to collide with.
   refuses in the same words and in the same place. A view is browsed like a
   table and edited only where the driver reports a key for it.
 
+#### Editing a query result
+
+A `SELECT` somebody wrote has no single table behind it in general, which is
+why the pane above is the one that edits. But the cases that *do* have one are
+recognisable from metadata the wire already carries — `ColumnInfo` holds a
+`table`, `schema` and `catalog` per column — and a result grid that can fix the
+row it is showing is worth having. So a query result becomes editable, under a
+gate with three clauses, and the machinery underneath is the data pane's own,
+**moved rather than copied**.
+
+- **The gate.** Every column that names a source table must name the *same*
+  one; at least one must; and the table's primary key must be present in the
+  result, every column of it. Each clause earns its place. One table, because an
+  `UPDATE` names one. The key in full, because the `WHERE` is built out of the
+  row's own values and a key column that was never selected has no value to be
+  found by — which is also what quietly disqualifies most aggregates, since
+  `SELECT dept, COUNT(*) FROM emp GROUP BY dept` names `emp` in one column but
+  does not carry `emp`'s key. A column that names no table is **read-only rather
+  than disqualifying**: refusing the whole result because one column was
+  computed would refuse `SELECT id, name, name || '!' FROM users`, where the
+  first two are perfectly writable.
+- **The metadata is a hint, and is allowed to be.** JDBC answers the *empty
+  string*, not null, for a column with no source table, so both spellings mean
+  "unknown" and a filter for them is the first thing any of this does. Beyond
+  that the answer is a particular driver's rather than a fact: several return
+  `""` for schema and catalog unconditionally, and MySQL can report an alias
+  where the table was asked for. None of that has to be trusted, because every
+  way out of a wrong hint is a refusal — a table name that is wrong finds no
+  primary key and the result stays read-only, and a name that is right over rows
+  that are not is caught by the update count of exactly 1 that every generated
+  `UPDATE` and `DELETE` is already checked against. The hint is only ever
+  allowed to *offer* editing, never to make a statement safe.
+- **Updates and deletes only; no inserts.** A result carries the columns the
+  user selected, not the columns the table requires, so a row typed into a
+  `SELECT id, name FROM users` is missing every `NOT NULL` column that was not
+  selected and is refused by the server every time. And a row that did insert
+  need not satisfy the query's own `WHERE`, so the reload would not show it —
+  an apply that looks as though it failed. Inserting is what the data pane on
+  that table is for; this is the surface for changing rows you are already
+  looking at.
+- **One copy of the apply.** The staging buffer, the planner, the batch, the
+  transaction, the preview that is the confirmation and the update-count guard
+  are all §7.9's, and they now live where both panes reach them rather than
+  being written twice. The transaction ordering in particular — the rollback
+  *before* autocommit is restored, which is what stops several products
+  committing the half-applied batch — is the last thing this codebase should
+  hold two copies of.
+- **A sort or a re-run replaces the source**, exactly as above, and the query
+  pane's sort wraps the statement in a derived table rather than appending an
+  `ORDER BY`, so it re-runs. The rule is unchanged: ask first while anything is
+  staged, and never carry an edit across by key.
+
 ### 7.10 Structure editing (`ALTER TABLE`)
 
 Changing a table's *shape* — adding a column, retyping one, dropping a
