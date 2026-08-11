@@ -45,6 +45,14 @@ menu:
   # pane. Also the label of the button that does the same from the detail
   # panel's header: one command, one wording.
   view_data: View data
+  # Opens the same table's shape in a pane that can alter it. Also the label
+  # of the button beside "View data" in the detail panel's header: one
+  # command, one wording.
+  view_structure: Edit structure
+  # Opens the same pane in its create mode over the schema selected in the
+  # explorer — the place a table would appear. No ellipsis: it opens a pane to
+  # fill in, not a dialog to answer.
+  new_table: New table
   # Reads a .sql file into a new query pane on the connection showing.
   open_sql_file: Open SQL file…
   # Opens the extraction dialog over the object selected in the explorer.
@@ -572,6 +580,12 @@ query:
   # A LOB cell that was opened. Only its size travelled with the row, and
   # reading the body needs a bridge operation that is not implemented yet.
   lob_unsupported: The LOB viewer is not built yet.
+  # A result grid whose rows cannot be written back through, said above the
+  # grid rather than by refusing a keystroke: it is a standing fact about what
+  # is being shown, not a failure. One line for all three ways a result misses
+  # the gate — more than one table, no table at all, or a table whose primary
+  # key was not among the columns selected.
+  not_editable: These rows do not come from one table with its primary key selected, so they can be read but not changed.
   # The error envelope, under the driver's own message.
   sql_state: "SQLSTATE %{state}"
   # One-line suggestions, chosen by the leading two characters of the SQLSTATE,
@@ -642,6 +656,122 @@ data:
 
 # The script extraction dialog: one explorer object written out to a file. The
 # form half describes the job; the card that replaces it reports the job.
+# The structure pane: one table's shape, and the ALTER TABLE batch that would
+# change it. Opened with the explorer's "edit structure" row or the detail
+# panel's button of the same name.
+#
+# Never translated: SQL keywords — NOT NULL, PRIMARY KEY, FOREIGN KEY, UNIQUE,
+# CHECK — and the names of tables, columns and constraints. An empty cell is the
+# — glyph.
+struct:
+  loading: loading…
+  refresh: Refresh
+  discard: Discard
+  # A reload reads the catalogue again, and every staged edit is keyed to an
+  # index into the reading it was staged against.
+  discard_first: Discard the pending changes first.
+  # The one line that says why nothing here can be staged. Not a failure: a
+  # standing fact about the connection, stated once rather than raised when a
+  # key is pressed.
+  read_only: This connection is read-only, so this table's structure can be read but not changed.
+  # What is staged but not yet sent, in the pane's header. One per column,
+  # constraint or rename the user touched — not one per statement, because a
+  # column with three attributes changed is one row they edited.
+  pending: "%{count} pending changes"
+
+  # The column table, and its headings.
+  columns: Columns
+  column: Column
+  type: Type
+  # Quoted: bare `Null` is YAML's null literal and would load as an empty
+  # heading. The word is the SQL keyword and is not translated.
+  nullable: "Null"
+  default: Default
+  state: State
+  # What has been staged against one row of it. A dropped row keeps its place,
+  # struck through, so that the mark can be taken off again.
+  state_changed: changed
+  state_dropped: to drop
+  state_added: new
+  # The toggle at the end of a row, in its two positions, and the button that
+  # takes an added column back off the list.
+  drop: Drop
+  keep: Keep
+  remove: Remove
+  add_column: Add column
+
+  # The form under the table: one column at a time, and every keystroke staged.
+  edit_column: Selected column
+  no_selection: Pick a column above to edit it.
+  name: Name
+  # Whether the column has a default at all, beside the field that says what it
+  # is. Two controls because "no default" and "a default of the empty string"
+  # are two states the server tells apart and one field cannot say both.
+  has_default: Has a default
+
+  # The constraint table. The kinds themselves — PRIMARY KEY, FOREIGN KEY,
+  # UNIQUE, CHECK — are SQL keywords and stay as they are.
+  constraints: Constraints
+  kind: Kind
+  # A table the catalogue reports no constraint for, as against one that could
+  # not be read.
+  empty: nothing here
+  # The product has no ALTER that drops one, so the toggles are drawn disabled
+  # rather than left out: a surface says what it cannot do.
+  no_constraint_drop: "%{dialect} has no ALTER TABLE that drops a constraint."
+
+  # The form that gives a table being created a key or a reference, and drawn
+  # only there: ALTER TABLE drops constraints and never adds one, so this is
+  # the only place a table made by rudbman can be given either. The three kinds
+  # themselves — PRIMARY KEY, UNIQUE, FOREIGN KEY — are the SQL keywords and
+  # carry no keys of their own, exactly as NOT NULL does above.
+  new_constraint: Add a constraint
+  # Optional, and it says so: an unnamed constraint is ordinary and common, and
+  # the server names it.
+  constraint_name: Name (optional)
+  # The other side of a foreign key. Both are free text — the pane has no
+  # catalogue browser — and both reach the server as they were typed.
+  references: Referenced table
+  # Left empty means the referenced table's own primary key, which every
+  # product accepts as an omitted list.
+  referenced_columns: Referenced columns (optional)
+  add_constraint: Add constraint
+
+  # A bare name: a rename moves a table within its schema, and no product takes
+  # a qualified target.
+  rename_table: Rename table
+  new_name: New name
+
+  # The same field, and the same staging slot, in the pane's create mode: there
+  # it is the table's own name rather than a new one for a table that has one,
+  # and it is required, where a rename left alone is the commonest thing to do
+  # with one. The first is also the tab's title, which a table being created has
+  # no name to take.
+  new_table: New table
+  new_table_in: "New table in %{scope}"
+  table_name: Table name
+
+  # The statements everything staged would send, recomputed as it is typed.
+  statements: Statements
+
+  # The apply. The confirmation is the statements themselves, always shown,
+  # which is a superset of the profile's "ask before a write" and answers it.
+  apply: Apply
+  # The same button in create mode: a batch of amendments is applied, and a
+  # table is created.
+  create: Create table
+  apply_title: "Apply %{count} statements"
+  # Always shown, and not the conditional line the data pane draws: a DDL batch
+  # runs under autocommit on every product, because two of the six commit at
+  # every statement whatever the client asked for.
+  apply_no_undo: This cannot be undone. Each statement is committed as it runs, and no rollback can take one back.
+  applying: applying…
+  applied: "%{count} statements applied."
+  # The batch stopped part way. The statements before the one that failed are
+  # in the table for good, so the number is the work still to do — and the whole
+  # batch was on screen a moment earlier.
+  apply_stopped: "Statement %{number} of %{total} failed. The %{committed} before it were committed and cannot be undone."
+
 extract:
   title: Extract script
   # The object the dialog was opened over, qualified by its schema. Read-only:

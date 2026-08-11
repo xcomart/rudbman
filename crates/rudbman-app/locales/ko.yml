@@ -19,6 +19,8 @@ menu:
   # SELECT against it.
   query_object: 선택한 객체 조회
   view_data: 데이터 보기
+  view_structure: 구조 편집
+  new_table: 새 테이블
   open_sql_file: SQL 파일 열기…
   extract_script: 스크립트 추출…
   transfer_table: 행 전송…
@@ -386,6 +388,7 @@ query:
   confirm_body: "데이터를 변경하는 문장: %{count}개"
   confirm_run: 실행
   lob_unsupported: LOB 뷰어는 아직 없습니다.
+  not_editable: 이 행들은 기본 키까지 선택된 단일 테이블에서 온 것이 아니라, 읽을 수는 있어도 바꿀 수는 없습니다.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 문장의 구문과 대상 객체를 읽을 권한이 있는지 확인하세요.
   hint_constraint: 테이블이 선언한 제약 조건을 위반했습니다.
@@ -422,6 +425,53 @@ data:
   apply_null_key: "이 행의 %{column} 값이 NULL이라 행을 다시 찾을 수 없습니다."
   apply_unknown_key: "읽어 온 열 중에 키 열 %{column}이(가) 없습니다. 새로 고친 뒤 다시 시도하세요."
   apply_not_planned: "이 변경 사항은 문장으로 만들 수 없습니다: %{detail}"
+
+struct:
+  loading: 불러오는 중…
+  refresh: 새로 고침
+  discard: 취소
+  discard_first: 변경 사항을 먼저 취소하세요.
+  read_only: 읽기 전용 접속이라 이 테이블의 구조를 읽을 수만 있습니다.
+  pending: "대기 중인 변경 %{count}건"
+  columns: 열
+  column: 열
+  type: 타입
+  nullable: 널
+  default: 기본값
+  state: 상태
+  state_changed: 변경됨
+  state_dropped: 삭제 예정
+  state_added: 새 열
+  drop: 삭제
+  keep: 되돌리기
+  remove: 빼기
+  add_column: 열 추가
+  edit_column: 선택한 열
+  no_selection: 위에서 열을 고르면 편집할 수 있습니다.
+  name: 이름
+  has_default: 기본값 있음
+  constraints: 제약 조건
+  kind: 종류
+  empty: 없음
+  no_constraint_drop: "%{dialect}에는 제약 조건을 삭제하는 ALTER TABLE이 없습니다."
+  new_constraint: 새 제약 조건
+  constraint_name: 이름(선택)
+  references: 참조할 테이블
+  referenced_columns: 참조할 열(선택)
+  add_constraint: 제약 조건 추가
+  rename_table: 테이블 이름 변경
+  new_name: 새 이름
+  new_table: 새 테이블
+  new_table_in: "%{scope}에 새 테이블"
+  table_name: 테이블 이름
+  statements: 문장
+  apply: 적용
+  create: 테이블 만들기
+  apply_title: "%{count}개 문장 적용"
+  apply_no_undo: 되돌릴 수 없습니다. 각 문장은 실행되는 즉시 커밋되며 롤백으로도 되돌릴 수 없습니다.
+  applying: 적용하는 중…
+  applied: "문장 %{count}개를 적용했습니다."
+  apply_stopped: "%{total}개 중 %{number}번째 문장이 실패했습니다. 그 앞의 %{committed}개는 이미 커밋되어 되돌릴 수 없습니다."
 
 extract:
   title: 스크립트 추출

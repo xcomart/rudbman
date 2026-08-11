@@ -966,6 +966,231 @@ underneath for a second one to collide with.
   refuses in the same words and in the same place. A view is browsed like a
   table and edited only where the driver reports a key for it.
 
+#### Editing a query result
+
+A `SELECT` somebody wrote has no single table behind it in general, which is
+why the pane above is the one that edits. But the cases that *do* have one are
+recognisable from metadata the wire already carries — `ColumnInfo` holds a
+`table`, `schema` and `catalog` per column — and a result grid that can fix the
+row it is showing is worth having. So a query result becomes editable, under a
+gate with three clauses, and the machinery underneath is the data pane's own,
+**moved rather than copied**.
+
+- **The gate.** Every column that names a source table must name the *same*
+  one; at least one must; and the table's primary key must be present in the
+  result, every column of it. Each clause earns its place. One table, because an
+  `UPDATE` names one. The key in full, because the `WHERE` is built out of the
+  row's own values and a key column that was never selected has no value to be
+  found by — which is also what quietly disqualifies most aggregates, since
+  `SELECT dept, COUNT(*) FROM emp GROUP BY dept` names `emp` in one column but
+  does not carry `emp`'s key. A column that names no table is **read-only rather
+  than disqualifying**: refusing the whole result because one column was
+  computed would refuse `SELECT id, name, name || '!' FROM users`, where the
+  first two are perfectly writable.
+- **The metadata is a hint, and is allowed to be.** JDBC answers the *empty
+  string*, not null, for a column with no source table, so both spellings mean
+  "unknown" and a filter for them is the first thing any of this does. Beyond
+  that the answer is a particular driver's rather than a fact. None of it has to
+  be trusted, because every way out of a wrong hint is a refusal — a table name
+  that is wrong finds no primary key and the result stays read-only, and a name
+  that is right over rows that are not is caught by the update count of exactly
+  1 that every generated `UPDATE` and `DELETE` is already checked against. The
+  hint is only ever allowed to *offer* editing, never to make a statement safe.
+- **What the drivers actually answer**, measured rather than assumed
+  (`crates/rudbman-jdbc/tests/containers.rs` pins all of it; pgjdbc 42.7.4 and
+  Connector/J 9.1.0):
+  * pgjdbc answers `""` for **both** schema and catalog on an ordinary column of
+    an ordinary `public` table, so the gate can never lean on the schema, and
+    only MySQL supplies a catalog at all.
+  * Connector/J does **not** report a table alias where the table was asked
+    for — `FROM t b` answers `t`. It only answers `b` under the legacy
+    `useOldAliasMetadataBehavior=true`. An earlier draft of this section said
+    otherwise; the claim is true of a connection property, not of the product.
+  * pgjdbc reports a column's **alias** as `getColumnName`, so `name` and
+    `label` are both the alias, where Connector/J keeps the two apart. This is
+    why aliasing a *key* column silently turns editing off on PostgreSQL and not
+    on MySQL: the catalogue name the key is matched against is gone. It fails to
+    the read-only side, which is the right direction, but it is a real
+    difference in what the same query offers on two products.
+- **Updates and deletes only; no inserts.** A result carries the columns the
+  user selected, not the columns the table requires, so a row typed into a
+  `SELECT id, name FROM users` is missing every `NOT NULL` column that was not
+  selected and is refused by the server every time. And a row that did insert
+  need not satisfy the query's own `WHERE`, so the reload would not show it —
+  an apply that looks as though it failed. Inserting is what the data pane on
+  that table is for; this is the surface for changing rows you are already
+  looking at.
+- **One copy of the apply.** The staging buffer, the planner, the batch, the
+  transaction, the preview that is the confirmation and the update-count guard
+  are all §7.9's, and they now live where both panes reach them rather than
+  being written twice. The transaction ordering in particular — the rollback
+  *before* autocommit is restored, which is what stops several products
+  committing the half-applied batch — is the last thing this codebase should
+  hold two copies of.
+- **A sort or a re-run replaces the source**, exactly as above, and the query
+  pane's sort wraps the statement in a derived table rather than appending an
+  `ORDER BY`, so it re-runs. The rule is unchanged: ask first while anything is
+  staged, and never carry an edit across by key.
+
+### 7.10 Structure editing (`ALTER TABLE`)
+
+Changing a table's *shape* — adding a column, retyping one, dropping a
+constraint — is a second generator (`rudbman-sql::ddl`, a sibling of §7.9's
+`dml`) and a second surface. It is not an extension of the row editor, and the
+reason is that almost nothing carries over. Row editing has one statement
+grammar that every product spells the same way and a value model the wire
+already carries; structure editing has six grammars that disagree on every
+clause, no bind parameters anywhere, and no undo on two of the six.
+
+- **A statement is a string, and there are no parameters.** No server accepts a
+  `?` in a DDL statement — not for a type, not for a default, not for a name —
+  so `plan_alter` returns `Vec<String>` where `plan_edits` returns SQL plus
+  values. §7.9's rule that a value is never spliced into text does not lapse
+  here so much as it does not apply: there are no values, only names (through
+  `Dialect::quote_ident`, as everywhere) and fragments the user wrote.
+- **Types and defaults are the user's own SQL, passed through unread.** This
+  crate has no type model and is not getting one: `VARCHAR2(30)`,
+  `character varying(30)`, `NVARCHAR(30)` and `TEXT` are four products' answers
+  to one question, and a mapping table between them would be a guess made in
+  the one place that cannot see the server. So a column's type is a string the
+  user typed into a field pre-filled from the catalog, a default is a string in
+  the same shape, and the generator's whole contribution is deciding which
+  clause they land in. What makes that safe is the same thing that makes §7.9's
+  short `WHERE` clause safe — the batch is shown in full before any of it runs,
+  and a type nobody can parse is visible there.
+- **The input is a diff that carries both sides**, not a target state: every
+  changed column arrives as the definition that was read *and* the definition
+  that is wanted. Two dialects need the old side. MySQL's `MODIFY COLUMN` and
+  `CHANGE COLUMN` restate the entire definition, so a change of type that did
+  not also restate `NOT NULL` would quietly drop it; SQL Server's `ALTER COLUMN`
+  restates the type even when only nullability changed, and — the trap — resets
+  the column to nullable when the clause is omitted. The old side is also what
+  lets a column rename be spelled `CHANGE a b <definition>` on MySQL, which is
+  the form that works before 8.0 as well as after, since the client cannot see
+  the server's version.
+- **Where the products differ is a table, not a pile of branches.** Four
+  families: the standard one (PostgreSQL, H2, generic) with an independent
+  clause per attribute — `SET DATA TYPE`, `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`; MySQL, which restates the definition; Oracle's
+  `MODIFY (...)`, which restates *only what changed*, because naming `NOT NULL`
+  on a column that already has it is ORA-01442; and SQL Server, whose
+  `ALTER COLUMN` carries type and nullability together. Even the spellings that
+  look universal are not — `ADD COLUMN` is a syntax error on Oracle and SQL
+  Server, which want a bare `ADD`, and the order of `DEFAULT` and `NOT NULL`
+  inside one definition is a per-dialect field rather than a constant, since
+  Oracle takes the default first and MySQL documents the reverse.
+- **A refusal names the product and the reason.** SQLite can add, drop and
+  rename a column and rename a table, and has no `ALTER` for anything else: a
+  type change there is a table rebuild — new table, copy, drop, rename — which
+  is a data-moving operation wearing a schema operation's clothes, and it is not
+  what a user who typed a new type asked for. SQL Server keeps defaults as named
+  constraints rather than column attributes, so changing one is a drop and an
+  add of a constraint whose name JDBC's `getColumns` does not report. Both are
+  refused, in a line that says which product and why, before anything is
+  planned. A generated statement that fails on the server would say less: the
+  driver's message names a syntax error, not the fact that the product cannot do
+  this at all.
+- **Dropping a constraint needs to know its kind.** Everywhere but MySQL it is
+  `DROP CONSTRAINT <name>`; MySQL has no generic form and spells each kind
+  separately (`DROP PRIMARY KEY`, `DROP FOREIGN KEY`, `DROP INDEX`,
+  `DROP CHECK`). The kind travels with the name, which costs the caller nothing:
+  the detail panel's keys and references tabs already know which is which.
+- **Order within a batch**: constraint drops, then column adds, then column
+  changes, then column drops, then the table rename. Constraints go first
+  because one naming a column blocks that column's drop; the renames go last —
+  both a column's and the table's — so that every statement before them names
+  its target the way the catalog still holds it, which is the same rule twice.
+- **No transaction is pretended.** MySQL and Oracle commit implicitly at every
+  DDL statement, so a batch cannot be rolled back there, and wrapping one in
+  `setAutoCommit(false)` would produce a rollback that silently does nothing on
+  a third of the products rudbman supports. The batch therefore runs under
+  autocommit on every product alike, stops at the first failure, and reports
+  **how many statements were committed before it stopped** — which is a fact the
+  user can act on, where "the transaction was rolled back" would have been a
+  guess. §7.9's model is the opposite one for the opposite reason: DML is
+  transactional everywhere, so there a rollback is a promise that can be kept.
+- **The surface is a pane of its own** — `PaneItem::TableStruct`, a sibling of
+  `TableData` — and the detail panel stays read-only. The panel is one load and
+  one refresh of presentation, and it keeps its rows as display strings: a
+  column's type, size and scale are folded into `VARCHAR(255)` and its
+  nullability into the word `NOT NULL` by the time they are stored, so nothing
+  an editor needs survives in it. The structure pane issues its own
+  `DESCRIBE columns` / `primary_keys` / `imported_keys` and keeps what it reads.
+  The way in is the detail header and the explorer row, beside "view data".
+- **Success reloads rather than patches.** What a server did with a DDL
+  statement is not always what it was asked — a type widened, a default
+  normalized, a column added at the end regardless of where it was typed — so
+  the pane re-reads the catalog and shows that, exactly as §7.9's apply re-runs
+  its `SELECT`.
+- **A failure reloads too, and discards what was staged**, which is where this
+  parts company with §7.9. There a failed apply leaves every staged change
+  where it was, because the rollback means nothing was written; here the
+  statements before the one that failed are committed and cannot be taken back,
+  so the catalog has moved and the staging — keyed, like the row editor's, to
+  indices into the reading it was staged against — is describing a table that no
+  longer exists in that shape. Replaying it would apply the committed half
+  twice. What the user is told instead is exactly how far the batch got: which
+  statement failed, the driver's reason, and how many before it were committed.
+  The whole batch was on screen a moment earlier, so that number locates the
+  work still to do.
+
+#### Creating a table
+
+A table being created is a table whose current shape is empty, so it is **the
+same pane in a second mode** rather than a surface of its own. The column list,
+the one-column-at-a-time form, the live batch preview and the apply are already
+what a person filling in a new table wants, and duplicating them into a dialog
+would be duplicating the largest part of the pane to change the verb. The way in
+is the explorer's context menu on a schema — the place a table would appear —
+and the pane opens with nothing staged but its name field focused.
+
+- **The generator is a second entry point, not a special case of the first.**
+  `plan_create` takes a `TableCreate` and answers with one statement. Sharing
+  `ColumnDef` with `plan_alter` is the whole of what they have in common: an
+  `ALTER` is a batch of amendments to something that exists and has to be
+  ordered against itself, and a `CREATE` is one sentence.
+- **This is where constraints are born, and the only place.** `plan_alter`
+  drops constraints and never adds one, so without table-level clauses here a
+  table made by rudbman could never be given a key or a reference at all. The
+  create path therefore carries `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY`
+  clauses. They are also the easy half of the problem: unlike `ALTER`, whose
+  every clause is spelled differently per product, a table-level constraint in
+  a `CREATE TABLE` is standard everywhere rudbman speaks — **with one exception,
+  and it was found by running it rather than by reading**. A `FOREIGN KEY` that
+  omits the referenced column list is resolved by PostgreSQL to the parent's
+  primary key, and refused outright by MySQL, which answers *"Key reference and
+  table reference don't match"* — a message that names neither the omission nor
+  the fix. This document previously claimed every product took the short form.
+  It does not, so that shape is now refused for MySQL by name and reason, like
+  the other per-product refusals above.
+- **Auto-increment is not modelled.** It is spelled at least five ways —
+  `SERIAL`, `AUTO_INCREMENT` after the type, `IDENTITY`, `GENERATED BY DEFAULT
+  AS IDENTITY`, `AUTOINCREMENT` — and some of those are a type, some a column
+  attribute and some a clause. Since a column's type here is already the user's
+  own SQL passed through unread, all five reach the server exactly as typed and
+  the module needs to know about none of them. That is the same rule that keeps
+  a type table out of §7.10 generally, applied where it would have been most
+  tempting to break it.
+- **No `IF NOT EXISTS`.** Oracle has no such form, so it would be a per-product
+  refusal for a clause whose whole purpose is to say nothing when it matters.
+  A table that already exists is a message the server phrases better than a
+  statement that silently did nothing.
+- **Success turns the pane into the editor for the table it just made.** The
+  reload that follows every apply (above) finds a table where there was none,
+  and the pane goes on as the structure editor for it. That is also what proves
+  the server accepted the shape rather than a shape near it, and it means the
+  common sequence — create a table, then notice a column needs a default — is
+  one surface and no re-navigation.
+- **A refused create keeps what was typed**, which is the one place the discard
+  rule above does not reach — and it does not reach it for the same reason it
+  exists. That rule discards because the statements before the failure are
+  committed and the snapshot's indices no longer describe anything. A create is
+  one statement: when it is refused nothing was committed, the snapshot is the
+  empty one it always was, and the staging was never keyed to it — a table
+  being defined is all additions. So a mistyped type in a thirty-column
+  definition costs the line it is on rather than the definition. The rule is
+  about what a committed statement invalidates, not about failure as such.
+
 ---
 
 ## 8. Settings, profiles and secrets

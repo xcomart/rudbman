@@ -55,6 +55,7 @@ use crate::erd_pane::{ErdPane, ErdTarget};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::QueryPane;
+use crate::struct_pane::StructPane;
 use crate::table_detail::TableDetail;
 
 /// Fraction of a split the first child gets when the split is created.
@@ -132,6 +133,14 @@ pub enum PaneItem {
     /// applied yet. Holds only the panel, because the panel knows which object
     /// it is showing — which is also what tells two of them apart.
     TableData(Entity<DataPane>),
+    /// One table's shape, and the `ALTER TABLE` batch that would change it.
+    ///
+    /// A sibling of [`PaneItem::TableData`] rather than a fifth tab of the
+    /// detail panel, for the reason §7.10 gives: the panel keeps its rows as
+    /// display strings, so nothing an editor needs survives in it. Holds only
+    /// the panel, which knows which table it is editing — and that is also what
+    /// tells two of them apart.
+    TableStruct(Entity<StructPane>),
     /// A canvas of tables, the form under it, and the `SELECT` they describe.
     ///
     /// Numbered like a query pane and for the same reason: several at once is
@@ -152,7 +161,8 @@ impl PaneItem {
     /// The title its tab carries.
     ///
     /// A detail panel is named after the object it describes, qualified by its
-    /// schema; a query pane has no name of its own, so it takes its number; a
+    /// schema; a structure pane the same, unless it is making a table that does
+    /// not exist yet; a query pane has no name of its own, so it takes its number; a
     /// diagram is named after the scope it covers; a builder takes its number,
     /// as the query pane does and for the same reason. A data pane is named
     /// after its table, exactly as the detail panel is: the two never sit in
@@ -164,6 +174,10 @@ impl PaneItem {
             PaneItem::Query { number, .. } => ts!("query.tab", index = number),
             PaneItem::Erd(panel) => panel.read(cx).target().title(),
             PaneItem::TableData(panel) => SharedString::from(panel.read(cx).target().qualified()),
+            // Asked of the pane rather than read off its target, because a
+            // structure pane in its create mode has no table to be named after
+            // yet — only a field somebody is typing into (§7.10).
+            PaneItem::TableStruct(panel) => panel.read(cx).title(),
             PaneItem::QueryBuilder { number, .. } => ts!("builder.tab", index = number),
         }
     }
@@ -179,6 +193,7 @@ impl PaneItem {
             PaneItem::Query { pane, .. } => pane.read(cx).connection(),
             PaneItem::Erd(panel) => panel.read(cx).target().connection,
             PaneItem::TableData(panel) => panel.read(cx).connection(),
+            PaneItem::TableStruct(panel) => panel.read(cx).connection(),
             PaneItem::QueryBuilder { pane, .. } => pane.read(cx).connection(),
         }
     }
@@ -186,13 +201,16 @@ impl PaneItem {
     /// Whether closing this tab would throw away work the user has not sent
     /// anywhere.
     ///
-    /// The one tab that can say yes is a data pane holding staged edits: those
-    /// live in the source under its grid, and dropping the tab drops them with
-    /// no way back (architecture document, §7.9). Everything else either holds
-    /// nothing (a detail panel, a diagram, a builder — all of them views of
-    /// something the database still has) or holds something a close does not
-    /// destroy: a query pane's SQL is the user's text, and closing the tab is
-    /// how one gets rid of it.
+    /// The tabs that can say yes are the three that stage edits: a data pane
+    /// and a query pane hold rows the user has changed but not applied, and a
+    /// structure pane holds columns and constraints. All three live in the
+    /// source under a grid or in indices into a snapshot, and dropping the tab
+    /// drops them with no way back (architecture document, §7.9, §7.10).
+    ///
+    /// A query pane says yes only about its *results*. Its SQL is the user's
+    /// text and closing the tab is how one gets rid of it; what a close must
+    /// not throw away silently is a staged `UPDATE` nobody has sent. Everything
+    /// else here holds nothing but a view of something the database still has.
     ///
     /// A question and not a veto: the caller decides what to do about it, and
     /// the shell answers by refusing the close and saying why
@@ -200,10 +218,9 @@ impl PaneItem {
     pub fn blocks_close(&self, cx: &App) -> bool {
         match self {
             PaneItem::TableData(panel) => panel.read(cx).has_pending_edits(cx),
-            PaneItem::TableDetail(_)
-            | PaneItem::Query { .. }
-            | PaneItem::Erd(_)
-            | PaneItem::QueryBuilder { .. } => false,
+            PaneItem::TableStruct(panel) => panel.read(cx).has_pending_edits(),
+            PaneItem::Query { pane, .. } => pane.read(cx).has_pending_edits(cx),
+            PaneItem::TableDetail(_) | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => false,
         }
     }
 }
@@ -307,6 +324,7 @@ impl Pane {
             PaneItem::Query { .. }
             | PaneItem::Erd(_)
             | PaneItem::TableData(_)
+            | PaneItem::TableStruct(_)
             | PaneItem::QueryBuilder { .. } => false,
         })
     }
@@ -322,6 +340,24 @@ impl Pane {
             PaneItem::TableDetail(_)
             | PaneItem::Query { .. }
             | PaneItem::Erd(_)
+            | PaneItem::TableStruct(_)
+            | PaneItem::QueryBuilder { .. } => false,
+        })
+    }
+
+    /// The index of the tab editing `target`'s structure, if one is open here.
+    ///
+    /// A third lookup over the same object rather than a shared one, for
+    /// [`Pane::data_of`]'s reason: the shape of a table, its rows and its
+    /// description are three tabs a user may perfectly well want at once, and
+    /// each has to find its own.
+    pub fn struct_of(&self, target: &ObjectTarget, cx: &App) -> Option<usize> {
+        self.items.iter().position(|item| match item {
+            PaneItem::TableStruct(panel) => panel.read(cx).target() == target,
+            PaneItem::TableDetail(_)
+            | PaneItem::Query { .. }
+            | PaneItem::Erd(_)
+            | PaneItem::TableData(_)
             | PaneItem::QueryBuilder { .. } => false,
         })
     }
@@ -337,6 +373,7 @@ impl Pane {
             PaneItem::TableDetail(_)
             | PaneItem::Query { .. }
             | PaneItem::TableData(_)
+            | PaneItem::TableStruct(_)
             | PaneItem::QueryBuilder { .. } => false,
         })
     }

@@ -22,6 +22,21 @@ tasks.withType(Javadoc).configureEach {
     options.encoding = 'UTF-8'
 }
 
+// A configuration nothing compiles or runs against, holding the JDBC drivers
+// the *Rust* container tests need.
+//
+// `crates/rudbman-jdbc/tests/containers.rs` looks for a driver jar the way
+// `tests/h2.rs` looks for H2's: in the Gradle cache, under
+// `<gradle home>/caches/modules-2/files-2.1/<group>/<artifact>/**`. H2 lands
+// there because the bridge's own Java suite really does use it. These two do
+// not — no Java test in this project ever loads a PostgreSQL or a MySQL
+// driver — so declaring them `testImplementation` would put them on a class
+// path with no use for them and say something untrue about this suite. This
+// configuration fills the cache without claiming they are part of any build.
+configurations {
+    drivers
+}
+
 dependencies {
     // Gson is the only runtime dependency. Metadata values are arbitrary strings
     // handed to us by drivers (table comments, vendor error messages, control
@@ -34,6 +49,26 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+
+    // See the `drivers` configuration above: for `crates/rudbman-jdbc/tests`,
+    // not for anything in `src`.
+    drivers 'org.postgresql:postgresql:42.7.4'
+    drivers 'com.mysql:mysql-connector-j:9.1.0'
+}
+
+// Resolution *is* the work: a file in the cache is all the Rust tests want.
+// The paths are printed so that a developer who would rather point
+// RUDBMAN_TEST_PG_JAR / RUDBMAN_TEST_MYSQL_JAR at them by hand can read them
+// off, and so that the task says something when it has nothing to download.
+tasks.register('drivers') {
+    group = 'verification'
+    description = 'Downloads the PostgreSQL and MySQL JDBC drivers into the Gradle cache, ' +
+        'where the Rust container tests (crates/rudbman-jdbc/tests/containers.rs) find them.'
+    def jars = configurations.drivers
+    inputs.files jars
+    doLast {
+        jars.each { println it.absolutePath }
+    }
 }
 
 // The JVM is booted with -Djava.class.path=<bridge.jar> and nothing else

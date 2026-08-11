@@ -19,6 +19,8 @@ menu:
   # SELECT against it.
   query_object: Ausgewähltes Objekt abfragen
   view_data: Daten ansehen
+  view_structure: Struktur bearbeiten
+  new_table: Neue Tabelle
   open_sql_file: SQL-Datei öffnen…
   extract_script: Skript extrahieren…
   transfer_table: Zeilen übertragen…
@@ -386,6 +388,7 @@ query:
   confirm_body: "Anweisungen, die Daten ändern: %{count}"
   confirm_run: Ausführen
   lob_unsupported: Der LOB-Betrachter existiert noch nicht.
+  not_editable: Diese Zeilen stammen nicht aus einer Tabelle samt ausgewähltem Primärschlüssel; sie lassen sich lesen, aber nicht ändern.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Prüfen Sie die Syntax der Anweisung und Ihre Leserechte auf das Genannte.
   hint_constraint: Die Anweisung verletzt eine Bedingung der Tabelle.
@@ -422,6 +425,53 @@ data:
   apply_null_key: "Das %{column} dieser Zeile ist NULL, daher kann keine Anweisung sie wiederfinden."
   apply_unknown_key: "Die Schlüsselspalte %{column} ist nicht unter den gelesenen Spalten. Laden Sie neu und versuchen Sie es erneut."
   apply_not_planned: "Diese Änderungen lassen sich nicht als Anweisungen schreiben: %{detail}"
+
+struct:
+  loading: wird geladen …
+  refresh: Neu laden
+  discard: Verwerfen
+  discard_first: Verwerfen Sie die ausstehenden Änderungen zuerst.
+  read_only: "Diese Verbindung ist schreibgeschützt; die Struktur dieser Tabelle lässt sich lesen, aber nicht ändern."
+  pending: "%{count} ausstehende Änderungen"
+  columns: Spalten
+  column: Spalte
+  type: Typ
+  nullable: "Null"
+  default: Vorgabe
+  state: Status
+  state_changed: geändert
+  state_dropped: zu löschen
+  state_added: neu
+  drop: Löschen
+  keep: Behalten
+  remove: Entfernen
+  add_column: Spalte hinzufügen
+  edit_column: Ausgewählte Spalte
+  no_selection: Wählen Sie oben eine Spalte, um sie zu bearbeiten.
+  name: Name
+  has_default: Hat eine Vorgabe
+  constraints: Constraints
+  kind: Art
+  empty: nichts vorhanden
+  no_constraint_drop: "%{dialect} kennt kein ALTER TABLE, das ein Constraint löscht."
+  new_constraint: Neues Constraint
+  constraint_name: Name (optional)
+  references: Referenzierte Tabelle
+  referenced_columns: Referenzierte Spalten (optional)
+  add_constraint: Constraint hinzufügen
+  rename_table: Tabelle umbenennen
+  new_name: Neuer Name
+  new_table: Neue Tabelle
+  new_table_in: "Neue Tabelle in %{scope}"
+  table_name: Tabellenname
+  statements: Anweisungen
+  apply: Anwenden
+  create: Tabelle anlegen
+  apply_title: "%{count} Anweisungen anwenden"
+  apply_no_undo: "Das lässt sich nicht rückgängig machen: Jede Anweisung wird beim Ausführen sofort festgeschrieben, und kein Rollback holt sie zurück."
+  applying: wird angewendet …
+  applied: "%{count} Anweisungen angewendet."
+  apply_stopped: "Anweisung %{number} von %{total} ist fehlgeschlagen. Die %{committed} davor wurden festgeschrieben und lassen sich nicht rückgängig machen."
 
 extract:
   title: Skript extrahieren

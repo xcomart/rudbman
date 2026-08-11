@@ -19,6 +19,8 @@ menu:
   # SELECT against it.
   query_object: 查询所选对象
   view_data: 查看数据
+  view_structure: 编辑结构
+  new_table: 新建表
   open_sql_file: 打开 SQL 文件…
   extract_script: 提取脚本…
   transfer_table: 传输数据行…
@@ -386,6 +388,7 @@ query:
   confirm_body: "会修改数据的语句：%{count} 条"
   confirm_run: 执行
   lob_unsupported: LOB 查看器尚未实现。
+  not_editable: 这些行并非来自单一表且未选出其主键，因此只能读取，不能修改。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 请检查语句的语法，以及对其所引用对象的读取权限。
   hint_constraint: 语句违反了表上声明的约束。
@@ -422,6 +425,53 @@ data:
   apply_null_key: "该行的 %{column} 为 NULL，无法再次定位该行。"
   apply_unknown_key: "读取到的列中没有键列 %{column}。请刷新后重试。"
   apply_not_planned: "这些更改无法转换为语句：%{detail}"
+
+struct:
+  loading: 正在加载…
+  refresh: 刷新
+  discard: 放弃
+  discard_first: 请先放弃待处理的更改。
+  read_only: 此连接为只读，只能查看该表的结构而不能修改。
+  pending: "%{count} 项待处理的更改"
+  columns: 列
+  column: 列
+  type: 类型
+  nullable: 可空
+  default: 默认值
+  state: 状态
+  state_changed: 已改
+  state_dropped: 待删除
+  state_added: 新增
+  drop: 删除
+  keep: 保留
+  remove: 移除
+  add_column: 添加列
+  edit_column: 所选列
+  no_selection: 请在上方选择一列进行编辑。
+  name: 名称
+  has_default: 有默认值
+  constraints: 约束
+  kind: 种类
+  empty: 无
+  no_constraint_drop: "%{dialect} 没有可删除约束的 ALTER TABLE。"
+  new_constraint: 新建约束
+  constraint_name: 名称（可选）
+  references: 引用的表
+  referenced_columns: 引用的列（可选）
+  add_constraint: 添加约束
+  rename_table: 重命名表
+  new_name: 新名称
+  new_table: 新建表
+  new_table_in: "在 %{scope} 中新建表"
+  table_name: 表名
+  statements: 语句
+  apply: 应用
+  create: 创建表
+  apply_title: "应用 %{count} 条语句"
+  apply_no_undo: 此操作无法撤销。每条语句一经执行即提交，回滚也收不回来。
+  applying: 正在应用…
+  applied: "已应用 %{count} 条语句。"
+  apply_stopped: "第 %{number} 条语句（共 %{total} 条）失败。它之前的 %{committed} 条已提交，无法撤销。"
 
 extract:
   title: 提取脚本

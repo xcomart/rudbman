@@ -71,6 +71,27 @@
 //! that knows how to format one is on the far side of the bridge. That module
 //! documents the reasoning.
 //!
+//! # Writing DDL
+//!
+//! [`mod@ddl`] is the same idea one level up, for the structure pane: hand
+//! [`plan_alter`] one table's staged structure edits — a column added, another
+//! retyped, a constraint dropped, the table renamed — and it answers with the
+//! `ALTER TABLE` statements that apply them, in an order the catalog can
+//! survive. Nothing is bound there and nothing can be: no server takes a `?` in
+//! DDL, so a statement is a `String`, and a column's type and default are the
+//! user's own SQL passed through unread. Where the products disagree they
+//! disagree completely — `ADD COLUMN` is a syntax error on two of them — and a
+//! change one of them cannot express is refused by name rather than generated
+//! and rejected. That module documents the reasoning.
+//!
+//! The same module writes the statement that makes a table in the first place:
+//! [`plan_create`] takes a [`TableCreate`] — a name, its columns and the
+//! [`TableConstraint`]s it is born with — and answers with the one
+//! `CREATE TABLE` that creates it, across several lines because that statement
+//! is read before it is run. It is where a primary key, a unique constraint or
+//! a foreign key can be written at all: [`plan_alter`] drops constraints and
+//! never adds one.
+//!
 //! # Known limitations
 //!
 //! Written down rather than half-implemented:
@@ -95,6 +116,11 @@
 //!   what the vendors disagree about.
 //! * [`mod@ident`] — [`Dialect::quote_ident`] and [`Dialect::qualify`], for the
 //!   callers that write SQL rather than read it.
+//! * [`mod@ddl`] — [`plan_alter`], [`TableAlter`], [`ColumnDef`],
+//!   [`ColumnChange`]: one table's staged structure edits turned into
+//!   `ALTER TABLE` statements; and [`plan_create`], [`TableCreate`],
+//!   [`TableConstraint`]: a new table turned into the `CREATE TABLE` that
+//!   makes it.
 //! * [`mod@dml`] — [`plan_edits`], [`TableEdits`], [`DmlStatement`],
 //!   [`DmlValue`]: the grid's staged edits turned into parameterized SQL.
 //! * [`mod@lexer`] — [`Token`], [`TokenKind`], [`LineState`], [`lex_line`],
@@ -105,6 +131,7 @@
 
 #![warn(missing_docs)]
 
+pub mod ddl;
 pub mod dialect;
 pub mod dml;
 pub mod ident;
@@ -113,6 +140,10 @@ pub mod statement;
 
 mod keywords;
 
+pub use ddl::{
+    ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, DdlError, TableAlter, TableConstraint,
+    TableCreate, Unsupported, plan_alter, plan_create,
+};
 pub use dialect::{Dialect, DialectId, Syntax};
 pub use dml::{
     DmlError, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,

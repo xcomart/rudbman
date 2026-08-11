@@ -44,19 +44,19 @@
 //! [`EditSet::changed`] groups by row into `updates`, and [`EditSet::inserted`]
 //! is already one `Vec` per row with one cell per column, which is `inserts`
 //! once [`StagedCell`] is mapped onto `InsertCell` — `Unset` to `Unset`, the
-//! other two to `Set`. [`plan_apply`] is that mapping, and it ends where the
-//! pane picks up: a list of [`PlannedStatement`]s, each carrying the SQL, the
-//! bind parameters, the values as the confirmation shows them, and whether the
-//! server has to report exactly one row for it.
+//! other two to `Set`. [`plan_apply`] is that mapping, and it ends where
+//! [`crate::row_apply`] picks up: a list of [`PlannedStatement`]s, each carrying
+//! the SQL, the bind parameters, the values as the confirmation shows them, and
+//! whether the server has to report exactly one row for it.
 //!
-//! That the planning lives here rather than in the pane is the same choice the
-//! rest of this module makes. It has no window and no JVM in it: everything it
-//! decides — which rows become which statement, which key value goes in a
-//! `WHERE`, whether what the user typed can be bound to the column's type at
-//! all — is decidable from the buffer and the column metadata alone, and it is
-//! the half of the apply worth testing exhaustively. What is left for the pane
-//! is the part that genuinely needs a session: running the statements in order,
-//! counting the rows each one reached, and rolling back.
+//! That the planning lives here rather than beside the sending is the same
+//! choice the rest of this module makes. It has no window and no JVM in it:
+//! everything it decides — which rows become which statement, which key value
+//! goes in a `WHERE`, whether what the user typed can be bound to the column's
+//! type at all — is decidable from the buffer and the column metadata alone, and
+//! it is the half of the apply worth testing exhaustively. What is left for
+//! [`crate::row_apply`] is the part that genuinely needs a session: running the
+//! statements in order, counting the rows each one reached, and rolling back.
 //!
 //! Nothing here sends anything.
 
@@ -69,7 +69,7 @@ use rudbman_sql::{
     Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
 
-use crate::query_source::{ResultSource, bit_is_boolean, sql_types};
+use crate::query_source::{ResultSource, bit_is_boolean, column_name, key_index, sql_types};
 
 /// What has been staged into one cell.
 ///
@@ -345,6 +345,37 @@ impl EditSet {
     }
 }
 
+/// Where the table a generated statement will name came from.
+///
+/// The one thing that decides whether a column the driver named no source table
+/// for may still be written to, and the two answers are opposite for a good
+/// reason rather than by taste.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableSource {
+    /// The caller knows the table independently of the result.
+    ///
+    /// The data pane, which read its [`ObjectTarget`] off the catalogue before
+    /// it ran its `SELECT` and hands those same name parts to
+    /// [`plan_apply`]. The statement names *that* table whatever the columns
+    /// say, so a column the driver would not name a table for is still that
+    /// table's column and is perfectly writable — and it has to be, because
+    /// drivers do answer `""` for `getTableName` on a plain `SELECT * FROM t`.
+    ///
+    /// [`ObjectTarget`]: crate::explorer::ObjectTarget
+    Known,
+    /// The table was inferred from the columns themselves (§7.9's gate).
+    ///
+    /// The query pane, where the metadata under test *is* the thing that named
+    /// the table. A column that named none is a computed one — an expression, a
+    /// literal, an aggregate — and there is nothing for a `SET` clause to
+    /// assign to: [`column_name`] falls back to the label for a column with no
+    /// catalogue name, so a statement built from one would try to assign to
+    /// something spelled `name || '!'`. Read-only whatever else the column
+    /// says, and §7.9 lets it stand in an otherwise editable result rather than
+    /// refusing the result over it.
+    Inferred,
+}
+
 /// What one column will and will not accept.
 ///
 /// Read once off the result's [`ColumnInfo`], because it cannot change while
@@ -358,6 +389,11 @@ struct ColumnRules {
     /// read-only, and an auto-increment key — which is not merely pointless to
     /// type into but actively wrong, since leaving it out is what gets the
     /// server to generate one.
+    ///
+    /// And false for a third **only under [`TableSource::Inferred`]**: a column
+    /// that names no source table, which is a computed one. That clause is the
+    /// query pane's alone, and deliberately not global — see [`TableSource`]
+    /// for why the same column is writable in the data pane.
     writable: bool,
     /// Whether the catalogue allows NULL.
     ///
@@ -378,13 +414,30 @@ struct ColumnRules {
 const COLUMN_NO_NULLS: i32 = 0;
 
 impl ColumnRules {
-    fn of(column: &ColumnInfo) -> Self {
+    fn of(column: &ColumnInfo, table: TableSource) -> Self {
+        let named = match table {
+            // The caller's table stands for every column of the result.
+            TableSource::Known => true,
+            TableSource::Inferred => has_source_table(column),
+        };
         Self {
-            writable: !column.read_only && !column.auto_increment,
+            writable: !column.read_only && !column.auto_increment && named,
             nullable: column.nullable != COLUMN_NO_NULLS,
             kind: dml_kind(column),
         }
     }
+}
+
+/// Whether the driver named a table this column was read from.
+///
+/// The empty string is filtered out as well as the absent value, because JDBC
+/// answers `""` — not null — for a column with no source table, and both
+/// spellings mean "unknown" (§7.9).
+fn has_source_table(column: &ColumnInfo) -> bool {
+    column
+        .table
+        .as_deref()
+        .is_some_and(|table| !table.is_empty())
 }
 
 /// The bind form a column's values take, from its `java.sql.Types` constant.
@@ -446,12 +499,22 @@ impl EditableSource {
     ///
     /// `writable` is the pane's answer to "may anything here be changed at
     /// all"; false makes every cell refuse an edit however the columns are
-    /// described.
-    pub fn new(base: ResultSource, columns: &[ColumnInfo], writable: bool) -> Self {
+    /// described. `table` says where the table a statement will name comes
+    /// from, which is the one thing that decides whether a column the driver
+    /// named no table for is writable — see [`TableSource`].
+    pub fn new(
+        base: ResultSource,
+        columns: &[ColumnInfo],
+        writable: bool,
+        table: TableSource,
+    ) -> Self {
         Self {
             base,
             edits: EditSet::new(),
-            columns: columns.iter().map(ColumnRules::of).collect(),
+            columns: columns
+                .iter()
+                .map(|column| ColumnRules::of(column, table))
+                .collect(),
             writable,
         }
     }
@@ -547,6 +610,25 @@ impl EditableSource {
     /// Whether anything here may be changed at all.
     pub fn writable(&self) -> bool {
         self.writable
+    }
+
+    /// Marks the key columns and opens the source for editing, together.
+    ///
+    /// For the caller whose key arrives *after* the rows do. The data pane
+    /// reads its key before it runs its `SELECT`, so it marks the base and then
+    /// wraps it; a query result cannot — the table is only recognisable from
+    /// the columns the result came back with, and asking the catalogue about it
+    /// is a second round trip §7.9 refuses to make the rows wait for. So the
+    /// grid is built read-only and this is what the answer does to it.
+    ///
+    /// The two halves are one call rather than two on purpose: a source that
+    /// became writable without its key marked would draw an editable grid with
+    /// nothing emphasised as the thing an `UPDATE` will find the row by, and
+    /// one marked without becoming writable would say the opposite. They are
+    /// the same decision.
+    pub fn make_editable(&mut self, keys: &[String]) {
+        self.base.mark_primary_keys(keys);
+        self.writable = true;
     }
 }
 
@@ -939,34 +1021,6 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// The name a statement should spell a column with.
-///
-/// The catalogue's name and not [`ColumnInfo::display_name`]'s preference for
-/// the label: a `SELECT *` gives the two the same value, but where a driver
-/// reports a label of its own it is a heading, and a heading is not something
-/// an `UPDATE` can assign to.
-fn column_name(column: &ColumnInfo) -> String {
-    column
-        .name
-        .as_deref()
-        .filter(|name| !name.is_empty())
-        .map_or_else(|| column.display_name(), str::to_string)
-}
-
-/// Which column of the result a key column's name refers to.
-///
-/// Exactly first, then ignoring case. The second pass is for the products that
-/// answer `getPrimaryKeys` in one case and `ResultSetMetaData` in another —
-/// which several do, and where the exact match would leave a keyed table looking
-/// keyless.
-fn key_index(names: &[String], wanted: &str) -> Option<usize> {
-    names.iter().position(|name| name == wanted).or_else(|| {
-        names
-            .iter()
-            .position(|name| name.eq_ignore_ascii_case(wanted))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use rudbman_grid::GridColumnKind;
@@ -995,7 +1049,62 @@ mod tests {
             &columns,
         ));
         base.mark_primary_keys(&["ID".to_string()]);
-        EditableSource::new(base, &columns, writable)
+        EditableSource::new(base, &columns, writable, TableSource::Known)
+    }
+
+    /// The same column, read two ways.
+    ///
+    /// A driver that answers the empty string for `getTableName` — which they
+    /// do, even for a plain `SELECT * FROM t` — is saying "unknown", and what
+    /// unknown *means* depends entirely on who is asking. The data pane already
+    /// knows the table and writes back to it, so the column is writable; the
+    /// query pane worked the table out from this very metadata, so a column
+    /// that contributed none of it is a computed one with no name a `SET`
+    /// clause could use.
+    ///
+    /// Getting this wrong in the global direction is a data pane that silently
+    /// refuses every keystroke on every product whose driver is terse, so it is
+    /// asserted in both directions here.
+    #[test]
+    fn an_unnamed_source_table_is_read_only_only_where_the_table_was_inferred() {
+        // `info` builds a column with a null table; the empty string is the
+        // other spelling of the same answer, and both have to behave alike.
+        let columns = vec![info(1, "ID", 4, 0), unnamed_table(2, "NAME")];
+        let rows = |table| {
+            let mut base = ResultSource::new(&columns);
+            base.push(render_batch(
+                &batch(&[&[Some("1")], &[Some("a")]]),
+                &columns,
+            ));
+            EditableSource::new(base, &columns, true, table)
+        };
+
+        let known = rows(TableSource::Known);
+        assert!(
+            known.cell_editable(0, 0) && known.cell_editable(0, 1),
+            "the data pane stopped writing to a column its driver would not name"
+        );
+
+        let inferred = rows(TableSource::Inferred);
+        assert!(
+            !inferred.cell_editable(0, 0),
+            "a null source table is the same answer as an empty one"
+        );
+        assert!(
+            !inferred.cell_editable(0, 1),
+            "a computed column took an edit in a query result"
+        );
+    }
+
+    /// A column whose source table is the **empty string** rather than null.
+    fn unnamed_table(index: i32, name: &str) -> ColumnInfo {
+        serde_json::from_str(&format!(
+            r#"{{"index":{index},"name":"{name}","label":"{name}","table":"","schema":"",
+                 "catalog":"","type":12,"type_name":"T","jdbc_type":"T",
+                 "class_name":null,"precision":0,"scale":0,"display_size":0,
+                 "nullable":2,"auto_increment":false,"signed":true,"read_only":false,"kind":4}}"#
+        ))
+        .expect("parses")
     }
 
     /// The overlay answers before the rows do, and only where something is
@@ -1227,7 +1336,12 @@ mod tests {
         columns[0].auto_increment = true;
         columns[2].read_only = true;
         columns[1].nullable = COLUMN_NO_NULLS;
-        let source = EditableSource::new(ResultSource::new(&columns), &columns, true);
+        let source = EditableSource::new(
+            ResultSource::new(&columns),
+            &columns,
+            true,
+            TableSource::Known,
+        );
 
         assert!(!source.cell_editable(0, 0), "an auto-increment key");
         assert!(!source.cell_editable(0, 2), "a read-only column");
@@ -1241,7 +1355,12 @@ mod tests {
     fn an_auto_increment_column_is_not_typed_into_on_a_new_row() {
         let mut columns = vec![info(1, "ID", 4, 0), info(2, "NAME", 12, 0)];
         columns[0].auto_increment = true;
-        let mut source = EditableSource::new(ResultSource::new(&columns), &columns, true);
+        let mut source = EditableSource::new(
+            ResultSource::new(&columns),
+            &columns,
+            true,
+            TableSource::Known,
+        );
         source.edits_mut().add_insert(2);
 
         assert!(!source.cell_editable(0, 0));
@@ -1289,7 +1408,7 @@ mod tests {
             &columns,
         ));
         base.mark_primary_keys(&["ID".to_string()]);
-        EditableSource::new(base, &columns, true)
+        EditableSource::new(base, &columns, true, TableSource::Known)
     }
 
     /// Plans what is staged against [`plan_source`].
@@ -1518,7 +1637,7 @@ mod tests {
         let columns = vec![info(1, "NAME", 12, 0), info(2, "NOTE", 12, 0)];
         let mut base = ResultSource::new(&columns);
         base.push(render_batch(&batch(&[&[None], &[Some("z")]]), &columns));
-        let mut source = EditableSource::new(base, &columns, true);
+        let mut source = EditableSource::new(base, &columns, true, TableSource::Known);
         source.stage(0, 1, StagedCell::Text("Z".into()));
 
         let planned = plan_apply(

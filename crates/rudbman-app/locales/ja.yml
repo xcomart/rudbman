@@ -19,6 +19,8 @@ menu:
   # SELECT against it.
   query_object: 選択したオブジェクトを照会
   view_data: データを表示
+  view_structure: 構造を編集
+  new_table: 新しいテーブル
   open_sql_file: SQL ファイルを開く…
   extract_script: スクリプトを抽出…
   transfer_table: 行を転送…
@@ -386,6 +388,7 @@ query:
   confirm_body: "データを変更する文: %{count} 件"
   confirm_run: 実行する
   lob_unsupported: LOB ビューアーはまだありません。
+  not_editable: この行は主キーを選択した単一のテーブルから来ていないため、読み取りはできますが変更はできません。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 文の構文と、対象を読む権限があるかを確認してください。
   hint_constraint: テーブルが宣言している制約に違反しました。
@@ -422,6 +425,53 @@ data:
   apply_null_key: "この行の %{column} が NULL のため、行を特定できません。"
   apply_unknown_key: "読み込んだ列の中にキー列 %{column} がありません。再読み込みしてやり直してください。"
   apply_not_planned: "この変更は文にできません: %{detail}"
+
+struct:
+  loading: 読み込み中…
+  refresh: 再読み込み
+  discard: 取り消し
+  discard_first: 保留中の変更を先に取り消してください。
+  read_only: 読み取り専用の接続のため、このテーブルの構造は閲覧のみできます。
+  pending: "保留中の変更 %{count} 件"
+  columns: 列
+  column: 列
+  type: 型
+  nullable: NULL 可
+  default: 既定値
+  state: 状態
+  state_changed: 変更
+  state_dropped: 削除予定
+  state_added: 新規
+  drop: 削除
+  keep: 元に戻す
+  remove: 取り除く
+  add_column: 列を追加
+  edit_column: 選択中の列
+  no_selection: 上の一覧から列を選ぶと編集できます。
+  name: 名前
+  has_default: 既定値を持つ
+  constraints: 制約
+  kind: 種類
+  empty: ありません
+  no_constraint_drop: "%{dialect} には制約を削除する ALTER TABLE がありません。"
+  new_constraint: 新しい制約
+  constraint_name: 名前（任意）
+  references: 参照先テーブル
+  referenced_columns: 参照先の列（任意）
+  add_constraint: 制約を追加
+  rename_table: テーブル名の変更
+  new_name: 新しい名前
+  new_table: 新しいテーブル
+  new_table_in: "%{scope} に新しいテーブル"
+  table_name: テーブル名
+  statements: 文
+  apply: 適用
+  create: テーブルを作成
+  apply_title: "%{count} 件の文を適用"
+  apply_no_undo: これは取り消せません。各文は実行された時点でコミットされ、ロールバックでも戻せません。
+  applying: 適用中…
+  applied: "%{count} 件の文を適用しました。"
+  apply_stopped: "%{total} 件中 %{number} 件目の文が失敗しました。その前の %{committed} 件はコミット済みで取り消せません。"
 
 extract:
   title: スクリプトの抽出

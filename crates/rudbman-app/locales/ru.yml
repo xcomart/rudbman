@@ -19,6 +19,8 @@ menu:
   # SELECT against it.
   query_object: Запросить выбранный объект
   view_data: Показать данные
+  view_structure: Изменить структуру
+  new_table: Новая таблица
   open_sql_file: Открыть файл SQL…
   extract_script: Извлечь скрипт…
   transfer_table: Перенести строки…
@@ -386,6 +388,7 @@ query:
   confirm_body: "Инструкций, изменяющих данные: %{count}"
   confirm_run: Выполнить
   lob_unsupported: Просмотрщик LOB ещё не готов.
+  not_editable: Эти строки получены не из одной таблицы с выбранным первичным ключом, поэтому их можно читать, но не изменять.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Проверьте синтаксис инструкции и права на чтение того, что она называет.
   hint_constraint: Инструкция нарушила ограничение, объявленное таблицей.
@@ -422,6 +425,53 @@ data:
   apply_null_key: "Значение %{column} в этой строке равно NULL, поэтому найти её снова невозможно."
   apply_unknown_key: "Ключевого столбца %{column} нет среди прочитанных столбцов. Обновите и повторите попытку."
   apply_not_planned: "Эти изменения нельзя записать в виде операторов: %{detail}"
+
+struct:
+  loading: загрузка…
+  refresh: Обновить
+  discard: Отменить
+  discard_first: Сначала отмените несохранённые изменения.
+  read_only: Соединение доступно только для чтения, поэтому структуру этой таблицы можно только читать.
+  pending: "Несохранённых изменений: %{count}"
+  columns: Столбцы
+  column: Столбец
+  type: Тип
+  nullable: "Null"
+  default: По умолчанию
+  state: Состояние
+  state_changed: изменён
+  state_dropped: к удалению
+  state_added: новый
+  drop: Удалить
+  keep: Вернуть
+  remove: Убрать
+  add_column: Добавить столбец
+  edit_column: Выбранный столбец
+  no_selection: Выберите столбец выше, чтобы изменить его.
+  name: Имя
+  has_default: Есть значение по умолчанию
+  constraints: Ограничения
+  kind: Вид
+  empty: ничего нет
+  no_constraint_drop: "В %{dialect} нет ALTER TABLE, удаляющего ограничение."
+  new_constraint: Новое ограничение
+  constraint_name: Имя (необязательно)
+  references: Целевая таблица
+  referenced_columns: Целевые столбцы (необязательно)
+  add_constraint: Добавить ограничение
+  rename_table: Переименовать таблицу
+  new_name: Новое имя
+  new_table: Новая таблица
+  new_table_in: "Новая таблица в %{scope}"
+  table_name: Имя таблицы
+  statements: Операторы
+  apply: Применить
+  create: Создать таблицу
+  apply_title: "Применить операторов: %{count}"
+  apply_no_undo: "Это нельзя отменить: каждый оператор фиксируется сразу при выполнении, и откат его не вернёт."
+  applying: применение…
+  applied: "Применено операторов: %{count}."
+  apply_stopped: "Оператор %{number} из %{total} завершился ошибкой. Предыдущие (%{committed}) зафиксированы, и отменить их нельзя."
 
 extract:
   title: Извлечение скрипта

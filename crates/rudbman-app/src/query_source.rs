@@ -382,10 +382,51 @@ pub fn page(
     })
 }
 
+/// The name a statement — or a key lookup — should spell a column with.
+///
+/// The catalogue's name and not [`ColumnInfo::display_name`]'s preference for
+/// the label: a `SELECT *` gives the two the same value, but where a driver
+/// reports a label of its own it is a heading, and a heading is not something
+/// an `UPDATE` can assign to. A column with no catalogue name at all — a
+/// computed expression — has only its heading, so that is what is left.
+pub(crate) fn column_name(column: &ColumnInfo) -> String {
+    column
+        .name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| column.display_name(), str::to_string)
+}
+
+/// Which column of a result a key column's name refers to.
+///
+/// Exactly first, then ignoring case. The second pass is for the products that
+/// answer `getPrimaryKeys` in one case and `ResultSetMetaData` in another —
+/// which several do, and where the exact match would leave a keyed table looking
+/// keyless.
+///
+/// `names` is always [`column_name`]'s answer for each column, which is what
+/// makes `SELECT id AS pk FROM t` find its key: the catalogue still calls that
+/// column `id`, and the alias is only what the heading says. Both
+/// [`ResultSource::mark_primary_keys`] and [`crate::data_edit::plan_apply`] ask
+/// this one function, so the column the grid marks and the column the `WHERE`
+/// clause is written from can never be two different columns.
+pub(crate) fn key_index(names: &[String], wanted: &str) -> Option<usize> {
+    names.iter().position(|name| name == wanted).or_else(|| {
+        names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(wanted))
+    })
+}
+
 /// One column's heading, as the grid needs it.
 #[derive(Clone, Debug)]
 struct SourceColumn {
+    /// What the heading draws: the label where the driver reports one.
     name: String,
+    /// What a key is matched against: [`column_name`]'s answer. Kept beside the
+    /// heading rather than derived from it because an aliased column has two
+    /// names and only one of them is the table's.
+    key_name: String,
     kind: GridColumnKind,
     /// Whether the grid emphasises it as part of the primary key. False unless
     /// somebody who knows the key said otherwise; see
@@ -416,6 +457,7 @@ impl ResultSource {
                 .iter()
                 .map(|column| SourceColumn {
                     name: column.display_name(),
+                    key_name: column_name(column),
                     kind: column_kind(column),
                     primary_key: false,
                 })
@@ -445,17 +487,31 @@ impl ResultSource {
     /// Marks the columns `keys` names as the primary key.
     ///
     /// Nothing here can work this out on its own — a result carries no key
-    /// metadata — so it is told, by the one caller that asked the driver first:
-    /// the data pane, which reads `DESCRIBE primary_keys` before it runs its
-    /// `SELECT` (architecture document, §7.9). A query result never calls this
-    /// and keeps the honest answer, which is "no key".
+    /// metadata — so it is told, by a caller that asked the driver first: the
+    /// data pane, which reads `DESCRIBE primary_keys` before it runs its
+    /// `SELECT` (architecture document, §7.9). A result nobody tells keeps the
+    /// honest answer, which is "no key".
     ///
-    /// Names are compared exactly, because both sides come from the same
-    /// catalogue and a case-insensitive match would mark the wrong column on
-    /// the products where two can differ by case alone.
+    /// Matching is [`key_index`]'s and not the heading's, which is the whole
+    /// point of [`SourceColumn::key_name`] existing: `SELECT id AS pk FROM t`
+    /// draws `pk` and the driver still calls the key `id`, so a comparison
+    /// against the heading would leave the key column unmarked while
+    /// [`crate::data_edit::plan_apply`] went on writing a `WHERE` clause from
+    /// it. The two used to disagree; they now ask the same function, so they
+    /// cannot.
     pub fn mark_primary_keys(&mut self, keys: &[String]) {
+        let names: Vec<String> = self
+            .columns
+            .iter()
+            .map(|column| column.key_name.clone())
+            .collect();
         for column in &mut self.columns {
-            column.primary_key = keys.contains(&column.name);
+            column.primary_key = false;
+        }
+        for wanted in keys {
+            if let Some(index) = key_index(&names, wanted) {
+                self.columns[index].primary_key = true;
+            }
         }
     }
 
@@ -715,5 +771,42 @@ pub(crate) mod tests {
         );
         assert_eq!(source.column(1).align, rudbman_grid::GridColumnAlign::Left);
         assert!(!source.column(0).primary_key, "a query result has no key");
+    }
+
+    /// The same column metadata, with a label the catalogue name does not share.
+    fn aliased(index: i32, name: &str, label: &str) -> ColumnInfo {
+        serde_json::from_str(&format!(
+            r#"{{"index":{index},"name":"{name}","label":"{label}","table":"T","schema":null,
+                 "catalog":null,"type":4,"type_name":"T","jdbc_type":"T",
+                 "class_name":null,"precision":0,"scale":0,"display_size":0,
+                 "nullable":2,"auto_increment":false,"signed":true,"read_only":false,"kind":4}}"#
+        ))
+        .expect("parses")
+    }
+
+    /// `SELECT id AS pk` still marks the key column.
+    ///
+    /// The heading says `pk` and the catalogue says `id`, and it is the
+    /// catalogue that [`crate::data_edit::plan_apply`] writes the `WHERE`
+    /// clause from. Marking off the heading left the two disagreeing: the grid
+    /// drew no key while the apply happily used one.
+    #[test]
+    fn an_aliased_key_column_is_still_marked() {
+        let columns = vec![aliased(1, "ID", "PK"), aliased(2, "NAME", "NAME")];
+        let mut source = ResultSource::new(&columns);
+        source.mark_primary_keys(&["ID".to_string()]);
+        assert!(source.column(0).primary_key, "the alias hid the key");
+        assert!(!source.column(1).primary_key);
+        assert_eq!(
+            source.column(0).name,
+            "PK",
+            "the heading is still the label"
+        );
+
+        // And the case-insensitive second pass reaches it too, which is what
+        // the products that answer `getPrimaryKeys` in another case need.
+        let mut source = ResultSource::new(&columns);
+        source.mark_primary_keys(&["id".to_string()]);
+        assert!(source.column(0).primary_key);
     }
 }

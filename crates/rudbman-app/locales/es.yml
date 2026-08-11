@@ -19,6 +19,8 @@ menu:
   # SELECT against it.
   query_object: Consultar el objeto seleccionado
   view_data: Ver datos
+  view_structure: Editar la estructura
+  new_table: Tabla nueva
   open_sql_file: Abrir archivo SQL…
   extract_script: Extraer script…
   transfer_table: Transferir filas…
@@ -386,6 +388,7 @@ query:
   confirm_body: "Sentencias que modifican datos: %{count}"
   confirm_run: Ejecutar
   lob_unsupported: El visor de LOB todavía no existe.
+  not_editable: Estas filas no provienen de una sola tabla con su clave primaria seleccionada, así que pueden leerse pero no modificarse.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Revise la sintaxis de la sentencia y sus permisos de lectura.
   hint_constraint: La sentencia infringe una restricción de la tabla.
@@ -422,6 +425,53 @@ data:
   apply_null_key: "El %{column} de esta fila es NULL, así que ninguna sentencia puede volver a encontrarla."
   apply_unknown_key: "La columna clave %{column} no está entre las columnas leídas. Recargue e inténtelo de nuevo."
   apply_not_planned: "Estos cambios no se pueden escribir como sentencias: %{detail}"
+
+struct:
+  loading: cargando…
+  refresh: Recargar
+  discard: Descartar
+  discard_first: Descarte primero los cambios pendientes.
+  read_only: "Esta conexión es de solo lectura; la estructura de esta tabla se puede leer pero no modificar."
+  pending: "%{count} cambios pendientes"
+  columns: Columnas
+  column: Columna
+  type: Tipo
+  nullable: Nulo
+  default: Predeterminado
+  state: Estado
+  state_changed: modificada
+  state_dropped: a eliminar
+  state_added: nueva
+  drop: Eliminar
+  keep: Conservar
+  remove: Quitar
+  add_column: Añadir columna
+  edit_column: Columna seleccionada
+  no_selection: Elija arriba una columna para editarla.
+  name: Nombre
+  has_default: Tiene un valor predeterminado
+  constraints: Restricciones
+  kind: Clase
+  empty: no hay nada
+  no_constraint_drop: "%{dialect} no tiene ningún ALTER TABLE que elimine una restricción."
+  new_constraint: Restricción nueva
+  constraint_name: Nombre (opcional)
+  references: Tabla referenciada
+  referenced_columns: Columnas referenciadas (opcional)
+  add_constraint: Añadir restricción
+  rename_table: Renombrar la tabla
+  new_name: Nombre nuevo
+  new_table: Tabla nueva
+  new_table_in: "Tabla nueva en %{scope}"
+  table_name: Nombre de la tabla
+  statements: Sentencias
+  apply: Aplicar
+  create: Crear la tabla
+  apply_title: "Aplicar %{count} sentencias"
+  apply_no_undo: "Esto no se puede deshacer: cada sentencia se confirma en cuanto se ejecuta, y ninguna reversión la recupera."
+  applying: aplicando…
+  applied: "%{count} sentencias aplicadas."
+  apply_stopped: "La sentencia %{number} de %{total} ha fallado. Las %{committed} anteriores se confirmaron y no se pueden deshacer."
 
 extract:
   title: Extraer script

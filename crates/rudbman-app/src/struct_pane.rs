@@ -1,0 +1,3828 @@
+//! The structure pane: one table's shape, and the `ALTER TABLE` batch that
+//! would change it.
+//!
+//! What the architecture document's §7.10 draws, and a sibling of
+//! [`crate::data_pane`] rather than a fifth tab of [`crate::table_detail`]: the
+//! panel keeps its rows as display strings — a column's size folded into
+//! `VARCHAR(255)`, its nullability into the word `NOT NULL` — so nothing an
+//! editor needs survives in it. This pane issues its own
+//! `DESCRIBE columns` / `primary_keys` / `imported_keys` / `indexes` and keeps
+//! what it reads.
+//!
+//! # What it holds and what it shows
+//!
+//! One [`Structure`], read once and never modified, and one [`StructEdits`]
+//! staged beside it. Everything drawn is the *effective* value —
+//! [`StructEdits::draft`] — so a row the user has typed into shows what they
+//! typed while the snapshot underneath still says what the catalog does, which
+//! is what lets the plan carry both sides (§7.10).
+//!
+//! # The apply, and why it pretends nothing
+//!
+//! [`StructPane::apply`] raises the statements and [`StructPane::confirm_apply`]
+//! sends them, which is [`crate::data_pane`]'s shape. What is not that pane's
+//! shape is the transaction, because there is none: MySQL and Oracle commit
+//! implicitly at every DDL statement, so [`apply_alter`] forces autocommit *on*
+//! for every product alike, stops at the first failure, and reports how many
+//! statements were committed before it stopped (§7.10). Nothing here rolls
+//! anything back, and the confirmation says so before the user reaches it.
+//!
+//! Both endings — the batch that ran and the batch that stopped half way —
+//! throw the staging away and read the catalogue again. See
+//! [`StructPane::applied`] for why the failure cannot do what §7.9's does and
+//! leave the staging standing.
+//!
+//! # The form is one column at a time
+//!
+//! Three [`TextInput`]s and two checkboxes, refilled as the selection moves,
+//! rather than an input per cell: a table of two hundred columns would
+//! otherwise be six hundred entities, and a column's four fields are read
+//! together anyway. Every keystroke stages immediately, so moving the selection
+//! needs no commit step and nothing can be lost by clicking elsewhere.
+//!
+//! # The second mode: a table being created
+//!
+//! §7.10's create path is **this pane with an empty snapshot**, and that is
+//! meant literally rather than as an analogy: [`StructPane::creating`] reaches
+//! [`Load::Ready`] without a `DESCRIBE`, holding a [`Structure`] whose `table`
+//! is the catalogue and schema the table goes in and whose columns and
+//! constraints are empty lists. From there the column list draws nothing, "add
+//! column" already works, the one-column-at-a-time form already works, the drop
+//! toggles have nothing to toggle, and the live batch and the apply are the
+//! ones that were already here. A second surface would have duplicated the
+//! largest part of the pane in order to change the verb.
+//!
+//! [`Mode`] is the discriminant, and it is an enum rather than an
+//! `Option`-shaped origin because [`StructPane::target`] stays total in both
+//! modes: a create pane names the schema it is making a table in, and the
+//! reload, the dedup, the icon and the focus all go on reading it. Five things
+//! branch on it and nothing else does:
+//!
+//! * **The plan.** [`StructEdits::plan_create`] instead of [`StructEdits::plan`].
+//! * **The name.** The same field and the same staging slot, with a label that
+//!   says "the table's name" rather than "a new name for it" — and required,
+//!   where a rename left alone is the commonest thing to do with one.
+//! * **The constraints.** In alter mode the table only drops them; in create
+//!   mode it is the only place they can be born at all (§7.10), so the form
+//!   under it adds one.
+//! * **The refusals that only say "not finished yet".** See
+//!   [`StructPane::plan`].
+//! * **What an apply ends in.** A create that succeeds *becomes* the editor for
+//!   the table it just made: see [`StructPane::applied`].
+//!
+//! The apply itself is not one of them. [`apply_alter`] sends a `Vec<String>`
+//! and has no opinion about what is in it, the confirmation is the statements
+//! either way, and the line saying this cannot be undone is as true of a
+//! `CREATE TABLE` as of an `ALTER`.
+
+use std::collections::BTreeMap;
+
+use gpui::{
+    AnyElement, App, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, IntoElement,
+    MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString, Subscription, Window, div,
+    prelude::*, px,
+};
+use rudbman_core::ConnectionProfile;
+use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
+use rudbman_sql::{ConstraintDrop, ConstraintKind, Dialect, TableAlter, plan_alter};
+use rudbman_ui::{
+    Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
+    TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to, scrolled, theme,
+};
+
+use crate::builder_sql;
+use crate::connection::SessionHandle;
+use crate::explorer::{ConnectionId, ObjectTarget};
+use crate::i18n::ts;
+use crate::icons;
+use crate::query::{QueryError, error_lines, note};
+use crate::struct_edit::{
+    ColumnDraft, ColumnField, ConstraintDraft, DraftValue, LoadedColumn, LoadedConstraint,
+    NewConstraintKind, PlanError, StructEdits, Structure,
+};
+use crate::table_detail::{NOTHING, flag, items, number, text, type_of};
+
+/// Element id of the body's overlay scroll indicator.
+const BODY_SCROLLBAR: &str = "struct-body-scrollbar";
+
+/// One item of a `DESCRIBE` answer.
+type Item = serde_json::Map<String, serde_json::Value>;
+
+/// Where the pane's structure has got to.
+///
+/// [`crate::table_detail::Load`]'s shape: one fetch, and the two ways it can
+/// end.
+enum Load {
+    /// A fetch is out.
+    Running,
+    /// It came back.
+    Ready(Box<Structure>),
+    /// It failed; the driver's own message.
+    Failed(SharedString),
+}
+
+/// Which of the two things the pane is doing.
+///
+/// A table being created is a table whose current shape is empty (§7.10), so
+/// this is not two panes and not two of anything below it: it is which of
+/// [`StructEdits`]'s two entry points the staging is planned through, and the
+/// handful of labels that read differently on either side of that. See the
+/// [module documentation](self) for the whole list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// An existing table, read from the catalogue and amended.
+    Alter,
+    /// A table that does not exist yet, filled in and made.
+    ///
+    /// Turns into [`Mode::Alter`] the moment the server takes it: what proves
+    /// the shape asked for is the shape stored is reading it back
+    /// ([`StructPane::applied`]).
+    Create,
+}
+
+/// Which column the editor form is filled from.
+///
+/// Two spaces, because an added column has no snapshot row to be indexed
+/// against — see [`StructEdits`]. Both are positions into collections that a
+/// reload throws away, which is why nothing outside one frame holds a
+/// [`Selection`] across a refresh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Selection {
+    /// A row of the snapshot, by index into [`Structure::columns`].
+    Column(usize),
+    /// A column being added, by position in [`StructEdits::added`].
+    Added(usize),
+}
+
+/// What a stopped batch left behind, and what to say about it.
+///
+/// Two parts where the data pane's has three, because there is only one shape
+/// of failure to report: a driver refused a statement. This pane's own refusals
+/// — a plan the generator would not write — never reach a send, and are already
+/// on screen in the statements block when they happen.
+struct ApplyProblem {
+    /// The driver's own envelope, through the query pane's flattening.
+    error: Box<QueryError>,
+    /// How far the batch got: which statement failed, and how many before it
+    /// were committed and cannot be taken back.
+    stopped: SharedString,
+}
+
+/// One table's structure, and whatever is staged against it.
+pub struct StructPane {
+    /// What is being edited. Also the tab's title, and the identity two "edit
+    /// structure" gestures are deduplicated on.
+    ///
+    /// In [`Mode::Create`] its `name` is empty until the table exists — the
+    /// name being typed lives in the staging buffer, which is what makes it
+    /// discardable — and its catalogue and schema are the place the table is
+    /// being made in.
+    target: ObjectTarget,
+    /// Whether this is an existing table or one being made.
+    mode: Mode,
+    /// Which connection tab this pane belongs to.
+    connection: ConnectionId,
+    /// The session the metadata is read over.
+    ///
+    /// `None` once [`StructPane::detach`] has run: the tab outlives its
+    /// connection, because the structure already read is worth looking at, but
+    /// nothing more can be asked for.
+    session: Option<SessionHandle>,
+    /// Writes the statements, and nothing here writes one by hand.
+    dialect: Dialect,
+    /// The profile refuses writes outright (§8), so nothing can be staged.
+    read_only: bool,
+    /// The autocommit setting the session was opened with (§8).
+    ///
+    /// What the batch puts *back*, rather than a flat `true`: a profile opened
+    /// with autocommit off is a session the user asked to be in a transaction,
+    /// and a batch that handed it back in the other mode would be an edit to
+    /// the connection nobody made. It is not what the batch *runs* under — see
+    /// [`apply_alter`], which forces autocommit on whatever this says.
+    restore_auto_commit: bool,
+    /// Where the fetch has got to.
+    load: Load,
+    /// Everything staged against [`Load::Ready`]'s structure.
+    edits: StructEdits,
+    /// The column the form below the table is filled from.
+    selected: Option<Selection>,
+    /// The form's three fields: name, type, default.
+    name_input: Entity<TextInput>,
+    type_input: Entity<TextInput>,
+    default_input: Entity<TextInput>,
+    /// The table's new bare name — or, in [`Mode::Create`], its name.
+    rename_input: Entity<TextInput>,
+    /// The kind of the constraint the create-mode form is filling in.
+    constraint_kind: NewConstraintKind,
+    /// The columns it covers, in the order they were ticked, which is the
+    /// key's own order.
+    constraint_columns: Vec<String>,
+    /// Its optional name, the table it references and the columns on the other
+    /// side of that reference.
+    ///
+    /// Unwatched, unlike the four above: a constraint is added whole when the
+    /// button is pressed, so these are read once at that moment rather than
+    /// staged per keystroke. That is also why one form serves every constraint
+    /// — there is no selection to move and nothing to refill.
+    constraint_fields: [Entity<TextInput>; 3],
+    /// What was last *put into* the four fields, or last read out of them.
+    ///
+    /// The guard that keeps refilling the form from staging an edit nobody
+    /// made. gpui delivers an observation after the update that caused it, so a
+    /// flag set and cleared around [`TextInput::set_content`] would already be
+    /// clear by the time the handler ran; comparing against the last value
+    /// seen is decided in the handler itself and cannot race. Updated on the
+    /// way out as well as on the way in, so a field typed over and typed back
+    /// stages the value it was typed back to rather than being mistaken for a
+    /// refill.
+    filled: [String; 3],
+    /// The same guard for the rename field.
+    filled_rename: String,
+    /// Keeps the four field observations alive for as long as the pane.
+    _watch: [Subscription; 4],
+    /// The generation of the newest load. Every delivery carries one, and one
+    /// that is not this is an answer a later load has already replaced.
+    ///
+    /// One async path today and two from the commit that applies a batch: a
+    /// successful apply reloads (§7.10), and its reload has to be able to
+    /// supersede whatever a refresh had already asked for.
+    generation: u64,
+    /// A line the pane wants to say without it being a failure.
+    notice: Option<SharedString>,
+    /// The statements an apply is about to send, while they are being shown.
+    ///
+    /// This pane's write confirmation, and the one modal it raises: §7.10 and
+    /// §7.9 agree that the question worth asking before a write is not "are you
+    /// sure" but "is this what you meant", and for DDL only the statements
+    /// themselves can answer it — a type nobody can parse is visible there and
+    /// nowhere else.
+    preview: Option<Vec<String>>,
+    /// Whether the user has asked to apply since the last discard.
+    ///
+    /// What decides when a create's two "not finished yet" refusals become
+    /// visible; see [`StructPane::plan`]. Inert in [`Mode::Alter`], where
+    /// neither of them can arise.
+    apply_asked: bool,
+    /// Whether a batch is out on the session.
+    ///
+    /// Not a state of [`StructPane::load`], because the structure is still on
+    /// screen and still readable while it runs; what it gates is a second apply
+    /// on top of the first, and a tab closed out from under one.
+    applying: bool,
+    /// Why the last batch stopped, and how far it got.
+    ///
+    /// Held apart from [`StructPane::notice`] and drawn in the danger colour: a
+    /// batch that stopped half way has committed everything before the
+    /// statement that failed, and a line that faded in with the other passing
+    /// remarks would be the wrong weight for that.
+    apply_error: Option<ApplyProblem>,
+    focus_handle: FocusHandle,
+    /// Scroll of everything below the header.
+    body_scroll: ScrollHandle,
+    /// Whether the body's overlay bar is on screen.
+    body_scrollbar: ScrollbarState,
+}
+
+impl StructPane {
+    /// A pane over `target`, before it has asked for anything.
+    ///
+    /// It does **not** load, for the reason [`crate::table_detail::TableDetail`]
+    /// does not: the host is still inside `cx.new` and has a tab to open first.
+    /// [`StructPane::refresh`] is the one way in, and it is also what the
+    /// header's button calls.
+    pub fn new(
+        session: SessionHandle,
+        connection: ConnectionId,
+        target: ObjectTarget,
+        profile: &ConnectionProfile,
+        driver_dialect: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        // Disabled once and for the pane's life rather than per render: both
+        // halves of "this may not be written" — the profile's flag and the
+        // absence of an apply — are settled before the first frame.
+        let read_only = profile.read_only;
+        let field = |cx: &mut Context<Self>| cx.new(|cx| TextInput::new(cx).disabled(read_only));
+        let name_input = field(cx);
+        let type_input = field(cx);
+        let default_input = field(cx);
+        let rename_input = field(cx);
+        let constraint_fields = [field(cx), field(cx), field(cx)];
+
+        // Observed rather than left alone: a `TextInput` emits nothing, so the
+        // only way a keystroke reaches the staging buffer is for the pane to
+        // watch the entity and read it back.
+        let watch = [
+            Self::watch(&name_input, ColumnField::Name, cx),
+            Self::watch(&type_input, ColumnField::Type, cx),
+            Self::watch(&default_input, ColumnField::Default, cx),
+            cx.observe(&rename_input, |pane, input, cx| {
+                let typed = input.read(cx).content().to_string();
+                pane.renamed(typed, cx);
+            }),
+        ];
+
+        Self {
+            target,
+            mode: Mode::Alter,
+            connection,
+            session: Some(session),
+            dialect: Dialect::from_id(driver_dialect),
+            read_only,
+            restore_auto_commit: profile.auto_commit,
+            load: Load::Running,
+            edits: StructEdits::new(),
+            selected: None,
+            name_input,
+            type_input,
+            default_input,
+            rename_input,
+            constraint_kind: NewConstraintKind::default(),
+            constraint_columns: Vec::new(),
+            constraint_fields,
+            filled: Default::default(),
+            filled_rename: String::new(),
+            _watch: watch,
+            generation: 0,
+            notice: None,
+            preview: None,
+            apply_asked: false,
+            applying: false,
+            apply_error: None,
+            focus_handle: cx.focus_handle(),
+            body_scroll: ScrollHandle::new(),
+            body_scrollbar: ScrollbarState::new(),
+        }
+    }
+
+    /// A pane over a table that does not exist yet, in `target`'s catalogue and
+    /// schema.
+    ///
+    /// `target.name` is ignored and left empty: the name is the one thing about
+    /// a new table that is staged rather than known, and it is typed into the
+    /// same field a rename is (§7.10).
+    ///
+    /// Unlike [`StructPane::new`] this **is** loaded when it returns, and
+    /// without a round trip: the shape a table being created currently has is
+    /// the empty one, and there is nothing to ask a server for. The host
+    /// therefore opens the tab and does not call [`StructPane::refresh`].
+    pub fn creating(
+        session: SessionHandle,
+        connection: ConnectionId,
+        target: ObjectTarget,
+        profile: &ConnectionProfile,
+        driver_dialect: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut pane = Self::new(session, connection, target, profile, driver_dialect, cx);
+        pane.target.name = String::new();
+        pane.mode = Mode::Create;
+        pane.load = Load::Ready(Box::new(blank_structure(&pane.target)));
+        pane.fill_rename(cx);
+        pane
+    }
+
+    /// Watches one of the three column fields.
+    fn watch(
+        input: &Entity<TextInput>,
+        field: ColumnField,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.observe(input, move |pane, input, cx| {
+            let typed = input.read(cx).content().to_string();
+            pane.typed(field, typed, cx);
+        })
+    }
+
+    /// The object whose structure this is.
+    pub fn target(&self) -> &ObjectTarget {
+        &self.target
+    }
+
+    /// The title its tab carries.
+    ///
+    /// A table being created has no name to be titled after — it has a field
+    /// somebody is typing into — so the tab says what the pane is instead. It
+    /// stops saying that the moment the table exists, because by then
+    /// [`StructPane::target`] names it and every other tab of that table is
+    /// titled the same way.
+    pub fn title(&self) -> SharedString {
+        match self.mode {
+            Mode::Alter => SharedString::from(self.target.qualified()),
+            Mode::Create => ts!("struct.new_table"),
+        }
+    }
+
+    /// What the header says this pane is, which is the title with the schema
+    /// still in it.
+    fn heading(&self) -> SharedString {
+        match self.mode {
+            Mode::Alter => SharedString::from(self.target.qualified()),
+            // Where it is going matters here in a way it does not in a tab:
+            // "new table" alone would not say which schema is about to grow one.
+            Mode::Create => match self
+                .target
+                .schema
+                .as_deref()
+                .or(self.target.catalog.as_deref())
+            {
+                Some(scope) if !scope.is_empty() => ts!("struct.new_table_in", scope = scope),
+                _ => ts!("struct.new_table"),
+            },
+        }
+    }
+
+    /// The verb on the apply button and on the confirmation's own.
+    ///
+    /// One word apart, and worth the key: "apply" is what one does to a batch
+    /// of amendments, and a table is created.
+    fn apply_label(&self) -> SharedString {
+        match self.mode {
+            Mode::Alter => ts!("struct.apply"),
+            Mode::Create => ts!("struct.create"),
+        }
+    }
+
+    /// Which connection tab this pane runs against.
+    pub fn connection(&self) -> ConnectionId {
+        self.connection
+    }
+
+    /// Lets the session go, leaving the tab standing.
+    ///
+    /// The same bargain a data pane's detach strikes (§9.3): what stays is the
+    /// structure already read, which is the user's to look at.
+    pub fn detach(&mut self, cx: &mut Context<Self>) {
+        self.session = None;
+        cx.notify();
+    }
+
+    /// Whether the pane is holding edits nobody has sent anywhere.
+    ///
+    /// Asked by the tab strip before a close and by [`StructPane::refresh`]
+    /// before a reload, for one reason: a staged edit is keyed to an index into
+    /// the snapshot it was staged against, and a snapshot read again is a new
+    /// set of indices (§7.10).
+    ///
+    /// A batch already out on the session counts as pending too, even though
+    /// the answer will throw the buffer away whichever answer it is: what the
+    /// user is owed is how far that batch got, and a tab closed in the meantime
+    /// is a tab that takes the report with it.
+    pub fn has_pending_edits(&self) -> bool {
+        !self.edits.is_empty() || self.applying
+    }
+
+    /// Says, in the pane itself, why the gesture that was just tried is being
+    /// refused while changes are staged.
+    ///
+    /// The counterpart of [`StructPane::has_pending_edits`] for the shell: a
+    /// tab that simply would not close, with nothing said, would read as a bug.
+    pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
+        self.notice = Some(ts!("struct.discard_first"));
+        cx.notify();
+    }
+
+    /// Whether the keyboard is anywhere inside this pane, as the last drawn
+    /// frame had it.
+    ///
+    /// The four fields as well as the pane's own handle, for the reason a data
+    /// pane asks about its grid: a focus left on a field of a tab that has
+    /// stopped being rendered swallows every shortcut in the window.
+    pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        if self.focus_handle.contains_focused(window, cx) {
+            return true;
+        }
+        self.fields()
+            .iter()
+            .any(|input| input.read(cx).focus_handle(cx).contains_focused(window, cx))
+    }
+
+    /// Puts the keyboard on the pane.
+    ///
+    /// On the name field in [`Mode::Create`], because §7.10 opens a new table
+    /// with its name field focused: it is the one thing a create cannot do
+    /// without, and it is the first field of the first block. An existing
+    /// table's pane takes the keyboard on its own root instead — there the
+    /// field is a rename, and starting in it would invite one nobody asked for.
+    pub fn take_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode == Mode::Create && self.read_only_reason().is_none() {
+            window.focus(&self.rename_input.read(cx).focus_handle(cx));
+            cx.notify();
+            return;
+        }
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    /// Every field of the pane, for the focus question only.
+    ///
+    /// The create-mode form's three are in here as well as the four that are
+    /// always drawn: a focus left on a field of a tab that has stopped being
+    /// rendered swallows every shortcut in the window, and which mode the pane
+    /// was in when it happened makes no difference to that.
+    fn fields(&self) -> [&Entity<TextInput>; 7] {
+        let [name, references, referenced] = &self.constraint_fields;
+        [
+            &self.name_input,
+            &self.type_input,
+            &self.default_input,
+            &self.rename_input,
+            name,
+            references,
+            referenced,
+        ]
+    }
+
+    /// Why nothing here can be staged, when something says so.
+    ///
+    /// One reason today where the data pane has two, and stated in the same
+    /// place and the same weight: a standing fact about what is being shown,
+    /// not a failure, and the answer to a question the user has not asked yet.
+    fn read_only_reason(&self) -> Option<SharedString> {
+        self.read_only.then(|| ts!("struct.read_only"))
+    }
+
+    /// Reads the structure again, from scratch.
+    ///
+    /// Refuses while anything is staged, exactly as a data pane's refresh
+    /// does: the indices the staging holds are the snapshot's, and a snapshot
+    /// read again is a different one.
+    ///
+    /// In [`Mode::Create`] there is nothing to read — the table is not there
+    /// yet — so the empty snapshot is simply put back. That is the same
+    /// sentence the loader would have produced if a `DESCRIBE` could have been
+    /// sent, and it keeps this the one way the pane arrives at a structure.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.has_pending_edits() {
+            self.notice = Some(ts!("struct.discard_first"));
+            cx.notify();
+            return;
+        }
+        if self.mode == Mode::Create {
+            self.load = Load::Ready(Box::new(blank_structure(&self.target)));
+            self.notice = None;
+            self.preview = None;
+            self.apply_error = None;
+            self.select(None, cx);
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            self.notice = Some(ts!("explorer.disconnected"));
+            cx.notify();
+            return;
+        };
+
+        self.generation += 1;
+        let generation = self.generation;
+        self.load = Load::Running;
+        self.notice = None;
+        // Both describe a batch over the structure being replaced: the one that
+        // would have been sent, and the one that stopped.
+        self.preview = None;
+        self.apply_error = None;
+        self.select(None, cx);
+
+        let target = self.target.clone();
+        cx.spawn(async move |pane, cx| {
+            let outcome = cx
+                .background_spawn(async move { load_structure(session.session(), &target) })
+                .await;
+            pane.update(cx, |pane, cx| pane.deliver(generation, outcome, cx))
+                .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Records what one load produced.
+    fn deliver(
+        &mut self,
+        generation: u64,
+        outcome: Result<Structure, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.generation {
+            // A superseded load's answer, and one nothing on screen is keyed to.
+            return;
+        }
+        // Whatever was staged was staged against the structure being replaced.
+        self.edits.clear();
+        self.selected = None;
+        self.load = match outcome {
+            Ok(structure) => Load::Ready(Box::new(structure)),
+            Err(message) => Load::Failed(SharedString::from(message)),
+        };
+        self.fill_rename(cx);
+        self.fill_fields(cx);
+        cx.notify();
+    }
+
+    /// The table's own bare name, as the catalog spells it.
+    fn bare_name(&self) -> &str {
+        &self.target.name
+    }
+
+    /// The structure, once it has been read.
+    fn structure(&self) -> Option<&Structure> {
+        match &self.load {
+            Load::Ready(structure) => Some(structure),
+            Load::Running | Load::Failed(_) => None,
+        }
+    }
+
+    /// Whether a fetch is out.
+    fn is_loading(&self) -> bool {
+        matches!(self.load, Load::Running)
+    }
+
+    /// The effective draft of whichever column is selected.
+    fn selected_draft(&self) -> Option<ColumnDraft> {
+        match self.selected? {
+            Selection::Column(index) => Some(self.edits.draft(self.structure()?, index)),
+            Selection::Added(position) => self.edits.added().get(position).cloned(),
+        }
+    }
+
+    /// Moves the form onto another column, and refills it.
+    fn select(&mut self, selection: Option<Selection>, cx: &mut Context<Self>) {
+        self.selected = selection;
+        self.fill_fields(cx);
+        cx.notify();
+    }
+
+    /// Puts the table's effective name into the rename field.
+    ///
+    /// The staged one where there is one and the catalog's own where there is
+    /// not, which is [`StructPane::fill_fields`]'s rule for the other three
+    /// fields. That it always answers the catalog today — a reload and a
+    /// discard both clear the staging first — is a fact about its two callers
+    /// and not about what the field is meant to show.
+    fn fill_rename(&mut self, cx: &mut Context<Self>) {
+        self.filled_rename = self
+            .edits
+            .rename_to()
+            .unwrap_or_else(|| self.bare_name())
+            .to_string();
+        let name = self.filled_rename.clone();
+        self.rename_input
+            .update(cx, |input, cx| input.set_content(name, cx));
+    }
+
+    /// Puts the selected column's values into the three fields.
+    ///
+    /// `filled` is written *before* the fields are, so that the observation
+    /// each `set_content` provokes reads its own value back and stages nothing.
+    fn fill_fields(&mut self, cx: &mut Context<Self>) {
+        let draft = self.selected_draft().unwrap_or_default();
+        self.filled = [
+            draft.name,
+            draft.type_sql,
+            draft.default_sql.unwrap_or_default(),
+        ];
+        let inputs = [
+            self.name_input.clone(),
+            self.type_input.clone(),
+            self.default_input.clone(),
+        ];
+        for (input, value) in inputs.into_iter().zip(self.filled.clone()) {
+            input.update(cx, |input, cx| input.set_content(value, cx));
+        }
+    }
+
+    /// One of the three fields was typed into.
+    fn typed(&mut self, field: ColumnField, value: String, cx: &mut Context<Self>) {
+        let (slot, staged) = match field {
+            ColumnField::Name => (0, DraftValue::Name(value.clone())),
+            ColumnField::Type => (1, DraftValue::Type(value.clone())),
+            // Typing into the default field is what gives a column a default;
+            // the box beside it is how one is taken away. That is the whole
+            // reason the pair exists: `None` and `Some("")` are two states the
+            // server distinguishes, and one field cannot say both.
+            ColumnField::Default => (2, DraftValue::Default(Some(value.clone()))),
+            // Not a field: the nullability is a box, and it stages through
+            // [`StructPane::set_field`] directly.
+            ColumnField::NotNull => return,
+        };
+        // The value this field was last seen holding. Equal means the field is
+        // being refilled from the selection rather than typed into, and staging
+        // that would mark a row the user only clicked on as edited.
+        if self.filled[slot] == value {
+            return;
+        }
+        self.set_field(staged, cx);
+    }
+
+    /// The rename field was typed into.
+    ///
+    /// A field holding the name the table already has is not a rename — it is
+    /// the pre-filled value, and leaving it alone is the commonest thing to do
+    /// with it — so it stages nothing rather than staging an edit that would
+    /// plan to nothing while counting as pending.
+    fn renamed(&mut self, value: String, cx: &mut Context<Self>) {
+        if self.filled_rename == value {
+            return;
+        }
+        self.filled_rename = value.clone();
+        if self.read_only {
+            return;
+        }
+        self.edits
+            .set_rename((value != self.bare_name()).then_some(value));
+        cx.notify();
+    }
+
+    /// Stages one field of the selected column.
+    ///
+    /// The guard is brought into step with whatever is being staged, and here
+    /// rather than in [`StructPane::typed`] because two of the four controls
+    /// are boxes: a default the box has just taken away would otherwise leave
+    /// the field's guard still holding the old text, and the next keystroke in
+    /// that field would read as a refill and stage nothing.
+    fn set_field(&mut self, value: DraftValue, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        let Some(selected) = self.selected else {
+            return;
+        };
+        match (value.field(), &value) {
+            (ColumnField::Name, DraftValue::Name(typed)) => self.filled[0] = typed.clone(),
+            (ColumnField::Type, DraftValue::Type(typed)) => self.filled[1] = typed.clone(),
+            (ColumnField::Default, DraftValue::Default(typed)) => {
+                self.filled[2] = typed.clone().unwrap_or_default();
+            }
+            // The nullability, which lands in no field at all.
+            _ => {}
+        }
+        match selected {
+            Selection::Column(index) => {
+                let Load::Ready(structure) = &self.load else {
+                    return;
+                };
+                self.edits.set_column(structure, index, value);
+            }
+            Selection::Added(position) => self.edits.set_added(position, value),
+        }
+        cx.notify();
+    }
+
+    /// Turns a column's default on or off.
+    ///
+    /// The fields are refilled afterwards rather than left as they were: with
+    /// the default dropped the text beside the box says nothing true, and a
+    /// form that disagrees with the row above it is worse than one that forgot
+    /// what was typed.
+    fn set_has_default(&mut self, has_default: bool, cx: &mut Context<Self>) {
+        let value = has_default.then(|| self.filled[2].clone());
+        self.set_field(DraftValue::Default(value), cx);
+        self.fill_fields(cx);
+    }
+
+    /// Appends a column and starts filling it in.
+    fn add_column(&mut self, cx: &mut Context<Self>) {
+        if self.read_only || self.structure().is_none() {
+            return;
+        }
+        let position = self.edits.add_column();
+        self.select(Some(Selection::Added(position)), cx);
+    }
+
+    /// Takes an added column back off the list.
+    ///
+    /// The selection goes with it whatever it pointed at: the positions after
+    /// this one all move up, and a form left filled from the old numbering
+    /// would be editing a different column than the one on screen.
+    fn remove_added(&mut self, position: usize, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        self.edits.remove_added(position);
+        self.select(None, cx);
+    }
+
+    /// Marks a column to be dropped, or takes the mark off.
+    ///
+    /// Marking one discards whatever was staged against it — that is
+    /// [`StructEdits::toggle_column_drop`]'s rule, not this one — so the form
+    /// lets go of it too rather than going on offering fields for a column that
+    /// is going.
+    fn toggle_drop(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        let dropped = self.edits.toggle_column_drop(index);
+        if dropped && self.selected == Some(Selection::Column(index)) {
+            self.select(None, cx);
+            return;
+        }
+        self.fill_fields(cx);
+        cx.notify();
+    }
+
+    /// Marks a constraint to be dropped, or takes the mark off.
+    fn toggle_constraint_drop(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        self.edits.toggle_constraint_drop(index);
+        cx.notify();
+    }
+
+    /// Which of the three the create-mode form is filling in.
+    ///
+    /// The column list survives the change and the two reference fields do
+    /// not stop existing either — they are simply not drawn on the two kinds
+    /// that have no other side — so a user who picked the columns and then
+    /// realised it was a unique constraint keeps the work.
+    fn set_constraint_kind(&mut self, kind: NewConstraintKind, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        self.constraint_kind = kind;
+        cx.notify();
+    }
+
+    /// Puts a column into the constraint being filled in, or takes it out.
+    ///
+    /// Appended rather than inserted in column order: `PRIMARY KEY (a, b)` and
+    /// `PRIMARY KEY (b, a)` are two different indexes, so the order they were
+    /// ticked in is the one thing here that carries the user's intent.
+    fn toggle_constraint_column(&mut self, column: &str, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        match self
+            .constraint_columns
+            .iter()
+            .position(|held| held == column)
+        {
+            Some(at) => {
+                self.constraint_columns.remove(at);
+            }
+            None => self.constraint_columns.push(column.to_string()),
+        }
+        cx.notify();
+    }
+
+    /// Stages the constraint the form is holding, and empties the form.
+    ///
+    /// Nothing here judges what was filled in. A key over no columns and a
+    /// foreign key with no table to point at are both refusals the generator
+    /// makes in a sentence that names the constraint, and they arrive in the
+    /// statements block the moment the row is added — which is where every
+    /// other refusal in this pane is read.
+    fn add_constraint(&mut self, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        let [name, references, referenced_columns] = &self.constraint_fields;
+        let draft = ConstraintDraft {
+            kind: self.constraint_kind,
+            name: name.read(cx).content().to_string(),
+            columns: self.constraint_columns.clone(),
+            references: references.read(cx).content().to_string(),
+            referenced_columns: referenced_columns.read(cx).content().to_string(),
+        };
+        self.edits.add_constraint(draft);
+        self.clear_constraint_form(cx);
+        cx.notify();
+    }
+
+    /// Empties the create-mode constraint form: its three fields and its ticks.
+    ///
+    /// The kind is left where it was, because it is the one part of a
+    /// constraint that a second one is likely to share: two unique constraints
+    /// in a row is ordinary and two of *anything* on the same columns is not.
+    fn clear_constraint_form(&mut self, cx: &mut Context<Self>) {
+        self.constraint_columns.clear();
+        for input in self.constraint_fields.clone() {
+            input.update(cx, |input, cx| input.set_content(String::new(), cx));
+        }
+    }
+
+    /// Takes a staged constraint back off the list.
+    ///
+    /// The only edit one has: a constraint is four short fields, and re-typing
+    /// them is quicker than a second selection state would be to use or to
+    /// explain.
+    fn remove_added_constraint(&mut self, position: usize, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        self.edits.remove_added_constraint(position);
+        cx.notify();
+    }
+
+    /// Throws away everything staged.
+    fn discard(&mut self, cx: &mut Context<Self>) {
+        self.edits.clear();
+        self.notice = None;
+        // A preview describes changes that are about to stop existing, and a
+        // failure describes an attempt to send them.
+        self.preview = None;
+        self.apply_error = None;
+        // Nothing is left to be unfinished, so the question of whether to say
+        // so goes back to where it started.
+        self.apply_asked = false;
+        self.clear_constraint_form(cx);
+        self.fill_rename(cx);
+        self.select(None, cx);
+    }
+
+    /// Plans the staged edits and puts the statements up for confirmation.
+    ///
+    /// Half of §7.10's apply, and the half that sends nothing.
+    /// [`StructPane::confirm_apply`] is what runs them.
+    ///
+    /// The read-only check is made again here even though the header's button
+    /// is drawn disabled on a pane that has one: this is the only function in
+    /// the pane that leads to a write, and the refusal is worth stating where
+    /// the write is rather than only where the button is.
+    ///
+    /// A plan the generator refused raises nothing and says nothing new. Its
+    /// sentence — which product, and why it cannot do this — is already on
+    /// screen in the statements block, and a second copy of it in the failure
+    /// strip would be the same words twice.
+    ///
+    /// The one refusal that is *not* already on screen when this is reached is
+    /// a create that has not been finished: no name, or no columns. Asking to
+    /// apply is the moment those stop being a state the user is in and become
+    /// an answer they are owed, and the flag this sets is what puts them in the
+    /// statements block — where every other refusal is, rather than in a strip
+    /// of their own. See [`StructPane::plan`].
+    fn apply(&mut self, cx: &mut Context<Self>) {
+        if self.read_only_reason().is_some() || self.applying || self.preview.is_some() {
+            return;
+        }
+        self.apply_error = None;
+        self.apply_asked = true;
+        // An empty batch is what an empty staging plans to, and there is
+        // nothing to confirm about it.
+        if let Some(Ok(statements)) = self.plan()
+            && !statements.is_empty()
+        {
+            self.preview = Some(statements);
+        }
+        cx.notify();
+    }
+
+    /// Runs the statements the confirmation showed.
+    ///
+    /// The batch goes out on the session's own worker thread, so it queues
+    /// behind whatever else this connection is doing rather than racing it, and
+    /// the autocommit flip and every statement happen inside that one
+    /// background call. Splitting it across awaits would leave the connection
+    /// in a mode nothing else on this session asked for between them.
+    fn confirm_apply(&mut self, cx: &mut Context<Self>) {
+        let Some(statements) = self.preview.take() else {
+            return;
+        };
+        if self.read_only_reason().is_some() {
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            self.notice = Some(ts!("explorer.disconnected"));
+            cx.notify();
+            return;
+        };
+
+        self.applying = true;
+        self.apply_error = None;
+        self.notice = Some(ts!("struct.applying"));
+        let generation = self.generation;
+        let restore = self.restore_auto_commit;
+
+        // `cx.spawn` and not the data pane's `spawn_in`: what this ends in is
+        // [`StructPane::refresh`], which builds no entity that needs a window.
+        cx.spawn(async move |pane, cx| {
+            let outcome = cx
+                .background_spawn(
+                    async move { apply_alter(session.session(), &statements, restore) },
+                )
+                .await;
+            pane.update(cx, |pane, cx| pane.applied(generation, outcome, cx))
+                .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Records what one batch did.
+    ///
+    /// **Both endings clear the staging and reload**, and that is where this
+    /// parts company with §7.9's apply. There a failure leaves every staged
+    /// change exactly where it was, because the rollback means nothing was
+    /// written. Here there is no rollback: the statements before the one that
+    /// failed are committed and cannot be taken back, so the catalogue has
+    /// moved and the staging — keyed, like the row editor's, to indices into
+    /// the reading it was staged against — is describing a table that no longer
+    /// exists in that shape. Replaying it would apply the committed half twice.
+    /// What the user gets instead is exactly how far the batch got: which
+    /// statement failed, the driver's reason, and how many before it were
+    /// committed. The whole batch was on screen a moment earlier, so that
+    /// number locates the work still to do.
+    ///
+    /// Success reloads for its own reason: what a server did with a DDL
+    /// statement is not always what it was asked — a type widened, a default
+    /// normalized, a column added at the end regardless of where it was typed —
+    /// so the pane re-reads the catalogue and shows that (§7.10).
+    ///
+    /// **A create that succeeds turns the pane into the editor for the table it
+    /// just made** (§7.10): the mode becomes [`Mode::Alter`], the target takes
+    /// the name the statement was sent with, and the reload that was going to
+    /// happen anyway finds it. Nothing else has to change — the tab retitles
+    /// itself from the target, the name field becomes a rename field, the
+    /// constraint table starts offering drops — and the reading that comes back
+    /// is what proves the server stored the shape that was asked for.
+    ///
+    /// **A create that fails keeps its staging**, which is where this parts
+    /// company with the paragraph above and with an alter's own failure. The
+    /// reason an alter discards is that the statements before the one that
+    /// failed are committed, so the catalogue has moved out from under indices
+    /// the staging holds. A create is one statement: if it failed, nothing ran,
+    /// nothing was committed, the snapshot is the same empty one it always was
+    /// and the staging is still describing exactly the table the user is trying
+    /// to make. Throwing away a table definition because a type had a typo in
+    /// it would be destroying the work for the reason it was worth keeping.
+    fn applied(
+        &mut self,
+        generation: u64,
+        outcome: Result<usize, AlterFailure>,
+        cx: &mut Context<Self>,
+    ) {
+        self.applying = false;
+        if generation != self.generation {
+            // A superseded load has already thrown the staging away, and the
+            // structure this batch was planned against is not what is on
+            // screen. Only reachable through a discard that raced the batch.
+            cx.notify();
+            return;
+        }
+        // The name the batch was sent with, read before the discard that
+        // throws it away — and only on the ending that means the server has it.
+        if outcome.is_ok()
+            && self.mode == Mode::Create
+            && let Some(name) = self.edits.rename_to()
+        {
+            self.target.name = name.to_string();
+            self.mode = Mode::Alter;
+        }
+        let stale = outcome.is_ok() || self.mode == Mode::Alter;
+        if stale {
+            // Cleared before the reload, not after: `refresh` refuses while
+            // anything is staged.
+            self.discard(cx);
+            self.refresh(cx);
+        }
+        match outcome {
+            Ok(applied) => self.notice = Some(ts!("struct.applied", count = applied)),
+            Err(failure) => {
+                self.notice = None;
+                self.apply_error = Some(ApplyProblem {
+                    stopped: ts!(
+                        "struct.apply_stopped",
+                        number = failure.committed + 1,
+                        total = failure.total,
+                        committed = failure.committed
+                    ),
+                    error: Box::new(QueryError::new(failure.error)),
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// The statements the staged edits would send, as the block under the
+    /// tables shows them.
+    ///
+    /// `None` while nothing is staged or nothing has been read — an empty
+    /// staging plans to an empty batch, and a box with nothing in it says less
+    /// than no box at all. Computed on every render rather than kept in a
+    /// field: it is a function of the snapshot, the staging and the dialect,
+    /// and a cached copy would be one more thing that can be stale.
+    ///
+    /// `None` too, in [`Mode::Create`], for the two refusals that only say the
+    /// table is not finished yet — no name, or no columns
+    /// ([`PlanError::is_unfinished`]). A pane that has just been opened is in
+    /// both of those states, and a red line telling somebody their table has no
+    /// columns while they are still typing its name would be scolding them for
+    /// the state everybody starts in. They become visible the moment the user
+    /// asks to apply, which is the moment the question stops being rhetorical —
+    /// and they appear in the statements block, where the pane's refusals
+    /// already live, rather than in a surface of their own. Every other refusal
+    /// names a row that can be gone and looked at, and those are shown as they
+    /// arise in both modes.
+    fn plan(&self) -> Option<Result<Vec<String>, PlanError>> {
+        let structure = self.structure()?;
+        if self.edits.is_empty() {
+            return None;
+        }
+        let planned = match self.mode {
+            Mode::Alter => self.edits.plan(structure, &self.dialect),
+            Mode::Create => self.edits.plan_create(structure, &self.dialect),
+        };
+        match &planned {
+            Err(refusal) if refusal.is_unfinished() && !self.apply_asked => None,
+            _ => Some(planned),
+        }
+    }
+
+    /// The overlay bar of the body, as it stands.
+    fn scrollbar(&self) -> Scrollbar {
+        Scrollbar::for_handle(BODY_SCROLLBAR, ScrollbarAxis::Vertical, &self.body_scroll)
+            .fade(self.body_scrollbar.fade())
+    }
+
+    /// Puts the bar up when the body has moved, and starts the clock.
+    fn watch_scroll(&mut self, cx: &mut Context<Self>) {
+        let moved = scrolled(&self.body_scroll, ScrollbarAxis::Vertical);
+        if let Some(epoch) = self.body_scrollbar.moved(moved) {
+            hide_later(epoch, cx, |pane: &mut Self| Some(&mut pane.body_scrollbar));
+        }
+    }
+
+    /// Lets go of the body's thumb and starts its clock again.
+    fn release(&mut self, cx: &mut Context<Self>) {
+        if let Some(epoch) = self.body_scrollbar.release() {
+            hide_later(epoch, cx, |pane: &mut Self| Some(&mut pane.body_scrollbar));
+            cx.notify();
+        }
+    }
+
+    /// Puts the bar up while the pointer rests on the edge it rides.
+    fn hover_scrollbar(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.body_scrollbar.hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+        if let Some(epoch) = self.body_scrollbar.hover_leave() {
+            hide_now(self, epoch, cx, |pane: &mut Self| {
+                Some(&mut pane.body_scrollbar)
+            });
+        }
+    }
+
+    /// The header: what is being edited, how much is staged, and the three
+    /// buttons that act on all of it.
+    fn render_header(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let this = cx.entity();
+        let loading = self.is_loading();
+        let staged = self.has_pending_edits();
+        let writable = self.read_only_reason().is_none();
+        let pending = staged.then(|| ts!("struct.pending", count = self.edits.pending_count()));
+
+        div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .items_center()
+            .gap(px(8.))
+            .h(px(30.))
+            .px(px(10.))
+            .border_b_1()
+            .border_color(chrome.border)
+            .child(icons::icon(
+                self.target.folder.icon(),
+                px(14.),
+                chrome.text_muted,
+            ))
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(13.))
+                    .text_color(chrome.text)
+                    .child(self.heading()),
+            )
+            .child(div().flex_1().min_w_0())
+            .when(loading, |header| {
+                header.child(
+                    div()
+                        .flex_none()
+                        .text_size(px(11.))
+                        .text_color(chrome.text_muted)
+                        .child(ts!("struct.loading")),
+                )
+            })
+            .children(pending.map(|pending| {
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(px(11.))
+                    .text_color(chrome.accent)
+                    .child(pending)
+            }))
+            .child({
+                let this = this.clone();
+                // Drawn on a read-only pane as well as a writable one, unlike
+                // the data pane's: this header has no third button to keep it
+                // company, and a header that loses one of two buttons reads as
+                // a pane in a different mode rather than one that may not be
+                // written to. The banner underneath is where that is said.
+                Button::new("struct-apply", self.apply_label())
+                    .variant(ButtonVariant::Primary)
+                    .disabled(!writable || !staged || loading || self.applying)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |pane, cx| pane.apply(cx));
+                    })
+            })
+            .child({
+                let this = this.clone();
+                Button::new("struct-discard", ts!("struct.discard"))
+                    .variant(ButtonVariant::Secondary)
+                    .disabled(!staged || self.applying)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |pane, cx| pane.discard(cx));
+                    })
+            })
+            .child(
+                Button::new("struct-refresh", ts!("struct.refresh"))
+                    .variant(ButtonVariant::Secondary)
+                    .disabled(loading)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |pane, cx| pane.refresh(cx));
+                    }),
+            )
+    }
+
+    /// The one line that says why nothing here can be staged.
+    fn render_banner(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+        let reason = self.read_only_reason()?;
+        Some(
+            div()
+                .flex_none()
+                .px(px(10.))
+                .py(px(4.))
+                .border_b_1()
+                .border_color(chrome.border)
+                .bg(chrome.surface)
+                .text_size(px(11.))
+                .text_color(chrome.text_muted)
+                .child(reason),
+        )
+    }
+
+    /// The structure, or the one line that stands in for it.
+    fn render_body(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let content = match &self.load {
+            Load::Running => note(ts!("struct.loading"), chrome.text_muted),
+            Load::Failed(message) => note(message.clone(), chrome.danger),
+            Load::Ready(structure) => self.render_structure(structure, chrome, cx),
+        };
+
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .child(
+                div()
+                    .id("struct-body")
+                    .track_scroll(&self.body_scroll)
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .gap(px(14.))
+                    .p(px(10.))
+                    .overflow_y_scroll()
+                    .child(content),
+            )
+            .children(
+                self.scrollbar()
+                    .on_hover(cx.listener(|pane, hovered: &bool, _window, cx| {
+                        pane.hover_scrollbar(*hovered, cx);
+                    }))
+                    .render(chrome),
+            )
+    }
+
+    /// The four blocks: the columns, the form, the constraints, the name — and
+    /// the statements they add up to.
+    ///
+    /// The name block moves to the front in [`Mode::Create`] and stays at the
+    /// back in [`Mode::Alter`], which is the same rule read twice: it goes
+    /// where the attention does. A new table is named before it is filled in —
+    /// §7.10 opens the pane with that field focused — and an existing table is
+    /// renamed, if at all, after everything else has been decided.
+    fn render_structure(
+        &self,
+        structure: &Structure,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let creating = self.mode == Mode::Create;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .children(creating.then(|| self.render_name(chrome)))
+            .child(self.render_columns(structure, chrome, cx))
+            .child(self.render_editor(chrome, cx))
+            .child(self.render_constraints(structure, chrome, cx))
+            .children((!creating).then(|| self.render_name(chrome)))
+            .children(self.render_statements(chrome, cx))
+            .into_any_element()
+    }
+
+    /// The columns: one row per snapshot column, then one per added column.
+    ///
+    /// A dropped row is struck through and stays where it is rather than
+    /// vanishing, for §7.9's reason: a row that disappears when it is marked
+    /// takes with it the one thing that would let the mark be taken off again.
+    fn render_columns(
+        &self,
+        structure: &Structure,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let this = cx.entity();
+        let writable = self.read_only_reason().is_none();
+
+        let rows = (0..structure.columns.len()).map(|index| {
+            let draft = self.edits.draft(structure, index);
+            let dropped = self.edits.is_column_dropped(index);
+            let state = if dropped {
+                ts!("struct.state_dropped")
+            } else if self.edits.is_column_changed(index) {
+                ts!("struct.state_changed")
+            } else {
+                NOTHING
+            };
+            let label = if dropped {
+                ts!("struct.keep")
+            } else {
+                ts!("struct.drop")
+            };
+            let selector = this.clone();
+            let dropper = this.clone();
+            // The row's *index* in the id, never its name: an element id that
+            // changed while a name was being retyped would make gpui treat the
+            // row as a new one on every keystroke.
+            self.row(
+                ("struct-column", index),
+                &draft,
+                state,
+                dropped,
+                self.selected == Some(Selection::Column(index)),
+                index % 2 == 1,
+                chrome,
+                move |_window, cx| {
+                    selector.update(cx, |pane, cx| {
+                        pane.select(Some(Selection::Column(index)), cx);
+                    });
+                },
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(84.))
+                    .px(px(4.))
+                    .children(writable.then(|| {
+                        Button::new(("struct-drop", index), label)
+                            .variant(ButtonVariant::Secondary)
+                            .on_click(move |_, _window, cx| {
+                                dropper.update(cx, |pane, cx| pane.toggle_drop(index, cx));
+                            })
+                    })),
+            )
+        });
+
+        let added = self
+            .edits
+            .added()
+            .iter()
+            .enumerate()
+            .map(|(position, draft)| {
+                let selector = this.clone();
+                let remover = this.clone();
+                self.row(
+                    ("struct-added", position),
+                    draft,
+                    ts!("struct.state_added"),
+                    false,
+                    self.selected == Some(Selection::Added(position)),
+                    (structure.columns.len() + position) % 2 == 1,
+                    chrome,
+                    move |_window, cx| {
+                        selector.update(cx, |pane, cx| {
+                            pane.select(Some(Selection::Added(position)), cx);
+                        });
+                    },
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(84.))
+                        .px(px(4.))
+                        .children(writable.then(|| {
+                            Button::new(("struct-remove", position), ts!("struct.remove"))
+                                .variant(ButtonVariant::Secondary)
+                                .on_click(move |_, _window, cx| {
+                                    remover.update(cx, |pane, cx| pane.remove_added(position, cx));
+                                })
+                        })),
+                )
+            });
+
+        let adder = this.clone();
+        let add = writable.then(|| {
+            Button::new("struct-add-column", ts!("struct.add_column"))
+                .variant(ButtonVariant::Secondary)
+                .on_click(move |_, _window, cx| {
+                    adder.update(cx, |pane, cx| pane.add_column(cx));
+                })
+        });
+
+        section(
+            ts!("struct.columns"),
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .child(
+                    headings(
+                        [
+                            ts!("struct.column"),
+                            ts!("struct.type"),
+                            ts!("struct.nullable"),
+                            ts!("struct.default"),
+                            ts!("struct.state"),
+                        ],
+                        chrome,
+                    )
+                    .child(div().flex_none().w(px(84.))),
+                )
+                .children(rows)
+                .children(added)
+                .child(div().flex().flex_row().pt(px(6.)).children(add)),
+            chrome,
+        )
+        .into_any_element()
+    }
+
+    /// One column row, up to the button at the end of it.
+    #[allow(clippy::too_many_arguments)]
+    fn row(
+        &self,
+        id: (&'static str, usize),
+        draft: &ColumnDraft,
+        state: SharedString,
+        struck: bool,
+        selected: bool,
+        zebra: bool,
+        chrome: &Theme,
+        click: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> gpui::Stateful<Div> {
+        let cells = [
+            (SharedString::from(draft.name.clone()), false),
+            (SharedString::from(draft.type_sql.clone()), true),
+            // SQL keywords, not words: NULL and NOT NULL read the same in every
+            // language and are what the column's own DDL says.
+            (
+                SharedString::new_static(if draft.not_null { "NOT NULL" } else { "NULL" }),
+                true,
+            ),
+            (
+                draft
+                    .default_sql
+                    .clone()
+                    .map_or(NOTHING, SharedString::from),
+                true,
+            ),
+            (state, true),
+        ];
+
+        div()
+            .id(id)
+            .flex()
+            .flex_row()
+            .items_center()
+            .cursor_pointer()
+            // Zebra striping, because a row of five truncated cells is hard to
+            // follow across otherwise — and the selected row instead of it,
+            // because which row the form is filled from matters more.
+            .when(zebra && !selected, |row| row.bg(chrome.surface))
+            .when(selected, |row| row.bg(chrome.surface_hover))
+            .children(cells.into_iter().map(|(text, muted)| {
+                cell(text, muted, chrome).when(struck, |cell| cell.line_through())
+            }))
+            .on_click(move |_, window, cx| click(window, cx))
+    }
+
+    /// The form: the selected column's four fields, one column at a time.
+    fn render_editor(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let Some(draft) = self.selected_draft() else {
+            return section(
+                ts!("struct.edit_column"),
+                div()
+                    .text_size(px(11.))
+                    .text_color(chrome.text_muted)
+                    .child(ts!("struct.no_selection")),
+                chrome,
+            )
+            .into_any_element();
+        };
+        let this = cx.entity();
+        let nulls = this.clone();
+        let writable = self.read_only_reason().is_none();
+
+        section(
+            ts!("struct.edit_column"),
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(form_row(ts!("struct.name"), self.name_input.clone()))
+                .child(form_row(ts!("struct.type"), self.type_input.clone()))
+                .child(form_row(ts!("struct.default"), self.default_input.clone()))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(16.))
+                        .child(
+                            // The SQL keyword, untranslated: it is what the
+                            // column's own DDL says.
+                            Checkbox::new("struct-not-null", SharedString::new_static("NOT NULL"))
+                                .checked(draft.not_null)
+                                .on_toggle(move |checked, _window, cx| {
+                                    nulls.update(cx, |pane, cx| {
+                                        pane.set_field(DraftValue::NotNull(checked), cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Checkbox::new("struct-has-default", ts!("struct.has_default"))
+                                .checked(draft.default_sql.is_some())
+                                .on_toggle(move |checked, _window, cx| {
+                                    this.update(cx, |pane, cx| pane.set_has_default(checked, cx));
+                                }),
+                        ),
+                )
+                .when(!writable, |form| form.opacity(0.6)),
+            chrome,
+        )
+        .into_any_element()
+    }
+
+    /// The constraints: the ones the catalogue reported, the ones being added,
+    /// and — in [`Mode::Create`] — the form that adds one.
+    ///
+    /// The two lists are drawn one after the other rather than switched
+    /// between, because in each mode the other one is empty: an alter can only
+    /// drop and a create has nothing read to drop. That is the same trick the
+    /// column table has already been playing with its snapshot rows and its
+    /// added ones.
+    ///
+    /// The drop toggle is drawn disabled where the dialect cannot drop a
+    /// constraint at all rather than left out, and a line underneath says which
+    /// product and why: §7.8's rule that a surface documents itself, and the
+    /// same sentence the generator would have refused with.
+    fn render_constraints(
+        &self,
+        structure: &Structure,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let this = cx.entity();
+        let writable = self.read_only_reason().is_none();
+        let droppable = drops_constraints(&self.dialect);
+        let creating = self.mode == Mode::Create;
+        let added = self.edits.added_constraints();
+
+        let loaded = structure
+            .constraints
+            .iter()
+            .enumerate()
+            .map(|(index, constraint)| {
+                let dropped = self.edits.is_constraint_dropped(index);
+                let this = this.clone();
+                let label = if dropped {
+                    ts!("struct.keep")
+                } else {
+                    ts!("struct.drop")
+                };
+                constraint_row(
+                    kind_name(constraint.kind),
+                    &constraint.name,
+                    SharedString::from(constraint.columns.join(", ")),
+                    dropped,
+                    index % 2 == 1,
+                    chrome,
+                )
+                .child(div().flex_none().w(px(84.)).px(px(4.)).children(
+                    writable.then(|| {
+                        Button::new(("struct-drop-constraint", index), label)
+                            .variant(ButtonVariant::Secondary)
+                            .disabled(!droppable)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| {
+                                    pane.toggle_constraint_drop(index, cx);
+                                });
+                            })
+                    }),
+                ))
+            });
+
+        let staged =
+            added.iter().enumerate().map(|(position, draft)| {
+                let this = this.clone();
+                constraint_row(
+                    SharedString::new_static(draft.kind.keyword()),
+                    &draft.name,
+                    reference_summary(draft),
+                    false,
+                    (structure.constraints.len() + position) % 2 == 1,
+                    chrome,
+                )
+                .child(div().flex_none().w(px(84.)).px(px(4.)).children(
+                    writable.then(|| {
+                        Button::new(("struct-remove-constraint", position), ts!("struct.remove"))
+                            .variant(ButtonVariant::Secondary)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| {
+                                    pane.remove_added_constraint(position, cx);
+                                });
+                            })
+                    }),
+                ))
+            });
+
+        let listing = if structure.constraints.is_empty() && added.is_empty() {
+            div()
+                .text_size(px(11.))
+                .text_color(chrome.text_muted)
+                .child(ts!("struct.empty"))
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .child(
+                    headings(
+                        [
+                            ts!("struct.kind"),
+                            ts!("struct.name"),
+                            ts!("struct.columns"),
+                        ],
+                        chrome,
+                    )
+                    .child(div().flex_none().w(px(84.))),
+                )
+                .children(loaded)
+                .children(staged)
+                .children((!droppable && !structure.constraints.is_empty()).then(|| {
+                    div()
+                        .pt(px(6.))
+                        .text_size(px(11.))
+                        .text_color(chrome.text_muted)
+                        .child(ts!(
+                            "struct.no_constraint_drop",
+                            dialect = self.dialect.name()
+                        ))
+                }))
+        };
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(listing)
+            .children(
+                (creating && writable).then(|| self.render_add_constraint(structure, chrome, cx)),
+            );
+
+        section(ts!("struct.constraints"), body, chrome).into_any_element()
+    }
+
+    /// The form that gives a table being created a key or a reference.
+    ///
+    /// The only place a constraint can be born (§7.10): `plan_alter` drops them
+    /// and never adds one, so without this a table made by rudbman could never
+    /// be given a key at all.
+    ///
+    /// Four controls and no more. The kind is three buttons carrying their own
+    /// SQL keywords; the columns are ticked off the columns being defined,
+    /// because a constraint over a column this table does not have is not a
+    /// thing anyone means; the name is optional, and says so, since an unnamed
+    /// constraint is ordinary and the server names it. Only a foreign key draws
+    /// the last two, and those are free text: the pane has no catalogue browser
+    /// and §7.10's create path does not want one, so the other side of a
+    /// reference reaches the server as it was typed — which is the rule a
+    /// column's type has followed all along.
+    fn render_add_constraint(
+        &self,
+        structure: &Structure,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let this = cx.entity();
+        let [name, references, referenced_columns] = self.constraint_fields.clone();
+        let candidates = self.constraint_candidates(structure);
+
+        let kinds = NewConstraintKind::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(at, kind)| {
+                let this = this.clone();
+                let chosen = self.constraint_kind == kind;
+                Button::new(
+                    ("struct-constraint-kind", at),
+                    // The SQL keyword, untranslated: it is what the clause under
+                    // the form says.
+                    SharedString::new_static(kind.keyword()),
+                )
+                .variant(if chosen {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Secondary
+                })
+                .on_click(move |_, _window, cx| {
+                    this.update(cx, |pane, cx| pane.set_constraint_kind(kind, cx));
+                })
+            });
+
+        let columns = candidates.iter().cloned().enumerate().map(|(at, column)| {
+            let this = this.clone();
+            let ticked = self.constraint_columns.contains(&column);
+            Checkbox::new(
+                ("struct-constraint-column", at),
+                SharedString::from(column.clone()),
+            )
+            .checked(ticked)
+            .on_toggle(move |_checked, _window, cx| {
+                let column = column.clone();
+                this.update(cx, |pane, cx| pane.toggle_constraint_column(&column, cx));
+            })
+        });
+
+        let adder = this.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .pt(px(6.))
+            .border_t_1()
+            .border_color(chrome.border)
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(chrome.text_muted)
+                    .child(ts!("struct.new_constraint")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(120.))
+                            .text_size(px(11.))
+                            .text_color(chrome.text_muted)
+                            .child(ts!("struct.kind")),
+                    )
+                    .children(kinds),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(120.))
+                            .text_size(px(11.))
+                            .text_color(chrome.text_muted)
+                            .child(ts!("struct.columns")),
+                    )
+                    .when(candidates.is_empty(), |row| {
+                        row.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(chrome.text_muted)
+                                .child(ts!("struct.empty")),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .gap(px(12.))
+                            .children(columns),
+                    ),
+            )
+            .child(form_row(ts!("struct.constraint_name"), name))
+            .when(
+                self.constraint_kind == NewConstraintKind::ForeignKey,
+                |form| {
+                    form.child(form_row(ts!("struct.references"), references))
+                        .child(form_row(
+                            ts!("struct.referenced_columns"),
+                            referenced_columns,
+                        ))
+                },
+            )
+            .child(
+                div().flex().flex_row().child(
+                    Button::new("struct-add-constraint", ts!("struct.add_constraint"))
+                        .variant(ButtonVariant::Secondary)
+                        .on_click(move |_, _window, cx| {
+                            adder.update(cx, |pane, cx| pane.add_constraint(cx));
+                        }),
+                ),
+            )
+    }
+
+    /// The columns a constraint can be put over: everything the table will
+    /// have, in the order the column table draws it.
+    ///
+    /// The snapshot's own columns first and the added ones after, which in
+    /// [`Mode::Create`] means only the added ones — the snapshot is empty. A
+    /// column with no name yet is left out because there is nothing to tick,
+    /// and a constraint already staged goes on naming whatever it was given: a
+    /// column renamed underneath one is visible in the statement, which is
+    /// where §7.10 puts every question of this kind.
+    fn constraint_candidates(&self, structure: &Structure) -> Vec<String> {
+        structure
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .chain(self.edits.added().iter().map(|draft| draft.name.clone()))
+            .filter(|name| !name.is_empty())
+            .collect()
+    }
+
+    /// The name field: one input, and two things to call it.
+    ///
+    /// In [`Mode::Alter`] it is pre-filled with the table's bare name and
+    /// leaving it alone is what almost everybody does. In [`Mode::Create`] it
+    /// starts empty and is the one field the statement cannot be written
+    /// without. The same input and the same staging slot either way — there is
+    /// one name being typed — and only the words around it differ.
+    fn render_name(&self, chrome: &Theme) -> AnyElement {
+        let (title, label) = match self.mode {
+            Mode::Alter => (ts!("struct.rename_table"), ts!("struct.new_name")),
+            Mode::Create => (ts!("struct.new_table"), ts!("struct.table_name")),
+        };
+        section(title, form_row(label, self.rename_input.clone()), chrome).into_any_element()
+    }
+
+    /// The statements the staged edits would send, or the refusal they earned.
+    fn render_statements(&self, chrome: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let mono = crate::app_settings::monospace_family(cx);
+        let body = match self.plan()? {
+            // Nothing to send. A box with nothing in it would say less than no
+            // box at all.
+            Ok(statements) if statements.is_empty() => return None,
+            Ok(statements) => div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .font_family(mono)
+                .text_size(px(11.))
+                .text_color(chrome.text)
+                .children(statements.into_iter().map(SharedString::from)),
+            // The generator's own sentence, which already names the product and
+            // the reason it cannot do this — see `struct_edit::PlanError`.
+            Err(error) => div()
+                .text_size(px(11.))
+                .text_color(chrome.danger)
+                .child(SharedString::from(error.to_string())),
+        };
+
+        Some(
+            section(
+                ts!("struct.statements"),
+                div()
+                    .w_full()
+                    .p(px(8.))
+                    .rounded_md()
+                    .bg(chrome.surface)
+                    .border_1()
+                    .border_color(chrome.border)
+                    .child(body),
+                chrome,
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// The statements a batch is about to send, while they are being shown.
+    ///
+    /// The same list the block under the tables already draws, raised over it:
+    /// §7.10 and §7.9 both have the preview *be* the write confirmation, which
+    /// is a superset of the profile's "ask before a write" and therefore
+    /// answers it. Each statement is its own block in the monospace family,
+    /// because a `?` is the one thing that cannot appear in one of these and a
+    /// type the server has never heard of is the one thing that can.
+    ///
+    /// The line above them saying this cannot be undone is not a conditional
+    /// the way the data pane's is. There it depends on the product; here it is
+    /// true on every product, because the batch runs under autocommit on all of
+    /// them (§7.10) — so it is always drawn.
+    fn render_apply_preview(&self, chrome: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let statements = self.preview.as_ref()?;
+        let this = cx.entity();
+        let dismiss = this.clone();
+        let mono = crate::app_settings::monospace_family(cx);
+
+        let listing = statements.iter().enumerate().map(|(index, statement)| {
+            div()
+                .when(index > 0, |block| block.mt(px(8.)))
+                .font_family(mono.clone())
+                .text_size(px(11.))
+                .text_color(chrome.text)
+                .child(SharedString::from(statement.clone()))
+        });
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(chrome.danger)
+                    .child(ts!("struct.apply_no_undo")),
+            )
+            .child(
+                div()
+                    .id("struct-apply-preview")
+                    .max_h(px(260.))
+                    .overflow_y_scroll()
+                    .p(px(8.))
+                    .rounded_md()
+                    .bg(chrome.surface)
+                    .border_1()
+                    .border_color(chrome.border)
+                    .children(listing),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("struct-apply-cancel", ts!("common.cancel"))
+                            .variant(ButtonVariant::Secondary)
+                            .on_click({
+                                let this = this.clone();
+                                move |_, _window, cx| {
+                                    this.update(cx, |pane, cx| {
+                                        pane.preview = None;
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("struct-apply-run", self.apply_label())
+                            .variant(ButtonVariant::Primary)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| pane.confirm_apply(cx));
+                            }),
+                    ),
+            );
+
+        Some(
+            modal(
+                "struct-apply-modal",
+                ts!("struct.apply_title", count = statements.len()),
+                px(560.),
+                body,
+                move |_window, cx| {
+                    dismiss.update(cx, |pane, cx| {
+                        pane.preview = None;
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// How far the last batch got, above the structure it has already changed.
+    ///
+    /// A strip and not the body, for the data pane's reason: the structure is
+    /// still on screen — the reloaded one, which is the point — and a failure
+    /// drawn in its place would take away the one reading that says what the
+    /// committed half did.
+    fn render_apply_error(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+        let problem = self.apply_error.as_ref()?;
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap(px(4.))
+                .px(px(10.))
+                .py(px(6.))
+                .border_b_1()
+                .border_color(chrome.border)
+                .bg(chrome.surface)
+                .child(error_lines(&problem.error, chrome))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(chrome.danger)
+                        .child(problem.stopped.clone()),
+                ),
+        )
+    }
+}
+
+impl Focusable for StructPane {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for StructPane {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.watch_scroll(cx);
+        let chrome = theme(cx);
+        let header = self.render_header(&chrome, cx);
+        let banner = self.render_banner(&chrome);
+        let failure = self.render_apply_error(&chrome);
+        let body = self.render_body(&chrome, cx);
+        let preview = self.render_apply_preview(&chrome, cx);
+
+        div()
+            .id("struct-pane")
+            .track_focus(&self.focus_handle)
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .relative()
+            .on_drag_move::<DraggedThumb>(cx.listener(
+                |pane, event: &DragMoveEvent<DraggedThumb>, _window, cx| {
+                    let Some(progress) = pane.scrollbar().dragged(event, cx) else {
+                        return;
+                    };
+                    pane.body_scrollbar.hold();
+                    scroll_to(&pane.body_scroll, ScrollbarAxis::Vertical, progress);
+                    cx.notify();
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|pane, _: &MouseUpEvent, _window, cx| pane.release(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|pane, _: &MouseUpEvent, _window, cx| pane.release(cx)),
+            )
+            .child(header)
+            .children(banner)
+            .children(failure)
+            .child(body)
+            .children(self.notice.clone().map(|notice| {
+                div()
+                    .absolute()
+                    .bottom(px(6.))
+                    .left(px(10.))
+                    .right(px(10.))
+                    .px(px(8.))
+                    .py(px(4.))
+                    .rounded_md()
+                    .bg(chrome.surface)
+                    .border_1()
+                    .border_color(chrome.border)
+                    .text_size(px(11.))
+                    .text_color(chrome.text_muted)
+                    .child(notice)
+            }))
+            // Last, so it draws over everything else including the notice
+            // (architecture document, §7.8).
+            .children(preview)
+    }
+}
+
+/// A titled block of the body.
+fn section<E: IntoElement>(
+    title: SharedString,
+    body: E,
+    chrome: &Theme,
+) -> impl IntoElement + use<E> {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(chrome.text_muted)
+                .child(title),
+        )
+        .child(body)
+}
+
+/// One cell of one of the pane's tables.
+///
+/// Every column shares the width evenly rather than being measured, and the
+/// widest cell truncates: [`crate::table_detail`]'s idiom, and for its reason —
+/// a column list is tens of rows and never the millions the result grid has to
+/// survive.
+fn cell(text: SharedString, muted: bool, chrome: &Theme) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .px(px(6.))
+        .py(px(3.))
+        .text_size(px(11.))
+        .text_color(if muted {
+            chrome.text_muted
+        } else {
+            chrome.text
+        })
+        .child(text)
+}
+
+/// The heading row of one of the pane's tables.
+fn headings<const N: usize>(headers: [SharedString; N], chrome: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .border_b_1()
+        .border_color(chrome.border)
+        .children(headers.into_iter().map(|text| cell(text, true, chrome)))
+}
+
+/// One row of the constraint table, up to the button at the end of it.
+///
+/// The same three cells whether the constraint was read from the catalogue or
+/// is being added, because they are the same three facts: what kind it is, what
+/// it is called, and what it covers.
+fn constraint_row(
+    kind: SharedString,
+    name: &str,
+    columns: SharedString,
+    struck: bool,
+    zebra: bool,
+    chrome: &Theme,
+) -> Div {
+    let named = if name.is_empty() {
+        NOTHING
+    } else {
+        SharedString::from(name.to_string())
+    };
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .when(zebra, |row| row.bg(chrome.surface))
+        .children(
+            [(kind, false), (named, true), (columns, true)]
+                .into_iter()
+                .map(|(text, muted)| {
+                    cell(text, muted, chrome).when(struck, |cell| cell.line_through())
+                }),
+        )
+}
+
+/// What a staged constraint covers, and — on a foreign key — what it points at.
+///
+/// Folded into the one cell the table has for it rather than given a column of
+/// its own, because two of the three kinds would leave that column empty. The
+/// arrow is punctuation and not a word, so it needs no translation.
+fn reference_summary(draft: &ConstraintDraft) -> SharedString {
+    let columns = draft.columns.join(", ");
+    if draft.kind != NewConstraintKind::ForeignKey || draft.references.is_empty() {
+        return SharedString::from(columns);
+    }
+    let other = if draft.referenced_columns.is_empty() {
+        draft.references.clone()
+    } else {
+        format!("{} ({})", draft.references, draft.referenced_columns)
+    };
+    SharedString::from(format!("{columns} → {other}"))
+}
+
+/// The empty snapshot a table being created is edited against.
+///
+/// §7.10's whole design for the create path in one function: the current shape
+/// of a table that does not exist yet is no columns and no constraints, in the
+/// catalogue and schema it is going to be made in. The name is not part of it —
+/// that is staged, and discardable, like everything else the user types.
+fn blank_structure(target: &ObjectTarget) -> Structure {
+    // Through `table_parts` so that which of the catalogue and the schema
+    // qualifies a name is decided in one place, and then without the name,
+    // which is the field nobody has filled in yet.
+    let mut table = builder_sql::table_parts(
+        target.catalog.as_deref(),
+        target.schema.as_deref(),
+        &target.name,
+    );
+    table.pop();
+    Structure {
+        table,
+        columns: Vec::new(),
+        constraints: Vec::new(),
+    }
+}
+
+/// A constraint's kind, as SQL spells it.
+///
+/// Untranslated for the reason `NOT NULL` is: these are the words the table's
+/// own DDL carries, and a localised `PRIMARY KEY` would stop matching the
+/// statement the block below shows.
+fn kind_name(kind: ConstraintKind) -> SharedString {
+    SharedString::new_static(match kind {
+        ConstraintKind::PrimaryKey => "PRIMARY KEY",
+        ConstraintKind::ForeignKey => "FOREIGN KEY",
+        ConstraintKind::Unique => "UNIQUE",
+        ConstraintKind::Check => "CHECK",
+    })
+}
+
+/// Whether this dialect can drop a constraint at all.
+///
+/// Asked of the generator rather than answered here: SQLite is the product that
+/// cannot, and a second list of which products those are would be a list that
+/// can disagree with the one that writes the statements. The probe costs a
+/// handful of string operations and reaches no database.
+fn drops_constraints(dialect: &Dialect) -> bool {
+    let mut probe = TableAlter::new(["t"]);
+    probe.drop_constraints.push(ConstraintDrop {
+        kind: ConstraintKind::PrimaryKey,
+        name: "c".to_string(),
+    });
+    plan_alter(&probe, dialect).is_ok()
+}
+
+/// A batch that stopped: what the driver refused, and how much of the batch is
+/// already in.
+///
+/// There is no `half_applied` flag the way §7.9's failure has one, because
+/// there is nothing to be uncertain about: every statement before the one that
+/// failed is committed, and `committed` says how many that is.
+struct AlterFailure {
+    /// The driver's own envelope, from the statement that failed.
+    error: JdbcError,
+    /// How many statements ran and committed before it.
+    committed: usize,
+    /// How many there were in the batch. What makes `committed` legible: "1 of
+    /// 4 committed" is a position in a list the user has just read.
+    total: usize,
+}
+
+/// Runs one `ALTER TABLE` batch and reports how far it got.
+///
+/// **Blocks**, and is called from `cx.background_spawn` with a
+/// [`SessionHandle`]: every call in here goes through the session's own worker
+/// thread, so the batch runs without anything else on this connection getting
+/// in between.
+///
+/// §7.10's shape, and deliberately not §7.9's:
+///
+/// * **Autocommit is forced on**, whatever the profile opened with. MySQL and
+///   Oracle commit implicitly at every DDL statement, so `setAutoCommit(false)`
+///   would buy a rollback that silently does nothing on a third of the products
+///   rudbman supports — and a profile that opened with autocommit *off* would
+///   leave the batch sitting in a transaction this pane never commits. One
+///   model for every product is the only honest one.
+/// * **The first failure stops the batch**, and the statements before it stay
+///   in. There is no `rollback` call in this function and there is nothing for
+///   one to do.
+/// * **No update count is checked.** What a DDL statement reports as a count is
+///   not a number about the table, and §7.9's staleness guard has no meaning
+///   here.
+/// * Autocommit goes back to `restore` whatever happened. A failure to restore
+///   it is logged and no more: the work is committed either way, and reporting
+///   it as this batch's failure would say something untrue about the batch.
+fn apply_alter(
+    session: &Session,
+    statements: &[String],
+    restore: bool,
+) -> Result<usize, AlterFailure> {
+    let total = statements.len();
+    let failed = |error, committed| AlterFailure {
+        error,
+        committed,
+        total,
+    };
+
+    if let Err(error) = session.set_auto_commit(true) {
+        // Nothing has run, so there is nothing to put back: the session is
+        // still in whatever mode it was opened in.
+        return Err(failed(error, 0));
+    }
+
+    let mut committed = 0;
+    let mut stopped = None;
+    for statement in statements {
+        // Dropping the cursor closes it; a DDL statement holds nothing worth
+        // paging.
+        if let Err(error) = session.execute(&StatementSpec::new(statement.clone())) {
+            stopped = Some(error);
+            break;
+        }
+        committed += 1;
+    }
+
+    if let Err(error) = session.set_auto_commit(restore) {
+        log::warn!("restoring auto-commit after an ALTER batch failed: {error}");
+    }
+
+    match stopped {
+        Some(error) => Err(failed(error, committed)),
+        None => Ok(total),
+    }
+}
+
+/// Reads one table's structure: its columns, and the constraints that can be
+/// dropped.
+///
+/// **Blocks**, and is called from `cx.background_spawn` with a
+/// [`SessionHandle`]. Every request goes through the session's own worker
+/// thread, so they queue behind whatever else that connection is doing rather
+/// than racing it.
+///
+/// Four `DESCRIBE`s and no more, because four is what JDBC's
+/// `DatabaseMetaData` answers: there is no call for check constraints at all,
+/// so a [`Structure`] read this way never holds one (§7.10).
+pub fn load_structure(session: &Session, target: &ObjectTarget) -> Result<Structure, String> {
+    let scoped = |kind: &str| {
+        let mut request = DescribeRequest::new(kind).with_table(&target.name);
+        request.catalog = target.catalog.clone();
+        request.schema = target.schema.clone();
+        request
+    };
+
+    let columns = items(session, &{
+        let mut request = DescribeRequest::new("columns");
+        request.catalog = target.catalog.clone();
+        request.schema = target.schema.clone();
+        request.table = Some(target.name.clone());
+        request
+    })?;
+    let primary = items(session, &scoped("primary_keys"))?;
+    let imported = items(session, &scoped("imported_keys"))?;
+    let indexes = items(session, &scoped("indexes"))?;
+
+    Ok(Structure {
+        table: builder_sql::table_parts(
+            target.catalog.as_deref(),
+            target.schema.as_deref(),
+            &target.name,
+        ),
+        columns: columns_of(&columns),
+        constraints: constraints_of(&primary, &imported, &indexes),
+    })
+}
+
+/// The columns of one `DESCRIBE columns` answer, in ordinal order.
+///
+/// Sorted rather than taken as they came: a reload that reshuffled the rows
+/// would move every index the staging buffer holds, and drivers are not
+/// required to answer in any order at all. The sort is stable, so a driver that
+/// reported no ordinal keeps the order it gave.
+fn columns_of(items: &[Item]) -> Vec<LoadedColumn> {
+    let mut columns: Vec<(i64, LoadedColumn)> = items
+        .iter()
+        .map(|column| {
+            (
+                number(column, "ordinal").unwrap_or(i64::MAX),
+                LoadedColumn {
+                    name: text(column, "name").unwrap_or_default().to_string(),
+                    // The panel's own folding: `VARCHAR(255)`, `NUMERIC(12,2)`.
+                    // That is the form the user retypes and the only form the
+                    // generator passes on.
+                    type_sql: type_of(column),
+                    not_null: !flag(column, "is_nullable").unwrap_or(true),
+                    // `text` answers `None` for an absent *and* for an empty
+                    // value, which is exactly the distinction the generator
+                    // needs: no default at all, rather than a default of the
+                    // empty string.
+                    default_sql: text(column, "default").map(str::to_owned),
+                },
+            )
+        })
+        .collect();
+    columns.sort_by_key(|(ordinal, _)| *ordinal);
+    columns.into_iter().map(|(_, column)| column).collect()
+}
+
+/// The constraints three `DESCRIBE` answers add up to.
+///
+/// In kind order and then in name order — the primary key, the foreign keys,
+/// the unique indexes — so that a reload does not reshuffle the table and the
+/// indices the staging buffer holds go on meaning what they meant.
+///
+/// Three rules worth stating:
+///
+/// * **An unnamed primary key is kept.** A driver that reports no `PK_NAME`
+///   still leaves a droppable key on MySQL, whose `DROP PRIMARY KEY` names no
+///   constraint because a table has at most one. An unnamed *foreign key* is
+///   skipped instead: every product's spelling of that drop needs the name.
+/// * **An index row with no column is a table statistic** — JDBC's
+///   `tableIndexStatistic` — and not an index, exactly as the detail panel has
+///   it.
+/// * **The primary key's own index is not offered twice.** It arrives once from
+///   `getPrimaryKeys` and again from `getIndexInfo`, and the second copy would
+///   offer a `DROP CONSTRAINT` against a name the server does not know as a
+///   constraint. Matched by name and, for the drivers that name the index and
+///   the key differently, by covering exactly the key's columns.
+fn constraints_of(primary: &[Item], imported: &[Item], indexes: &[Item]) -> Vec<LoadedConstraint> {
+    let mut constraints = Vec::new();
+
+    let key_columns = ordered(primary, "column", "seq");
+    let key_name = primary
+        .iter()
+        .find_map(|row| text(row, "name"))
+        .unwrap_or_default()
+        .to_string();
+    if !primary.is_empty() {
+        constraints.push(LoadedConstraint {
+            kind: ConstraintKind::PrimaryKey,
+            name: key_name.clone(),
+            columns: key_columns.clone(),
+        });
+    }
+
+    let mut foreign: BTreeMap<&str, Vec<(i64, String)>> = BTreeMap::new();
+    for row in imported {
+        let (Some(name), Some(column)) = (text(row, "fk_name"), text(row, "fk_column")) else {
+            continue;
+        };
+        foreign
+            .entry(name)
+            .or_default()
+            .push((number(row, "seq").unwrap_or(0), column.to_string()));
+    }
+    for (name, mut members) in foreign {
+        members.sort_by_key(|(seq, _)| *seq);
+        constraints.push(LoadedConstraint {
+            kind: ConstraintKind::ForeignKey,
+            name: name.to_string(),
+            columns: members.into_iter().map(|(_, column)| column).collect(),
+        });
+    }
+
+    let mut unique: BTreeMap<&str, Vec<(i64, String)>> = BTreeMap::new();
+    for row in indexes {
+        let (Some(name), Some(column)) = (text(row, "name"), text(row, "column")) else {
+            continue;
+        };
+        if flag(row, "non_unique").unwrap_or(true) || name == key_name {
+            continue;
+        }
+        unique
+            .entry(name)
+            .or_default()
+            .push((number(row, "ordinal").unwrap_or(0), column.to_string()));
+    }
+    for (name, mut members) in unique {
+        members.sort_by_key(|(ordinal, _)| *ordinal);
+        let columns: Vec<String> = members.into_iter().map(|(_, column)| column).collect();
+        if !key_columns.is_empty() && columns == key_columns {
+            continue;
+        }
+        constraints.push(LoadedConstraint {
+            kind: ConstraintKind::Unique,
+            name: name.to_string(),
+            columns,
+        });
+    }
+
+    constraints
+}
+
+/// One key's columns, in the order the sequence member gives them.
+fn ordered(rows: &[Item], column: &str, sequence: &str) -> Vec<String> {
+    let mut members: Vec<(i64, String)> = rows
+        .iter()
+        .filter_map(|row| {
+            Some((
+                number(row, sequence).unwrap_or(0),
+                text(row, column)?.to_string(),
+            ))
+        })
+        .collect();
+    members.sort_by_key(|(seq, _)| *seq);
+    members.into_iter().map(|(_, column)| column).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, WindowHandle};
+
+    use super::*;
+    use crate::app_settings;
+    use crate::connection::Connected;
+    use crate::explorer::Folder;
+
+    /// Parses one `DESCRIBE` item out of JSON.
+    fn item(json: &str) -> Item {
+        serde_json::from_str(json).expect("the fixture parses")
+    }
+
+    /// Parses a list of them.
+    fn list(rows: &[&str]) -> Vec<Item> {
+        rows.iter().copied().map(item).collect()
+    }
+
+    /// A table of the fixture's `APP` schema.
+    fn target(name: &str) -> ObjectTarget {
+        ObjectTarget {
+            connection: ConnectionId(1),
+            catalog: None,
+            schema: Some("APP".to_string()),
+            folder: Folder::Tables,
+            name: name.to_string(),
+        }
+    }
+
+    /// A window whose whole content is one structure pane, already loaded.
+    fn pane(
+        connected: &Connected,
+        target: ObjectTarget,
+        cx: &mut TestAppContext,
+    ) -> WindowHandle<StructPane> {
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let session = connected.handle();
+        let profile = crate::connection::h2::profile("struct-pane");
+        let window = cx.add_window(move |_window, cx| {
+            StructPane::new(session, ConnectionId(1), target, &profile, "h2", cx)
+        });
+        window
+            .update(cx, |pane, _window, cx| pane.refresh(cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+    }
+
+    /// The fixture table, read through the pane's own loader.
+    #[test]
+    fn a_table_is_read_as_its_columns_and_its_droppable_constraints() {
+        let connected = crate::explorer::tests::h2_fixture("struct-load");
+        let structure = load_structure(connected.session(), &target("PERSON"))
+            .unwrap_or_else(|error| panic!("PERSON: {error}"));
+
+        assert_eq!(structure.table, ["APP", "PERSON"]);
+        let names: Vec<&str> = structure
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect();
+        assert_eq!(names, ["ID", "TEAM_ID", "EMAIL", "SALARY"], "ordinal order");
+
+        let id = &structure.columns[0];
+        assert_eq!(id.type_sql, "INTEGER", "{id:?}");
+        assert!(id.not_null, "a primary key column refuses NULL");
+        // No default, rather than a default of the empty string: the two are
+        // different statements.
+        assert_eq!(id.default_sql, None);
+        // The size folded in, exactly as the detail panel spells it.
+        assert_eq!(structure.columns[2].type_sql, "CHARACTER VARYING(200)");
+        assert_eq!(structure.columns[3].type_sql, "NUMERIC(12,2)");
+        assert!(!structure.columns[2].not_null);
+
+        // One primary key, one foreign key, one unique index — and the index
+        // behind the primary key is *not* a fourth.
+        let kinds: Vec<ConstraintKind> = structure
+            .constraints
+            .iter()
+            .map(|constraint| constraint.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ConstraintKind::PrimaryKey,
+                ConstraintKind::ForeignKey,
+                ConstraintKind::Unique
+            ],
+            "{:?}",
+            structure.constraints
+        );
+        assert_eq!(structure.constraints[0].columns, ["ID"]);
+        assert_eq!(structure.constraints[1].name, "FK_PERSON_TEAM");
+        assert_eq!(structure.constraints[1].columns, ["TEAM_ID"]);
+        assert_eq!(structure.constraints[2].name, "UX_PERSON_EMAIL");
+        assert_eq!(structure.constraints[2].columns, ["EMAIL"]);
+    }
+
+    /// The primary key's own index is the same constraint under two names, and
+    /// offering it twice would offer a drop that fails.
+    #[test]
+    fn the_primary_keys_index_is_not_offered_as_a_second_constraint() {
+        let primary = list(&[
+            r#"{"column":"ID","seq":1,"name":"PK_ORDERS"}"#,
+            r#"{"column":"LINE","seq":2,"name":"PK_ORDERS"}"#,
+        ]);
+        let indexes = list(&[
+            // The key's index, reported under the key's own name.
+            r#"{"name":"PK_ORDERS","column":"ID","ordinal":1,"non_unique":false}"#,
+            r#"{"name":"PK_ORDERS","column":"LINE","ordinal":2,"non_unique":false}"#,
+            // The same index under a name of its own, which several drivers do.
+            r#"{"name":"PRIMARY_KEY_4","column":"ID","ordinal":1,"non_unique":false}"#,
+            r#"{"name":"PRIMARY_KEY_4","column":"LINE","ordinal":2,"non_unique":false}"#,
+            // A statistic row: no column, and not an index at all.
+            r#"{"name":"STATS","non_unique":true}"#,
+            // A non-unique index is not a constraint and cannot be dropped as
+            // one.
+            r#"{"name":"IX_NOTE","column":"NOTE","ordinal":1,"non_unique":true}"#,
+            // And a genuine unique index, which is.
+            r#"{"name":"UX_CODE","column":"CODE","ordinal":1,"non_unique":false}"#,
+        ]);
+
+        let constraints = constraints_of(&primary, &[], &indexes);
+        assert_eq!(constraints.len(), 2, "{constraints:?}");
+        assert_eq!(constraints[0].kind, ConstraintKind::PrimaryKey);
+        assert_eq!(constraints[0].columns, ["ID", "LINE"], "in KEY_SEQ order");
+        assert_eq!(constraints[1].name, "UX_CODE");
+        assert_eq!(constraints[1].kind, ConstraintKind::Unique);
+    }
+
+    /// A primary key a driver would not name is still a primary key: MySQL's
+    /// `DROP PRIMARY KEY` writes no name. A foreign key without one is not,
+    /// because every spelling of that drop needs it.
+    #[test]
+    fn an_unnamed_primary_key_is_kept_and_an_unnamed_foreign_key_is_not() {
+        let primary = list(&[r#"{"column":"ID","seq":1}"#]);
+        let imported = list(&[
+            r#"{"fk_column":"TEAM_ID","seq":1}"#,
+            r#"{"fk_name":"FK_B","fk_column":"B2","seq":2}"#,
+            r#"{"fk_name":"FK_B","fk_column":"B1","seq":1}"#,
+            r#"{"fk_name":"FK_A","fk_column":"A1","seq":1}"#,
+        ]);
+
+        let constraints = constraints_of(&primary, &imported, &[]);
+        assert_eq!(constraints.len(), 3, "{constraints:?}");
+        assert_eq!(constraints[0].kind, ConstraintKind::PrimaryKey);
+        assert_eq!(constraints[0].name, "", "unnamed, and kept");
+        // Name order among the foreign keys, and key-sequence order inside one.
+        assert_eq!(constraints[1].name, "FK_A");
+        assert_eq!(constraints[2].name, "FK_B");
+        assert_eq!(constraints[2].columns, ["B1", "B2"]);
+    }
+
+    /// An absent or empty default is "no default", which is a different
+    /// statement from a default of the empty string.
+    #[test]
+    fn an_empty_default_is_no_default_at_all() {
+        let columns = columns_of(&list(&[
+            r#"{"name":"A","type_name":"INTEGER","data_type":4,"ordinal":1,"is_nullable":true}"#,
+            r#"{"name":"B","type_name":"INTEGER","data_type":4,"ordinal":2,"default":""}"#,
+            r#"{"name":"C","type_name":"INTEGER","data_type":4,"ordinal":3,"default":"0"}"#,
+        ]));
+
+        assert_eq!(columns[0].default_sql, None, "absent");
+        assert_eq!(columns[1].default_sql, None, "empty is not Some(\"\")");
+        assert_eq!(columns[2].default_sql, Some("0".to_string()));
+        // A driver that would not say is taken as nullable, which is JDBC's own
+        // default and the safer of the two.
+        assert!(!columns[0].not_null);
+    }
+
+    /// The columns come out in ordinal order however the driver listed them.
+    #[test]
+    fn columns_are_ordered_so_a_reload_does_not_reshuffle_them() {
+        let columns = columns_of(&list(&[
+            r#"{"name":"C","type_name":"INTEGER","data_type":4,"ordinal":3}"#,
+            r#"{"name":"A","type_name":"INTEGER","data_type":4,"ordinal":1}"#,
+            r#"{"name":"B","type_name":"INTEGER","data_type":4,"ordinal":2}"#,
+        ]));
+        let names: Vec<&str> = columns.iter().map(|column| column.name.as_str()).collect();
+        assert_eq!(names, ["A", "B", "C"]);
+    }
+
+    /// SQLite has no `ALTER` that drops a constraint, and the pane asks the
+    /// generator rather than keeping a list of its own.
+    #[test]
+    fn only_the_products_that_can_drop_a_constraint_offer_the_toggle() {
+        assert!(drops_constraints(&Dialect::POSTGRES));
+        assert!(drops_constraints(&Dialect::MYSQL));
+        assert!(drops_constraints(&Dialect::ORACLE));
+        assert!(!drops_constraints(&Dialect::SQLITE));
+    }
+
+    /// The block under the tables is the staged state turned into statements,
+    /// recomputed and never cached.
+    #[gpui::test]
+    fn the_statements_follow_what_is_staged(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-statements");
+        let window = pane(&connected, target("PERSON"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(pane.structure().is_some(), "the structure arrived");
+                assert!(!pane.has_pending_edits());
+                assert_eq!(pane.plan(), None, "nothing staged is nothing to show");
+
+                // The type of the third column, retyped through the form: the
+                // selection fills the fields, and the field stages.
+                pane.select(Some(Selection::Column(2)), cx);
+                assert_eq!(pane.filled[0], "EMAIL", "the form filled from the row");
+                assert!(
+                    !pane.has_pending_edits(),
+                    "selecting a row is not an edit of it"
+                );
+
+                pane.typed(ColumnField::Type, "VARCHAR(300)".to_string(), cx);
+                assert!(pane.edits.is_column_changed(2));
+                assert_eq!(
+                    pane.plan(),
+                    Some(Ok(vec![
+                        "ALTER TABLE APP.PERSON ALTER COLUMN EMAIL SET DATA TYPE VARCHAR(300)"
+                            .to_string()
+                    ]))
+                );
+
+                // A drop of the same column replaces the change rather than
+                // joining it.
+                pane.toggle_drop(2, cx);
+                assert_eq!(
+                    pane.plan(),
+                    Some(Ok(vec![
+                        "ALTER TABLE APP.PERSON DROP COLUMN EMAIL".to_string()
+                    ]))
+                );
+                assert_eq!(pane.selected, None, "a dropped column is not editable");
+
+                // And a discard puts it all back.
+                pane.discard(cx);
+                assert!(!pane.has_pending_edits());
+                assert_eq!(pane.plan(), None);
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// An added column is typed from nothing, and its refusal names the row.
+    #[gpui::test]
+    fn an_added_column_is_staged_from_the_form(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-add");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                pane.add_column(cx);
+                assert_eq!(pane.selected, Some(Selection::Added(0)));
+                // A column with no name cannot be added, and the refusal points
+                // at the row rather than at a statement.
+                assert_eq!(
+                    pane.plan(),
+                    Some(Err(PlanError::AddedHasNoName { position: 0 }))
+                );
+
+                pane.typed(ColumnField::Name, "MOTTO".to_string(), cx);
+                pane.typed(ColumnField::Type, "VARCHAR(40)".to_string(), cx);
+                assert_eq!(
+                    pane.plan(),
+                    Some(Ok(vec![
+                        "ALTER TABLE APP.TEAM ADD COLUMN MOTTO VARCHAR(40)".to_string()
+                    ]))
+                );
+
+                // The default pair: typing one sets it, and the box takes it
+                // away again. `None` and `Some("")` stay two states.
+                pane.set_has_default(true, cx);
+                assert_eq!(
+                    pane.edits.added()[0].default_sql,
+                    Some(String::new()),
+                    "a default of nothing is still a default"
+                );
+                pane.typed(ColumnField::Default, "'?'".to_string(), cx);
+                assert_eq!(
+                    pane.plan(),
+                    Some(Ok(vec![
+                        "ALTER TABLE APP.TEAM ADD COLUMN MOTTO VARCHAR(40) DEFAULT '?'".to_string()
+                    ]))
+                );
+                pane.set_has_default(false, cx);
+                assert_eq!(pane.edits.added()[0].default_sql, None);
+
+                pane.remove_added(0, cx);
+                assert!(!pane.has_pending_edits());
+                assert_eq!(pane.selected, None);
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The rename field is pre-filled from the catalog, so filling it is not a
+    /// rename and typing the same name back is not one either.
+    #[gpui::test]
+    fn the_rename_field_only_counts_once_it_says_something_else(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-rename");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                assert_eq!(pane.filled_rename, "TEAM");
+                assert!(!pane.has_pending_edits(), "the pre-fill is not an edit");
+
+                pane.renamed("SQUAD".to_string(), cx);
+                assert_eq!(
+                    pane.plan(),
+                    Some(Ok(vec!["ALTER TABLE APP.TEAM RENAME TO SQUAD".to_string()]))
+                );
+
+                pane.renamed("TEAM".to_string(), cx);
+                assert!(!pane.has_pending_edits(), "typed back is not a rename");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A read-only profile browses and stages nothing, and says so where the
+    /// data pane says its own.
+    #[gpui::test]
+    fn a_read_only_profile_stages_nothing(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-read-only");
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let session = connected.handle();
+        let mut profile = crate::connection::h2::profile("struct-read-only");
+        profile.read_only = true;
+        let window = cx.add_window(move |_window, cx| {
+            StructPane::new(session, ConnectionId(1), target("TEAM"), &profile, "h2", cx)
+        });
+        window
+            .update(cx, |pane, _window, cx| pane.refresh(cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                assert_eq!(pane.read_only_reason(), Some(ts!("struct.read_only")));
+                assert!(pane.structure().is_some(), "it still browses");
+
+                pane.select(Some(Selection::Column(0)), cx);
+                pane.typed(ColumnField::Type, "BIGINT".to_string(), cx);
+                pane.toggle_drop(0, cx);
+                pane.add_column(cx);
+                pane.renamed("SQUAD".to_string(), cx);
+                assert!(!pane.has_pending_edits(), "nothing may be staged");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A window whose whole content is one structure pane over a table that
+    /// does not exist yet.
+    ///
+    /// Nothing is refreshed, because there is nothing to read: a table being
+    /// created is loaded the moment the pane is built.
+    fn create_pane(
+        connected: &Connected,
+        read_only: bool,
+        cx: &mut TestAppContext,
+    ) -> WindowHandle<StructPane> {
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let session = connected.handle();
+        let mut profile = crate::connection::h2::profile("struct-create");
+        profile.read_only = read_only;
+        // The name is ignored — a new table has none yet — and the schema is
+        // the place it is going.
+        let target = ObjectTarget {
+            name: String::new(),
+            ..target("IGNORED")
+        };
+        let window = cx.add_window(move |_window, cx| {
+            StructPane::creating(session, ConnectionId(1), target, &profile, "h2", cx)
+        });
+        cx.run_until_parked();
+        window
+    }
+
+    /// Stages `APP.NOTE(ID integer NOT NULL, BODY varchar(40))` through the
+    /// pane's own form, exactly as a user would.
+    fn stage_new_table(pane: &mut StructPane, cx: &mut Context<StructPane>) {
+        pane.renamed("NOTE".to_string(), cx);
+        pane.add_column(cx);
+        pane.typed(ColumnField::Name, "ID".to_string(), cx);
+        pane.typed(ColumnField::Type, "integer".to_string(), cx);
+        pane.set_field(DraftValue::NotNull(true), cx);
+        pane.add_column(cx);
+        pane.typed(ColumnField::Name, "BODY".to_string(), cx);
+        pane.typed(ColumnField::Type, "varchar(40)".to_string(), cx);
+    }
+
+    /// A pane over a table that does not exist yet is loaded, empty, and quiet.
+    ///
+    /// The whole of §7.10's create design in one assertion: the current shape
+    /// of a table being created is an empty one, reached without a `DESCRIBE`.
+    #[gpui::test]
+    fn a_create_pane_opens_empty_and_plans_nothing(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-open");
+        let window = create_pane(&connected, false, cx);
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert!(!pane.is_loading(), "nothing was asked for");
+                let structure = pane.structure().expect("it is already loaded");
+                assert_eq!(structure.table, ["APP"], "the schema, and no name yet");
+                assert!(structure.columns.is_empty());
+                assert!(structure.constraints.is_empty());
+
+                assert!(!pane.has_pending_edits());
+                assert_eq!(pane.plan(), None, "an empty create shows nothing");
+                assert_eq!(pane.filled_rename, "", "the name field starts empty");
+
+                // The tab and the header say what the pane is, because there is
+                // no table to name it after.
+                assert_eq!(pane.title(), ts!("struct.new_table"));
+                assert_eq!(pane.heading(), ts!("struct.new_table_in", scope = "APP"));
+                assert_eq!(pane.apply_label(), ts!("struct.create"));
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A name and one column plan exactly the `CREATE TABLE` the generator
+    /// writes — and the two states before that show nothing rather than a
+    /// refusal.
+    #[gpui::test]
+    fn a_name_and_a_column_plan_the_statement_that_makes_the_table(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-plan");
+        let window = create_pane(&connected, false, cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                // A name and no columns: staged, and still nothing shown.
+                pane.renamed("NOTE".to_string(), cx);
+                assert!(pane.has_pending_edits());
+                assert_eq!(
+                    pane.plan(),
+                    None,
+                    "a table with no columns yet is a state, not a mistake"
+                );
+
+                // A column with no name is a mistake, and one that names a row.
+                pane.add_column(cx);
+                assert_eq!(
+                    pane.plan(),
+                    Some(Err(PlanError::AddedHasNoName { position: 0 })),
+                    "and this one is shown as it is typed"
+                );
+
+                pane.typed(ColumnField::Name, "ID".to_string(), cx);
+                pane.typed(ColumnField::Type, "integer".to_string(), cx);
+                pane.set_field(DraftValue::NotNull(true), cx);
+                assert_eq!(
+                    pane.plan(),
+                    Some(Ok(vec![
+                        ["CREATE TABLE APP.NOTE (", "  ID integer NOT NULL", ")"].join("\n")
+                    ]))
+                );
+
+                // And a discard puts the pane back where it opened, without
+                // taking the schema with it.
+                pane.discard(cx);
+                assert!(!pane.has_pending_edits());
+                assert_eq!(pane.plan(), None);
+                assert_eq!(pane.structure().expect("still loaded").table, ["APP"]);
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The name is required, and the refusal waits until it is asked for.
+    #[gpui::test]
+    fn the_missing_name_is_refused_when_the_apply_is_asked_for(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-name");
+        let window = create_pane(&connected, false, cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                pane.add_column(cx);
+                pane.typed(ColumnField::Name, "ID".to_string(), cx);
+                pane.typed(ColumnField::Type, "integer".to_string(), cx);
+                assert_eq!(
+                    pane.plan(),
+                    None,
+                    "the name field is not scolded for being empty"
+                );
+
+                pane.apply(cx);
+                assert!(pane.preview.is_none(), "nothing to confirm");
+                assert_eq!(
+                    pane.plan(),
+                    Some(Err(PlanError::NoTableName)),
+                    "asking to apply is what makes the question worth answering"
+                );
+
+                // Typed in, and the refusal is replaced by the statement.
+                pane.renamed("NOTE".to_string(), cx);
+                assert!(matches!(pane.plan(), Some(Ok(_))));
+                pane.apply(cx);
+                assert_eq!(pane.preview.as_ref().map(Vec::len), Some(1));
+
+                // Cleared again, and it goes back to being a refusal — the ask
+                // has not been taken back.
+                pane.preview = None;
+                pane.renamed(String::new(), cx);
+                assert_eq!(pane.plan(), Some(Err(PlanError::NoTableName)));
+
+                // A discard is what takes it back.
+                pane.discard(cx);
+                pane.renamed("NOTE".to_string(), cx);
+                assert_eq!(pane.plan(), None, "no columns, and nothing said about it");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The constraint form is the only place a table gets a key or a reference,
+    /// and both reach the statement.
+    #[gpui::test]
+    fn a_key_and_a_reference_reach_the_create_statement(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-keys");
+        let window = create_pane(&connected, false, cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_new_table(pane, cx);
+
+                // Only the columns being defined can be ticked, which in create
+                // mode is the whole of what the table will have.
+                let structure = pane.structure().expect("loaded").clone();
+                assert_eq!(pane.constraint_candidates(&structure), ["ID", "BODY"]);
+
+                // A named primary key over ID.
+                pane.set_constraint_kind(NewConstraintKind::PrimaryKey, cx);
+                pane.toggle_constraint_column("ID", cx);
+                pane.constraint_fields[0]
+                    .update(cx, |input, cx| input.set_content("NOTE_PK".to_string(), cx));
+                pane.add_constraint(cx);
+                assert!(
+                    pane.constraint_columns.is_empty(),
+                    "the form emptied itself for the next one"
+                );
+                assert_eq!(
+                    pane.constraint_fields[0].read(cx).content(),
+                    "",
+                    "and so did its name field"
+                );
+
+                // An unnamed foreign key from BODY to a table named as free
+                // text, with the other side left to that table's own key.
+                pane.set_constraint_kind(NewConstraintKind::ForeignKey, cx);
+                pane.toggle_constraint_column("BODY", cx);
+                pane.toggle_constraint_column("ID", cx);
+                pane.toggle_constraint_column("BODY", cx);
+                assert_eq!(pane.constraint_columns, ["ID"], "ticked, and unticked");
+                pane.constraint_fields[1].update(cx, |input, cx| {
+                    input.set_content("APP.TEAM".to_string(), cx)
+                });
+                pane.add_constraint(cx);
+
+                assert_eq!(
+                    pane.plan(),
+                    Some(Ok(vec![
+                        [
+                            "CREATE TABLE APP.NOTE (",
+                            "  ID integer NOT NULL,",
+                            "  BODY varchar(40),",
+                            "  CONSTRAINT NOTE_PK PRIMARY KEY (ID),",
+                            "  FOREIGN KEY (ID) REFERENCES APP.TEAM",
+                            ")",
+                        ]
+                        .join("\n")
+                    ]))
+                );
+                assert_eq!(
+                    pane.edits.pending_count(),
+                    5,
+                    "a name, two columns, two keys"
+                );
+
+                // Taken back off, which is the only edit a staged constraint
+                // has.
+                pane.remove_added_constraint(0, cx);
+                assert_eq!(pane.edits.added_constraints().len(), 1);
+                assert_eq!(
+                    pane.edits.added_constraints()[0].kind,
+                    NewConstraintKind::ForeignKey
+                );
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The create runs against a real server, and the pane then edits the table
+    /// it just made (§7.10).
+    ///
+    /// The most interesting behaviour on this path, and the one that proves the
+    /// rest: the mode switches, the target takes the name the statement carried,
+    /// and the reload that follows shows the columns and the key **the server**
+    /// stored — H2's own `CHARACTER VARYING`, which nothing on this side typed.
+    #[gpui::test]
+    fn a_created_table_becomes_the_table_the_pane_edits(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-apply");
+        let window = create_pane(&connected, false, cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_new_table(pane, cx);
+                pane.set_constraint_kind(NewConstraintKind::PrimaryKey, cx);
+                pane.toggle_constraint_column("ID", cx);
+                pane.constraint_fields[0]
+                    .update(cx, |input, cx| input.set_content("NOTE_PK".to_string(), cx));
+                pane.add_constraint(cx);
+
+                pane.apply(cx);
+                assert_eq!(
+                    pane.preview.as_deref(),
+                    Some(
+                        &[[
+                            "CREATE TABLE APP.NOTE (",
+                            "  ID integer NOT NULL,",
+                            "  BODY varchar(40),",
+                            "  CONSTRAINT NOTE_PK PRIMARY KEY (ID)",
+                            ")",
+                        ]
+                        .join("\n")][..]
+                    ),
+                    "one statement, and the confirmation is that statement"
+                );
+                pane.confirm_apply(cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert_eq!(pane.mode, Mode::Alter, "the pane turned into an editor");
+                assert_eq!(pane.target().name, "NOTE");
+                assert_eq!(pane.title(), "APP.NOTE", "and the tab renamed itself");
+                assert_eq!(pane.apply_label(), ts!("struct.apply"));
+                assert!(!pane.has_pending_edits());
+                assert_eq!(pane.notice, Some(ts!("struct.applied", count = 1)));
+                assert!(pane.apply_error.is_none());
+
+                // The reload is against the table that now exists, and what it
+                // shows is the server's own spelling.
+                let structure = pane.structure().expect("the reload arrived");
+                assert_eq!(structure.table, ["APP", "NOTE"]);
+                assert_eq!(
+                    columns_named(structure),
+                    ["ID INTEGER", "BODY CHARACTER VARYING(40)"]
+                );
+                assert_eq!(
+                    structure.constraints.len(),
+                    1,
+                    "{:?}",
+                    structure.constraints
+                );
+                assert_eq!(structure.constraints[0].kind, ConstraintKind::PrimaryKey);
+                assert_eq!(structure.constraints[0].name, "NOTE_PK");
+                assert_eq!(structure.constraints[0].columns, ["ID"]);
+                // The name field is a rename field now, pre-filled the way one
+                // always is.
+                assert_eq!(pane.filled_rename, "NOTE");
+            })
+            .expect("the window is open");
+
+        // And the table is there for anybody else reading the catalogue.
+        assert_eq!(
+            server_columns(&connected, "NOTE"),
+            ["ID INTEGER", "BODY CHARACTER VARYING(40)"]
+        );
+        connected.close().expect("close");
+    }
+
+    /// A create the server refuses keeps everything staged, which is the
+    /// opposite of what a failed alter does and for the reason that rule was
+    /// written: one statement that failed committed nothing, so nothing the
+    /// staging describes has moved.
+    #[gpui::test]
+    fn a_refused_create_keeps_the_table_that_was_typed(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-refused");
+        let window = create_pane(&connected, false, cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_new_table(pane, cx);
+                // A type no server has heard of, passed through unread (§7.10).
+                pane.select(Some(Selection::Added(1)), cx);
+                pane.typed(ColumnField::Type, "NOT_A_TYPE".to_string(), cx);
+                pane.apply(cx);
+                pane.confirm_apply(cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                let problem = pane
+                    .apply_error
+                    .as_ref()
+                    .expect("the statement was refused");
+                assert!(!problem.error.message.is_empty(), "the driver said nothing");
+                assert_eq!(pane.mode, Mode::Create, "nothing was made");
+                assert!(
+                    pane.has_pending_edits(),
+                    "the table definition survived a typo in one type"
+                );
+                assert_eq!(pane.edits.added().len(), 2);
+                assert_eq!(pane.filled_rename, "NOTE");
+
+                // Fixed in place and sent again, which is the whole point of
+                // having kept it.
+                pane.typed(ColumnField::Type, "varchar(40)".to_string(), cx);
+                pane.apply(cx);
+                assert_eq!(pane.preview.as_ref().map(Vec::len), Some(1));
+                pane.confirm_apply(cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert_eq!(pane.mode, Mode::Alter);
+                assert_eq!(
+                    columns_named(pane.structure().expect("the reload arrived")),
+                    ["ID INTEGER", "BODY CHARACTER VARYING(40)"]
+                );
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A read-only profile creates nothing either: the same flag, in the same
+    /// words, on the mode that would have written a table rather than changed
+    /// one.
+    #[gpui::test]
+    fn a_read_only_profile_creates_nothing(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-read-only");
+        let window = create_pane(&connected, true, cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                assert_eq!(pane.read_only_reason(), Some(ts!("struct.read_only")));
+                assert!(pane.structure().is_some(), "the empty pane still draws");
+
+                stage_new_table(pane, cx);
+                pane.toggle_constraint_column("ID", cx);
+                pane.set_constraint_kind(NewConstraintKind::ForeignKey, cx);
+                pane.add_constraint(cx);
+                assert!(!pane.has_pending_edits(), "nothing may be staged");
+                assert!(pane.constraint_columns.is_empty());
+
+                // And past the form, in case it were ever gone round.
+                pane.edits.set_rename(Some("NOTE".to_string()));
+                pane.apply(cx);
+                assert!(pane.preview.is_none(), "a read-only pane planned a create");
+                pane.preview = Some(vec!["CREATE TABLE APP.NOTE (ID integer)".to_string()]);
+                pane.confirm_apply(cx);
+                assert!(!pane.applying);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        // Read straight off the session and not through the pane: a table that
+        // was never made answers no columns, which is how the catalogue says a
+        // table is not there.
+        let made = load_structure(connected.session(), &target("NOTE"))
+            .map(|structure| !structure.columns.is_empty())
+            .unwrap_or(false);
+        assert!(!made, "a table was created over a read-only connection");
+        connected.close().expect("close");
+    }
+
+    /// A pane whose connection has gone keeps what it read and asks for nothing
+    /// more.
+    #[gpui::test]
+    fn a_detached_pane_says_so_rather_than_asking(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-detach");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                pane.detach(cx);
+                pane.refresh(cx);
+                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert!(pane.structure().is_some(), "what was read is still there");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A refresh refuses while anything is staged, for the reason a data pane's
+    /// does: the indices the buffer holds are the snapshot's.
+    #[gpui::test]
+    fn a_reload_refuses_to_take_the_indices_out_from_under_the_staging(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-reload");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                pane.select(Some(Selection::Column(1)), cx);
+                pane.typed(ColumnField::Type, "VARCHAR(80)".to_string(), cx);
+                assert!(pane.has_pending_edits());
+
+                pane.refresh(cx);
+                assert_eq!(pane.notice, Some(ts!("struct.discard_first")));
+                assert!(pane.structure().is_some(), "nothing was thrown away");
+                assert!(pane.has_pending_edits());
+
+                pane.warn_pending(cx);
+                assert_eq!(pane.notice, Some(ts!("struct.discard_first")));
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The table as the server holds it, read straight off the session and not
+    /// through the pane.
+    ///
+    /// Every apply assertion needs both readings: what the pane shows is one
+    /// reading of the catalogue, and the question a stopped batch asks is about
+    /// the table itself.
+    fn server_columns(connected: &Connected, table: &str) -> Vec<String> {
+        columns_named(
+            &load_structure(connected.session(), &target(table))
+                .unwrap_or_else(|error| panic!("{table}: {error}")),
+        )
+    }
+
+    /// One structure's columns as `NAME TYPE`, which is what an `ALTER` moves.
+    fn columns_named(structure: &Structure) -> Vec<String> {
+        structure
+            .columns
+            .iter()
+            .map(|column| format!("{} {}", column.name, column.type_sql))
+            .collect()
+    }
+
+    /// Stages the two edits every apply test below sends: one column added,
+    /// one column's type retyped to `type_sql`.
+    fn stage_batch(pane: &mut StructPane, type_sql: &str, cx: &mut Context<StructPane>) {
+        pane.add_column(cx);
+        pane.typed(ColumnField::Name, "MOTTO".to_string(), cx);
+        pane.typed(ColumnField::Type, "VARCHAR(40)".to_string(), cx);
+        pane.select(Some(Selection::Column(1)), cx);
+        pane.typed(ColumnField::Type, type_sql.to_string(), cx);
+    }
+
+    /// The confirmation is the batch itself, and turning it down sends nothing.
+    #[gpui::test]
+    fn the_confirmation_holds_the_whole_batch_and_can_be_turned_down(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-confirm");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_batch(pane, "VARCHAR(80)", cx);
+                pane.apply(cx);
+
+                // Exactly the list the block under the tables is showing, in
+                // the order the batch will run: adds before changes (§7.10).
+                assert_eq!(
+                    pane.preview.as_deref(),
+                    Some(
+                        &[
+                            "ALTER TABLE APP.TEAM ADD COLUMN MOTTO VARCHAR(40)".to_string(),
+                            "ALTER TABLE APP.TEAM ALTER COLUMN NAME SET DATA TYPE VARCHAR(80)"
+                                .to_string(),
+                        ][..]
+                    )
+                );
+                // The line the modal draws above them, on every product and not
+                // only the ones without transactions.
+                assert!(!ts!("struct.apply_no_undo").is_empty());
+
+                // What the modal's Cancel button does...
+                pane.preview = None;
+                assert!(pane.has_pending_edits(), "the staging went with the modal");
+
+                // ...and what its backdrop does, which is the same thing.
+                pane.apply(cx);
+                assert!(pane.preview.is_some(), "it can be raised again");
+                pane.preview = None;
+                assert!(pane.has_pending_edits());
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        assert_eq!(
+            server_columns(&connected, "TEAM"),
+            ["ID INTEGER", "NAME CHARACTER VARYING(40)"],
+            "the confirmation sent something"
+        );
+        connected.close().expect("close");
+    }
+
+    /// A batch that runs all the way through clears the staging and shows what
+    /// the server now holds rather than what was asked for.
+    #[gpui::test]
+    fn an_applied_batch_clears_the_staging_and_reloads(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-apply");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_batch(pane, "VARCHAR(80)", cx);
+                pane.apply(cx);
+                pane.confirm_apply(cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert!(!pane.has_pending_edits(), "the buffer outlived the batch");
+                assert!(pane.preview.is_none());
+                assert!(pane.apply_error.is_none());
+                assert_eq!(pane.notice, Some(ts!("struct.applied", count = 2)));
+                // The reload is what makes the server's own spelling visible:
+                // H2 answers CHARACTER VARYING, which nothing on this side
+                // typed and nothing on this side could have guessed.
+                assert_eq!(
+                    columns_named(pane.structure().expect("the reload arrived")),
+                    [
+                        "ID INTEGER",
+                        "NAME CHARACTER VARYING(80)",
+                        "MOTTO CHARACTER VARYING(40)"
+                    ]
+                );
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A statement the server refuses stops the batch where it stands, and the
+    /// ones before it stay in the table.
+    #[gpui::test]
+    fn a_refused_statement_leaves_the_ones_before_it_committed(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-apply-stop");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                // The add is good; the retype names a type no server has heard
+                // of, and the generator passes it through unread (§7.10).
+                stage_batch(pane, "NOT_A_TYPE", cx);
+                pane.apply(cx);
+                assert_eq!(pane.preview.as_ref().map(Vec::len), Some(2));
+                pane.confirm_apply(cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                let problem = pane.apply_error.as_ref().expect("the batch stopped");
+                assert!(!problem.error.message.is_empty(), "the driver said nothing");
+                assert_eq!(
+                    problem.stopped,
+                    ts!("struct.apply_stopped", number = 2, total = 2, committed = 1)
+                );
+                assert!(pane.notice.is_none(), "a failure is not a passing remark");
+                // The staging cannot survive: it is keyed to indices into a
+                // reading the committed statement has just invalidated, and
+                // replaying it would add MOTTO a second time (§7.10).
+                assert!(!pane.has_pending_edits());
+                assert_eq!(
+                    columns_named(pane.structure().expect("the reload arrived")),
+                    [
+                        "ID INTEGER",
+                        "NAME CHARACTER VARYING(40)",
+                        "MOTTO CHARACTER VARYING(40)"
+                    ],
+                    "the committed half is in and the refused one is not"
+                );
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The batch itself, against a session that was opened inside a
+    /// transaction: it forces autocommit on for the run — because two of the
+    /// six products commit at every DDL statement whatever the client asked for
+    /// — and hands the session back the way it found it (§7.10).
+    #[test]
+    fn the_batch_forces_autocommit_on_and_hands_the_session_back_as_it_found_it() {
+        let connected = crate::explorer::tests::h2_fixture("struct-autocommit");
+        let session = connected.session();
+        session.set_auto_commit(false).expect("H2 has transactions");
+
+        let applied = apply_alter(
+            session,
+            &["alter table APP.TEAM add column MOTTO varchar(40)".to_string()],
+            false,
+        )
+        .unwrap_or_else(|failure| panic!("{}", failure.error));
+        assert_eq!(applied, 1);
+
+        // Nothing here committed anything of its own, and the column is in.
+        session.rollback().expect("the rollback goes out");
+        assert!(
+            server_columns(&connected, "TEAM")
+                .iter()
+                .any(|column| column.starts_with("MOTTO ")),
+            "the batch ran outside whatever transaction the session was in"
+        );
+
+        // And the session is back in the mode it was found in: a row inserted
+        // now is one a rollback can still take away, which is only true with
+        // autocommit off.
+        let insert = StatementSpec::new("insert into APP.TEAM (ID, NAME) values (9, 'nine')");
+        session.execute(&insert).expect("the insert runs");
+        session.rollback().expect("the rollback goes out");
+        session
+            .execute(&insert)
+            .expect("the row went back, so its key is free again");
+        connected.close().expect("close");
+    }
+
+    /// A pane that may not be written to raises no confirmation, which is only
+    /// reachable by going round the form.
+    #[gpui::test]
+    fn a_read_only_pane_raises_no_confirmation(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-apply-read-only");
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let session = connected.handle();
+        let mut profile = crate::connection::h2::profile("struct-apply-read-only");
+        profile.read_only = true;
+        let window = cx.add_window(move |_window, cx| {
+            StructPane::new(session, ConnectionId(1), target("TEAM"), &profile, "h2", cx)
+        });
+        window
+            .update(cx, |pane, _window, cx| pane.refresh(cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                // Past the form, which would refuse: what is under test is the
+                // check `apply` makes for itself.
+                pane.edits.set_rename(Some("SQUAD".to_string()));
+                assert!(pane.has_pending_edits());
+
+                pane.apply(cx);
+                assert!(pane.preview.is_none(), "a read-only pane planned a batch");
+
+                // And so does the half that sends, in case the first were ever
+                // reached with a plan already in hand.
+                pane.preview = Some(vec!["ALTER TABLE APP.TEAM RENAME TO SQUAD".to_string()]);
+                pane.confirm_apply(cx);
+                assert!(!pane.applying);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(
+            server_columns(&connected, "TEAM"),
+            ["ID INTEGER", "NAME CHARACTER VARYING(40)"],
+            "the table is still there under its own name"
+        );
+        connected.close().expect("close");
+    }
+
+    /// Every state of the pane lays out.
+    ///
+    /// The one thing a headless test cannot answer on its own: a duplicated
+    /// element id or an element the layout cannot place is a panic at paint
+    /// time and nothing at all before it, and this pane draws two tables, a
+    /// form and a block of statements out of one body.
+    #[gpui::test]
+    fn every_state_of_the_pane_draws(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-draw");
+        let window = pane(&connected, target("PERSON"), cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+        vcx.run_until_parked();
+
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                // A selected row, a dropped one, an added one, a dropped
+                // constraint and a rename: every branch of the body at once.
+                pane.select(Some(Selection::Column(1)), cx);
+                pane.typed(ColumnField::Type, "BIGINT".to_string(), cx);
+                pane.toggle_drop(2, cx);
+                pane.toggle_constraint_drop(1, cx);
+                pane.renamed("HUMAN".to_string(), cx);
+                pane.add_column(cx);
+                pane.typed(ColumnField::Name, "MEMO".to_string(), cx);
+                pane.typed(ColumnField::Type, "VARCHAR(10)".to_string(), cx);
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        // The refusal branch of the statements block, which is a different
+        // element from the listing.
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.select(Some(Selection::Column(0)), cx);
+                pane.typed(ColumnField::Name, String::new(), cx);
+                assert!(matches!(pane.plan(), Some(Err(_))));
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        // The confirmation over all of it, and the strip a stopped batch
+        // leaves behind — two elements nothing else in the pane draws.
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.discard(cx);
+                pane.renamed("HUMAN".to_string(), cx);
+                pane.apply(cx);
+                assert!(pane.preview.is_some());
+                pane.apply_error = Some(ApplyProblem {
+                    error: Box::new(QueryError::new(JdbcError::Protocol("refused".to_string()))),
+                    stopped: ts!("struct.apply_stopped", number = 2, total = 3, committed = 1),
+                });
+                cx.notify();
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        // And the two bodies that stand in for a structure.
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.discard(cx);
+                pane.load = Load::Failed("permission denied".into());
+                cx.notify();
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.load = Load::Running;
+                cx.notify();
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+        connected.close().expect("close");
+    }
+
+    /// And every state of the create mode draws, which is a different set of
+    /// elements: the name block moves to the front, the constraint form appears
+    /// under a table that may have nothing in it, and its last two fields exist
+    /// on one of the three kinds only.
+    #[gpui::test]
+    fn every_state_of_the_create_mode_draws(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-create-draw");
+        let window = create_pane(&connected, false, cx);
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+        vcx.run_until_parked();
+
+        // The pane as it opens: no columns to tick, no constraints to list.
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.set_constraint_kind(NewConstraintKind::ForeignKey, cx);
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                stage_new_table(pane, cx);
+                pane.toggle_constraint_column("ID", cx);
+                pane.set_constraint_kind(NewConstraintKind::Unique, cx);
+                pane.add_constraint(cx);
+                pane.set_constraint_kind(NewConstraintKind::ForeignKey, cx);
+                pane.toggle_constraint_column("BODY", cx);
+                pane.add_constraint(cx);
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        // The refusal branch of the statements block, on the create path. Which
+        // refusal it is depends on which observation the window has delivered
+        // by now — the pane's fields are being driven from the outside here —
+        // and the branch under test is the same one either way; the sentence
+        // itself is `the_missing_name_is_refused_when_the_apply_is_asked_for`'s.
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.renamed(String::new(), cx);
+                pane.apply(cx);
+                assert!(matches!(pane.plan(), Some(Err(_))));
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+        connected.close().expect("close");
+    }
+
+    #[test]
+    fn every_label_the_pane_draws_has_a_translation() {
+        for label in [
+            ts!("struct.loading"),
+            ts!("struct.refresh"),
+            ts!("struct.discard"),
+            ts!("struct.discard_first"),
+            ts!("struct.read_only"),
+            ts!("struct.pending", count = 2),
+            ts!("struct.columns"),
+            ts!("struct.column"),
+            ts!("struct.type"),
+            ts!("struct.nullable"),
+            ts!("struct.default"),
+            ts!("struct.state"),
+            ts!("struct.state_changed"),
+            ts!("struct.state_dropped"),
+            ts!("struct.state_added"),
+            ts!("struct.drop"),
+            ts!("struct.keep"),
+            ts!("struct.remove"),
+            ts!("struct.add_column"),
+            ts!("struct.edit_column"),
+            ts!("struct.no_selection"),
+            ts!("struct.name"),
+            ts!("struct.has_default"),
+            ts!("struct.constraints"),
+            ts!("struct.kind"),
+            ts!("struct.empty"),
+            ts!("struct.no_constraint_drop", dialect = "SQLite"),
+            ts!("struct.new_constraint"),
+            ts!("struct.constraint_name"),
+            ts!("struct.references"),
+            ts!("struct.referenced_columns"),
+            ts!("struct.add_constraint"),
+            ts!("struct.rename_table"),
+            ts!("struct.new_name"),
+            ts!("struct.new_table"),
+            ts!("struct.new_table_in", scope = "APP"),
+            ts!("struct.table_name"),
+            ts!("struct.statements"),
+            ts!("struct.apply"),
+            ts!("struct.create"),
+            ts!("struct.apply_title", count = 3),
+            ts!("struct.apply_no_undo"),
+            ts!("struct.applying"),
+            ts!("struct.applied", count = 3),
+            ts!("struct.apply_stopped", number = 2, total = 3, committed = 1),
+            ts!("menu.view_structure"),
+            ts!("menu.new_table"),
+        ] {
+            assert!(!label.is_empty(), "empty label");
+            assert!(!label.starts_with("struct."), "untranslated {label:?}");
+            assert!(!label.starts_with("menu."), "untranslated {label:?}");
+        }
+        // The one setting the language changes nothing about: SQL keywords are
+        // what the table's own DDL says. That holds for the kinds a constraint
+        // is *added* as too, which is why the create form's three buttons carry
+        // no keys of their own.
+        assert_eq!(kind_name(ConstraintKind::PrimaryKey), "PRIMARY KEY");
+        assert_eq!(kind_name(ConstraintKind::ForeignKey), "FOREIGN KEY");
+        assert_eq!(kind_name(ConstraintKind::Unique), "UNIQUE");
+        assert_eq!(kind_name(ConstraintKind::Check), "CHECK");
+        assert_eq!(NewConstraintKind::PrimaryKey.keyword(), "PRIMARY KEY");
+        assert_eq!(NewConstraintKind::Unique.keyword(), "UNIQUE");
+        assert_eq!(NewConstraintKind::ForeignKey.keyword(), "FOREIGN KEY");
+        // The scope is named in the create-mode heading, so a language that
+        // dropped the placeholder would lose the schema.
+        assert!(ts!("struct.new_table_in", scope = "APP").contains("APP"));
+    }
+
+    /// Nothing is asked for from the constructor: the host has a tab to open
+    /// first, and a fetch started inside `cx.new` would be racing it.
+    #[gpui::test]
+    fn opening_a_pane_leaves_it_loading_until_the_host_asks(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-open");
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let session = connected.handle();
+        let profile = crate::connection::h2::profile("struct-open");
+        let window = cx.add_window(move |_window, cx| {
+            StructPane::new(
+                session,
+                ConnectionId(1),
+                target("PERSON"),
+                &profile,
+                "h2",
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert!(pane.is_loading());
+                assert!(pane.structure().is_none());
+                assert_eq!(pane.target().name, "PERSON");
+                assert_eq!(pane.connection(), ConnectionId(1));
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+}
