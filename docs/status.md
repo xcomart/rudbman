@@ -30,6 +30,7 @@ Last updated: 2026-08-11 (after structure editing, §7.10).
 | Context menus (PR #7) | done | A right-click menu on every surface: the widgets learn only the gesture and emit an event, while the app owns the menu, the labels and the commands, because the widget layer carries no user-facing strings (§7.8). Rows that cannot run right now are drawn greyed rather than left out, so the menu doubles as the surface's documentation. Menus are described as MenuRow lists before they are drawn, and the tests read the description instead of clicking computed pixels. Escape closes a menu ahead of everything else — which uncovered and fixed the editor's find-bar binding swallowing the key with the bar shut |
 | Monospace font fix | done | The literal family `monospace` is a fontconfig generic that only Linux resolves; on Windows every surface asking for it logged an error and fell back to the proportional system font. The app now resolves the first installed candidate per OS (Windows: Cascadia Mono through Courier New) and falls back to the alias where nothing matches |
 | Table data editing, phase 1 (§7.9) | done | `PaneItem::TableData` plus `DataPane` — `SELECT *` at the settings' fetch size, paged by the query pane's own cursor walk (moved into `query_source` so both use one), sorted by an appended `ORDER BY`, opened from the explorer row and the detail header. `rudbman-sql::dml` (`plan_edits`: one `UPDATE`/`DELETE`/`INSERT` per row, deletes then updates then inserts, every value a bind parameter and every name through `quote_ident`). `data_edit` — the staging buffer keyed by base row index, the overlay the grid draws through, the `java.sql.Types` → bind-form table, and the planner that turns one into the other. The apply: the whole batch shown before any of it runs (which is the write confirmation, by superset), then autocommit off, one `execute` each, a row count of exactly 1 required of every `UPDATE` and `DELETE`, commit, reload — and on any failure a rollback *before* autocommit is restored. Proved end to end against H2 on both sides: the pane's own suite, and `rudbman-jdbc`'s `tests/h2.rs` for the wire mechanics |
+| Table creation (§7.10, "Creating a table") | done | `plan_create` beside `plan_alter` — one statement, multi-line because it is read before it is run, and the only place a `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` is born, since `plan_alter` drops constraints and never adds one. A table-level constraint turned out byte-identical on all seven dialects, so `AlterStyle` gained no row. No auto-increment flag and no `IF NOT EXISTS` (Oracle has neither). The pane takes a second mode rather than a second surface — a table being created is a table whose current shape is empty, so the column list, the form, the live batch and the apply are the ones already there, diverging in eight named places. Two calls worth knowing: the "no name"/"no columns" refusals are held until the apply is asked for, because a pane just opened is in both states; and a refused create *keeps* what was typed, where a refused alter discards it — the discard rule is about what a committed statement invalidates, and a create that failed committed nothing. On success the pane becomes the editor for the table it made |
 | Structure editing (§7.10) | done | `rudbman-sql::ddl` — `plan_alter` over a diff that carries **both sides** of every changed column, because MySQL's `MODIFY`/`CHANGE` restates a whole definition and SQL Server's `ALTER COLUMN` resets nullability when the clause is omitted. Statements are plain strings (no server takes a `?` in DDL) and a type or a default is the user's own SQL, passed through unread. The per-product spellings are one flat record per dialect in the shape `Syntax` is one; what a product cannot express is refused by name and reason (SQLite's type/nullability/default and constraint drops, SQL Server's defaults) rather than generated and rejected. `struct_edit` — the staging model, pure and unit-tested: a draft equal to its snapshot is dropped rather than refused, and a dropped column discards any change staged against it. `PaneItem::TableStruct` plus `StructPane` — its own four `DESCRIBE`s (the panel keeps display strings, so nothing an editor needs survives in it), the PK's own backing index matched away by name *and* by covering the key's columns, one column edited at a time in a form rather than an input per cell, and the batch shown live and read-only before it can be run. The apply forces autocommit on and never calls rollback — MySQL and Oracle commit at every DDL statement — stops at the first refusal, and on **either** outcome discards and reloads, saying how far it got |
 | First release, v0.1.0 (PR #8) | done | `release.yml` (every build job runs Gradle, then jlink, then cargo — in that order, because rudbman-jdbc's build script refuses to compile without the bridge JAR — plus a smoke step over the staged tree before anything is published), `packaging/` (a Linux desktop entry and an `install.sh` that installs the whole tree and symlinks it, a macOS `Info.plist`), `<exe_dir>/runtime` added to the bundled-runtime search, `jdk.charsets` in the jlink module list (with `--compress=2`, the JDK 17 spelling), and a README brought fully up to date with three screenshots (captured through the temporary env-gated hook, reverted before the commit) |
 
@@ -37,7 +38,7 @@ Last updated: 2026-08-11 (after structure editing, §7.10).
 - The branch flow is logman's: **work on dev, main takes PR merge commits
   only**. CI is a three-platform matrix and runs the bridge (Java) suite
   before the Rust one.
-- Test count (2026-08-11): roughly 1010 Rust plus 141 Java. That includes the
+- Test count (2026-08-11): roughly 1045 Rust plus 141 Java. That includes the
   integration tests, which boot a real JVM and a real H2.
 
 ## What is next
@@ -61,13 +62,19 @@ out. What remains can be taken in any order:
   recognisable — `ColumnInfo` carries `table` and `schema` per column — and that
   is the shape a phase 2 would take: accept a result whose every column names
   one table, look its key up, and reuse `data_edit` unchanged.
-- **Structure editing covers one existing table and nothing around it.** A
-  column can be added, retyped, renamed, made null or not, given or denied a
-  default and dropped; a constraint the catalog reports can be dropped; the
-  table can be renamed. What is *not* there: creating a table from nothing,
-  **adding** a constraint or an index, reordering columns, and check
-  constraints — JDBC's `DatabaseMetaData` does not report them, so the pane has
-  no source for one even though the generator can write the drop. Two refusals
+- **Structure editing covers one table at a time and nothing around it.** A
+  table can be created — columns, a primary key, unique constraints and foreign
+  keys — and an existing one can have a column added, retyped, renamed, made
+  null or not, given or denied a default and dropped, a reported constraint
+  dropped, and itself renamed. What is *not* there: **adding** a constraint or
+  an index to a table that already exists (creation is the only place one is
+  born, which is why the create path carries them), dropping a table,
+  reordering columns, and check constraints — JDBC's `DatabaseMetaData` does
+  not report them, so the pane has no source for one even though the generator
+  can write the drop. Auto-increment is deliberately unmodelled: a column's
+  type is the user's own SQL passed through unread, so `SERIAL`, `INT
+  AUTO_INCREMENT` and `GENERATED BY DEFAULT AS IDENTITY` all reach the server
+  as typed. Two refusals
   are per-product and would each need real work rather than a spelling: SQL
   Server's defaults are separately named constraints whose names the catalog
   does not give, and SQLite needs a table rebuild (new table, copy, drop,
