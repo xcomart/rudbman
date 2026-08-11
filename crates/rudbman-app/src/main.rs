@@ -59,6 +59,11 @@ mod pane_tree;
 mod query;
 mod query_source;
 mod settings_dialog;
+// The staging model for structure editing, written and tested against the DDL
+// generator ahead of the pane that will render it — so inside a binary crate
+// every one of its operations reads as dead code until that pane lands.
+#[allow(dead_code)]
+mod struct_edit;
 mod table_detail;
 mod theme_editor;
 mod transfer_dialog;
