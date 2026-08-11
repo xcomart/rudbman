@@ -105,7 +105,7 @@ use context_menu::MenuRow;
 use data_pane::DataPane;
 use erd_layout::ErdLayouts;
 use erd_pane::{ErdDiagram, ErdPane, ErdPaneEvent, ErdTarget};
-use explorer::{ConnectionId, Explorer, ExplorerEvent, NodeId, ObjectTarget, RootInfo};
+use explorer::{ConnectionId, Explorer, ExplorerEvent, Folder, NodeId, ObjectTarget, RootInfo};
 use extract_dialog::{ExtractDialog, ExtractDialogEvent};
 use i18n::ts;
 use icons::Icons;
@@ -1270,6 +1270,54 @@ impl Workspace {
             .detach();
         panel.update(cx, |panel, cx| panel.refresh(cx));
         self.append_tab(PaneItem::TableStruct(panel.clone()), window, cx);
+        panel.update(cx, |panel, cx| panel.take_focus(window, cx));
+    }
+
+    /// Opens a structure pane over a table that does not exist yet, in `scope`.
+    ///
+    /// The create half of §7.10, and deliberately **not** deduplicated the way
+    /// [`Workspace::open_structure`] is: a pane in that mode names no table —
+    /// its name is a field somebody is typing into — so there is nothing to
+    /// deduplicate on, and two of them are two tables being drafted rather than
+    /// one tab opened twice. The moment one of them becomes a real table it
+    /// takes that table's name, and the ordinary rule applies to it again.
+    ///
+    /// Nothing happens without a live session, for [`Workspace::open_structure`]'s
+    /// reason turned around: the statement has to be sent somewhere.
+    fn open_new_table(
+        &mut self,
+        connection: ConnectionId,
+        scope: explorer::Scope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session_of(connection) else {
+            return;
+        };
+        let Some(open) = self.connections.iter().find(|open| open.id == connection) else {
+            return;
+        };
+        let profile = open.profile.clone();
+        let dialect = Self::dialect_of(&profile);
+        let target = ObjectTarget {
+            connection,
+            catalog: scope.catalog,
+            schema: scope.schema,
+            folder: Folder::Tables,
+            name: String::new(),
+        };
+
+        let panel =
+            cx.new(|cx| StructPane::creating(session, connection, target, &profile, &dialect, cx));
+        // Observed for the reason `open_structure`'s is: the tab strip's title
+        // and its dot are the shell's to redraw.
+        cx.observe(&panel, |_workspace, _panel, cx| cx.notify())
+            .detach();
+        // Not asked to load: a table being created *is* loaded — its current
+        // shape is the empty one — and there is no server to ask for it.
+        self.append_tab(PaneItem::TableStruct(panel.clone()), window, cx);
+        // The pane puts the keyboard on its name field, which §7.10 opens a new
+        // table with.
         panel.update(cx, |panel, cx| panel.take_focus(window, cx));
     }
 
@@ -3058,6 +3106,35 @@ impl Workspace {
                     .on_activate(object(Workspace::open_transfer)),
             );
             rows.push(MenuRow::separator());
+        }
+
+        // The places a table would appear, which is where §7.10's create path
+        // is offered: a schema, a catalogue on a product whose schema level was
+        // skipped, and the Tables folder under either. Left out entirely on the
+        // rest — a table is not made inside another table, and the connection
+        // root names no scope to make one in — because a row a kind cannot
+        // answer is left out rather than greyed.
+        let creatable = match node {
+            NodeId::Schema { .. } | NodeId::Catalog { .. } => scope.clone(),
+            NodeId::Folder {
+                folder: Folder::Tables,
+                scope,
+                ..
+            } => Some(scope.clone()),
+            _ => None,
+        };
+        if let Some(scope) = creatable {
+            let this = this.clone();
+            rows.push(
+                MenuRow::new(ts!("menu.new_table"))
+                    .enabled(live)
+                    .on_activate(move |window: &mut Window, cx: &mut App| {
+                        let scope = scope.clone();
+                        this.update(cx, |workspace, cx| {
+                            workspace.open_new_table(connection, scope, window, cx);
+                        });
+                    }),
+            );
         }
 
         // The connection root names no scope — a diagram of every catalogue at
@@ -7513,6 +7590,16 @@ mod tests {
             scope: public(),
             folder: explorer::Folder::Tables,
         };
+        let views = NodeId::Folder {
+            connection,
+            scope: public(),
+            folder: explorer::Folder::Views,
+        };
+        let schema = NodeId::Schema {
+            connection,
+            catalog: None,
+            name: "PUBLIC".to_string(),
+        };
         let root = NodeId::Connection(connection);
 
         window
@@ -7529,16 +7616,33 @@ mod tests {
                 // than greyed.
                 assert_eq!(
                     context_menu::labels(&workspace.explorer_rows(&routine, cx)),
-                    scope_labels()
+                    scope_labels(),
+                    "a table is not made inside a procedure either"
+                );
+
+                // A schema and the Tables folder under it are the places a
+                // table would appear, and the only rows that offer to make one
+                // (§7.10).
+                let mut with_create = vec![ts!("menu.new_table").to_string()];
+                with_create.extend(scope_labels());
+                assert_eq!(
+                    context_menu::labels(&workspace.explorer_rows(&schema, cx)),
+                    with_create
                 );
                 assert_eq!(
                     context_menu::labels(&workspace.explorer_rows(&folder, cx)),
-                    scope_labels()
+                    with_create
+                );
+                assert_eq!(
+                    context_menu::labels(&workspace.explorer_rows(&views, cx)),
+                    scope_labels(),
+                    "a CREATE TABLE under Views would put it where it is not listed"
                 );
 
                 // The connection root names no scope — a diagram of every
                 // catalogue at once is not a diagram — so it keeps the rows and
-                // greys them.
+                // greys them. It offers no new table for the same reason: there
+                // is no schema to make one in.
                 let rows = workspace.explorer_rows(&root, cx);
                 assert_eq!(context_menu::labels(&rows), scope_labels());
                 assert_eq!(context_menu::greyed(&rows), scope_labels());

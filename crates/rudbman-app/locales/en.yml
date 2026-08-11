@@ -49,6 +49,10 @@ menu:
   # of the button beside "View data" in the detail panel's header: one
   # command, one wording.
   view_structure: Edit structure
+  # Opens the same pane in its create mode over the schema selected in the
+  # explorer — the place a table would appear. No ellipsis: it opens a pane to
+  # fill in, not a dialog to answer.
+  new_table: New table
   # Reads a .sql file into a new query pane on the connection showing.
   open_sql_file: Open SQL file…
   # Opens the extraction dialog over the object selected in the explorer.
@@ -710,10 +714,36 @@ struct:
   # rather than left out: a surface says what it cannot do.
   no_constraint_drop: "%{dialect} has no ALTER TABLE that drops a constraint."
 
+  # The form that gives a table being created a key or a reference, and drawn
+  # only there: ALTER TABLE drops constraints and never adds one, so this is
+  # the only place a table made by rudbman can be given either. The three kinds
+  # themselves — PRIMARY KEY, UNIQUE, FOREIGN KEY — are the SQL keywords and
+  # carry no keys of their own, exactly as NOT NULL does above.
+  new_constraint: Add a constraint
+  # Optional, and it says so: an unnamed constraint is ordinary and common, and
+  # the server names it.
+  constraint_name: Name (optional)
+  # The other side of a foreign key. Both are free text — the pane has no
+  # catalogue browser — and both reach the server as they were typed.
+  references: Referenced table
+  # Left empty means the referenced table's own primary key, which every
+  # product accepts as an omitted list.
+  referenced_columns: Referenced columns (optional)
+  add_constraint: Add constraint
+
   # A bare name: a rename moves a table within its schema, and no product takes
   # a qualified target.
   rename_table: Rename table
   new_name: New name
+
+  # The same field, and the same staging slot, in the pane's create mode: there
+  # it is the table's own name rather than a new one for a table that has one,
+  # and it is required, where a rename left alone is the commonest thing to do
+  # with one. The first is also the tab's title, which a table being created has
+  # no name to take.
+  new_table: New table
+  new_table_in: "New table in %{scope}"
+  table_name: Table name
 
   # The statements everything staged would send, recomputed as it is typed.
   statements: Statements
@@ -721,6 +751,9 @@ struct:
   # The apply. The confirmation is the statements themselves, always shown,
   # which is a superset of the profile's "ask before a write" and answers it.
   apply: Apply
+  # The same button in create mode: a batch of amendments is applied, and a
+  # table is created.
+  create: Create table
   apply_title: "Apply %{count} statements"
   # Always shown, and not the conditional line the data pane draws: a DDL batch
   # runs under autocommit on every product, because two of the six commit at

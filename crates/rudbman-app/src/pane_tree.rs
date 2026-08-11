@@ -161,7 +161,8 @@ impl PaneItem {
     /// The title its tab carries.
     ///
     /// A detail panel is named after the object it describes, qualified by its
-    /// schema; a query pane has no name of its own, so it takes its number; a
+    /// schema; a structure pane the same, unless it is making a table that does
+    /// not exist yet; a query pane has no name of its own, so it takes its number; a
     /// diagram is named after the scope it covers; a builder takes its number,
     /// as the query pane does and for the same reason. A data pane is named
     /// after its table, exactly as the detail panel is: the two never sit in
@@ -173,7 +174,10 @@ impl PaneItem {
             PaneItem::Query { number, .. } => ts!("query.tab", index = number),
             PaneItem::Erd(panel) => panel.read(cx).target().title(),
             PaneItem::TableData(panel) => SharedString::from(panel.read(cx).target().qualified()),
-            PaneItem::TableStruct(panel) => SharedString::from(panel.read(cx).target().qualified()),
+            // Asked of the pane rather than read off its target, because a
+            // structure pane in its create mode has no table to be named after
+            // yet — only a field somebody is typing into (§7.10).
+            PaneItem::TableStruct(panel) => panel.read(cx).title(),
             PaneItem::QueryBuilder { number, .. } => ts!("builder.tab", index = number),
         }
     }

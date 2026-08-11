@@ -79,6 +79,39 @@
 //! rename. Within the changes and the drops it is column order, because the
 //! staged collections are ordered by the index they are keyed with.
 //!
+//! # A table being created is a table whose current shape is empty
+//!
+//! [`StructEdits::plan_create`] is the second entry point, and it stages
+//! against the same [`Structure`] the first one does — one whose `table` holds
+//! the catalogue and schema the table is to be made in, whose `columns` are
+//! empty and whose `constraints` are empty. Everything that follows from that
+//! is already here: an added column is a [`ColumnDraft`] with no snapshot row
+//! behind it, which is what every added column already is, and a name typed
+//! into [`StructEdits::set_rename`] is the table's name rather than a new one
+//! for a table that has one. Nothing is duplicated to say it twice.
+//!
+//! Three things do differ, and only three:
+//!
+//! * **The name is required.** A rename left empty is [`PlanError::NoNewName`];
+//!   a create with no name is [`PlanError::NoTableName`], which is a different
+//!   sentence for a different question.
+//! * **Constraints are added rather than dropped.** [`ConstraintDraft`] is the
+//!   staging for that, and it exists only on this path: `plan_alter` drops
+//!   constraints and never adds one, so without it a table made by rudbman
+//!   could never be given a key at all (§7.10).
+//! * **Two of the refusals only say "not finished yet".**
+//!   [`PlanError::NoTableName`] and [`DdlError::NoColumns`] are what a pane
+//!   that has just been opened plans to, and [`PlanError::is_unfinished`] is
+//!   how the pane tells them from the refusals that name a row somebody got
+//!   wrong. Which of the two it shows when is the pane's business; this module
+//!   only says which is which.
+//!
+//! What is *not* read on this path is [`StructEdits`]'s three snapshot-keyed
+//! collections — the changed columns, the dropped ones and the dropped
+//! constraints. There is no snapshot to change or drop against, and an empty
+//! one keeps them empty by construction: [`StructEdits::set_column`] stages
+//! nothing for an index the structure does not have.
+//!
 //! # Check constraints
 //!
 //! In practice a [`Structure`] never holds a [`ConstraintKind::Check`]: it is
@@ -96,7 +129,7 @@ use std::fmt;
 
 use rudbman_sql::{
     ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, DdlError, Dialect, TableAlter,
-    plan_alter,
+    TableConstraint, TableCreate, plan_alter, plan_create,
 };
 
 /// One column as the catalog reported it.
@@ -242,6 +275,129 @@ impl DraftValue {
     }
 }
 
+/// Which of the three table-level constraints a new one is.
+///
+/// Three and not [`ConstraintKind`]'s four: `CHECK` is a predicate the user
+/// would have to write, and a field holding one would be a second place where
+/// SQL is typed and passed through unread. The three that are here are the
+/// three §7.10 names, and they are the ones a table needs in order to have a
+/// key and a reference at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NewConstraintKind {
+    /// `PRIMARY KEY`.
+    #[default]
+    PrimaryKey,
+    /// `UNIQUE`.
+    Unique,
+    /// `FOREIGN KEY`.
+    ForeignKey,
+}
+
+impl NewConstraintKind {
+    /// The SQL keyword that introduces the clause.
+    ///
+    /// Untranslated, exactly as `NOT NULL` is: it is what the statement below
+    /// the form says, and a localised `PRIMARY KEY` would stop matching it.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            NewConstraintKind::PrimaryKey => "PRIMARY KEY",
+            NewConstraintKind::Unique => "UNIQUE",
+            NewConstraintKind::ForeignKey => "FOREIGN KEY",
+        }
+    }
+
+    /// The three, in the order they are offered.
+    pub const ALL: [NewConstraintKind; 3] = [
+        NewConstraintKind::PrimaryKey,
+        NewConstraintKind::Unique,
+        NewConstraintKind::ForeignKey,
+    ];
+}
+
+/// One constraint a table is being created with.
+///
+/// The columns are chosen from the columns being defined, and everything on the
+/// other side of a foreign key is text the user wrote: the pane has no
+/// catalogue browser, and §7.10's create path does not want one. Both halves
+/// reach the server as they stand, which is the rule a column's type already
+/// follows — and what makes it safe is the same thing: the statement is shown
+/// in full before any of it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConstraintDraft {
+    /// Which of the three it is.
+    pub kind: NewConstraintKind,
+    /// The constraint's name, or empty for none.
+    ///
+    /// Empty is not refused and is not passed on as `Some("")` either: an
+    /// unnamed constraint is ordinary — the server names it — and
+    /// [`DdlError::NoConstraintName`] is therefore unreachable from here, in
+    /// the way [`DdlError::NoChange`] is unreachable from [`StructEdits::plan`].
+    pub name: String,
+    /// The columns it covers, in the order they were chosen.
+    ///
+    /// The order is the key's own: `PRIMARY KEY (a, b)` and
+    /// `PRIMARY KEY (b, a)` are two different indexes.
+    pub columns: Vec<String>,
+    /// The table a foreign key points at, as the user wrote it: dotted parts,
+    /// `customers` or `app.customers`. Read on no other kind.
+    pub references: String,
+    /// The columns on the other side, comma-separated.
+    ///
+    /// Empty means the referenced table's own primary key, which every product
+    /// accepts as an omitted list and which stays correct when that key is
+    /// later re-ordered.
+    pub referenced_columns: String,
+}
+
+impl ConstraintDraft {
+    /// This draft as the generator's own record of a table-level constraint.
+    fn constraint(&self) -> TableConstraint {
+        let columns = self.columns.clone();
+        let made = match self.kind {
+            NewConstraintKind::PrimaryKey => TableConstraint::primary_key(columns),
+            NewConstraintKind::Unique => TableConstraint::unique(columns),
+            NewConstraintKind::ForeignKey => TableConstraint::foreign_key_to(
+                columns,
+                name_parts(&self.references),
+                comma_list(&self.referenced_columns),
+            ),
+        };
+        match self.name.is_empty() {
+            true => made,
+            false => made.with_name(self.name.clone()),
+        }
+    }
+}
+
+/// One dotted name as its parts.
+///
+/// A blank field answers no parts at all rather than one empty part, so that
+/// the generator's refusal is [`DdlError::NoReferencedTable`] — "no usable
+/// name" — which is what a field nobody filled in means. Nothing is trimmed
+/// away in the middle: `app..customers` is a name with a hole in it, and
+/// saying so is better than guessing which half was meant.
+fn name_parts(text: &str) -> Vec<String> {
+    if text.trim().is_empty() {
+        return Vec::new();
+    }
+    text.split('.')
+        .map(|part| part.trim().to_string())
+        .collect()
+}
+
+/// One comma-separated list as its members, with the empty ones dropped.
+///
+/// Unlike [`name_parts`], a trailing comma here is a typing artefact and not a
+/// hole: the list is optional in the first place, and refusing one because it
+/// ends in a separator would be inventing a rule the server does not have.
+fn comma_list(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Everything staged against one table's structure, and nothing else.
 ///
 /// Deliberately ignorant of the structure itself: it holds indices, drafts and
@@ -265,7 +421,15 @@ pub struct StructEdits {
     added: Vec<ColumnDraft>,
     /// Indices into [`Structure::constraints`] of the constraints to drop.
     dropped_constraints: BTreeSet<usize>,
-    /// The table's new bare name, if it is being renamed.
+    /// The constraints being added, in the order they were added.
+    ///
+    /// Only [`StructEdits::plan_create`] reads them: `plan_alter` has no clause
+    /// that adds a constraint, so on the alter path this stays empty because
+    /// nothing offers a way to fill it.
+    added_constraints: Vec<ConstraintDraft>,
+    /// The table's new bare name, if it is being renamed — or, on the create
+    /// path, its name, which is the same field for the same reason: there is
+    /// one name being typed and one slot to type it into.
     rename_to: Option<String>,
 }
 
@@ -287,6 +451,7 @@ impl StructEdits {
             && self.dropped.is_empty()
             && self.added.is_empty()
             && self.dropped_constraints.is_empty()
+            && self.added_constraints.is_empty()
             && self.rename_to.is_none()
     }
 
@@ -302,6 +467,7 @@ impl StructEdits {
             + self.dropped.len()
             + self.added.len()
             + self.dropped_constraints.len()
+            + self.added_constraints.len()
             + usize::from(self.rename_to.is_some())
     }
 
@@ -315,6 +481,7 @@ impl StructEdits {
         self.dropped.clear();
         self.added.clear();
         self.dropped_constraints.clear();
+        self.added_constraints.clear();
         self.rename_to = None;
     }
 
@@ -413,6 +580,37 @@ impl StructEdits {
         }
         self.dropped_constraints.insert(index);
         true
+    }
+
+    /// Appends a constraint to a table being created, and answers its position.
+    ///
+    /// Whole rather than a field at a time, which is why there is no
+    /// `set_added_constraint` beside [`StructEdits::set_added`]: a constraint
+    /// is a kind, a name, a column list and — on one of the three kinds — two
+    /// text fields, and it is filled in on a form and added when it is
+    /// finished. What is *not* checked here is whether it says anything usable:
+    /// a key over no columns is [`DdlError::NoConstraintColumns`], which names
+    /// the constraint and is the generator's to say.
+    pub fn add_constraint(&mut self, draft: ConstraintDraft) -> usize {
+        self.added_constraints.push(draft);
+        self.added_constraints.len() - 1
+    }
+
+    /// Takes an added constraint back off the list, and says whether there was
+    /// one.
+    ///
+    /// The ones after it move up, as in [`StructEdits::remove_added`].
+    pub fn remove_added_constraint(&mut self, position: usize) -> bool {
+        if position >= self.added_constraints.len() {
+            return false;
+        }
+        self.added_constraints.remove(position);
+        true
+    }
+
+    /// The constraints being added, in the order the pane draws them.
+    pub fn added_constraints(&self) -> &[ConstraintDraft] {
+        &self.added_constraints
     }
 
     /// Sets the table's new **bare** name, or `None` to leave it alone.
@@ -537,6 +735,59 @@ impl StructEdits {
         // written above.
         plan_alter(&alter, dialect).map_err(PlanError::Ddl)
     }
+
+    /// Turns everything staged against an **empty** `structure` into the
+    /// `CREATE TABLE` that makes it.
+    ///
+    /// [`StructEdits::plan`]'s sibling rather than a mode of it, exactly as
+    /// [`plan_create`] is [`plan_alter`]'s: an alter is a batch of amendments
+    /// to something that exists and has to be ordered against itself, and a
+    /// create is one sentence. `structure.table` is the catalogue and schema
+    /// the table goes in, and the name staged through
+    /// [`StructEdits::set_rename`] is appended to it — the one field, used for
+    /// the one name there is on this path.
+    ///
+    /// The two refusals it makes before the generator are the two that can
+    /// name a row: an added column with no name and one with no type. The name
+    /// is checked after them so that a mistake the user can go and look at is
+    /// reported ahead of a field they have not reached yet — see
+    /// [`PlanError::is_unfinished`].
+    pub fn plan_create(
+        &self,
+        structure: &Structure,
+        dialect: &Dialect,
+    ) -> Result<Vec<String>, PlanError> {
+        let mut columns = Vec::with_capacity(self.added.len());
+        for (position, draft) in self.added.iter().enumerate() {
+            if draft.name.is_empty() {
+                return Err(PlanError::AddedHasNoName { position });
+            }
+            if draft.type_sql.is_empty() {
+                return Err(PlanError::AddedHasNoType { position });
+            }
+            columns.push(draft.def());
+        }
+
+        let Some(name) = self.rename_to.as_deref().filter(|name| !name.is_empty()) else {
+            return Err(PlanError::NoTableName);
+        };
+
+        let mut create = TableCreate::new(
+            structure
+                .table
+                .iter()
+                .cloned()
+                .chain(std::iter::once(name.to_string())),
+        );
+        create.columns = columns;
+        create.constraints = self
+            .added_constraints
+            .iter()
+            .map(ConstraintDraft::constraint)
+            .collect();
+
+        plan_create(&create, dialect).map_err(PlanError::Ddl)
+    }
 }
 
 impl LoadedColumn {
@@ -591,8 +842,37 @@ pub enum PlanError {
     },
     /// The table's new name is the empty string.
     NoNewName,
+    /// A table being created has not been given a name.
+    ///
+    /// Separate from [`PlanError::NoNewName`] because it is a different
+    /// question: there a field pre-filled from the catalogue was cleared, and
+    /// here a field that started empty has not been filled in yet. Only the
+    /// second is [`PlanError::is_unfinished`].
+    NoTableName,
     /// `rudbman-sql` refused the alter.
     Ddl(DdlError),
+}
+
+impl PlanError {
+    /// Whether this refusal says only that a table being created is not
+    /// finished yet.
+    ///
+    /// Two shapes, and both of them describe a pane that has just been opened:
+    /// no name typed, and no column added. Neither is a mistake somebody made —
+    /// they are the state everybody starts in — so a surface showing them
+    /// beside the statements would be telling the user off for not having
+    /// finished typing. Every other refusal names a row that can be gone and
+    /// looked at, and those are shown as they arise.
+    ///
+    /// Nothing on the alter path answers `true`: [`PlanError::NoTableName`] is
+    /// raised only by [`StructEdits::plan_create`], and a
+    /// [`DdlError::NoColumns`] can only come out of `plan_create` too.
+    pub fn is_unfinished(&self) -> bool {
+        matches!(
+            self,
+            PlanError::NoTableName | PlanError::Ddl(DdlError::NoColumns)
+        )
+    }
 }
 
 impl fmt::Display for PlanError {
@@ -612,6 +892,9 @@ impl fmt::Display for PlanError {
                 write!(f, "column `{column}` has been left without a name")
             }
             PlanError::NoNewName => f.write_str("the table's new name is empty"),
+            PlanError::NoTableName => {
+                f.write_str("the table being created has not been given a name")
+            }
             PlanError::Ddl(error) => error.fmt(f),
         }
     }
@@ -1087,6 +1370,252 @@ mod tests {
         assert!(edits.added().is_empty());
         assert_eq!(edits.rename_to(), None);
         assert_eq!(edits.plan(&structure, &Dialect::POSTGRES), Ok(Vec::new()));
+    }
+
+    /// The empty snapshot a table being created is staged against: the schema
+    /// it goes in, and nothing else.
+    fn blank() -> Structure {
+        Structure {
+            table: vec!["app".to_string()],
+            columns: Vec::new(),
+            constraints: Vec::new(),
+        }
+    }
+
+    /// Stages `app.orders(id integer NOT NULL, note varchar(80))`.
+    fn two_columns(edits: &mut StructEdits) {
+        edits.set_rename(Some("orders".to_string()));
+        let id = edits.add_column();
+        edits.set_added(id, DraftValue::Name("id".to_string()));
+        edits.set_added(id, DraftValue::Type("integer".to_string()));
+        edits.set_added(id, DraftValue::NotNull(true));
+        let note = edits.add_column();
+        edits.set_added(note, DraftValue::Name("note".to_string()));
+        edits.set_added(note, DraftValue::Type("varchar(80)".to_string()));
+    }
+
+    /// A pane that has just been opened plans to the two refusals that say
+    /// only "not finished yet", and to nothing else.
+    #[test]
+    fn an_unfinished_create_is_a_state_and_not_a_mistake() {
+        let blank = blank();
+        let mut edits = StructEdits::new();
+
+        // Nothing at all: no name first, because that is the field the pane
+        // opens focused on.
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::NoTableName)
+        );
+        assert!(PlanError::NoTableName.is_unfinished());
+
+        // A name and no columns: the generator's own refusal, and the second
+        // half of the same state.
+        edits.set_rename(Some("orders".to_string()));
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::Ddl(DdlError::NoColumns))
+        );
+        assert!(PlanError::Ddl(DdlError::NoColumns).is_unfinished());
+
+        // And a column the user did get wrong, which is not one of the two:
+        // it names a row, and it is reported ahead of the missing name.
+        let added = edits.add_column();
+        edits.set_added(added, DraftValue::Type("integer".to_string()));
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::AddedHasNoName { position: 0 })
+        );
+        assert!(!PlanError::AddedHasNoName { position: 0 }.is_unfinished());
+
+        edits.set_rename(None);
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::AddedHasNoName { position: 0 }),
+            "the row the user can go and look at comes first"
+        );
+        assert!(
+            !PlanError::NoNewName.is_unfinished(),
+            "a rename is not this"
+        );
+    }
+
+    /// The name is the same slot a rename uses, and it is required.
+    #[test]
+    fn the_create_takes_its_name_from_the_one_name_field_there_is() {
+        let blank = blank();
+        let mut edits = StructEdits::new();
+        two_columns(&mut edits);
+
+        assert_eq!(edits.rename_to(), Some("orders"));
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Ok(vec![
+                [
+                    "CREATE TABLE app.orders (",
+                    "  id integer NOT NULL,",
+                    "  note varchar(80)",
+                    ")",
+                ]
+                .join("\n")
+            ])
+        );
+
+        // Cleared, which is what the field being emptied stages: the create is
+        // unfinished again rather than refused for a name of nothing.
+        edits.set_rename(None);
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::NoTableName)
+        );
+        edits.set_rename(Some(String::new()));
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::NoTableName),
+            "an empty field is an unfilled field"
+        );
+    }
+
+    /// The three kinds reach the statement, named or not, and a foreign key
+    /// carries the other side as the user wrote it.
+    #[test]
+    fn the_three_constraints_are_born_here_and_nowhere_else() {
+        let blank = blank();
+        let mut edits = StructEdits::new();
+        two_columns(&mut edits);
+
+        let key = ConstraintDraft {
+            kind: NewConstraintKind::PrimaryKey,
+            name: "orders_pk".to_string(),
+            columns: vec!["id".to_string()],
+            ..ConstraintDraft::default()
+        };
+        assert_eq!(edits.add_constraint(key), 0);
+        let unique = ConstraintDraft {
+            columns: vec!["note".to_string()],
+            kind: NewConstraintKind::Unique,
+            ..ConstraintDraft::default()
+        };
+        assert_eq!(edits.add_constraint(unique), 1);
+        let reference = ConstraintDraft {
+            columns: vec!["id".to_string()],
+            references: " app . customers ".to_string(),
+            referenced_columns: "cust_id, ".to_string(),
+            kind: NewConstraintKind::ForeignKey,
+            ..ConstraintDraft::default()
+        };
+        edits.add_constraint(reference);
+
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Ok(vec![
+                [
+                    "CREATE TABLE app.orders (",
+                    "  id integer NOT NULL,",
+                    "  note varchar(80),",
+                    // Named, and so carrying the CONSTRAINT prefix...
+                    "  CONSTRAINT orders_pk PRIMARY KEY (id),",
+                    // ...where an unnamed one does not: the server names it.
+                    "  UNIQUE (note),",
+                    // The reference's parts trimmed, and the trailing comma of
+                    // its column list dropped.
+                    "  FOREIGN KEY (id) REFERENCES app.customers (cust_id)",
+                    ")",
+                ]
+                .join("\n")
+            ])
+        );
+        assert_eq!(
+            edits.pending_count(),
+            6,
+            "two columns, three keys, the name"
+        );
+
+        // Taken back off, which is the only edit a staged constraint has.
+        assert!(edits.remove_added_constraint(1));
+        assert_eq!(edits.added_constraints().len(), 2);
+        assert_eq!(
+            edits.added_constraints()[1].kind,
+            NewConstraintKind::ForeignKey,
+            "the one after it moved up"
+        );
+        assert!(
+            !edits.remove_added_constraint(9),
+            "past the end takes nothing"
+        );
+    }
+
+    /// A foreign key with no other side, and a key over no columns, are the
+    /// generator's to refuse — and its sentences name the constraint.
+    #[test]
+    fn a_half_filled_constraint_is_the_generators_to_refuse() {
+        let blank = blank();
+        let mut edits = StructEdits::new();
+        two_columns(&mut edits);
+        edits.add_constraint(ConstraintDraft::default());
+
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::Ddl(DdlError::NoConstraintColumns {
+                constraint: "PRIMARY KEY".to_string()
+            })),
+            "an unnamed constraint is pointed at by its keyword"
+        );
+        assert!(
+            !edits
+                .plan_create(&blank, &Dialect::POSTGRES)
+                .unwrap_err()
+                .is_unfinished(),
+            "a key over nothing is a mistake and is shown as one"
+        );
+
+        let mut edits = StructEdits::new();
+        two_columns(&mut edits);
+        edits.add_constraint(ConstraintDraft {
+            columns: vec!["id".to_string()],
+            kind: NewConstraintKind::ForeignKey,
+            ..ConstraintDraft::default()
+        });
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Err(PlanError::Ddl(DdlError::NoReferencedTable {
+                constraint: "FOREIGN KEY".to_string()
+            }))
+        );
+    }
+
+    /// The create path reads the added columns, the added constraints and the
+    /// name, and nothing keyed to a snapshot it does not have.
+    #[test]
+    fn the_create_path_reads_nothing_keyed_to_a_snapshot() {
+        let blank = blank();
+        let mut edits = StructEdits::new();
+        two_columns(&mut edits);
+
+        // Marks against rows an empty structure does not have. They are kept —
+        // they are sets of indices — and read by neither plan.
+        edits.toggle_column_drop(0);
+        edits.toggle_constraint_drop(0);
+        // And an edit to a snapshot column stages nothing at all, because there
+        // is no such column.
+        edits.set_column(&blank, 0, DraftValue::Type("bigint".to_string()));
+
+        assert_eq!(
+            edits.plan_create(&blank, &Dialect::POSTGRES),
+            Ok(vec![
+                [
+                    "CREATE TABLE app.orders (",
+                    "  id integer NOT NULL,",
+                    "  note varchar(80)",
+                    ")",
+                ]
+                .join("\n")
+            ])
+        );
+        // A discard empties the constraints with everything else.
+        edits.clear();
+        assert!(edits.is_empty());
+        assert!(edits.added_constraints().is_empty());
     }
 
     /// A row the structure does not have answers quietly rather than panicking

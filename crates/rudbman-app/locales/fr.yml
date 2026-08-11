@@ -20,6 +20,7 @@ menu:
   query_object: Interroger l'objet sélectionné
   view_data: Voir les données
   view_structure: Modifier la structure
+  new_table: Nouvelle table
   open_sql_file: Ouvrir un fichier SQL…
   extract_script: Extraire un script…
   transfer_table: Transférer les lignes…
@@ -452,10 +453,19 @@ struct:
   kind: Nature
   empty: rien ici
   no_constraint_drop: "%{dialect} ne possède aucun ALTER TABLE qui supprime une contrainte."
+  new_constraint: Nouvelle contrainte
+  constraint_name: Nom (facultatif)
+  references: Table référencée
+  referenced_columns: Colonnes référencées (facultatif)
+  add_constraint: Ajouter la contrainte
   rename_table: Renommer la table
   new_name: Nouveau nom
+  new_table: Nouvelle table
+  new_table_in: "Nouvelle table dans %{scope}"
+  table_name: Nom de la table
   statements: Instructions
   apply: Appliquer
+  create: Créer la table
   apply_title: "Appliquer %{count} instructions"
   apply_no_undo: "Cela ne peut pas être annulé : chaque instruction est validée dès son exécution, et aucun retour arrière ne la reprend."
   applying: application…

@@ -1108,6 +1108,15 @@ and the pane opens with nothing staged but its name field focused.
   the server accepted the shape rather than a shape near it, and it means the
   common sequence — create a table, then notice a column needs a default — is
   one surface and no re-navigation.
+- **A refused create keeps what was typed**, which is the one place the discard
+  rule above does not reach — and it does not reach it for the same reason it
+  exists. That rule discards because the statements before the failure are
+  committed and the snapshot's indices no longer describe anything. A create is
+  one statement: when it is refused nothing was committed, the snapshot is the
+  empty one it always was, and the staging was never keyed to it — a table
+  being defined is all additions. So a mistyped type in a thirty-column
+  definition costs the line it is on rather than the definition. The rule is
+  about what a committed statement invalidates, not about failure as such.
 
 ---
 

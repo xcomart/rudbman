@@ -20,6 +20,7 @@ menu:
   query_object: 查询所选对象
   view_data: 查看数据
   view_structure: 编辑结构
+  new_table: 新建表
   open_sql_file: 打开 SQL 文件…
   extract_script: 提取脚本…
   transfer_table: 传输数据行…
@@ -452,10 +453,19 @@ struct:
   kind: 种类
   empty: 无
   no_constraint_drop: "%{dialect} 没有可删除约束的 ALTER TABLE。"
+  new_constraint: 新建约束
+  constraint_name: 名称（可选）
+  references: 引用的表
+  referenced_columns: 引用的列（可选）
+  add_constraint: 添加约束
   rename_table: 重命名表
   new_name: 新名称
+  new_table: 新建表
+  new_table_in: "在 %{scope} 中新建表"
+  table_name: 表名
   statements: 语句
   apply: 应用
+  create: 创建表
   apply_title: "应用 %{count} 条语句"
   apply_no_undo: 此操作无法撤销。每条语句一经执行即提交，回滚也收不回来。
   applying: 正在应用…
