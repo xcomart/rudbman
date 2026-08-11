@@ -59,11 +59,8 @@ mod pane_tree;
 mod query;
 mod query_source;
 mod settings_dialog;
-// The staging model for structure editing, written and tested against the DDL
-// generator ahead of the pane that will render it — so inside a binary crate
-// every one of its operations reads as dead code until that pane lands.
-#[allow(dead_code)]
 mod struct_edit;
+mod struct_pane;
 mod table_detail;
 mod theme_editor;
 mod transfer_dialog;
@@ -115,6 +112,7 @@ use icons::Icons;
 use pane_tree::{Axis, Pane, PaneId, PaneItem, PaneNode, PaneTree, SplitId};
 use query::{ConfirmRequest, QueryPane, QueryPaneEvent};
 use settings_dialog::{SettingsDialog, SettingsDialogEvent};
+use struct_pane::StructPane;
 use table_detail::{TableDetail, TableDetailEvent};
 use transfer_dialog::{TransferDialog, TransferDialogEvent, TransferTarget};
 use update_dialog::{UpdateDialog, UpdateDialogEvent};
@@ -473,6 +471,24 @@ impl WorkArea {
         }
         found
     }
+
+    /// Every structure pane in the area, in layout order.
+    ///
+    /// The third thing a connection's death is applied to, and for the reason
+    /// the other two are: this one holds a session handle of its own, and one
+    /// left attached to a dead connection would keep the session — and the
+    /// tunnel under it — standing (§9.3).
+    fn struct_panes(&self) -> Vec<Entity<StructPane>> {
+        let mut found = Vec::new();
+        for (_, pane) in self.panes.leaves() {
+            for item in pane.items() {
+                if let PaneItem::TableStruct(panel) = item {
+                    found.push(panel.clone());
+                }
+            }
+        }
+        found
+    }
 }
 
 /// One connection tab: the profile it was opened from, where it has got to, and
@@ -537,8 +553,24 @@ enum FocusTarget {
     Builder(Entity<BuilderPane>),
     /// A data pane; the keyboard goes onto its grid.
     Data(Entity<DataPane>),
+    /// A structure pane; the keyboard goes onto the pane itself, which is what
+    /// its own fields are reached from.
+    Struct(Entity<StructPane>),
     /// Anything with nothing to type into, and the empty pane.
     Shell,
+}
+
+/// The pane a close was refused over, so that it can be told to say why.
+///
+/// Two kinds hold work a close would destroy, and each says so in its own
+/// words: a data pane's staged rows and a structure pane's staged columns are
+/// keyed to indices of a result the close would drop. Resolved out of the tree
+/// before anything is updated, for the reason [`FocusTarget`] is.
+enum Pending {
+    /// Rows staged against a grid.
+    Data(Entity<DataPane>),
+    /// Columns and constraints staged against a structure.
+    Struct(Entity<StructPane>),
 }
 
 /// What a right-click on one of the shell's own surfaces landed on.
@@ -1123,6 +1155,12 @@ impl Workspace {
                 TableDetailEvent::ViewData(target) => {
                     workspace.open_data((**target).clone(), window, cx);
                 }
+                // Through the same gate as the explorer's own row, for the
+                // reason the one above it is: a table whose columns are already
+                // open lands on the structure tab already open for it.
+                TableDetailEvent::ViewStructure(target) => {
+                    workspace.open_structure((**target).clone(), window, cx);
+                }
             }
         })
         .detach();
@@ -1183,6 +1221,55 @@ impl Workspace {
         self.append_tab(PaneItem::TableData(panel.clone()), window, cx);
         // Opened with a keyboard gesture as often as with the mouse, and the
         // arrows and the copy chord are the grid's own.
+        panel.update(cx, |panel, cx| panel.take_focus(window, cx));
+    }
+
+    /// Opens `target`'s structure in a pane of its own, or brings the open one
+    /// to the front.
+    ///
+    /// The navigation rule the other two per-object tabs follow, and a third
+    /// deduplication for the reason there are three: the shape of a table, its
+    /// rows and its description are three things a user may want side by side
+    /// (§7.10).
+    ///
+    /// Nothing happens without a live session, exactly as for a data pane: the
+    /// whole content is a `DESCRIBE`, and there is nothing to edit the shape of
+    /// over a dead connection.
+    fn open_structure(
+        &mut self,
+        target: ObjectTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((pane, index)) = self.struct_tab(&target, cx) {
+            self.activate_tab(pane, index, window, cx);
+            return;
+        }
+        let Some(session) = self.session_of(target.connection) else {
+            return;
+        };
+        let Some(open) = self
+            .connections
+            .iter()
+            .find(|open| open.id == target.connection)
+        else {
+            return;
+        };
+        let profile = open.profile.clone();
+        let dialect = Self::dialect_of(&profile);
+        let connection = open.id;
+
+        let panel =
+            cx.new(|cx| StructPane::new(session, connection, target, &profile, &dialect, cx));
+        // Subscribed to before the first read, the way a detail panel is: the
+        // pane redraws its own body, but the shell has to redraw around it —
+        // the tab strip's title and its dot are the shell's — and an
+        // observation registered after the load would miss the frame the
+        // structure arrived in.
+        cx.observe(&panel, |_workspace, _panel, cx| cx.notify())
+            .detach();
+        panel.update(cx, |panel, cx| panel.refresh(cx));
+        self.append_tab(PaneItem::TableStruct(panel.clone()), window, cx);
         panel.update(cx, |panel, cx| panel.take_focus(window, cx));
     }
 
@@ -1432,6 +1519,7 @@ impl Workspace {
             PaneItem::TableDetail(_)
             | PaneItem::Erd(_)
             | PaneItem::TableData(_)
+            | PaneItem::TableStruct(_)
             | PaneItem::QueryBuilder { .. } => None,
         }
     }
@@ -1618,6 +1706,15 @@ impl Workspace {
             .find_map(|(id, pane)| pane.data_of(target, cx).map(|index| (id, index)))
     }
 
+    /// Where `target`'s structure is already open, if it is.
+    fn struct_tab(&self, target: &ObjectTarget, cx: &App) -> Option<(PaneId, usize)> {
+        self.work_area()?
+            .panes
+            .leaves()
+            .into_iter()
+            .find_map(|(id, pane)| pane.struct_of(target, cx).map(|index| (id, index)))
+    }
+
     /// Where `target`'s diagram is already open, if it is.
     fn erd_tab(&self, target: &ErdTarget, cx: &App) -> Option<(PaneId, usize)> {
         self.work_area()?
@@ -1729,6 +1826,9 @@ impl Workspace {
     /// dialog: apply the changes, or discard them. So the tab is brought to the
     /// front, the pane says what has to happen first, and the close does not.
     ///
+    /// A structure pane answers the same question about its own staging, which
+    /// is keyed to indices into the snapshot it was read against (§7.10).
+    ///
     /// All the victims are asked before any is refused, and the first blocker
     /// is the one shown — "close the other tabs" over three dirty panes should
     /// close none of them and land on one, rather than close two and stop.
@@ -1746,7 +1846,11 @@ impl Workspace {
         for index in victims {
             match target.items().get(*index) {
                 Some(PaneItem::TableData(panel)) if panel.read(cx).has_pending_edits(cx) => {
-                    blocked = Some((*index, panel.clone()));
+                    blocked = Some((*index, Pending::Data(panel.clone())));
+                    break;
+                }
+                Some(PaneItem::TableStruct(panel)) if panel.read(cx).has_pending_edits() => {
+                    blocked = Some((*index, Pending::Struct(panel.clone())));
                     break;
                 }
                 // Asked through the same seam every other tab answers, so that
@@ -1760,7 +1864,10 @@ impl Workspace {
             return false;
         };
         self.activate_tab(pane, index, window, cx);
-        panel.update(cx, |panel, cx| panel.warn_pending(cx));
+        match panel {
+            Pending::Data(panel) => panel.update(cx, |panel, cx| panel.warn_pending(cx)),
+            Pending::Struct(panel) => panel.update(cx, |panel, cx| panel.warn_pending(cx)),
+        }
         true
     }
 
@@ -1871,6 +1978,7 @@ impl Workspace {
             Some(PaneItem::Query { pane, .. }) => FocusTarget::Query(pane.clone()),
             Some(PaneItem::Erd(panel)) => FocusTarget::Erd(panel.clone()),
             Some(PaneItem::TableData(panel)) => FocusTarget::Data(panel.clone()),
+            Some(PaneItem::TableStruct(panel)) => FocusTarget::Struct(panel.clone()),
             Some(PaneItem::QueryBuilder { pane, .. }) => FocusTarget::Builder(pane.clone()),
             Some(PaneItem::TableDetail(_)) | None => FocusTarget::Shell,
         };
@@ -1881,6 +1989,9 @@ impl Workspace {
                 panel.update(cx, |panel, cx| panel.take_focus(window, cx));
             }
             FocusTarget::Builder(panel) => {
+                panel.update(cx, |panel, cx| panel.take_focus(window, cx));
+            }
+            FocusTarget::Struct(panel) => {
                 panel.update(cx, |panel, cx| panel.take_focus(window, cx));
             }
             FocusTarget::Shell => self.focus_shell(window, cx),
@@ -2095,6 +2206,9 @@ impl Workspace {
             pane.update(cx, |pane, cx| pane.detach(cx));
         }
         for panel in connection.work.data_panes() {
+            panel.update(cx, |panel, cx| panel.detach(cx));
+        }
+        for panel in connection.work.struct_panes() {
             panel.update(cx, |panel, cx| panel.detach(cx));
         }
 
@@ -2354,6 +2468,9 @@ impl Workspace {
             // data pane's grid when a cell is clicked.
             Some(PaneItem::QueryBuilder { pane, .. }) => pane.read(cx).contains_focus(window, cx),
             Some(PaneItem::TableData(panel)) => panel.read(cx).contains_focus(window, cx),
+            // And a third: the structure pane's four fields take the keyboard
+            // the moment one is clicked into.
+            Some(PaneItem::TableStruct(panel)) => panel.read(cx).contains_focus(window, cx),
             None => false,
         }
     }
@@ -2505,9 +2622,10 @@ impl Workspace {
                     PaneItem::Erd(panel) => diagrams.push(panel.clone()),
                     PaneItem::QueryBuilder { pane, .. } => builders.push(pane.clone()),
                     PaneItem::TableData(panel) => data.push(panel.clone()),
-                    // The one surface with nothing to act on: the detail panel
-                    // is four tabs of read-only presentation.
-                    PaneItem::TableDetail(_) => {}
+                    // The two surfaces with nothing to act on: the detail panel
+                    // is four tabs of read-only presentation, and the structure
+                    // pane's commands are all buttons of its own.
+                    PaneItem::TableDetail(_) | PaneItem::TableStruct(_) => {}
                 }
             }
         }
@@ -2907,6 +3025,14 @@ impl Workspace {
                 MenuRow::new(ts!("menu.view_data"))
                     .enabled(live)
                     .on_activate(object(Workspace::open_data)),
+            );
+            // Beside it, because the second shortest question a table can be
+            // asked is what it is made of — and unlike the detail panel, this
+            // one can answer by changing it (§7.10).
+            rows.push(
+                MenuRow::new(ts!("menu.view_structure"))
+                    .enabled(live)
+                    .on_activate(object(Workspace::open_structure)),
             );
             rows.push(
                 MenuRow::new(ts!("menu.query_object"))
@@ -4367,6 +4493,7 @@ fn render_pane(
                 Some(PaneItem::Query { pane, .. }) => pane.clone().into_any_element(),
                 Some(PaneItem::Erd(panel)) => panel.clone().into_any_element(),
                 Some(PaneItem::TableData(panel)) => panel.clone().into_any_element(),
+                Some(PaneItem::TableStruct(panel)) => panel.clone().into_any_element(),
                 Some(PaneItem::QueryBuilder { pane, .. }) => pane.clone().into_any_element(),
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
@@ -7350,6 +7477,7 @@ mod tests {
     fn relation_labels() -> Vec<String> {
         vec![
             ts!("menu.view_data").to_string(),
+            ts!("menu.view_structure").to_string(),
             ts!("menu.query_object").to_string(),
             ts!("menu.add_to_builder").to_string(),
             ts!("menu.extract_script").to_string(),

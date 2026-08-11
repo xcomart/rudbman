@@ -19,6 +19,7 @@ menu:
   # SELECT against it.
   query_object: Запросить выбранный объект
   view_data: Показать данные
+  view_structure: Изменить структуру
   open_sql_file: Открыть файл SQL…
   extract_script: Извлечь скрипт…
   transfer_table: Перенести строки…
@@ -422,6 +423,38 @@ data:
   apply_null_key: "Значение %{column} в этой строке равно NULL, поэтому найти её снова невозможно."
   apply_unknown_key: "Ключевого столбца %{column} нет среди прочитанных столбцов. Обновите и повторите попытку."
   apply_not_planned: "Эти изменения нельзя записать в виде операторов: %{detail}"
+
+struct:
+  loading: загрузка…
+  refresh: Обновить
+  discard: Отменить
+  discard_first: Сначала отмените несохранённые изменения.
+  read_only: Соединение доступно только для чтения, поэтому структуру этой таблицы можно только читать.
+  pending: "Несохранённых изменений: %{count}"
+  columns: Столбцы
+  column: Столбец
+  type: Тип
+  nullable: "Null"
+  default: По умолчанию
+  state: Состояние
+  state_changed: изменён
+  state_dropped: к удалению
+  state_added: новый
+  drop: Удалить
+  keep: Вернуть
+  remove: Убрать
+  add_column: Добавить столбец
+  edit_column: Выбранный столбец
+  no_selection: Выберите столбец выше, чтобы изменить его.
+  name: Имя
+  has_default: Есть значение по умолчанию
+  constraints: Ограничения
+  kind: Вид
+  empty: ничего нет
+  no_constraint_drop: "В %{dialect} нет ALTER TABLE, удаляющего ограничение."
+  rename_table: Переименовать таблицу
+  new_name: Новое имя
+  statements: Операторы
 
 extract:
   title: Извлечение скрипта

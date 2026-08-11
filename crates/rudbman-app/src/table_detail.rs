@@ -159,6 +159,12 @@ pub enum TableDetailEvent {
     /// knows which object it is describing and nothing about where a tab would
     /// go (architecture document, §7.9).
     ViewData(Box<ObjectTarget>),
+    /// Open this object's structure in a pane that can edit it.
+    ///
+    /// The panel itself stays read-only (§7.10): it holds its rows as display
+    /// strings, so nothing an editor would need survives in it. This is the
+    /// header's way through to the pane that reads the catalog again.
+    ViewStructure(Box<ObjectTarget>),
 }
 
 /// The panel.
@@ -276,6 +282,18 @@ impl TableDetail {
         cx.emit(TableDetailEvent::ViewData(Box::new(self.target.clone())));
     }
 
+    /// Asks for this object's structure, in a pane that can change it.
+    ///
+    /// Beside "view data" and for the same reason: the reader looking at a
+    /// column list is very often the person about to alter one, and the
+    /// alternative from here is finding the row in the tree again. Relations
+    /// only — a routine has no columns to alter.
+    fn view_structure(&mut self, cx: &mut Context<Self>) {
+        cx.emit(TableDetailEvent::ViewStructure(Box::new(
+            self.target.clone(),
+        )));
+    }
+
     /// The tabs this object gets.
     fn tabs(&self) -> &'static [Tab] {
         if self.target.folder.is_relation() {
@@ -344,6 +362,14 @@ impl TableDetail {
                     .variant(ButtonVariant::Secondary)
                     .on_click(move |_, _window, cx| {
                         this.update(cx, |detail, cx| detail.view_data(cx));
+                    })
+            }))
+            .children(self.target.folder.is_relation().then(|| {
+                let this = this.clone();
+                Button::new("detail-view-structure", ts!("menu.view_structure"))
+                    .variant(ButtonVariant::Secondary)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |detail, cx| detail.view_structure(cx));
                     })
             }))
             .child(
@@ -1432,6 +1458,11 @@ mod tests {
                 TableDetailEvent::ViewData(target) => {
                     recorder.borrow_mut().push(format!("data {}", target.name));
                 }
+                TableDetailEvent::ViewStructure(target) => {
+                    recorder
+                        .borrow_mut()
+                        .push(format!("struct {}", target.name));
+                }
             })
         });
         cx.update(|cx| panel.update(cx, |panel, cx| panel.refresh(cx)));
@@ -1446,10 +1477,17 @@ mod tests {
         // The header's second button, which hands the same object on to
         // whoever opens tabs rather than opening one itself.
         cx.update(|cx| panel.update(cx, |panel, cx| panel.view_data(cx)));
+        // And its third, which hands the same object to whoever opens the pane
+        // that can alter it.
+        cx.update(|cx| panel.update(cx, |panel, cx| panel.view_structure(cx)));
         cx.run_until_parked();
         assert_eq!(
             seen.borrow().as_slice(),
-            ["load PERSON".to_string(), "data PERSON".to_string()]
+            [
+                "load PERSON".to_string(),
+                "data PERSON".to_string(),
+                "struct PERSON".to_string()
+            ]
         );
     }
 

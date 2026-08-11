@@ -19,6 +19,7 @@ menu:
   # SELECT against it.
   query_object: Interroger l'objet sélectionné
   view_data: Voir les données
+  view_structure: Modifier la structure
   open_sql_file: Ouvrir un fichier SQL…
   extract_script: Extraire un script…
   transfer_table: Transférer les lignes…
@@ -422,6 +423,38 @@ data:
   apply_null_key: "Le %{column} de cette ligne est NULL ; aucune instruction ne peut la retrouver."
   apply_unknown_key: "La colonne clé %{column} ne figure pas parmi les colonnes lues. Rechargez et réessayez."
   apply_not_planned: "Ces modifications ne peuvent pas être écrites sous forme d'instructions : %{detail}"
+
+struct:
+  loading: chargement…
+  refresh: Recharger
+  discard: Abandonner
+  discard_first: Abandonnez d'abord les modifications en attente.
+  read_only: Cette connexion est en lecture seule ; la structure de cette table peut être lue mais pas modifiée.
+  pending: "%{count} modifications en attente"
+  columns: Colonnes
+  column: Colonne
+  type: Type
+  nullable: Nul
+  default: Défaut
+  state: État
+  state_changed: modifiée
+  state_dropped: à supprimer
+  state_added: nouvelle
+  drop: Supprimer
+  keep: Conserver
+  remove: Retirer
+  add_column: Ajouter une colonne
+  edit_column: Colonne sélectionnée
+  no_selection: Choisissez une colonne ci-dessus pour la modifier.
+  name: Nom
+  has_default: A une valeur par défaut
+  constraints: Contraintes
+  kind: Nature
+  empty: rien ici
+  no_constraint_drop: "%{dialect} ne possède aucun ALTER TABLE qui supprime une contrainte."
+  rename_table: Renommer la table
+  new_name: Nouveau nom
+  statements: Instructions
 
 extract:
   title: Extraire un script

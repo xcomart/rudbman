@@ -55,6 +55,7 @@ use crate::erd_pane::{ErdPane, ErdTarget};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::QueryPane;
+use crate::struct_pane::StructPane;
 use crate::table_detail::TableDetail;
 
 /// Fraction of a split the first child gets when the split is created.
@@ -132,6 +133,14 @@ pub enum PaneItem {
     /// applied yet. Holds only the panel, because the panel knows which object
     /// it is showing — which is also what tells two of them apart.
     TableData(Entity<DataPane>),
+    /// One table's shape, and the `ALTER TABLE` batch that would change it.
+    ///
+    /// A sibling of [`PaneItem::TableData`] rather than a fifth tab of the
+    /// detail panel, for the reason §7.10 gives: the panel keeps its rows as
+    /// display strings, so nothing an editor needs survives in it. Holds only
+    /// the panel, which knows which table it is editing — and that is also what
+    /// tells two of them apart.
+    TableStruct(Entity<StructPane>),
     /// A canvas of tables, the form under it, and the `SELECT` they describe.
     ///
     /// Numbered like a query pane and for the same reason: several at once is
@@ -164,6 +173,7 @@ impl PaneItem {
             PaneItem::Query { number, .. } => ts!("query.tab", index = number),
             PaneItem::Erd(panel) => panel.read(cx).target().title(),
             PaneItem::TableData(panel) => SharedString::from(panel.read(cx).target().qualified()),
+            PaneItem::TableStruct(panel) => SharedString::from(panel.read(cx).target().qualified()),
             PaneItem::QueryBuilder { number, .. } => ts!("builder.tab", index = number),
         }
     }
@@ -179,6 +189,7 @@ impl PaneItem {
             PaneItem::Query { pane, .. } => pane.read(cx).connection(),
             PaneItem::Erd(panel) => panel.read(cx).target().connection,
             PaneItem::TableData(panel) => panel.read(cx).connection(),
+            PaneItem::TableStruct(panel) => panel.read(cx).connection(),
             PaneItem::QueryBuilder { pane, .. } => pane.read(cx).connection(),
         }
     }
@@ -200,6 +211,7 @@ impl PaneItem {
     pub fn blocks_close(&self, cx: &App) -> bool {
         match self {
             PaneItem::TableData(panel) => panel.read(cx).has_pending_edits(cx),
+            PaneItem::TableStruct(panel) => panel.read(cx).has_pending_edits(),
             PaneItem::TableDetail(_)
             | PaneItem::Query { .. }
             | PaneItem::Erd(_)
@@ -307,6 +319,7 @@ impl Pane {
             PaneItem::Query { .. }
             | PaneItem::Erd(_)
             | PaneItem::TableData(_)
+            | PaneItem::TableStruct(_)
             | PaneItem::QueryBuilder { .. } => false,
         })
     }
@@ -322,6 +335,24 @@ impl Pane {
             PaneItem::TableDetail(_)
             | PaneItem::Query { .. }
             | PaneItem::Erd(_)
+            | PaneItem::TableStruct(_)
+            | PaneItem::QueryBuilder { .. } => false,
+        })
+    }
+
+    /// The index of the tab editing `target`'s structure, if one is open here.
+    ///
+    /// A third lookup over the same object rather than a shared one, for
+    /// [`Pane::data_of`]'s reason: the shape of a table, its rows and its
+    /// description are three tabs a user may perfectly well want at once, and
+    /// each has to find its own.
+    pub fn struct_of(&self, target: &ObjectTarget, cx: &App) -> Option<usize> {
+        self.items.iter().position(|item| match item {
+            PaneItem::TableStruct(panel) => panel.read(cx).target() == target,
+            PaneItem::TableDetail(_)
+            | PaneItem::Query { .. }
+            | PaneItem::Erd(_)
+            | PaneItem::TableData(_)
             | PaneItem::QueryBuilder { .. } => false,
         })
     }
@@ -337,6 +368,7 @@ impl Pane {
             PaneItem::TableDetail(_)
             | PaneItem::Query { .. }
             | PaneItem::TableData(_)
+            | PaneItem::TableStruct(_)
             | PaneItem::QueryBuilder { .. } => false,
         })
     }

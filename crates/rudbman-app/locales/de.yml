@@ -19,6 +19,7 @@ menu:
   # SELECT against it.
   query_object: Ausgewähltes Objekt abfragen
   view_data: Daten ansehen
+  view_structure: Struktur bearbeiten
   open_sql_file: SQL-Datei öffnen…
   extract_script: Skript extrahieren…
   transfer_table: Zeilen übertragen…
@@ -422,6 +423,38 @@ data:
   apply_null_key: "Das %{column} dieser Zeile ist NULL, daher kann keine Anweisung sie wiederfinden."
   apply_unknown_key: "Die Schlüsselspalte %{column} ist nicht unter den gelesenen Spalten. Laden Sie neu und versuchen Sie es erneut."
   apply_not_planned: "Diese Änderungen lassen sich nicht als Anweisungen schreiben: %{detail}"
+
+struct:
+  loading: wird geladen …
+  refresh: Neu laden
+  discard: Verwerfen
+  discard_first: Verwerfen Sie die ausstehenden Änderungen zuerst.
+  read_only: "Diese Verbindung ist schreibgeschützt; die Struktur dieser Tabelle lässt sich lesen, aber nicht ändern."
+  pending: "%{count} ausstehende Änderungen"
+  columns: Spalten
+  column: Spalte
+  type: Typ
+  nullable: "Null"
+  default: Vorgabe
+  state: Status
+  state_changed: geändert
+  state_dropped: zu löschen
+  state_added: neu
+  drop: Löschen
+  keep: Behalten
+  remove: Entfernen
+  add_column: Spalte hinzufügen
+  edit_column: Ausgewählte Spalte
+  no_selection: Wählen Sie oben eine Spalte, um sie zu bearbeiten.
+  name: Name
+  has_default: Hat eine Vorgabe
+  constraints: Constraints
+  kind: Art
+  empty: nichts vorhanden
+  no_constraint_drop: "%{dialect} kennt kein ALTER TABLE, das ein Constraint löscht."
+  rename_table: Tabelle umbenennen
+  new_name: Neuer Name
+  statements: Anweisungen
 
 extract:
   title: Skript extrahieren

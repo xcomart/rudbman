@@ -19,6 +19,7 @@ menu:
   # SELECT against it.
   query_object: Consultar el objeto seleccionado
   view_data: Ver datos
+  view_structure: Editar la estructura
   open_sql_file: Abrir archivo SQL…
   extract_script: Extraer script…
   transfer_table: Transferir filas…
@@ -422,6 +423,38 @@ data:
   apply_null_key: "El %{column} de esta fila es NULL, así que ninguna sentencia puede volver a encontrarla."
   apply_unknown_key: "La columna clave %{column} no está entre las columnas leídas. Recargue e inténtelo de nuevo."
   apply_not_planned: "Estos cambios no se pueden escribir como sentencias: %{detail}"
+
+struct:
+  loading: cargando…
+  refresh: Recargar
+  discard: Descartar
+  discard_first: Descarte primero los cambios pendientes.
+  read_only: "Esta conexión es de solo lectura; la estructura de esta tabla se puede leer pero no modificar."
+  pending: "%{count} cambios pendientes"
+  columns: Columnas
+  column: Columna
+  type: Tipo
+  nullable: Nulo
+  default: Predeterminado
+  state: Estado
+  state_changed: modificada
+  state_dropped: a eliminar
+  state_added: nueva
+  drop: Eliminar
+  keep: Conservar
+  remove: Quitar
+  add_column: Añadir columna
+  edit_column: Columna seleccionada
+  no_selection: Elija arriba una columna para editarla.
+  name: Nombre
+  has_default: Tiene un valor predeterminado
+  constraints: Restricciones
+  kind: Clase
+  empty: no hay nada
+  no_constraint_drop: "%{dialect} no tiene ningún ALTER TABLE que elimine una restricción."
+  rename_table: Renombrar la tabla
+  new_name: Nombre nuevo
+  statements: Sentencias
 
 extract:
   title: Extraer script
