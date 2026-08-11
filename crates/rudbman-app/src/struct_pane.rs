@@ -17,13 +17,20 @@
 //! typed while the snapshot underneath still says what the catalog does, which
 //! is what lets the plan carry both sides (§7.10).
 //!
-//! # Nothing here sends anything
+//! # The apply, and why it pretends nothing
 //!
-//! This is the first half of §7.10, the way `0919ae6` was the first half of
-//! §7.9: the pane loads, stages, and shows the statements the staging would
-//! produce. Running them is the other half. That is why the statements block is
-//! read-only text and why there is no Apply button to disable — an apply that
-//! is not written yet is better absent than greyed.
+//! [`StructPane::apply`] raises the statements and [`StructPane::confirm_apply`]
+//! sends them, which is [`crate::data_pane`]'s shape. What is not that pane's
+//! shape is the transaction, because there is none: MySQL and Oracle commit
+//! implicitly at every DDL statement, so [`apply_alter`] forces autocommit *on*
+//! for every product alike, stops at the first failure, and reports how many
+//! statements were committed before it stopped (§7.10). Nothing here rolls
+//! anything back, and the confirmation says so before the user reaches it.
+//!
+//! Both endings — the batch that ran and the batch that stopped half way —
+//! throw the staging away and read the catalogue again. See
+//! [`StructPane::applied`] for why the failure cannot do what §7.9's does and
+//! leave the staging standing.
 //!
 //! # The form is one column at a time
 //!
@@ -41,11 +48,11 @@ use gpui::{
     prelude::*, px,
 };
 use rudbman_core::ConnectionProfile;
-use rudbman_jdbc::{DescribeRequest, Session};
+use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::{ConstraintDrop, ConstraintKind, Dialect, TableAlter, plan_alter};
 use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    TextInput, Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
+    TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to, scrolled, theme,
 };
 
 use crate::builder_sql;
@@ -53,7 +60,7 @@ use crate::connection::SessionHandle;
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::icons;
-use crate::query::note;
+use crate::query::{QueryError, error_lines, note};
 use crate::struct_edit::{
     ColumnDraft, ColumnField, DraftValue, LoadedColumn, LoadedConstraint, PlanError, StructEdits,
     Structure,
@@ -93,6 +100,20 @@ enum Selection {
     Added(usize),
 }
 
+/// What a stopped batch left behind, and what to say about it.
+///
+/// Two parts where the data pane's has three, because there is only one shape
+/// of failure to report: a driver refused a statement. This pane's own refusals
+/// — a plan the generator would not write — never reach a send, and are already
+/// on screen in the statements block when they happen.
+struct ApplyProblem {
+    /// The driver's own envelope, through the query pane's flattening.
+    error: Box<QueryError>,
+    /// How far the batch got: which statement failed, and how many before it
+    /// were committed and cannot be taken back.
+    stopped: SharedString,
+}
+
 /// One table's structure, and whatever is staged against it.
 pub struct StructPane {
     /// What is being edited. Also the tab's title, and the identity two "edit
@@ -110,6 +131,14 @@ pub struct StructPane {
     dialect: Dialect,
     /// The profile refuses writes outright (§8), so nothing can be staged.
     read_only: bool,
+    /// The autocommit setting the session was opened with (§8).
+    ///
+    /// What the batch puts *back*, rather than a flat `true`: a profile opened
+    /// with autocommit off is a session the user asked to be in a transaction,
+    /// and a batch that handed it back in the other mode would be an edit to
+    /// the connection nobody made. It is not what the batch *runs* under — see
+    /// [`apply_alter`], which forces autocommit on whatever this says.
+    restore_auto_commit: bool,
     /// Where the fetch has got to.
     load: Load,
     /// Everything staged against [`Load::Ready`]'s structure.
@@ -146,6 +175,27 @@ pub struct StructPane {
     generation: u64,
     /// A line the pane wants to say without it being a failure.
     notice: Option<SharedString>,
+    /// The statements an apply is about to send, while they are being shown.
+    ///
+    /// This pane's write confirmation, and the one modal it raises: §7.10 and
+    /// §7.9 agree that the question worth asking before a write is not "are you
+    /// sure" but "is this what you meant", and for DDL only the statements
+    /// themselves can answer it — a type nobody can parse is visible there and
+    /// nowhere else.
+    preview: Option<Vec<String>>,
+    /// Whether a batch is out on the session.
+    ///
+    /// Not a state of [`StructPane::load`], because the structure is still on
+    /// screen and still readable while it runs; what it gates is a second apply
+    /// on top of the first, and a tab closed out from under one.
+    applying: bool,
+    /// Why the last batch stopped, and how far it got.
+    ///
+    /// Held apart from [`StructPane::notice`] and drawn in the danger colour: a
+    /// batch that stopped half way has committed everything before the
+    /// statement that failed, and a line that faded in with the other passing
+    /// remarks would be the wrong weight for that.
+    apply_error: Option<ApplyProblem>,
     focus_handle: FocusHandle,
     /// Scroll of everything below the header.
     body_scroll: ScrollHandle,
@@ -197,6 +247,7 @@ impl StructPane {
             session: Some(session),
             dialect: Dialect::from_id(driver_dialect),
             read_only,
+            restore_auto_commit: profile.auto_commit,
             load: Load::Running,
             edits: StructEdits::new(),
             selected: None,
@@ -209,6 +260,9 @@ impl StructPane {
             _watch: watch,
             generation: 0,
             notice: None,
+            preview: None,
+            applying: false,
+            apply_error: None,
             focus_handle: cx.focus_handle(),
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
@@ -252,8 +306,13 @@ impl StructPane {
     /// before a reload, for one reason: a staged edit is keyed to an index into
     /// the snapshot it was staged against, and a snapshot read again is a new
     /// set of indices (§7.10).
+    ///
+    /// A batch already out on the session counts as pending too, even though
+    /// the answer will throw the buffer away whichever answer it is: what the
+    /// user is owed is how far that batch got, and a tab closed in the meantime
+    /// is a tab that takes the report with it.
     pub fn has_pending_edits(&self) -> bool {
-        !self.edits.is_empty()
+        !self.edits.is_empty() || self.applying
     }
 
     /// Says, in the pane itself, why the gesture that was just tried is being
@@ -327,6 +386,10 @@ impl StructPane {
         let generation = self.generation;
         self.load = Load::Running;
         self.notice = None;
+        // Both describe a batch over the structure being replaced: the one that
+        // would have been sent, and the one that stopped.
+        self.preview = None;
+        self.apply_error = None;
         self.select(None, cx);
 
         let target = self.target.clone();
@@ -579,8 +642,137 @@ impl StructPane {
     fn discard(&mut self, cx: &mut Context<Self>) {
         self.edits.clear();
         self.notice = None;
+        // A preview describes changes that are about to stop existing, and a
+        // failure describes an attempt to send them.
+        self.preview = None;
+        self.apply_error = None;
         self.fill_rename(cx);
         self.select(None, cx);
+    }
+
+    /// Plans the staged edits and puts the statements up for confirmation.
+    ///
+    /// Half of §7.10's apply, and the half that sends nothing.
+    /// [`StructPane::confirm_apply`] is what runs them.
+    ///
+    /// The read-only check is made again here even though the header's button
+    /// is drawn disabled on a pane that has one: this is the only function in
+    /// the pane that leads to a write, and the refusal is worth stating where
+    /// the write is rather than only where the button is.
+    ///
+    /// A plan the generator refused raises nothing and says nothing new. Its
+    /// sentence — which product, and why it cannot do this — is already on
+    /// screen in the statements block, and a second copy of it in the failure
+    /// strip would be the same words twice.
+    fn apply(&mut self, cx: &mut Context<Self>) {
+        if self.read_only_reason().is_some() || self.applying || self.preview.is_some() {
+            return;
+        }
+        self.apply_error = None;
+        // An empty batch is what an empty staging plans to, and there is
+        // nothing to confirm about it.
+        if let Some(Ok(statements)) = self.plan()
+            && !statements.is_empty()
+        {
+            self.preview = Some(statements);
+        }
+        cx.notify();
+    }
+
+    /// Runs the statements the confirmation showed.
+    ///
+    /// The batch goes out on the session's own worker thread, so it queues
+    /// behind whatever else this connection is doing rather than racing it, and
+    /// the autocommit flip and every statement happen inside that one
+    /// background call. Splitting it across awaits would leave the connection
+    /// in a mode nothing else on this session asked for between them.
+    fn confirm_apply(&mut self, cx: &mut Context<Self>) {
+        let Some(statements) = self.preview.take() else {
+            return;
+        };
+        if self.read_only_reason().is_some() {
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            self.notice = Some(ts!("explorer.disconnected"));
+            cx.notify();
+            return;
+        };
+
+        self.applying = true;
+        self.apply_error = None;
+        self.notice = Some(ts!("struct.applying"));
+        let generation = self.generation;
+        let restore = self.restore_auto_commit;
+
+        // `cx.spawn` and not the data pane's `spawn_in`: what this ends in is
+        // [`StructPane::refresh`], which builds no entity that needs a window.
+        cx.spawn(async move |pane, cx| {
+            let outcome = cx
+                .background_spawn(
+                    async move { apply_alter(session.session(), &statements, restore) },
+                )
+                .await;
+            pane.update(cx, |pane, cx| pane.applied(generation, outcome, cx))
+                .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Records what one batch did.
+    ///
+    /// **Both endings clear the staging and reload**, and that is where this
+    /// parts company with §7.9's apply. There a failure leaves every staged
+    /// change exactly where it was, because the rollback means nothing was
+    /// written. Here there is no rollback: the statements before the one that
+    /// failed are committed and cannot be taken back, so the catalogue has
+    /// moved and the staging — keyed, like the row editor's, to indices into
+    /// the reading it was staged against — is describing a table that no longer
+    /// exists in that shape. Replaying it would apply the committed half twice.
+    /// What the user gets instead is exactly how far the batch got: which
+    /// statement failed, the driver's reason, and how many before it were
+    /// committed. The whole batch was on screen a moment earlier, so that
+    /// number locates the work still to do.
+    ///
+    /// Success reloads for its own reason: what a server did with a DDL
+    /// statement is not always what it was asked — a type widened, a default
+    /// normalized, a column added at the end regardless of where it was typed —
+    /// so the pane re-reads the catalogue and shows that (§7.10).
+    fn applied(
+        &mut self,
+        generation: u64,
+        outcome: Result<usize, AlterFailure>,
+        cx: &mut Context<Self>,
+    ) {
+        self.applying = false;
+        if generation != self.generation {
+            // A superseded load has already thrown the staging away, and the
+            // structure this batch was planned against is not what is on
+            // screen. Only reachable through a discard that raced the batch.
+            cx.notify();
+            return;
+        }
+        // Cleared before the reload, not after: `refresh` refuses while
+        // anything is staged.
+        self.discard(cx);
+        self.refresh(cx);
+        match outcome {
+            Ok(applied) => self.notice = Some(ts!("struct.applied", count = applied)),
+            Err(failure) => {
+                self.notice = None;
+                self.apply_error = Some(ApplyProblem {
+                    stopped: ts!(
+                        "struct.apply_stopped",
+                        number = failure.committed + 1,
+                        total = failure.total,
+                        committed = failure.committed
+                    ),
+                    error: Box::new(QueryError::new(failure.error)),
+                });
+            }
+        }
+        cx.notify();
     }
 
     /// The statements the staged edits would send, as the block under the
@@ -636,12 +828,13 @@ impl StructPane {
         }
     }
 
-    /// The header: what is being edited, how much is staged, and the two
+    /// The header: what is being edited, how much is staged, and the three
     /// buttons that act on all of it.
     fn render_header(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let loading = self.is_loading();
         let staged = self.has_pending_edits();
+        let writable = self.read_only_reason().is_none();
         let pending = staged.then(|| ts!("struct.pending", count = self.edits.pending_count()));
 
         div()
@@ -686,9 +879,23 @@ impl StructPane {
             }))
             .child({
                 let this = this.clone();
+                // Drawn on a read-only pane as well as a writable one, unlike
+                // the data pane's: this header has no third button to keep it
+                // company, and a header that loses one of two buttons reads as
+                // a pane in a different mode rather than one that may not be
+                // written to. The banner underneath is where that is said.
+                Button::new("struct-apply", ts!("struct.apply"))
+                    .variant(ButtonVariant::Primary)
+                    .disabled(!writable || !staged || loading || self.applying)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |pane, cx| pane.apply(cx));
+                    })
+            })
+            .child({
+                let this = this.clone();
                 Button::new("struct-discard", ts!("struct.discard"))
                     .variant(ButtonVariant::Secondary)
-                    .disabled(!staged)
+                    .disabled(!staged || self.applying)
                     .on_click(move |_, _window, cx| {
                         this.update(cx, |pane, cx| pane.discard(cx));
                     })
@@ -1172,6 +1379,130 @@ impl StructPane {
             .into_any_element(),
         )
     }
+
+    /// The statements a batch is about to send, while they are being shown.
+    ///
+    /// The same list the block under the tables already draws, raised over it:
+    /// §7.10 and §7.9 both have the preview *be* the write confirmation, which
+    /// is a superset of the profile's "ask before a write" and therefore
+    /// answers it. Each statement is its own block in the monospace family,
+    /// because a `?` is the one thing that cannot appear in one of these and a
+    /// type the server has never heard of is the one thing that can.
+    ///
+    /// The line above them saying this cannot be undone is not a conditional
+    /// the way the data pane's is. There it depends on the product; here it is
+    /// true on every product, because the batch runs under autocommit on all of
+    /// them (§7.10) — so it is always drawn.
+    fn render_apply_preview(&self, chrome: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let statements = self.preview.as_ref()?;
+        let this = cx.entity();
+        let dismiss = this.clone();
+        let mono = crate::app_settings::monospace_family(cx);
+
+        let listing = statements.iter().enumerate().map(|(index, statement)| {
+            div()
+                .when(index > 0, |block| block.mt(px(8.)))
+                .font_family(mono.clone())
+                .text_size(px(11.))
+                .text_color(chrome.text)
+                .child(SharedString::from(statement.clone()))
+        });
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(chrome.danger)
+                    .child(ts!("struct.apply_no_undo")),
+            )
+            .child(
+                div()
+                    .id("struct-apply-preview")
+                    .max_h(px(260.))
+                    .overflow_y_scroll()
+                    .p(px(8.))
+                    .rounded_md()
+                    .bg(chrome.surface)
+                    .border_1()
+                    .border_color(chrome.border)
+                    .children(listing),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("struct-apply-cancel", ts!("common.cancel"))
+                            .variant(ButtonVariant::Secondary)
+                            .on_click({
+                                let this = this.clone();
+                                move |_, _window, cx| {
+                                    this.update(cx, |pane, cx| {
+                                        pane.preview = None;
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new("struct-apply-run", ts!("struct.apply"))
+                            .variant(ButtonVariant::Primary)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| pane.confirm_apply(cx));
+                            }),
+                    ),
+            );
+
+        Some(
+            modal(
+                "struct-apply-modal",
+                ts!("struct.apply_title", count = statements.len()),
+                px(560.),
+                body,
+                move |_window, cx| {
+                    dismiss.update(cx, |pane, cx| {
+                        pane.preview = None;
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// How far the last batch got, above the structure it has already changed.
+    ///
+    /// A strip and not the body, for the data pane's reason: the structure is
+    /// still on screen — the reloaded one, which is the point — and a failure
+    /// drawn in its place would take away the one reading that says what the
+    /// committed half did.
+    fn render_apply_error(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+        let problem = self.apply_error.as_ref()?;
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap(px(4.))
+                .px(px(10.))
+                .py(px(6.))
+                .border_b_1()
+                .border_color(chrome.border)
+                .bg(chrome.surface)
+                .child(error_lines(&problem.error, chrome))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(chrome.danger)
+                        .child(problem.stopped.clone()),
+                ),
+        )
+    }
 }
 
 impl Focusable for StructPane {
@@ -1186,7 +1517,9 @@ impl Render for StructPane {
         let chrome = theme(cx);
         let header = self.render_header(&chrome, cx);
         let banner = self.render_banner(&chrome);
+        let failure = self.render_apply_error(&chrome);
         let body = self.render_body(&chrome, cx);
+        let preview = self.render_apply_preview(&chrome, cx);
 
         div()
             .id("struct-pane")
@@ -1217,6 +1550,7 @@ impl Render for StructPane {
             )
             .child(header)
             .children(banner)
+            .children(failure)
             .child(body)
             .children(self.notice.clone().map(|notice| {
                 div()
@@ -1234,6 +1568,9 @@ impl Render for StructPane {
                     .text_color(chrome.text_muted)
                     .child(notice)
             }))
+            // Last, so it draws over everything else including the notice
+            // (architecture document, §7.8).
+            .children(preview)
     }
 }
 
@@ -1315,6 +1652,86 @@ fn drops_constraints(dialect: &Dialect) -> bool {
         name: "c".to_string(),
     });
     plan_alter(&probe, dialect).is_ok()
+}
+
+/// A batch that stopped: what the driver refused, and how much of the batch is
+/// already in.
+///
+/// There is no `half_applied` flag the way §7.9's failure has one, because
+/// there is nothing to be uncertain about: every statement before the one that
+/// failed is committed, and `committed` says how many that is.
+struct AlterFailure {
+    /// The driver's own envelope, from the statement that failed.
+    error: JdbcError,
+    /// How many statements ran and committed before it.
+    committed: usize,
+    /// How many there were in the batch. What makes `committed` legible: "1 of
+    /// 4 committed" is a position in a list the user has just read.
+    total: usize,
+}
+
+/// Runs one `ALTER TABLE` batch and reports how far it got.
+///
+/// **Blocks**, and is called from `cx.background_spawn` with a
+/// [`SessionHandle`]: every call in here goes through the session's own worker
+/// thread, so the batch runs without anything else on this connection getting
+/// in between.
+///
+/// §7.10's shape, and deliberately not §7.9's:
+///
+/// * **Autocommit is forced on**, whatever the profile opened with. MySQL and
+///   Oracle commit implicitly at every DDL statement, so `setAutoCommit(false)`
+///   would buy a rollback that silently does nothing on a third of the products
+///   rudbman supports — and a profile that opened with autocommit *off* would
+///   leave the batch sitting in a transaction this pane never commits. One
+///   model for every product is the only honest one.
+/// * **The first failure stops the batch**, and the statements before it stay
+///   in. There is no `rollback` call in this function and there is nothing for
+///   one to do.
+/// * **No update count is checked.** What a DDL statement reports as a count is
+///   not a number about the table, and §7.9's staleness guard has no meaning
+///   here.
+/// * Autocommit goes back to `restore` whatever happened. A failure to restore
+///   it is logged and no more: the work is committed either way, and reporting
+///   it as this batch's failure would say something untrue about the batch.
+fn apply_alter(
+    session: &Session,
+    statements: &[String],
+    restore: bool,
+) -> Result<usize, AlterFailure> {
+    let total = statements.len();
+    let failed = |error, committed| AlterFailure {
+        error,
+        committed,
+        total,
+    };
+
+    if let Err(error) = session.set_auto_commit(true) {
+        // Nothing has run, so there is nothing to put back: the session is
+        // still in whatever mode it was opened in.
+        return Err(failed(error, 0));
+    }
+
+    let mut committed = 0;
+    let mut stopped = None;
+    for statement in statements {
+        // Dropping the cursor closes it; a DDL statement holds nothing worth
+        // paging.
+        if let Err(error) = session.execute(&StatementSpec::new(statement.clone())) {
+            stopped = Some(error);
+            break;
+        }
+        committed += 1;
+    }
+
+    if let Err(error) = session.set_auto_commit(restore) {
+        log::warn!("restoring auto-commit after an ALTER batch failed: {error}");
+    }
+
+    match stopped {
+        Some(error) => Err(failed(error, committed)),
+        None => Ok(total),
+    }
 }
 
 /// Reads one table's structure: its columns, and the constraints that can be
@@ -1895,6 +2312,255 @@ mod tests {
         connected.close().expect("close");
     }
 
+    /// The table as the server holds it, read straight off the session and not
+    /// through the pane.
+    ///
+    /// Every apply assertion needs both readings: what the pane shows is one
+    /// reading of the catalogue, and the question a stopped batch asks is about
+    /// the table itself.
+    fn server_columns(connected: &Connected, table: &str) -> Vec<String> {
+        columns_named(
+            &load_structure(connected.session(), &target(table))
+                .unwrap_or_else(|error| panic!("{table}: {error}")),
+        )
+    }
+
+    /// One structure's columns as `NAME TYPE`, which is what an `ALTER` moves.
+    fn columns_named(structure: &Structure) -> Vec<String> {
+        structure
+            .columns
+            .iter()
+            .map(|column| format!("{} {}", column.name, column.type_sql))
+            .collect()
+    }
+
+    /// Stages the two edits every apply test below sends: one column added,
+    /// one column's type retyped to `type_sql`.
+    fn stage_batch(pane: &mut StructPane, type_sql: &str, cx: &mut Context<StructPane>) {
+        pane.add_column(cx);
+        pane.typed(ColumnField::Name, "MOTTO".to_string(), cx);
+        pane.typed(ColumnField::Type, "VARCHAR(40)".to_string(), cx);
+        pane.select(Some(Selection::Column(1)), cx);
+        pane.typed(ColumnField::Type, type_sql.to_string(), cx);
+    }
+
+    /// The confirmation is the batch itself, and turning it down sends nothing.
+    #[gpui::test]
+    fn the_confirmation_holds_the_whole_batch_and_can_be_turned_down(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-confirm");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_batch(pane, "VARCHAR(80)", cx);
+                pane.apply(cx);
+
+                // Exactly the list the block under the tables is showing, in
+                // the order the batch will run: adds before changes (§7.10).
+                assert_eq!(
+                    pane.preview.as_deref(),
+                    Some(
+                        &[
+                            "ALTER TABLE APP.TEAM ADD COLUMN MOTTO VARCHAR(40)".to_string(),
+                            "ALTER TABLE APP.TEAM ALTER COLUMN NAME SET DATA TYPE VARCHAR(80)"
+                                .to_string(),
+                        ][..]
+                    )
+                );
+                // The line the modal draws above them, on every product and not
+                // only the ones without transactions.
+                assert!(!ts!("struct.apply_no_undo").is_empty());
+
+                // What the modal's Cancel button does...
+                pane.preview = None;
+                assert!(pane.has_pending_edits(), "the staging went with the modal");
+
+                // ...and what its backdrop does, which is the same thing.
+                pane.apply(cx);
+                assert!(pane.preview.is_some(), "it can be raised again");
+                pane.preview = None;
+                assert!(pane.has_pending_edits());
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        assert_eq!(
+            server_columns(&connected, "TEAM"),
+            ["ID INTEGER", "NAME CHARACTER VARYING(40)"],
+            "the confirmation sent something"
+        );
+        connected.close().expect("close");
+    }
+
+    /// A batch that runs all the way through clears the staging and shows what
+    /// the server now holds rather than what was asked for.
+    #[gpui::test]
+    fn an_applied_batch_clears_the_staging_and_reloads(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-apply");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_batch(pane, "VARCHAR(80)", cx);
+                pane.apply(cx);
+                pane.confirm_apply(cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert!(!pane.has_pending_edits(), "the buffer outlived the batch");
+                assert!(pane.preview.is_none());
+                assert!(pane.apply_error.is_none());
+                assert_eq!(pane.notice, Some(ts!("struct.applied", count = 2)));
+                // The reload is what makes the server's own spelling visible:
+                // H2 answers CHARACTER VARYING, which nothing on this side
+                // typed and nothing on this side could have guessed.
+                assert_eq!(
+                    columns_named(pane.structure().expect("the reload arrived")),
+                    [
+                        "ID INTEGER",
+                        "NAME CHARACTER VARYING(80)",
+                        "MOTTO CHARACTER VARYING(40)"
+                    ]
+                );
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A statement the server refuses stops the batch where it stands, and the
+    /// ones before it stay in the table.
+    #[gpui::test]
+    fn a_refused_statement_leaves_the_ones_before_it_committed(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-apply-stop");
+        let window = pane(&connected, target("TEAM"), cx);
+
+        window
+            .update(cx, |pane, _window, cx| {
+                // The add is good; the retype names a type no server has heard
+                // of, and the generator passes it through unread (§7.10).
+                stage_batch(pane, "NOT_A_TYPE", cx);
+                pane.apply(cx);
+                assert_eq!(pane.preview.as_ref().map(Vec::len), Some(2));
+                pane.confirm_apply(cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, _cx| {
+                let problem = pane.apply_error.as_ref().expect("the batch stopped");
+                assert!(!problem.error.message.is_empty(), "the driver said nothing");
+                assert_eq!(
+                    problem.stopped,
+                    ts!("struct.apply_stopped", number = 2, total = 2, committed = 1)
+                );
+                assert!(pane.notice.is_none(), "a failure is not a passing remark");
+                // The staging cannot survive: it is keyed to indices into a
+                // reading the committed statement has just invalidated, and
+                // replaying it would add MOTTO a second time (§7.10).
+                assert!(!pane.has_pending_edits());
+                assert_eq!(
+                    columns_named(pane.structure().expect("the reload arrived")),
+                    [
+                        "ID INTEGER",
+                        "NAME CHARACTER VARYING(40)",
+                        "MOTTO CHARACTER VARYING(40)"
+                    ],
+                    "the committed half is in and the refused one is not"
+                );
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The batch itself, against a session that was opened inside a
+    /// transaction: it forces autocommit on for the run — because two of the
+    /// six products commit at every DDL statement whatever the client asked for
+    /// — and hands the session back the way it found it (§7.10).
+    #[test]
+    fn the_batch_forces_autocommit_on_and_hands_the_session_back_as_it_found_it() {
+        let connected = crate::explorer::tests::h2_fixture("struct-autocommit");
+        let session = connected.session();
+        session.set_auto_commit(false).expect("H2 has transactions");
+
+        let applied = apply_alter(
+            session,
+            &["alter table APP.TEAM add column MOTTO varchar(40)".to_string()],
+            false,
+        )
+        .unwrap_or_else(|failure| panic!("{}", failure.error));
+        assert_eq!(applied, 1);
+
+        // Nothing here committed anything of its own, and the column is in.
+        session.rollback().expect("the rollback goes out");
+        assert!(
+            server_columns(&connected, "TEAM")
+                .iter()
+                .any(|column| column.starts_with("MOTTO ")),
+            "the batch ran outside whatever transaction the session was in"
+        );
+
+        // And the session is back in the mode it was found in: a row inserted
+        // now is one a rollback can still take away, which is only true with
+        // autocommit off.
+        let insert = StatementSpec::new("insert into APP.TEAM (ID, NAME) values (9, 'nine')");
+        session.execute(&insert).expect("the insert runs");
+        session.rollback().expect("the rollback goes out");
+        session
+            .execute(&insert)
+            .expect("the row went back, so its key is free again");
+        connected.close().expect("close");
+    }
+
+    /// A pane that may not be written to raises no confirmation, which is only
+    /// reachable by going round the form.
+    #[gpui::test]
+    fn a_read_only_pane_raises_no_confirmation(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-apply-read-only");
+        cx.update(|cx| {
+            app_settings::init(cx);
+            rudbman_ui::init(cx);
+        });
+        let session = connected.handle();
+        let mut profile = crate::connection::h2::profile("struct-apply-read-only");
+        profile.read_only = true;
+        let window = cx.add_window(move |_window, cx| {
+            StructPane::new(session, ConnectionId(1), target("TEAM"), &profile, "h2", cx)
+        });
+        window
+            .update(cx, |pane, _window, cx| pane.refresh(cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                // Past the form, which would refuse: what is under test is the
+                // check `apply` makes for itself.
+                pane.edits.set_rename(Some("SQUAD".to_string()));
+                assert!(pane.has_pending_edits());
+
+                pane.apply(cx);
+                assert!(pane.preview.is_none(), "a read-only pane planned a batch");
+
+                // And so does the half that sends, in case the first were ever
+                // reached with a plan already in hand.
+                pane.preview = Some(vec!["ALTER TABLE APP.TEAM RENAME TO SQUAD".to_string()]);
+                pane.confirm_apply(cx);
+                assert!(!pane.applying);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(
+            server_columns(&connected, "TEAM"),
+            ["ID INTEGER", "NAME CHARACTER VARYING(40)"],
+            "the table is still there under its own name"
+        );
+        connected.close().expect("close");
+    }
+
     /// Every state of the pane lays out.
     ///
     /// The one thing a headless test cannot answer on its own: a duplicated
@@ -1931,6 +2597,23 @@ mod tests {
                 pane.select(Some(Selection::Column(0)), cx);
                 pane.typed(ColumnField::Name, String::new(), cx);
                 assert!(matches!(pane.plan(), Some(Err(_))));
+            })
+            .expect("the window is open");
+        vcx.run_until_parked();
+
+        // The confirmation over all of it, and the strip a stopped batch
+        // leaves behind — two elements nothing else in the pane draws.
+        window
+            .update(&mut vcx, |pane, _window, cx| {
+                pane.discard(cx);
+                pane.renamed("HUMAN".to_string(), cx);
+                pane.apply(cx);
+                assert!(pane.preview.is_some());
+                pane.apply_error = Some(ApplyProblem {
+                    error: Box::new(QueryError::new(JdbcError::Protocol("refused".to_string()))),
+                    stopped: ts!("struct.apply_stopped", number = 2, total = 3, committed = 1),
+                });
+                cx.notify();
             })
             .expect("the window is open");
         vcx.run_until_parked();
@@ -1987,6 +2670,12 @@ mod tests {
             ts!("struct.rename_table"),
             ts!("struct.new_name"),
             ts!("struct.statements"),
+            ts!("struct.apply"),
+            ts!("struct.apply_title", count = 3),
+            ts!("struct.apply_no_undo"),
+            ts!("struct.applying"),
+            ts!("struct.applied", count = 3),
+            ts!("struct.apply_stopped", number = 2, total = 3, committed = 1),
             ts!("menu.view_structure"),
         ] {
             assert!(!label.is_empty(), "empty label");

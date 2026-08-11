@@ -455,6 +455,12 @@ struct:
   rename_table: テーブル名の変更
   new_name: 新しい名前
   statements: 文
+  apply: 適用
+  apply_title: "%{count} 件の文を適用"
+  apply_no_undo: これは取り消せません。各文は実行された時点でコミットされ、ロールバックでも戻せません。
+  applying: 適用中…
+  applied: "%{count} 件の文を適用しました。"
+  apply_stopped: "%{total} 件中 %{number} 件目の文が失敗しました。その前の %{committed} 件はコミット済みで取り消せません。"
 
 extract:
   title: スクリプトの抽出

@@ -1056,6 +1056,17 @@ clause, no bind parameters anywhere, and no undo on two of the six.
   normalized, a column added at the end regardless of where it was typed — so
   the pane re-reads the catalog and shows that, exactly as §7.9's apply re-runs
   its `SELECT`.
+- **A failure reloads too, and discards what was staged**, which is where this
+  parts company with §7.9. There a failed apply leaves every staged change
+  where it was, because the rollback means nothing was written; here the
+  statements before the one that failed are committed and cannot be taken back,
+  so the catalog has moved and the staging — keyed, like the row editor's, to
+  indices into the reading it was staged against — is describing a table that no
+  longer exists in that shape. Replaying it would apply the committed half
+  twice. What the user is told instead is exactly how far the batch got: which
+  statement failed, the driver's reason, and how many before it were committed.
+  The whole batch was on screen a moment earlier, so that number locates the
+  work still to do.
 
 ---
 

@@ -455,6 +455,12 @@ struct:
   rename_table: Renommer la table
   new_name: Nouveau nom
   statements: Instructions
+  apply: Appliquer
+  apply_title: "Appliquer %{count} instructions"
+  apply_no_undo: "Cela ne peut pas être annulé : chaque instruction est validée dès son exécution, et aucun retour arrière ne la reprend."
+  applying: application…
+  applied: "%{count} instructions appliquées."
+  apply_stopped: "L'instruction %{number} sur %{total} a échoué. Les %{committed} qui la précèdent ont été validées et ne peuvent pas être annulées."
 
 extract:
   title: Extraire un script

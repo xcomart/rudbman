@@ -455,6 +455,12 @@ struct:
   rename_table: Tabelle umbenennen
   new_name: Neuer Name
   statements: Anweisungen
+  apply: Anwenden
+  apply_title: "%{count} Anweisungen anwenden"
+  apply_no_undo: "Das lässt sich nicht rückgängig machen: Jede Anweisung wird beim Ausführen sofort festgeschrieben, und kein Rollback holt sie zurück."
+  applying: wird angewendet …
+  applied: "%{count} Anweisungen angewendet."
+  apply_stopped: "Anweisung %{number} von %{total} ist fehlgeschlagen. Die %{committed} davor wurden festgeschrieben und lassen sich nicht rückgängig machen."
 
 extract:
   title: Skript extrahieren

@@ -716,8 +716,22 @@ struct:
   new_name: New name
 
   # The statements everything staged would send, recomputed as it is typed.
-  # Read-only, and read-only for now: running them is the next commit's.
   statements: Statements
+
+  # The apply. The confirmation is the statements themselves, always shown,
+  # which is a superset of the profile's "ask before a write" and answers it.
+  apply: Apply
+  apply_title: "Apply %{count} statements"
+  # Always shown, and not the conditional line the data pane draws: a DDL batch
+  # runs under autocommit on every product, because two of the six commit at
+  # every statement whatever the client asked for.
+  apply_no_undo: This cannot be undone. Each statement is committed as it runs, and no rollback can take one back.
+  applying: applying…
+  applied: "%{count} statements applied."
+  # The batch stopped part way. The statements before the one that failed are
+  # in the table for good, so the number is the work still to do — and the whole
+  # batch was on screen a moment earlier.
+  apply_stopped: "Statement %{number} of %{total} failed. The %{committed} before it were committed and cannot be undone."
 
 extract:
   title: Extract script

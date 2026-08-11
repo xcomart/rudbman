@@ -455,6 +455,12 @@ struct:
   rename_table: 重命名表
   new_name: 新名称
   statements: 语句
+  apply: 应用
+  apply_title: "应用 %{count} 条语句"
+  apply_no_undo: 此操作无法撤销。每条语句一经执行即提交，回滚也收不回来。
+  applying: 正在应用…
+  applied: "已应用 %{count} 条语句。"
+  apply_stopped: "第 %{number} 条语句（共 %{total} 条）失败。它之前的 %{committed} 条已提交，无法撤销。"
 
 extract:
   title: 提取脚本

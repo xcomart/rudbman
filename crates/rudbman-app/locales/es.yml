@@ -455,6 +455,12 @@ struct:
   rename_table: Renombrar la tabla
   new_name: Nombre nuevo
   statements: Sentencias
+  apply: Aplicar
+  apply_title: "Aplicar %{count} sentencias"
+  apply_no_undo: "Esto no se puede deshacer: cada sentencia se confirma en cuanto se ejecuta, y ninguna reversión la recupera."
+  applying: aplicando…
+  applied: "%{count} sentencias aplicadas."
+  apply_stopped: "La sentencia %{number} de %{total} ha fallado. Las %{committed} anteriores se confirmaron y no se pueden deshacer."
 
 extract:
   title: Extraer script
