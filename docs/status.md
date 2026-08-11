@@ -135,15 +135,25 @@ out. What remains can be taken in any order:
   release binaries are produced by CI.
 - **jlink `--compress`**: JDK 17 wants `--compress=2`. The `zip-N` syntax is
   JDK 21 and newer, and 17 errors on it.
-- **On this X display a gpui app sometimes receives no keyboard or mouse
-  input** (the pointer device disappears and XInput2 initialization fails).
-  GUI checks are therefore done with (1) a temporary hook gated by an
-  environment variable (`RUDBMAN_DEV_AUTOCONNECT` — auto-connect to an
-  in-memory H2 and open the screens needed from code) and (2) screenshots.
-  The hook is **always reverted before a commit, and the revert confirmed in
-  the diff**. Runs isolate `XDG_CONFIG_HOME` so the real settings are not
-  polluted.
-- Screenshots: `xwd` dies on X_QueryColors on this display. Capture with a
+- **GUI checks** are done with (1) a temporary hook gated by an environment
+  variable (`RUDBMAN_DEV_AUTOCONNECT` — auto-connect to an in-memory H2 and
+  open the screens needed from code) and (2) screenshots. The hook is **always
+  reverted before a commit, and the revert confirmed in the diff**. This is
+  worth doing rather than skipping: driving the panes for real is what turned
+  up §7.10's partial-failure path behaving exactly as designed (statement 1 of
+  2 committed, statement 2 refused by the server, the strip naming both), which
+  no unit test had shown end to end. **On Windows** launch from Git Bash — the
+  hook finds the H2 JAR through `HOME` — and capture with PowerShell plus
+  `System.Drawing`; the app takes synthetic clicks through `user32`
+  `mouse_event` normally. Two harness traps, neither an app bug: `SendKeys`
+  treats `(` and `)` as grouping and needs `{(}`/`{)}`, and a negative mouse
+  wheel delta has to be passed as its unsigned two's complement.
+- **On the Linux/X11 development machine** — *not* this Windows one — a gpui
+  app sometimes receives no keyboard or mouse input (the pointer device
+  disappears and XInput2 initialization fails), which is why the hook above
+  exists at all. Runs there isolate `XDG_CONFIG_HOME` so the real settings are
+  not polluted.
+- Screenshots on that X display: `xwd` dies on X_QueryColors. Capture with a
   small C tool that uses XGetImage instead (see xshot.c in the scratchpad —
   link against libX11).
 - **Never `pkill -f`** — it matches command lines and kills your own shell
