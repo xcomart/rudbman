@@ -58,6 +58,7 @@ mod maven;
 mod pane_tree;
 mod query;
 mod query_source;
+mod row_apply;
 mod settings_dialog;
 mod struct_edit;
 mod struct_pane;

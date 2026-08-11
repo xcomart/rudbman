@@ -44,19 +44,19 @@
 //! [`EditSet::changed`] groups by row into `updates`, and [`EditSet::inserted`]
 //! is already one `Vec` per row with one cell per column, which is `inserts`
 //! once [`StagedCell`] is mapped onto `InsertCell` — `Unset` to `Unset`, the
-//! other two to `Set`. [`plan_apply`] is that mapping, and it ends where the
-//! pane picks up: a list of [`PlannedStatement`]s, each carrying the SQL, the
-//! bind parameters, the values as the confirmation shows them, and whether the
-//! server has to report exactly one row for it.
+//! other two to `Set`. [`plan_apply`] is that mapping, and it ends where
+//! [`crate::row_apply`] picks up: a list of [`PlannedStatement`]s, each carrying
+//! the SQL, the bind parameters, the values as the confirmation shows them, and
+//! whether the server has to report exactly one row for it.
 //!
-//! That the planning lives here rather than in the pane is the same choice the
-//! rest of this module makes. It has no window and no JVM in it: everything it
-//! decides — which rows become which statement, which key value goes in a
-//! `WHERE`, whether what the user typed can be bound to the column's type at
-//! all — is decidable from the buffer and the column metadata alone, and it is
-//! the half of the apply worth testing exhaustively. What is left for the pane
-//! is the part that genuinely needs a session: running the statements in order,
-//! counting the rows each one reached, and rolling back.
+//! That the planning lives here rather than beside the sending is the same
+//! choice the rest of this module makes. It has no window and no JVM in it:
+//! everything it decides — which rows become which statement, which key value
+//! goes in a `WHERE`, whether what the user typed can be bound to the column's
+//! type at all — is decidable from the buffer and the column metadata alone, and
+//! it is the half of the apply worth testing exhaustively. What is left for
+//! [`crate::row_apply`] is the part that genuinely needs a session: running the
+//! statements in order, counting the rows each one reached, and rolling back.
 //!
 //! Nothing here sends anything.
 
@@ -69,7 +69,7 @@ use rudbman_sql::{
     Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
 
-use crate::query_source::{ResultSource, bit_is_boolean, sql_types};
+use crate::query_source::{ResultSource, bit_is_boolean, column_name, key_index, sql_types};
 
 /// What has been staged into one cell.
 ///
@@ -937,34 +937,6 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
             u8::from_str_radix(pair, 16).ok()
         })
         .collect()
-}
-
-/// The name a statement should spell a column with.
-///
-/// The catalogue's name and not [`ColumnInfo::display_name`]'s preference for
-/// the label: a `SELECT *` gives the two the same value, but where a driver
-/// reports a label of its own it is a heading, and a heading is not something
-/// an `UPDATE` can assign to.
-fn column_name(column: &ColumnInfo) -> String {
-    column
-        .name
-        .as_deref()
-        .filter(|name| !name.is_empty())
-        .map_or_else(|| column.display_name(), str::to_string)
-}
-
-/// Which column of the result a key column's name refers to.
-///
-/// Exactly first, then ignoring case. The second pass is for the products that
-/// answer `getPrimaryKeys` in one case and `ResultSetMetaData` in another —
-/// which several do, and where the exact match would leave a keyed table looking
-/// keyless.
-fn key_index(names: &[String], wanted: &str) -> Option<usize> {
-    names.iter().position(|name| name == wanted).or_else(|| {
-        names
-            .iter()
-            .position(|name| name.eq_ignore_ascii_case(wanted))
-    })
 }
 
 #[cfg(test)]
