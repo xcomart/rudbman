@@ -1,0 +1,65 @@
+# The two servers the opt-in container tests run against.
+#
+# `crates/rudbman-jdbc/tests/containers.rs` sends the SQL `rudbman-sql`'s `ddl`
+# module writes to a real PostgreSQL and a real MySQL and reads the catalogue
+# back. Nothing in the workspace needs these to be up: with the environment
+# variables below unset every one of those tests passes by doing nothing, which
+# is what keeps `cargo test --workspace` green on a machine with no Docker.
+#
+#     docker compose -f docker/compose.yml up -d
+#     docker compose -f docker/compose.yml ps          # wait for "healthy"
+#     docker compose -f docker/compose.yml down
+#
+# Then, from the repository root:
+#
+#     export RUDBMAN_TEST_PG_URL='jdbc:postgresql://127.0.0.1:55432/rudbman'
+#     export RUDBMAN_TEST_MYSQL_URL='jdbc:mysql://127.0.0.1:33306/rudbman?allowPublicKeyRetrieval=true&useSSL=false'
+#     cargo test -p rudbman-jdbc --test containers
+#
+# The user and the password default to `rudbman`/`rudbman`, matching this file;
+# RUDBMAN_TEST_PG_USER, RUDBMAN_TEST_PG_PASSWORD, RUDBMAN_TEST_MYSQL_USER and
+# RUDBMAN_TEST_MYSQL_PASSWORD override them.
+#
+# The ports are deliberately not 5432 and 3306. A developer with a server of
+# their own running would otherwise find these shadowing it — or, worse, find
+# the tests creating and dropping tables in it.
+#
+# The image tags are pinned. MySQL 8.4 in particular is a choice rather than
+# "the latest": `ALTER TABLE ... DROP CHECK` needs 8.0.16 or newer, and §7.10
+# claims that spelling is required.
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: rudbman-test-postgres
+    environment:
+      POSTGRES_USER: rudbman
+      POSTGRES_PASSWORD: rudbman
+      POSTGRES_DB: rudbman
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rudbman -d rudbman"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  mysql:
+    image: mysql:8.4
+    container_name: rudbman-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rudbman
+      MYSQL_DATABASE: rudbman
+      MYSQL_USER: rudbman
+      MYSQL_PASSWORD: rudbman
+    ports:
+      - "127.0.0.1:33306:3306"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 30

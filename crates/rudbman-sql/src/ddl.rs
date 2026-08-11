@@ -101,11 +101,14 @@
 //! schema operation's clothes, and not what a user who typed a new type asked
 //! for. SQL Server keeps a default as a separately named constraint rather than
 //! a column attribute, so changing one is a drop and an add of a constraint
-//! whose name JDBC's `getColumns` does not report. Both are
-//! [`DdlError::Unsupported`], in a line that says which product and why, before
-//! anything is planned. A generated statement that failed on the server would
-//! say less: the driver's message names a syntax error, not the fact that the
-//! product cannot do this at all.
+//! whose name JDBC's `getColumns` does not report. MySQL will not resolve a
+//! foreign key whose referenced columns are left out, which is the third of
+//! these and the only one found by sending the statement rather than by
+//! reading a manual — see [`Unsupported::ReferenceWithoutColumns`]. All three
+//! are [`DdlError::Unsupported`], in a line that says which product and why,
+//! before anything is planned. A generated statement that failed on the server
+//! would say less: the driver's message names a syntax error, not the fact
+//! that the product cannot do this at all.
 //!
 //! # Creating a table
 //!
@@ -119,11 +122,11 @@
 //! This is also where constraints are born, and the only place. [`plan_alter`]
 //! drops constraints and never adds one, so without the table-level clauses
 //! here a table rudbman made could never be given a key or a reference at all.
-//! They are the easy half of the problem, too: unlike `ALTER`, whose every
+//! They are the easier half of the problem, too: unlike `ALTER`, whose every
 //! clause is spelled differently per product, a table-level `PRIMARY KEY`,
-//! `UNIQUE` or `FOREIGN KEY` inside a `CREATE TABLE` is standard everywhere
-//! rudbman speaks, and `default_first` is the only row of `AlterStyle` the
-//! create path has any use for.
+//! `UNIQUE` or `FOREIGN KEY` inside a `CREATE TABLE` is near enough standard
+//! everywhere rudbman speaks, and the create path reads only two rows of
+//! `AlterStyle` — `default_first` and `named_reference_columns`.
 //!
 //! A constraint may carry a name or leave one to the server, and both are
 //! wanted. A name the user chose is the name they will later have to drop it
@@ -407,10 +410,13 @@ pub enum TableConstraint {
         references: Vec<String>,
         /// The referenced columns.
         ///
-        /// Empty means "the referenced table's own primary key", which every
-        /// product accepts as an omitted list — and which is the form that
-        /// stays correct when that key is later re-ordered. A non-empty list
-        /// has to be exactly as long as `columns`.
+        /// Empty means "the referenced table's own primary key", which most
+        /// products read an omitted list as — and which is the form that stays
+        /// correct when that key is later re-ordered. **MySQL is not one of
+        /// them**: it resolves no reference on its own, so an empty list there
+        /// is [`Unsupported::ReferenceWithoutColumns`] rather than a statement
+        /// it would refuse. A non-empty list has to be exactly as long as
+        /// `columns`.
         referenced_columns: Vec<String>,
     },
 }
@@ -435,9 +441,11 @@ impl TableConstraint {
     /// A foreign key from `columns` to the primary key of `references`,
     /// unnamed.
     ///
-    /// The referenced columns are left out, which is how every product spells
-    /// "whatever that table's key is". [`TableConstraint::foreign_key_to`]
-    /// names them instead.
+    /// The referenced columns are left out, which is how most products spell
+    /// "whatever that table's key is" — but not MySQL, which refuses the shape
+    /// outright ([`Unsupported::ReferenceWithoutColumns`]).
+    /// [`TableConstraint::foreign_key_to`] names them instead, and is the form
+    /// to build when the dialect may be MySQL.
     pub fn foreign_key(
         columns: impl IntoIterator<Item = impl Into<String>>,
         references: impl IntoIterator<Item = impl Into<String>>,
@@ -577,6 +585,16 @@ pub enum Unsupported {
     Default,
     /// Dropping a constraint.
     ConstraintDrop,
+    /// Writing a foreign key that does not name the columns it references.
+    ///
+    /// MySQL's alone, and the one entry in this enum that was found by sending
+    /// the statement rather than by reading a manual: the container tests in
+    /// `rudbman-jdbc` ran `FOREIGN KEY (c) REFERENCES parent` against a real
+    /// server and got error 1239, *"Incorrect foreign key definition for
+    /// 'fk': Key reference and table reference don't match"* — a message that
+    /// names neither the omission nor the fix, which is exactly the case this
+    /// enum exists to catch first.
+    ReferenceWithoutColumns,
 }
 
 /// Why an alter could not be turned into statements.
@@ -705,12 +723,20 @@ impl fmt::Display for DdlError {
                     Unsupported::Nullability => "change whether NULL is accepted",
                     Unsupported::Default => "change the default",
                     Unsupported::ConstraintDrop => "drop a constraint",
+                    Unsupported::ReferenceWithoutColumns => {
+                        "write a foreign key that does not name the columns it references"
+                    }
                 };
                 let reason = match (dialect, what) {
                     (DialectId::MsSql, Unsupported::Default) => {
                         "SQL Server holds a default as a separately named constraint rather than \
                          a column attribute, and the catalog does not report that name, so there \
                          is nothing to drop and re-add"
+                    }
+                    (DialectId::MySql, Unsupported::ReferenceWithoutColumns) => {
+                        "MySQL resolves no reference on its own, so the columns of the parent's \
+                         key have to be spelled out, where the other products read an omitted \
+                         list as that table's own primary key"
                     }
                     (DialectId::Sqlite, _) => {
                         "SQLite has no ALTER TABLE form for it, and the table would have to be \
@@ -803,12 +829,17 @@ enum TableRename {
     SpRename,
 }
 
-/// The per-dialect spellings of one `ALTER TABLE`.
+/// The per-dialect spellings of one `ALTER TABLE`, and the two disagreements a
+/// `CREATE TABLE` runs into.
 ///
 /// A flat record, one static per dialect, in the shape and for the reason
 /// [`Syntax`](crate::Syntax) is one: every place the products disagree is
 /// listed once, so adding a dialect is adding a row rather than editing a
-/// branch in each emitter.
+/// branch in each emitter. That is why
+/// [`named_reference_columns`](AlterStyle::named_reference_columns) is a field
+/// here rather than a `DialectId::MySql` test at the one site that reads it —
+/// a reader looking for "where do the products differ" should find all of it
+/// in one record, including the rows a `CREATE` cares about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AlterStyle {
     /// The keyword that adds a column: `ADD COLUMN`, or the bare `ADD` that
@@ -817,10 +848,18 @@ struct AlterStyle {
     /// `DEFAULT` precedes `NOT NULL` inside a column definition.
     ///
     /// Oracle, whose grammar puts the default in the datatype clause, ahead of
-    /// the inline constraints. Everyone else documents the reverse. The one
-    /// field [`plan_create`] reads: a column definition is the same fragment
-    /// inside a `CREATE TABLE` as it is after an `ADD`.
+    /// the inline constraints. Everyone else documents the reverse. One of the
+    /// two fields [`plan_create`] reads: a column definition is the same
+    /// fragment inside a `CREATE TABLE` as it is after an `ADD`.
     default_first: bool,
+    /// A `REFERENCES` clause has to name the columns it references.
+    ///
+    /// MySQL, which resolves no reference on its own and answers error 1239
+    /// for a `FOREIGN KEY (c) REFERENCES parent` that every other product
+    /// reads as the parent's own primary key. The other field
+    /// [`plan_create`] reads, and the one that turns into
+    /// [`Unsupported::ReferenceWithoutColumns`].
+    named_reference_columns: bool,
     /// How a column rename is spelled.
     column_rename: ColumnRename,
     /// How a column's attributes are changed.
@@ -836,6 +875,7 @@ impl AlterStyle {
     const GENERIC: Self = Self {
         add: "ADD COLUMN",
         default_first: false,
+        named_reference_columns: false,
         column_rename: ColumnRename::RenameColumn,
         attrs: AttrStyle::Clauses,
         constraints: DropStyle::Named,
@@ -851,9 +891,10 @@ impl AlterStyle {
         ..Self::GENERIC
     };
 
-    /// MySQL: `CHANGE`/`MODIFY COLUMN` restate the definition, and each kind of
-    /// constraint has its own `DROP`.
+    /// MySQL: `CHANGE`/`MODIFY COLUMN` restate the definition, each kind of
+    /// constraint has its own `DROP`, and a reference names its columns.
     const MYSQL: Self = Self {
+        named_reference_columns: true,
         column_rename: ColumnRename::Change,
         attrs: AttrStyle::Restate,
         constraints: DropStyle::PerKind,
@@ -1021,7 +1062,7 @@ pub fn plan_create(create: &TableCreate, dialect: &Dialect) -> Result<Vec<String
         items.push(column_def(column, style, dialect)?);
     }
     for constraint in &create.constraints {
-        items.push(table_constraint(constraint, dialect)?);
+        items.push(table_constraint(constraint, style, dialect)?);
     }
 
     let body = items
@@ -1041,7 +1082,11 @@ const CREATE_INDENT: &str = "  ";
 
 /// One table-level constraint clause, with the `CONSTRAINT <name>` prefix that
 /// a named one takes and an unnamed one does not.
-fn table_constraint(constraint: &TableConstraint, dialect: &Dialect) -> Result<String, DdlError> {
+fn table_constraint(
+    constraint: &TableConstraint,
+    style: &AlterStyle,
+    dialect: &Dialect,
+) -> Result<String, DdlError> {
     let label = || match constraint.name() {
         Some(name) => name.to_string(),
         None => constraint.keyword().to_string(),
@@ -1073,6 +1118,16 @@ fn table_constraint(constraint: &TableConstraint, dialect: &Dialect) -> Result<S
                     constraint: label(),
                 });
             }
+            if referenced_columns.is_empty() && style.named_reference_columns {
+                return Err(DdlError::Unsupported {
+                    dialect: dialect.id(),
+                    what: Unsupported::ReferenceWithoutColumns,
+                    // No column: the clause is refused as a whole, and naming
+                    // one of the several it may cover would point at the wrong
+                    // half of it.
+                    column: None,
+                });
+            }
             if !referenced_columns.is_empty()
                 && referenced_columns.len() != constraint.columns().len()
             {
@@ -1083,8 +1138,9 @@ fn table_constraint(constraint: &TableConstraint, dialect: &Dialect) -> Result<S
                 });
             }
             let target = dialect.qualify(references.iter().map(String::as_str));
-            // An omitted list is how every product spells "that table's own
-            // primary key", so an empty one is written by writing nothing.
+            // An omitted list is how the products that resolve one spell "that
+            // table's own primary key", so an empty one is written by writing
+            // nothing. MySQL, which resolves none, was refused above.
             let referenced = if referenced_columns.is_empty() {
                 String::new()
             } else {
@@ -2373,9 +2429,10 @@ mod tests {
     }
 
     /// A foreign key writes the referenced columns when it has them and writes
-    /// nothing at all when it does not, which is how every product spells "the
-    /// referenced table's own primary key". The target is qualified the same
-    /// way the created table is.
+    /// nothing at all when it does not, which is how the products that resolve
+    /// a reference on their own spell "the referenced table's own primary key".
+    /// MySQL, which does not, is `mysql_refuses_a_reference_with_no_columns`
+    /// below. The target is qualified the same way the created table is.
     #[test]
     fn a_foreign_key_omits_an_empty_referenced_list() {
         let mut create = TableCreate::new(["app", "order_lines"]);
@@ -2400,6 +2457,74 @@ mod tests {
                 "  FOREIGN KEY (order_id) REFERENCES app.orders,",
                 "  FOREIGN KEY (order_id, line_no) REFERENCES archive.old_lines (order_id, \
                  line_no)",
+                ")",
+            ]
+            .join("\n")
+        );
+    }
+
+    /// MySQL refuses a reference whose columns are not named, and every other
+    /// dialect still writes the bare `REFERENCES <t>`.
+    ///
+    /// This is the one refusal in this module that was not read out of a
+    /// manual. The container tests in `rudbman-jdbc` sent
+    /// `FOREIGN KEY (c) REFERENCES parent` to a real MySQL 8.4 and got error
+    /// 1239 — *"Incorrect foreign key definition for 'fk': Key reference and
+    /// table reference don't match"* — a message that names neither the
+    /// omission nor the fix. Which is what [`DdlError::Unsupported`] is for:
+    /// the refusal here says both, and says them before anything is sent.
+    #[test]
+    fn mysql_refuses_a_reference_with_no_columns() {
+        let mut create = TableCreate::new(["order_lines"]);
+        create.columns.push(ColumnDef::new("order_id", "integer"));
+        create
+            .constraints
+            .push(TableConstraint::foreign_key(["order_id"], ["orders"]));
+
+        let error = plan_create(&create, &Dialect::MYSQL).unwrap_err();
+        assert_eq!(
+            error,
+            DdlError::Unsupported {
+                dialect: DialectId::MySql,
+                what: Unsupported::ReferenceWithoutColumns,
+                // The clause is refused whole: it may cover several columns,
+                // and naming one of them would point at the wrong half of it.
+                column: None,
+            }
+        );
+        let message = error.to_string();
+        assert!(message.contains("MySQL"), "{message}");
+        assert!(message.contains("spelled out"), "{message}");
+        // The product is named the way a person writes it, not the way
+        // `drivers.json` spells it.
+        assert!(!message.contains("mysql"), "{message}");
+
+        // Everyone else resolves the omitted list, and goes on writing the
+        // bare clause.
+        for dialect in ALL {
+            if dialect.id() == DialectId::MySql {
+                continue;
+            }
+            assert!(
+                create_sql(&create, &dialect).contains("REFERENCES"),
+                "{}",
+                dialect.name()
+            );
+        }
+
+        // And MySQL with the columns named is untouched by any of this.
+        create.constraints.clear();
+        create.constraints.push(TableConstraint::foreign_key_to(
+            ["order_id"],
+            ["orders"],
+            ["id"],
+        ));
+        assert_eq!(
+            create_sql(&create, &Dialect::MYSQL),
+            [
+                "CREATE TABLE order_lines (",
+                "  order_id integer,",
+                "  FOREIGN KEY (order_id) REFERENCES orders (id)",
                 ")",
             ]
             .join("\n")

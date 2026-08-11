@@ -97,3 +97,95 @@ jobs:
 
       - name: test
         run: cargo test --workspace --locked
+
+  # The opt-in container suite, which the matrix above skips: with no
+  # RUDBMAN_TEST_*_URL set, every test in `tests/containers.rs` passes by doing
+  # nothing, so `cargo test --workspace` stays green on a runner with no server.
+  # That is the right default and it also means nobody would ever run them, so
+  # they get a job.
+  #
+  # Linux only, because that is where GitHub's `services:` can run containers at
+  # all — and one runner is enough: what these tests check is what PostgreSQL and
+  # MySQL do with the SQL rudbman-sql writes, which is a property of the servers
+  # and the drivers, not of the machine asking. They are also the only tests that
+  # can check it: everything else in the workspace proves the generator writes
+  # the string it was expected to write, and this proves the string was right.
+  #
+  # No apt step: this builds `rudbman-jdbc` and its three dependencies, none of
+  # which is gpui, so the native libraries the matrix installs are not needed.
+  containers:
+    name: PostgreSQL and MySQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      # The ports match docker/compose.yml so one set of URLs works in both
+      # places. On a runner nothing else is listening, but a developer reading
+      # the two files should not have to notice a difference.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: rudbman
+          POSTGRES_PASSWORD: rudbman
+          POSTGRES_DB: rudbman
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U rudbman -d rudbman"
+          --health-interval 3s --health-timeout 5s --health-retries 20
+      # 8.4 rather than latest: `ALTER TABLE ... DROP CHECK` needs 8.0.16 or
+      # newer and §7.10 claims that spelling is required, so the suite has to
+      # run somewhere it exists.
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rudbman
+          MYSQL_DATABASE: rudbman
+          MYSQL_USER: rudbman
+          MYSQL_PASSWORD: rudbman
+        ports: ['33306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -prudbman --silent"
+          --health-interval 3s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: bridge/*.gradle
+
+      # `jar`, not `build`: the matrix above already runs the Java suite, and
+      # rudbman-jdbc's build script only needs the JAR to exist. `drivers` is
+      # the task that pulls the two JDBC drivers into the Gradle cache.
+      - name: Build the bridge JAR and fetch the drivers
+        working-directory: bridge
+        shell: bash
+        run: ./gradlew jar drivers --no-daemon
+
+      # Handed over explicitly rather than searched for, for the reason the H2
+      # lookup above is: Gradle has just downloaded them and one line can name
+      # them, where a glob has more ways to be wrong than to be right.
+      - name: Locate the JDBC drivers
+        shell: bash
+        run: |
+          for spec in "PG:org.postgresql:postgresql" "MYSQL:com.mysql:mysql-connector-j"; do
+            var=${spec%%:*}; rest=${spec#*:}; group=${rest%%:*}; artifact=${rest#*:}
+            jar=$(find ~/.gradle/caches/modules-2/files-2.1/"$group"/"$artifact" \
+                    -name "$artifact-*.jar" ! -name '*-sources.jar' | head -1)
+            test -f "$jar"
+            echo "RUDBMAN_TEST_${var}_JAR=$jar" >> "$GITHUB_ENV"
+          done
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: test
+        env:
+          RUDBMAN_TEST_PG_URL: jdbc:postgresql://127.0.0.1:55432/rudbman
+          RUDBMAN_TEST_MYSQL_URL: jdbc:mysql://127.0.0.1:33306/rudbman?allowPublicKeyRetrieval=true&useSSL=false
+        # `--nocapture` so the skip lines are visible: a run where a URL went
+        # missing would otherwise be a green job that tested nothing.
+        run: cargo test -p rudbman-jdbc --test containers --locked -- --nocapture
