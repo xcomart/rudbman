@@ -966,6 +966,97 @@ underneath for a second one to collide with.
   refuses in the same words and in the same place. A view is browsed like a
   table and edited only where the driver reports a key for it.
 
+### 7.10 Structure editing (`ALTER TABLE`)
+
+Changing a table's *shape* — adding a column, retyping one, dropping a
+constraint — is a second generator (`rudbman-sql::ddl`, a sibling of §7.9's
+`dml`) and a second surface. It is not an extension of the row editor, and the
+reason is that almost nothing carries over. Row editing has one statement
+grammar that every product spells the same way and a value model the wire
+already carries; structure editing has six grammars that disagree on every
+clause, no bind parameters anywhere, and no undo on two of the six.
+
+- **A statement is a string, and there are no parameters.** No server accepts a
+  `?` in a DDL statement — not for a type, not for a default, not for a name —
+  so `plan_alter` returns `Vec<String>` where `plan_edits` returns SQL plus
+  values. §7.9's rule that a value is never spliced into text does not lapse
+  here so much as it does not apply: there are no values, only names (through
+  `Dialect::quote_ident`, as everywhere) and fragments the user wrote.
+- **Types and defaults are the user's own SQL, passed through unread.** This
+  crate has no type model and is not getting one: `VARCHAR2(30)`,
+  `character varying(30)`, `NVARCHAR(30)` and `TEXT` are four products' answers
+  to one question, and a mapping table between them would be a guess made in
+  the one place that cannot see the server. So a column's type is a string the
+  user typed into a field pre-filled from the catalog, a default is a string in
+  the same shape, and the generator's whole contribution is deciding which
+  clause they land in. What makes that safe is the same thing that makes §7.9's
+  short `WHERE` clause safe — the batch is shown in full before any of it runs,
+  and a type nobody can parse is visible there.
+- **The input is a diff that carries both sides**, not a target state: every
+  changed column arrives as the definition that was read *and* the definition
+  that is wanted. Two dialects need the old side. MySQL's `MODIFY COLUMN` and
+  `CHANGE COLUMN` restate the entire definition, so a change of type that did
+  not also restate `NOT NULL` would quietly drop it; SQL Server's `ALTER COLUMN`
+  restates the type even when only nullability changed, and — the trap — resets
+  the column to nullable when the clause is omitted. The old side is also what
+  lets a column rename be spelled `CHANGE a b <definition>` on MySQL, which is
+  the form that works before 8.0 as well as after, since the client cannot see
+  the server's version.
+- **Where the products differ is a table, not a pile of branches.** Four
+  families: the standard one (PostgreSQL, H2, generic) with an independent
+  clause per attribute — `SET DATA TYPE`, `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`; MySQL, which restates the definition; Oracle's
+  `MODIFY (...)`, which restates *only what changed*, because naming `NOT NULL`
+  on a column that already has it is ORA-01442; and SQL Server, whose
+  `ALTER COLUMN` carries type and nullability together. Even the spellings that
+  look universal are not — `ADD COLUMN` is a syntax error on Oracle and SQL
+  Server, which want a bare `ADD`, and the order of `DEFAULT` and `NOT NULL`
+  inside one definition is a per-dialect field rather than a constant, since
+  Oracle takes the default first and MySQL documents the reverse.
+- **A refusal names the product and the reason.** SQLite can add, drop and
+  rename a column and rename a table, and has no `ALTER` for anything else: a
+  type change there is a table rebuild — new table, copy, drop, rename — which
+  is a data-moving operation wearing a schema operation's clothes, and it is not
+  what a user who typed a new type asked for. SQL Server keeps defaults as named
+  constraints rather than column attributes, so changing one is a drop and an
+  add of a constraint whose name JDBC's `getColumns` does not report. Both are
+  refused, in a line that says which product and why, before anything is
+  planned. A generated statement that fails on the server would say less: the
+  driver's message names a syntax error, not the fact that the product cannot do
+  this at all.
+- **Dropping a constraint needs to know its kind.** Everywhere but MySQL it is
+  `DROP CONSTRAINT <name>`; MySQL has no generic form and spells each kind
+  separately (`DROP PRIMARY KEY`, `DROP FOREIGN KEY`, `DROP INDEX`,
+  `DROP CHECK`). The kind travels with the name, which costs the caller nothing:
+  the detail panel's keys and references tabs already know which is which.
+- **Order within a batch**: constraint drops, then column adds, then column
+  changes, then column drops, then the table rename. Constraints go first
+  because one naming a column blocks that column's drop; the renames go last —
+  both a column's and the table's — so that every statement before them names
+  its target the way the catalog still holds it, which is the same rule twice.
+- **No transaction is pretended.** MySQL and Oracle commit implicitly at every
+  DDL statement, so a batch cannot be rolled back there, and wrapping one in
+  `setAutoCommit(false)` would produce a rollback that silently does nothing on
+  a third of the products rudbman supports. The batch therefore runs under
+  autocommit on every product alike, stops at the first failure, and reports
+  **how many statements were committed before it stopped** — which is a fact the
+  user can act on, where "the transaction was rolled back" would have been a
+  guess. §7.9's model is the opposite one for the opposite reason: DML is
+  transactional everywhere, so there a rollback is a promise that can be kept.
+- **The surface is a pane of its own** — `PaneItem::TableStruct`, a sibling of
+  `TableData` — and the detail panel stays read-only. The panel is one load and
+  one refresh of presentation, and it keeps its rows as display strings: a
+  column's type, size and scale are folded into `VARCHAR(255)` and its
+  nullability into the word `NOT NULL` by the time they are stored, so nothing
+  an editor needs survives in it. The structure pane issues its own
+  `DESCRIBE columns` / `primary_keys` / `imported_keys` and keeps what it reads.
+  The way in is the detail header and the explorer row, beside "view data".
+- **Success reloads rather than patches.** What a server did with a DDL
+  statement is not always what it was asked — a type widened, a default
+  normalized, a column added at the end regardless of where it was typed — so
+  the pane re-reads the catalog and shows that, exactly as §7.9's apply re-runs
+  its `SELECT`.
+
 ---
 
 ## 8. Settings, profiles and secrets
