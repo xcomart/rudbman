@@ -6,7 +6,7 @@ the work up. The design and the contracts all live in
 work has come, what is left, and how work is done in this repository**. It is
 updated whenever a milestone ends.
 
-Last updated: 2026-08-10 (after table data editing, §7.9).
+Last updated: 2026-08-11 (after structure editing, §7.10).
 
 ## Where things stand
 
@@ -30,13 +30,14 @@ Last updated: 2026-08-10 (after table data editing, §7.9).
 | Context menus (PR #7) | done | A right-click menu on every surface: the widgets learn only the gesture and emit an event, while the app owns the menu, the labels and the commands, because the widget layer carries no user-facing strings (§7.8). Rows that cannot run right now are drawn greyed rather than left out, so the menu doubles as the surface's documentation. Menus are described as MenuRow lists before they are drawn, and the tests read the description instead of clicking computed pixels. Escape closes a menu ahead of everything else — which uncovered and fixed the editor's find-bar binding swallowing the key with the bar shut |
 | Monospace font fix | done | The literal family `monospace` is a fontconfig generic that only Linux resolves; on Windows every surface asking for it logged an error and fell back to the proportional system font. The app now resolves the first installed candidate per OS (Windows: Cascadia Mono through Courier New) and falls back to the alias where nothing matches |
 | Table data editing, phase 1 (§7.9) | done | `PaneItem::TableData` plus `DataPane` — `SELECT *` at the settings' fetch size, paged by the query pane's own cursor walk (moved into `query_source` so both use one), sorted by an appended `ORDER BY`, opened from the explorer row and the detail header. `rudbman-sql::dml` (`plan_edits`: one `UPDATE`/`DELETE`/`INSERT` per row, deletes then updates then inserts, every value a bind parameter and every name through `quote_ident`). `data_edit` — the staging buffer keyed by base row index, the overlay the grid draws through, the `java.sql.Types` → bind-form table, and the planner that turns one into the other. The apply: the whole batch shown before any of it runs (which is the write confirmation, by superset), then autocommit off, one `execute` each, a row count of exactly 1 required of every `UPDATE` and `DELETE`, commit, reload — and on any failure a rollback *before* autocommit is restored. Proved end to end against H2 on both sides: the pane's own suite, and `rudbman-jdbc`'s `tests/h2.rs` for the wire mechanics |
+| Structure editing (§7.10) | done | `rudbman-sql::ddl` — `plan_alter` over a diff that carries **both sides** of every changed column, because MySQL's `MODIFY`/`CHANGE` restates a whole definition and SQL Server's `ALTER COLUMN` resets nullability when the clause is omitted. Statements are plain strings (no server takes a `?` in DDL) and a type or a default is the user's own SQL, passed through unread. The per-product spellings are one flat record per dialect in the shape `Syntax` is one; what a product cannot express is refused by name and reason (SQLite's type/nullability/default and constraint drops, SQL Server's defaults) rather than generated and rejected. `struct_edit` — the staging model, pure and unit-tested: a draft equal to its snapshot is dropped rather than refused, and a dropped column discards any change staged against it. `PaneItem::TableStruct` plus `StructPane` — its own four `DESCRIBE`s (the panel keeps display strings, so nothing an editor needs survives in it), the PK's own backing index matched away by name *and* by covering the key's columns, one column edited at a time in a form rather than an input per cell, and the batch shown live and read-only before it can be run. The apply forces autocommit on and never calls rollback — MySQL and Oracle commit at every DDL statement — stops at the first refusal, and on **either** outcome discards and reloads, saying how far it got |
 | First release, v0.1.0 (PR #8) | done | `release.yml` (every build job runs Gradle, then jlink, then cargo — in that order, because rudbman-jdbc's build script refuses to compile without the bridge JAR — plus a smoke step over the staged tree before anything is published), `packaging/` (a Linux desktop entry and an `install.sh` that installs the whole tree and symlinks it, a macOS `Info.plist`), `<exe_dir>/runtime` added to the bundled-runtime search, `jdk.charsets` in the jlink module list (with `--compress=2`, the JDK 17 spelling), and a README brought fully up to date with three screenshots (captured through the temporary env-gated hook, reverted before the commit) |
 
 - Repository: <https://github.com/xcomart/rudbman> (public, MIT).
 - The branch flow is logman's: **work on dev, main takes PR merge commits
   only**. CI is a three-platform matrix and runs the bridge (Java) suite
   before the Rust one.
-- Test count (2026-08-06): roughly 810 Rust plus 141 Java. That includes the
+- Test count (2026-08-11): roughly 1010 Rust plus 141 Java. That includes the
   integration tests, which boot a real JVM and a real H2.
 
 ## What is next
@@ -60,12 +61,18 @@ out. What remains can be taken in any order:
   recognisable — `ColumnInfo` carries `table` and `schema` per column — and that
   is the shape a phase 2 would take: accept a result whose every column names
   one table, look its key up, and reuse `data_edit` unchanged.
-- **Structure editing (`ALTER TABLE`) is deferred entirely.** The detail panel
-  shows a table's columns, keys and DDL and changes none of them. It is a
-  separate generator from `rudbman-sql::dml` and a per-product one — every
-  product spells a column rename, a type change and a constraint drop
-  differently, and several cannot do some of them at all — so it wants its own
-  design pass rather than an extension of the row editor.
+- **Structure editing covers one existing table and nothing around it.** A
+  column can be added, retyped, renamed, made null or not, given or denied a
+  default and dropped; a constraint the catalog reports can be dropped; the
+  table can be renamed. What is *not* there: creating a table from nothing,
+  **adding** a constraint or an index, reordering columns, and check
+  constraints — JDBC's `DatabaseMetaData` does not report them, so the pane has
+  no source for one even though the generator can write the drop. Two refusals
+  are per-product and would each need real work rather than a spelling: SQL
+  Server's defaults are separately named constraints whose names the catalog
+  does not give, and SQLite needs a table rebuild (new table, copy, drop,
+  rename) for anything but add/drop/rename, which is a data-moving job wearing
+  a schema job's clothes and belongs with the §6 data plane if it is ever done.
 - LOB_READ(0x25) is not implemented in the bridge, so there is no LOB viewer.
   Candidate re-read strategies are in §12.7.
 - PL/SQL blocks and MySQL DELIMITER are not handled by statement splitting
