@@ -563,13 +563,16 @@ enum FocusTarget {
 
 /// The pane a close was refused over, so that it can be told to say why.
 ///
-/// Two kinds hold work a close would destroy, and each says so in its own
-/// words: a data pane's staged rows and a structure pane's staged columns are
-/// keyed to indices of a result the close would drop. Resolved out of the tree
-/// before anything is updated, for the reason [`FocusTarget`] is.
+/// Three kinds hold work a close would destroy, and each says so in its own
+/// words: a data pane's staged rows, a query pane's staged result rows (§7.9)
+/// and a structure pane's staged columns are all keyed to indices of a result
+/// the close would drop. Resolved out of the tree before anything is updated,
+/// for the reason [`FocusTarget`] is.
 enum Pending {
-    /// Rows staged against a grid.
+    /// Rows staged against a data pane's grid.
     Data(Entity<DataPane>),
+    /// Rows staged against a query result's grid.
+    Query(Entity<QueryPane>),
     /// Columns and constraints staged against a structure.
     Struct(Entity<StructPane>),
 }
@@ -1472,7 +1475,14 @@ impl Workspace {
         let dialect = Self::dialect_of(&profile);
         let settings = app_settings::current(cx);
 
-        let pane = cx.new(|cx| QueryPane::new(session, id, &profile, &dialect, &settings, sql, cx));
+        // What `SESSION_INFO` said when this connection opened, rather than a
+        // round trip of the pane's own: an editable result's apply runs in one
+        // transaction, and a product with none has to be told about (§7.9).
+        let transactional = connected.info.supports_transactions != Some(false);
+        let pane = cx.new(|cx| {
+            QueryPane::new(session, id, &profile, &dialect, &settings, sql, window, cx)
+                .with_transactions(transactional)
+        });
         // The elapsed clock and the row count live in the pane; the status bar
         // that draws them is here, so the shell redraws whenever the pane does.
         cx.observe(&pane, |_workspace, _pane, cx| cx.notify())
@@ -1875,8 +1885,11 @@ impl Workspace {
     /// dialog: apply the changes, or discard them. So the tab is brought to the
     /// front, the pane says what has to happen first, and the close does not.
     ///
-    /// A structure pane answers the same question about its own staging, which
-    /// is keyed to indices into the snapshot it was read against (§7.10).
+    /// A query pane answers the same question about a result grid that passed
+    /// §7.9's gate, and for the same reason: what is staged there is keyed to
+    /// the rows of one result, which the close would drop. A structure pane
+    /// answers it about its own staging, keyed to indices into the snapshot it
+    /// was read against (§7.10).
     ///
     /// All the victims are asked before any is refused, and the first blocker
     /// is the one shown — "close the other tabs" over three dirty panes should
@@ -1902,6 +1915,10 @@ impl Workspace {
                     blocked = Some((*index, Pending::Struct(panel.clone())));
                     break;
                 }
+                Some(PaneItem::Query { pane, .. }) if pane.read(cx).has_pending_edits(cx) => {
+                    blocked = Some((*index, Pending::Query(pane.clone())));
+                    break;
+                }
                 // Asked through the same seam every other tab answers, so that
                 // a kind of tab that grows unsaved work later has one place to
                 // say so.
@@ -1915,6 +1932,7 @@ impl Workspace {
         self.activate_tab(pane, index, window, cx);
         match panel {
             Pending::Data(panel) => panel.update(cx, |panel, cx| panel.warn_pending(cx)),
+            Pending::Query(pane) => pane.update(cx, |pane, cx| pane.warn_pending(cx)),
             Pending::Struct(panel) => panel.update(cx, |panel, cx| panel.warn_pending(cx)),
         }
         true
@@ -4430,7 +4448,7 @@ impl Workspace {
         };
         pending.pane.update(cx, |pane, cx| {
             if run {
-                pane.confirmed(cx);
+                pane.confirmed(window, cx);
             } else {
                 pane.declined(cx);
             }

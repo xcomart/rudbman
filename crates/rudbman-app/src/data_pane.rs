@@ -521,7 +521,12 @@ impl DataPane {
                 // table with no key — are facts about the object, and `keys`
                 // has just been set from the metadata this same load read.
                 let writable = self.read_only_reason().is_none();
-                let source = EditableSource::new(source, &columns, writable);
+                let source = EditableSource::new(
+                    source,
+                    &columns,
+                    writable,
+                    crate::data_edit::TableSource::Known,
+                );
 
                 let table = self.qualified();
                 let grid = cx.new(|cx| GridView::new(source, cx).insert_table(table));

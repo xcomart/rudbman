@@ -388,6 +388,7 @@ query:
   confirm_body: "데이터를 변경하는 문장: %{count}개"
   confirm_run: 실행
   lob_unsupported: LOB 뷰어는 아직 없습니다.
+  not_editable: 이 행들은 기본 키까지 선택된 단일 테이블에서 온 것이 아니라, 읽을 수는 있어도 바꿀 수는 없습니다.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 문장의 구문과 대상 객체를 읽을 권한이 있는지 확인하세요.
   hint_constraint: 테이블이 선언한 제약 조건을 위반했습니다.

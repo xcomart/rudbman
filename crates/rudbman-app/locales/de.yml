@@ -388,6 +388,7 @@ query:
   confirm_body: "Anweisungen, die Daten ändern: %{count}"
   confirm_run: Ausführen
   lob_unsupported: Der LOB-Betrachter existiert noch nicht.
+  not_editable: Diese Zeilen stammen nicht aus einer Tabelle samt ausgewähltem Primärschlüssel; sie lassen sich lesen, aber nicht ändern.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Prüfen Sie die Syntax der Anweisung und Ihre Leserechte auf das Genannte.
   hint_constraint: Die Anweisung verletzt eine Bedingung der Tabelle.

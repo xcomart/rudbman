@@ -580,6 +580,12 @@ query:
   # A LOB cell that was opened. Only its size travelled with the row, and
   # reading the body needs a bridge operation that is not implemented yet.
   lob_unsupported: The LOB viewer is not built yet.
+  # A result grid whose rows cannot be written back through, said above the
+  # grid rather than by refusing a keystroke: it is a standing fact about what
+  # is being shown, not a failure. One line for all three ways a result misses
+  # the gate — more than one table, no table at all, or a table whose primary
+  # key was not among the columns selected.
+  not_editable: These rows do not come from one table with its primary key selected, so they can be read but not changed.
   # The error envelope, under the driver's own message.
   sql_state: "SQLSTATE %{state}"
   # One-line suggestions, chosen by the leading two characters of the SQLSTATE,

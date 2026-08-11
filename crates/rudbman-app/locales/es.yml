@@ -388,6 +388,7 @@ query:
   confirm_body: "Sentencias que modifican datos: %{count}"
   confirm_run: Ejecutar
   lob_unsupported: El visor de LOB todavía no existe.
+  not_editable: Estas filas no provienen de una sola tabla con su clave primaria seleccionada, así que pueden leerse pero no modificarse.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Revise la sintaxis de la sentencia y sus permisos de lectura.
   hint_constraint: La sentencia infringe una restricción de la tabla.

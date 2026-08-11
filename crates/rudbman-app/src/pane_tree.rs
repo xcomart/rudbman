@@ -201,13 +201,16 @@ impl PaneItem {
     /// Whether closing this tab would throw away work the user has not sent
     /// anywhere.
     ///
-    /// The one tab that can say yes is a data pane holding staged edits: those
-    /// live in the source under its grid, and dropping the tab drops them with
-    /// no way back (architecture document, §7.9). Everything else either holds
-    /// nothing (a detail panel, a diagram, a builder — all of them views of
-    /// something the database still has) or holds something a close does not
-    /// destroy: a query pane's SQL is the user's text, and closing the tab is
-    /// how one gets rid of it.
+    /// The tabs that can say yes are the three that stage edits: a data pane
+    /// and a query pane hold rows the user has changed but not applied, and a
+    /// structure pane holds columns and constraints. All three live in the
+    /// source under a grid or in indices into a snapshot, and dropping the tab
+    /// drops them with no way back (architecture document, §7.9, §7.10).
+    ///
+    /// A query pane says yes only about its *results*. Its SQL is the user's
+    /// text and closing the tab is how one gets rid of it; what a close must
+    /// not throw away silently is a staged `UPDATE` nobody has sent. Everything
+    /// else here holds nothing but a view of something the database still has.
     ///
     /// A question and not a veto: the caller decides what to do about it, and
     /// the shell answers by refusing the close and saying why
@@ -216,10 +219,8 @@ impl PaneItem {
         match self {
             PaneItem::TableData(panel) => panel.read(cx).has_pending_edits(cx),
             PaneItem::TableStruct(panel) => panel.read(cx).has_pending_edits(),
-            PaneItem::TableDetail(_)
-            | PaneItem::Query { .. }
-            | PaneItem::Erd(_)
-            | PaneItem::QueryBuilder { .. } => false,
+            PaneItem::Query { pane, .. } => pane.read(cx).has_pending_edits(cx),
+            PaneItem::TableDetail(_) | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => false,
         }
     }
 }

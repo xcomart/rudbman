@@ -388,6 +388,7 @@ query:
   confirm_body: "データを変更する文: %{count} 件"
   confirm_run: 実行する
   lob_unsupported: LOB ビューアーはまだありません。
+  not_editable: この行は主キーを選択した単一のテーブルから来ていないため、読み取りはできますが変更はできません。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 文の構文と、対象を読む権限があるかを確認してください。
   hint_constraint: テーブルが宣言している制約に違反しました。

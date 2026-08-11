@@ -388,6 +388,7 @@ query:
   confirm_body: "会修改数据的语句：%{count} 条"
   confirm_run: 执行
   lob_unsupported: LOB 查看器尚未实现。
+  not_editable: 这些行并非来自单一表且未选出其主键，因此只能读取，不能修改。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 请检查语句的语法，以及对其所引用对象的读取权限。
   hint_constraint: 语句违反了表上声明的约束。

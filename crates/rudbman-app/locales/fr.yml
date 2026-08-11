@@ -388,6 +388,7 @@ query:
   confirm_body: "Instructions qui modifient des données : %{count}"
   confirm_run: Exécuter
   lob_unsupported: La visionneuse de LOB n'existe pas encore.
+  not_editable: Ces lignes ne proviennent pas d'une seule table dont la clé primaire est sélectionnée ; elles peuvent être lues mais pas modifiées.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Vérifiez la syntaxe de l'instruction et vos droits de lecture.
   hint_constraint: L'instruction viole une contrainte de la table.
