@@ -84,6 +84,14 @@
 //! change one of them cannot express is refused by name rather than generated
 //! and rejected. That module documents the reasoning.
 //!
+//! The same module writes the statement that makes a table in the first place:
+//! [`plan_create`] takes a [`TableCreate`] — a name, its columns and the
+//! [`TableConstraint`]s it is born with — and answers with the one
+//! `CREATE TABLE` that creates it, across several lines because that statement
+//! is read before it is run. It is where a primary key, a unique constraint or
+//! a foreign key can be written at all: [`plan_alter`] drops constraints and
+//! never adds one.
+//!
 //! # Known limitations
 //!
 //! Written down rather than half-implemented:
@@ -110,7 +118,9 @@
 //!   callers that write SQL rather than read it.
 //! * [`mod@ddl`] — [`plan_alter`], [`TableAlter`], [`ColumnDef`],
 //!   [`ColumnChange`]: one table's staged structure edits turned into
-//!   `ALTER TABLE` statements.
+//!   `ALTER TABLE` statements; and [`plan_create`], [`TableCreate`],
+//!   [`TableConstraint`]: a new table turned into the `CREATE TABLE` that
+//!   makes it.
 //! * [`mod@dml`] — [`plan_edits`], [`TableEdits`], [`DmlStatement`],
 //!   [`DmlValue`]: the grid's staged edits turned into parameterized SQL.
 //! * [`mod@lexer`] — [`Token`], [`TokenKind`], [`LineState`], [`lex_line`],
@@ -131,8 +141,8 @@ pub mod statement;
 mod keywords;
 
 pub use ddl::{
-    ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, DdlError, TableAlter, Unsupported,
-    plan_alter,
+    ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, DdlError, TableAlter, TableConstraint,
+    TableCreate, Unsupported, plan_alter, plan_create,
 };
 pub use dialect::{Dialect, DialectId, Syntax};
 pub use dml::{
