@@ -49,7 +49,7 @@ gpui = { path = "vendor/gpui" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 
 [workspace.package]
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 license = "MIT"
 authors = ["rudbman contributors"]

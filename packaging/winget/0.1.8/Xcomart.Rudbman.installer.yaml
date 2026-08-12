@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: Xcomart.Rudbman
-PackageVersion: 0.1.7
+PackageVersion: 0.1.8
 MinimumOSVersion: 10.0.0.0
 InstallerType: inno
 # packaging/windows/rudbman.iss sets PrivilegesRequired=lowest, so the installer never
@@ -12,7 +12,7 @@ InstallModes:
 - silent
 - silentWithProgress
 UpgradeBehavior: install
-# TODO: replace with the real publication date of the v0.1.7 release before opening
+# TODO: replace with the real publication date of the v0.1.8 release before opening
 # the winget-pkgs PR. The schema wants an ISO date (YYYY-MM-DD); the value below is a
 # placeholder that is well-formed but wrong.
 ReleaseDate: 1970-01-01
@@ -20,7 +20,7 @@ Installers:
 # The x64 build also runs under emulation on ARM64 Windows, but there is no native
 # arm64 artifact to declare here yet.
 - Architecture: x64
-  InstallerUrl: https://github.com/xcomart/rudbman/releases/download/v0.1.7/rudbman-v0.1.7-x86_64-pc-windows-msvc-setup.exe
+  InstallerUrl: https://github.com/xcomart/rudbman/releases/download/v0.1.8/rudbman-v0.1.8-x86_64-pc-windows-msvc-setup.exe
   # TODO: replace with the real SHA256 of the downloaded installer before opening the
   # winget-pkgs PR. The 64 zeros below are a placeholder — the PR pipeline downloads
   # the URL and compares, so a wrong hash fails validation.
