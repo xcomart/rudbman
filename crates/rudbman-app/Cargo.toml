@@ -18,9 +18,14 @@ path = "src/main.rs"
 [target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true
 
-# Used only by `src/caption.rs`, to colour the DWM title bar from the app theme.
+# `windows` and `raw-window-handle` are used only by `src/caption.rs`, to colour
+# the DWM title bar from the app theme. `windows-registry` is used only by
+# `src/update.rs`, which rewrites the `DisplayVersion` of the "Apps & features"
+# entry the Inno installer left behind, so that a copy which updates itself does
+# not go on looking out of date to winget.
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+windows-registry.workspace = true
 raw-window-handle.workspace = true
 
 # Used only by `src/caption.rs`, to pin the AppKit title bar to the app theme.

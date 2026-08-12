@@ -126,8 +126,8 @@ sys-locale = "0.3"
 # --- GUI: Zed's GPU-accelerated UI framework ---
 gpui = "0.2.2"
 
-# --- platform window chrome ---
-# All four are used by `rudbman-app` alone, and every one of them only under a
+# --- platform window chrome, and one platform registry ---
+# All five are used by `rudbman-app` alone, and every one of them only under a
 # `[target.'cfg(...)']` section, so a build for another platform never sees
 # them.
 #
@@ -138,8 +138,18 @@ gpui = "0.2.2"
 # links (0.61 and 0.2 respectively) so the bindings and the Objective-C runtime
 # shim are shared rather than duplicated in the tree. `raw-window-handle` is how
 # gpui hands out the `HWND` and the `NSView` those two need.
+#
+# `windows-registry` is the one registry consumer in the tree: after a
+# self-update `src/update.rs` corrects the `DisplayVersion` in the uninstall
+# entry the Inno installer wrote, so that winget still recognises the installed
+# copy. It is picked over `winreg` for the same reason as `windows` above — gpui
+# already links this exact crate at this exact version, so it costs an edge in
+# the dependency graph rather than a crate in the build, whereas `winreg`
+# appears today only as a *build*-dependency of `embed-resource` and would drag
+# a second registry binding, and its own `windows-sys`, into the linked binary.
 winresource = "0.1"
 windows = { version = "0.61", features = ["Win32_Graphics_Dwm"] }
+windows-registry = "0.5"
 raw-window-handle = "0.6"
 objc = "0.2"
 

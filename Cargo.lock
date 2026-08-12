@@ -5607,6 +5607,7 @@ dependencies = [
  "ureq",
  "uuid",
  "windows 0.61.3",
+ "windows-registry 0.5.3",
  "winresource",
 ]
 
