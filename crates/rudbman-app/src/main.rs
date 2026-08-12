@@ -4997,12 +4997,26 @@ fn apply_themes(settings: &AppSettings, cx: &mut App) {
 /// With the "follows the UI" switch off the configured id is used as it stands.
 /// With it on the answer is the first of these that exists:
 ///
-/// 1. the configured theme, when its cast already matches the chrome — a user
-///    who picked a dark editor for a dark window keeps the editor they picked;
-/// 2. the editor theme sharing the chrome theme's id, which is how the pairs
-///    that ship under one name (`one-dark`, `one-light`) stay together;
+/// 1. the editor theme sharing the chrome theme's id, when its cast matches the
+///    chrome — which is how the pairs that ship under one name stay together,
+///    and, since every built-in chrome theme has an editor theme of the same id,
+///    is the answer for every built-in;
+/// 2. the configured theme, when its cast matches the chrome — the fallback for
+///    a chrome theme of the user's own, which no editor theme is named after;
 /// 3. any editor theme of the right cast;
 /// 4. the configured id after all, when nothing of the right cast exists.
+///
+/// The namesake comes first because that is what the switch promises: its label
+/// says the editor theme is *matched to* the interface theme, not merely kept on
+/// the same side of light and dark, and while it is on the settings dialog
+/// disables the editor theme dropdown outright — so there is no pick of the
+/// user's here to preserve, and letting the configured id win would freeze the
+/// editor on one palette however far the chrome moved.
+///
+/// The cast is still checked in rule 1, though, and deliberately: a user who has
+/// written a *dark* editor theme under the id of a *light* chrome theme must not
+/// have it dragged into a light window. Preventing that pairing is the whole
+/// reason the switch exists, so it outranks the name match.
 ///
 /// Pure and taking the theme list as an argument so that the rule can be tested
 /// without an [`App`]; the caller supplies [`EditorThemeRegistry::all`].
@@ -5022,7 +5036,7 @@ fn editor_theme_for(
             .iter()
             .find(|entry| entry.id.eq_ignore_ascii_case(id) && entry.dark == ui_dark)
     };
-    if let Some(entry) = matching(configured).or_else(|| matching(ui_theme_id)) {
+    if let Some(entry) = matching(ui_theme_id).or_else(|| matching(configured)) {
         return entry.id.clone();
     }
     entries
@@ -5562,21 +5576,25 @@ fn main() {
 mod tests {
     use super::*;
 
-    /// A stand-in registry listing: two pairs of casts, plus one dark theme that
-    /// no chrome theme shares a name with.
+    /// A stand-in registry listing: the six built-in ids, each of which a
+    /// chrome theme shares a name with, plus one dark theme of the user's own
+    /// that none does — which is the case the rule below has to keep straight.
     fn entries() -> Vec<EditorThemeEntry> {
         [
-            ("one-dark", true),
-            ("one-light", false),
-            ("tokyo-night", true),
-            ("solarized-light", false),
+            ("one-dark", true, true),
+            ("one-light", false, true),
+            ("solarized-dark", true, true),
+            ("solarized-light", false, true),
+            ("gruvbox-dark", true, true),
+            ("dracula", true, true),
+            ("tokyo-night", true, false),
         ]
         .into_iter()
-        .map(|(id, dark)| EditorThemeEntry {
+        .map(|(id, dark, builtin)| EditorThemeEntry {
             id: id.to_string(),
             name: id.to_string(),
             dark,
-            builtin: true,
+            builtin,
         })
         .collect()
     }
@@ -5592,22 +5610,56 @@ mod tests {
     }
 
     #[test]
-    fn following_the_ui_keeps_a_pick_of_the_right_cast() {
-        // A user who chose Tokyo Night for a dark window keeps Tokyo Night, and
-        // is not dragged onto the chrome theme's namesake.
+    fn following_the_ui_prefers_the_chrome_themes_namesake() {
+        // The rule the switch is named for: the editor theme sharing the chrome
+        // theme's id wins, whatever the settings file still carries. A dark
+        // editor under a light window is dropped for the light namesake…
         assert_eq!(
-            editor_theme_for("tokyo-night", true, "one-dark", true, &entries()),
+            editor_theme_for("tokyo-night", true, "one-light", false, &entries()),
+            "one-light"
+        );
+        // …and so is a dark editor under a *different* dark window, which is
+        // the half that used to be skipped: the cast already matched, so the
+        // configured id won and the editor never moved off One Dark however far
+        // the chrome went. Every built-in chrome theme has a namesake here, so
+        // this is the path every built-in takes.
+        assert_eq!(
+            editor_theme_for("one-dark", true, "dracula", true, &entries()),
+            "dracula"
+        );
+        assert_eq!(
+            editor_theme_for("dracula", true, "gruvbox-dark", true, &entries()),
+            "gruvbox-dark"
+        );
+    }
+
+    #[test]
+    fn following_the_ui_keeps_the_configured_pick_when_the_chrome_has_no_namesake() {
+        // A chrome theme of the user's own, which no editor theme is named
+        // after: there is no pair to honour, so the configured editor theme
+        // stands as long as its cast fits the window.
+        assert_eq!(
+            editor_theme_for("tokyo-night", true, "my-chrome", true, &entries()),
             "tokyo-night"
         );
     }
 
     #[test]
-    fn following_the_ui_prefers_the_chrome_themes_namesake() {
-        // A light window with a dark editor pinned: the pair that ships under
-        // the chrome theme's own id wins over any other light theme.
+    fn following_the_ui_refuses_a_namesake_of_the_wrong_cast() {
+        // The one thing that outranks the name match. A user has written a dark
+        // editor theme under the id of a light chrome theme; pairing them would
+        // put a dark editor in a light window, which is the accident this switch
+        // exists to prevent, so the namesake is passed over.
+        let mut entries = entries();
+        entries.push(EditorThemeEntry {
+            id: "my-chrome".to_string(),
+            name: "Mine".to_string(),
+            dark: true,
+            builtin: false,
+        });
         assert_eq!(
-            editor_theme_for("tokyo-night", true, "one-light", false, &entries()),
-            "one-light"
+            editor_theme_for("solarized-light", true, "my-chrome", false, &entries),
+            "solarized-light"
         );
     }
 

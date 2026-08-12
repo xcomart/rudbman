@@ -1422,10 +1422,13 @@ impl SettingsDialog {
     ///
     /// Disabled rather than merely ignored: the setting says the app decides, so
     /// offering a working dropdown whose every choice would be silently
-    /// discarded would be a lie. Showing the resolved theme keeps the row
-    /// informative, since that answer moves as the chrome theme does — and the
-    /// disabled trigger is the same line in the same place as the live one, so
-    /// ticking the box shifts nothing on screen but the colours.
+    /// discarded would be a lie. It is also why
+    /// [`crate::editor_theme_for`] prefers the chrome theme's namesake over the
+    /// configured id — there is no live pick here to preserve. Showing the
+    /// resolved theme keeps the row informative, since that answer moves with
+    /// the chrome theme picked in the row above — and the disabled trigger is
+    /// the same line in the same place as the live one, so ticking the box
+    /// shifts nothing on screen but the colours.
     fn render_editor_theme(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
 

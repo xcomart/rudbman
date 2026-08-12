@@ -194,11 +194,19 @@ pub struct AppSettings {
     /// Ignored while [`AppSettings::editor_theme_follows_ui`] is on, but not
     /// forgotten: turning the switch off has to give the user their pick back.
     pub editor_theme: String,
-    /// Pick the editor theme from the UI theme's light/dark cast instead of
+    /// Match the editor theme to the UI theme instead of using
     /// [`AppSettings::editor_theme`].
     ///
+    /// The editor theme sharing the UI theme's id is preferred, which is what
+    /// keeps the palettes that ship under one name together and what makes
+    /// changing the UI theme move the editor with it; a UI theme of the user's
+    /// own, which no editor theme is named after, falls back to the configured
+    /// id and then to any editor theme of the right cast. Every candidate has to
+    /// be on the UI theme's side of light/dark to be taken at all.
+    ///
     /// On by default, because a dark editor inside a light window (or the other
-    /// way round) is the state nobody chooses on purpose.
+    /// way round) is the state nobody chooses on purpose. The rule itself lives
+    /// in the app layer, which is the only place that knows what is installed.
     pub editor_theme_follows_ui: bool,
     /// BCP 47 tag of the interface language, e.g. `"ko"` or `"zh-CN"`.
     ///
