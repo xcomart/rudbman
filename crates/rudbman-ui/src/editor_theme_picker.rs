@@ -546,9 +546,11 @@ mod tests {
     fn every_builtin_theme_keeps_the_previewed_classes_apart() {
         for theme in [
             EditorTheme::one_dark(),
-            EditorTheme::tokyo_night(),
             EditorTheme::one_light(),
+            EditorTheme::solarized_dark(),
             EditorTheme::solarized_light(),
+            EditorTheme::gruvbox_dark(),
+            EditorTheme::dracula(),
         ] {
             for (left, right) in [
                 (PreviewSlot::Keyword, PreviewSlot::Identifier),

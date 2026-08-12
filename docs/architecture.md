@@ -714,6 +714,15 @@ logman's `icon` slot works.
 A **different file, a different directory and a different token set** from the
 UI theme. `~/.config/rudbman/editor-themes/<id>.json`.
 
+Six editor themes ship built in, under the same six ids and names as the six UI
+themes — One Dark, One Light, Solarized Dark, Solarized Light, Gruvbox Dark,
+Dracula — so that every built-in UI theme has a syntax palette drawn by whoever
+drew the window around it. The two tables stay independent all the same: an id
+means nothing across them, and a theme of the user's own can exist on one side
+and not the other. The example below is one such palette — folke's Tokyo Night,
+which rudbman does *not* ship — because a file named after a built-in id would
+be skipped by the loader rather than loaded.
+
 ```json
 {
   "version": 1,

@@ -6,8 +6,9 @@
 //! has to hold for buttons and tabs and dialogs alike. An editor palette is a
 //! *syntax* palette: nineteen slots that only mean anything once a lexer has
 //! said which run of characters is a keyword and which is a string, and the
-//! published palettes people actually want (Tokyo Night, Monokai, whatever
-//! their editor of choice ships) are written in those terms and no other.
+//! published palettes people actually want — Dracula, Gruvbox, Monokai,
+//! whatever their editor of choice ships — are written in those terms and no
+//! other.
 //!
 //! Keeping them apart is what lets the two be picked independently — a light
 //! chrome around a dark editor is a real preference, not a mistake — and what
@@ -122,36 +123,6 @@ impl EditorTheme {
         }
     }
 
-    /// Tokyo Night.
-    ///
-    /// folke's palette, taken from `tokyonight.nvim`'s "night" variant. The
-    /// one built-in whose chrome counterpart rudbman does *not* ship, which is
-    /// the point of it being here: the editor palette is chosen on its own.
-    pub fn tokyo_night() -> Self {
-        Self {
-            dark: true,
-            background: hex("#1a1b26"),
-            foreground: hex("#a9b1d6"),
-            cursor: hex("#c0caf5"),
-            selection: hex("#33467c"),
-            line_highlight: hex("#1f2335"),
-            gutter: hex("#3b4261"),
-            gutter_active: hex("#737aa2"),
-            keyword: hex("#bb9af7"),
-            string: hex("#9ece6a"),
-            number: hex("#ff9e64"),
-            comment: hex("#565f89"),
-            function: hex("#7aa2f7"),
-            r#type: hex("#2ac3de"),
-            operator: hex("#89ddff"),
-            identifier: hex("#c0caf5"),
-            punctuation: hex("#a9b1d6"),
-            bracket_match: hex("#f7768e"),
-            error: hex("#f7768e"),
-            warning: hex("#e0af68"),
-        }
-    }
-
     /// One Light, the light counterpart of [`EditorTheme::one_dark`].
     ///
     /// Atom's `one-light-syntax`, hue for hue: the same twelve token classes
@@ -178,6 +149,59 @@ impl EditorTheme {
             bracket_match: hex("#0184bc"),
             error: hex("#e45649"),
             warning: hex("#986801"),
+        }
+    }
+
+    /// Solarized Dark, the mirror of [`EditorTheme::solarized_light`].
+    ///
+    /// Ethan Schoonover's palette read from the other end, with the tones named
+    /// as his official `solarized.xresources` names them: `base03` is the page,
+    /// `base0` the body text, `base1` the caret and `base01` the de-emphasised
+    /// gutter and comments — the same four roles the light variant fills with
+    /// `base3`, `base00`, `base01` and `base1`. The accents are unchanged from
+    /// the light variant, down to violet standing in for operators, because
+    /// holding the eight accents fixed while only the monotones swap is the
+    /// whole design of Solarized; a token that changed hue between the two
+    /// would be a different palette wearing the name.
+    ///
+    /// The two slots Solarized does not name are extrapolated the way the light
+    /// variant extrapolates them, in the opposite direction. The current-line
+    /// band is `base02`, which Schoonover documents as "background highlights"
+    /// and which is exactly what a current-line stripe is. The selection is one
+    /// further step along the same ramp — `base03` to `base02` is `+07 +0b +0c`,
+    /// and taking that step again lands on `#0e414e` — since a selection drawn
+    /// *in* the highlight band would vanish on the line the caret is on, and the
+    /// next tone Solarized actually names, `base01`, is the comment color and
+    /// would swallow a commented-out line the moment it were selected.
+    ///
+    /// Worth noting against the sibling project: rulogman's terminal scheme
+    /// spends `base02` on the *selection*, because a terminal palette has four
+    /// slots and no current-line band at all, so the highlight tone has nowhere
+    /// else to go. An editor palette has both bands, and here `base02` goes to
+    /// the one Solarized named it for.
+    pub fn solarized_dark() -> Self {
+        Self {
+            dark: true,
+            background: hex("#002b36"),
+            foreground: hex("#839496"),
+            cursor: hex("#93a1a1"),
+            selection: hex("#0e414e"),
+            line_highlight: hex("#073642"),
+            gutter: hex("#586e75"),
+            gutter_active: hex("#93a1a1"),
+            keyword: hex("#859900"),
+            string: hex("#2aa198"),
+            number: hex("#d33682"),
+            comment: hex("#586e75"),
+            function: hex("#268bd2"),
+            r#type: hex("#b58900"),
+            // Violet, the accent Solarized keeps spare, as in the light variant.
+            operator: hex("#6c71c4"),
+            identifier: hex("#839496"),
+            punctuation: hex("#839496"),
+            bracket_match: hex("#cb4b16"),
+            error: hex("#dc322f"),
+            warning: hex("#cb4b16"),
         }
     }
 
@@ -215,6 +239,111 @@ impl EditorTheme {
             warning: hex("#cb4b16"),
         }
     }
+
+    /// Gruvbox Dark.
+    ///
+    /// morhetz's palette at its default (medium) contrast, with the tone names
+    /// and the accent values of `gruvbox-contrib`'s `gruvbox-dark.xresources`:
+    /// `dark0` (`#282828`) is the page, `light1` (`#ebdbb2`) the body text and
+    /// the caret, and the accents are that file's *bright* ramp — red
+    /// `#fb4934`, green `#b8bb26`, yellow `#fabd2f`, purple `#d3869b`, aqua
+    /// `#8ec07c` — which is the ramp gruvbox itself highlights code with, the
+    /// neutral one being reserved for the terminal's normal colors.
+    ///
+    /// The three bands behind the text walk up the `dark0`/`dark1`/`dark2` ramp
+    /// gruvbox already defines rather than inventing anything, which puts the
+    /// selection on the `dark2` the sibling terminal scheme uses. The gutter
+    /// takes `dark4`, the last step of that ramp, leaving line numbers quieter
+    /// than the gray comments and quieter than every token class — which is
+    /// what a gutter is for.
+    ///
+    /// The token classes follow the vim theme's own highlight links — red
+    /// keywords, green strings, purple constants, yellow types, orange
+    /// operators and delimiters — with one departure. `Function` there is
+    /// green, the same green as a string, and in SQL that puts `COUNT(` and
+    /// `'...'` in one color on nearly every line; aqua, which gruvbox spends on
+    /// preprocessor directives that SQL has none of, takes functions instead.
+    ///
+    /// The gray comments are the dimmest thing here at 4.02:1 against the page,
+    /// which is a narrow margin over the red keywords at 4.29:1 — narrow, but
+    /// the right way round, and both are gruvbox's own values, so neither is
+    /// nudged to widen it.
+    pub fn gruvbox_dark() -> Self {
+        Self {
+            dark: true,
+            background: hex("#282828"),
+            foreground: hex("#ebdbb2"),
+            cursor: hex("#ebdbb2"),
+            selection: hex("#504945"),
+            line_highlight: hex("#3c3836"),
+            gutter: hex("#7c6f64"),
+            gutter_active: hex("#ebdbb2"),
+            keyword: hex("#fb4934"),
+            string: hex("#b8bb26"),
+            number: hex("#d3869b"),
+            comment: hex("#928374"),
+            function: hex("#8ec07c"),
+            r#type: hex("#fabd2f"),
+            operator: hex("#fe8019"),
+            identifier: hex("#ebdbb2"),
+            punctuation: hex("#ebdbb2"),
+            bracket_match: hex("#fe8019"),
+            error: hex("#fb4934"),
+            warning: hex("#fabd2f"),
+        }
+    }
+
+    /// Dracula.
+    ///
+    /// The specification published at `draculatheme.com`, slot for slot:
+    /// `Background` `#282a36` for the page, `Foreground` `#f8f8f2` for the text
+    /// and the caret, `Comment` `#6272a4` for comments and the gutter, and the
+    /// named accents spent the way Dracula's own language definitions spend
+    /// them — `Pink` keywords, `Yellow` strings, `Purple` numbers, `Green`
+    /// functions, `Cyan` type names, `Orange` for the matched bracket and the
+    /// warning mark, `Red` for the error mark.
+    ///
+    /// That the strings are yellow rather than green is where this parts from
+    /// the sibling terminal scheme, which derives its editor colors out of the
+    /// sixteen ANSI slots of `dracula/xresources` and so has to take green for
+    /// strings the way every terminal palette does. Nothing here is derived
+    /// from ANSI, so Dracula's own answer wins.
+    ///
+    /// One extrapolation. Dracula publishes a single `#44475a` and names it
+    /// both "Current Line" and "Selection", so taking it at its word would
+    /// paint two of the three bands behind the text identically and leave a
+    /// selection invisible on the one line a reader is guaranteed to be
+    /// selecting on. The selection keeps the published value — that is the band
+    /// being looked at, and it is what the terminal scheme uses too — and the
+    /// current-line stripe is pulled halfway back toward the page: `#363848`,
+    /// the midpoint of `#282a36` and `#44475a`, so the caret's line reads as a
+    /// hint beneath the selection rather than as a second one.
+    pub fn dracula() -> Self {
+        Self {
+            dark: true,
+            background: hex("#282a36"),
+            foreground: hex("#f8f8f2"),
+            cursor: hex("#f8f8f2"),
+            selection: hex("#44475a"),
+            line_highlight: hex("#363848"),
+            gutter: hex("#6272a4"),
+            gutter_active: hex("#f8f8f2"),
+            keyword: hex("#ff79c6"),
+            string: hex("#f1fa8c"),
+            number: hex("#bd93f9"),
+            comment: hex("#6272a4"),
+            function: hex("#50fa7b"),
+            r#type: hex("#8be9fd"),
+            // Pink again: Dracula tints operators with the keyword color, which
+            // is the one pairing its spec spells out for punctuation-like runs.
+            operator: hex("#ff79c6"),
+            identifier: hex("#f8f8f2"),
+            punctuation: hex("#f8f8f2"),
+            bracket_match: hex("#ffb86c"),
+            error: hex("#ff5555"),
+            warning: hex("#ffb86c"),
+        }
+    }
 }
 
 /// Parses a color a built-in palette spelled out.
@@ -237,12 +366,16 @@ impl Global for EditorTheme {}
 
 /// Id of the default editor theme.
 const ID_ONE_DARK: &str = "one-dark";
-/// Id of the Tokyo Night editor theme.
-const ID_TOKYO_NIGHT: &str = "tokyo-night";
 /// Id of the light counterpart of [`ID_ONE_DARK`].
 const ID_ONE_LIGHT: &str = "one-light";
+/// Id of the Solarized Dark editor theme.
+const ID_SOLARIZED_DARK: &str = "solarized-dark";
 /// Id of the Solarized Light editor theme.
 const ID_SOLARIZED_LIGHT: &str = "solarized-light";
+/// Id of the Gruvbox Dark editor theme.
+const ID_GRUVBOX_DARK: &str = "gruvbox-dark";
+/// Id of the Dracula editor theme.
+const ID_DRACULA: &str = "dracula";
 
 /// One entry of the built-in editor theme table.
 struct BuiltinEditorTheme {
@@ -257,24 +390,25 @@ struct BuiltinEditorTheme {
     build: fn() -> EditorTheme,
 }
 
-/// Every built-in editor theme, dark first.
+/// Every built-in editor theme, in the order [`crate::theme`] lists its own.
 ///
-/// Three of the four ids are also ids of built-in *chrome* themes, which is
-/// deliberate: the settings option that keeps the editor in step with the
-/// chrome resolves the chrome's id in this table, and finds something for
-/// three of the six. Tokyo Night is the fourth, and has no chrome counterpart.
-const BUILTIN_EDITOR_THEMES: [BuiltinEditorTheme; 4] = [
+/// The six ids are exactly the six ids of the built-in *chrome* themes, name
+/// for name and in the same order, which is what the settings option that keeps
+/// the editor in step with the chrome is built on: it resolves the chrome
+/// theme's id in this table and always finds the syntax palette drawn by
+/// whoever drew the window around it. Picking a built-in chrome theme therefore
+/// never leaves the editor on a palette from somewhere else.
+///
+/// That the two tables agree is a property of the built-ins and not of the
+/// design — see [`EditorThemeRegistry::is_builtin`] — since a theme of the
+/// user's own can exist on one side and not the other, and the two settings
+/// stay independently selectable.
+const BUILTIN_EDITOR_THEMES: [BuiltinEditorTheme; 6] = [
     BuiltinEditorTheme {
         id: ID_ONE_DARK,
         name: "One Dark",
         dark: true,
         build: EditorTheme::one_dark,
-    },
-    BuiltinEditorTheme {
-        id: ID_TOKYO_NIGHT,
-        name: "Tokyo Night",
-        dark: true,
-        build: EditorTheme::tokyo_night,
     },
     BuiltinEditorTheme {
         id: ID_ONE_LIGHT,
@@ -283,10 +417,28 @@ const BUILTIN_EDITOR_THEMES: [BuiltinEditorTheme; 4] = [
         build: EditorTheme::one_light,
     },
     BuiltinEditorTheme {
+        id: ID_SOLARIZED_DARK,
+        name: "Solarized Dark",
+        dark: true,
+        build: EditorTheme::solarized_dark,
+    },
+    BuiltinEditorTheme {
         id: ID_SOLARIZED_LIGHT,
         name: "Solarized Light",
         dark: false,
         build: EditorTheme::solarized_light,
+    },
+    BuiltinEditorTheme {
+        id: ID_GRUVBOX_DARK,
+        name: "Gruvbox Dark",
+        dark: true,
+        build: EditorTheme::gruvbox_dark,
+    },
+    BuiltinEditorTheme {
+        id: ID_DRACULA,
+        name: "Dracula",
+        dark: true,
+        build: EditorTheme::dracula,
     },
 ];
 
@@ -357,8 +509,11 @@ impl EditorThemeRegistry {
     /// Whether `id` names an editor theme that ships with rudbman.
     ///
     /// Answering `true` here does *not* imply the chrome theme of the same id
-    /// exists, or the other way round: the two tables are independent, and
-    /// `tokyo-night` is a built-in editor theme and no chrome theme at all.
+    /// exists, or the other way round: the two tables are independent, and that
+    /// the built-ins currently line up id for id is a fact about the palettes
+    /// rudbman happens to ship rather than a rule. A `tokyo-night.json` the user
+    /// drops into `editor-themes` is a built-in of neither table, and a chrome
+    /// theme they wrote is not an editor theme however it is named.
     pub fn is_builtin(id: &str) -> bool {
         BUILTIN_EDITOR_THEMES
             .iter()
@@ -658,7 +813,7 @@ mod tests {
     #[test]
     fn every_builtin_id_resolves_and_is_listed_once() {
         let mut ids: Vec<&str> = BUILTIN_EDITOR_THEMES.iter().map(|theme| theme.id).collect();
-        assert_eq!(ids.len(), 4);
+        assert_eq!(ids.len(), 6);
         ids.sort_unstable();
         let unique = ids.len();
         ids.dedup();
@@ -671,16 +826,18 @@ mod tests {
         assert!(!EditorThemeRegistry::is_builtin("nonsense"));
     }
 
-    /// Two of each, so that neither side of light/dark is the only one anybody
-    /// looked at — which is exactly how a palette that is unreadable on the
-    /// other side gets shipped.
+    /// Both sides are covered, so that neither is the only one anybody looked
+    /// at — which is exactly how a palette that is unreadable on the other side
+    /// gets shipped. The split is lopsided because the chrome table's is: the
+    /// six built-ins are the same six on both sides, and four of those six
+    /// published palettes are dark ones.
     #[test]
     fn the_builtin_editor_themes_cover_both_sides() {
         let dark = BUILTIN_EDITOR_THEMES
             .iter()
             .filter(|theme| theme.dark)
             .count();
-        assert_eq!(dark, 2);
+        assert_eq!(dark, 4);
         assert_eq!(BUILTIN_EDITOR_THEMES.len() - dark, 2);
     }
 
@@ -753,8 +910,8 @@ mod tests {
 
     #[test]
     fn editor_theme_file_round_trips_through_json() {
-        let theme = EditorTheme::tokyo_night();
-        let file = EditorThemeFile::from_theme("Tokyo Night", &theme);
+        let theme = EditorTheme::dracula();
+        let file = EditorThemeFile::from_theme("Dracula", &theme);
         let json = serde_json::to_string(&file).expect("serialize");
         // The Rust field is `r#type`; the key on disk has to be plain `type`.
         assert!(json.contains("\"type\""), "{json}");
@@ -769,6 +926,13 @@ mod tests {
 
     /// The format in the architecture document, byte for byte, has to load: it
     /// is what a user copying an example out of the docs will type.
+    ///
+    /// The example is deliberately a palette rudbman does *not* ship — folke's
+    /// Tokyo Night — because that is the situation the file format exists for,
+    /// and because a file named after a built-in would be skipped by the loader
+    /// rather than loaded. So there is nothing to compare it against slot for
+    /// slot; what is checked is that every key it spells is a key the format
+    /// knows, which is what a missing or misspelled one would show up as.
     #[test]
     fn the_documented_format_parses() {
         let json = r##"{
@@ -791,9 +955,18 @@ mod tests {
 
         let file: EditorThemeFile = serde_json::from_str(json).expect("parse");
         assert_eq!(file.name, "Tokyo Night");
-        // Which is where the built-in palette of that name came from, so the
-        // two have to agree slot for slot.
-        assert_eq!(file.to_theme(), EditorTheme::tokyo_night());
+        assert_eq!(file.version, 1);
+        assert!(file.dark);
+
+        // Every slot landed where it was written rather than on a fallback,
+        // which is what a key the document spells differently from the format
+        // would look like. `type` and `bracket_match` are checked by name
+        // because they are the two the Rust field names do not match.
+        let theme = file.to_theme();
+        assert_eq!(to_hex(theme.background), "#1a1b26");
+        assert_eq!(to_hex(theme.r#type), "#2ac3de");
+        assert_eq!(to_hex(theme.bracket_match), "#f7768e");
+        assert_eq!(EditorThemeFile::from_theme("Tokyo Night", &theme), file);
     }
 
     #[test]
@@ -843,7 +1016,7 @@ mod tests {
             let mut file = EditorThemeFile::from_theme(
                 "Typo",
                 &if dark {
-                    EditorTheme::tokyo_night()
+                    EditorTheme::gruvbox_dark()
                 } else {
                     EditorTheme::solarized_light()
                 },
