@@ -1372,7 +1372,9 @@ Target output size: around 50MB per platform.
 
 logman's `packaging/` is inherited. Linux gets a tar plus `install.sh` plus a
 `.desktop` file, macOS gets an `.app` bundle (`Contents/runtime/`), and Windows
-gets a zipped folder — the executable is the launcher.
+gets two things for the same tree: a zipped folder and an Inno Setup installer
+(`packaging/windows/rudbman.iss`). In every shape the executable is the
+launcher.
 
 The archive layout is dictated by §4.1's search order. Relative to the
 executable, the bridge JAR goes to `lib/rudbman-bridge.jar` (`<exe_dir>/lib`,
@@ -1380,11 +1382,13 @@ or `<exe_dir>/../lib` inside the macOS bundle) and the runtime goes beside it
 (`<exe_dir>/runtime`, or `<exe_dir>/../runtime` on macOS):
 
 ```
-rudbman-vX.Y.Z-<target>/          # Windows and Linux
+rudbman-vX.Y.Z-<target>/          # Windows (zip and installer) and Linux
 ├── rudbman(.exe)
 ├── lib/rudbman-bridge.jar
 ├── runtime/                      # jlink output (§10.2)
 └── README.md (+ Linux: install.sh, .desktop, icons/)
+                                  # Windows installer only: unins000.exe,
+                                  # written into %LOCALAPPDATA%\Programs\rudbman
 
 rudbman.app/                      # macOS
 └── Contents/
@@ -1400,6 +1404,39 @@ directory is nested code to `codesign`, and sealing the bundle fails on an
 unsigned JAR. `Contents/lib/` is sealed as a plain resource instead — the
 first v0.1.0 release run failed exactly this way.
 
+**Why Windows ships twice.** The zip is not redundant and cannot be dropped:
+the in-app updater (`crates/rudbman-app/src/update.rs`) downloads that asset by
+name and unpacks it over the running install. What the zip cannot do is tell
+Windows anything. Unzipping leaves no entry under *Apps & features*, and that
+entry — the uninstall key the installer writes under
+`HKCU\…\CurrentVersion\Uninstall` — is precisely what the Windows Package
+Manager reads to decide which version is installed, whether an upgrade exists,
+and how to remove it. Without it a winget package cannot be validated, let
+alone upgraded. So the installer exists for winget, and the zip stays for the
+updater.
+
+The installer lays down the *same tree*, byte for byte, into
+`%LOCALAPPDATA%\Programs\rudbman` — a single recursive `[Files]` entry over the
+staged directory, not a curated list. That is forced by §4.1: `rudbman.exe` is a
+launcher that resolves `lib/rudbman-bridge.jar` and `runtime/` relative to
+`current_exe()`, so an installer that shipped only the executable would produce
+a program that opens its window and then dies on the first connection. It
+installs per user (`PrivilegesRequired=lowest`), so there is no UAC prompt and
+no elevated winget install, and it uninstalls only what it installed — settings,
+themes and the credential-store entries live outside `{app}` and survive. The
+`AppId` GUID in the script is pinned forever: winget records it as the package's
+`ProductCode`, and changing it would orphan every copy already on disk.
+
+Shipping twice means the two halves have to agree about what is installed, and
+they would not on their own: the in-app updater replaces files, while winget
+reads the `DisplayVersion` in that uninstall key. So after a successful update
+`update.rs` rewrites that one value, and does it under a guard — only when the
+key's `InstallLocation` canonicalises to the directory the running executable is
+in. A copy unpacked from the zip has no key and none is created; an installed
+copy and a portable copy on one machine cannot bump each other's recorded
+version. Without the guard a self-updating portable copy would mark the
+installed one up to date and remove it from `winget upgrade` permanently.
+
 Unlike logman's, the Linux `install.sh` installs not a single binary but **the
 whole tree** into `~/.local/share/rudbman/`, then creates a `~/.local/bin/rudbman`
 symlink. Because `current_exe()` resolves symlinks to their real path, the
@@ -1410,6 +1447,19 @@ cargo, in that order. The release job packages and then smoke-checks that
 `runtime/bin/java --list-modules` contains `jdk.charsets` and
 `jdk.unsupported`, and that the JAR and the executable are in their places —
 because a missing module does not surface until connect time (§10.2).
+
+The Windows installer gets the same treatment for the same reason, one step
+further: it is built from the tree that just passed, signed with the same
+self-signed certificate as the executable (`packaging/windows/sign.ps1`, shared
+by both so the retry-and-cleanup logic exists once), and then actually run —
+`/VERYSILENT` into a scratch directory — to confirm the three load-bearing
+paths arrived and that the uninstall key really is in the registry with this
+release's version. Everything the installer exists for is a side effect no file
+listing would show. After publishing, a `winget` job hands the installer URL to
+`wingetcreate`, which opens the pull request against `microsoft/winget-pkgs`;
+it skips silently without a `WINGET_PAT` secret, because the very first
+submission has to be made by hand from the manifests kept in
+`packaging/winget/` (see the README there).
 
 ### 10.4 Branches and releases
 

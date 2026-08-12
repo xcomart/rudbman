@@ -77,14 +77,23 @@ JVM bridge.
 
 ## Installing
 
-Download the archive for your platform from
+Download the build for your platform from
 [Releases](https://github.com/xcomart/rudbman/releases). **No JDK needed** —
-each archive carries a Java runtime built with `jlink`, and rudbman uses the
+every download carries a Java runtime built with `jlink`, and rudbman uses the
 one next to its executable.
 
-- **Windows** — unzip and run `rudbman.exe`. The executable is self-signed at
-  best, so SmartScreen may say "Windows protected your PC"; choose **More
-  info → Run anyway**.
+- **Windows** — two downloads, the same program inside.
+  - `…-setup.exe` is an installer. It installs into your user profile, so it
+    needs no administrator rights and raises no UAC prompt, and it adds a
+    Start-menu entry plus an **Apps & features** entry you can uninstall from
+    later. Uninstalling removes only the program: settings, themes and saved
+    connections stay.
+  - `….zip` is the same tree, portable. Unzip it wherever you like and run
+    `rudbman.exe` from inside the folder — keep the folder together, because
+    the executable finds its Java runtime and bridge JAR beside itself.
+
+  Either way the executable is self-signed at best, so SmartScreen may say
+  "Windows protected your PC"; choose **More info → Run anyway**.
 - **macOS** — unpack the `.tar.gz` and drag `rudbman.app` to Applications.
   The bundle is ad-hoc signed rather than notarized, so Gatekeeper quarantines
   it on arrival: the first launch needs **right-click → Open** instead of a
