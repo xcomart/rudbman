@@ -26,7 +26,7 @@ Installers:
   # The winget-pkgs PR pipeline downloads the URL and compares, so a wrong hash
   # fails validation. `wingetcreate update` computes it by itself for every
   # release after this first hand-made one.
-  InstallerSha256: C664C7AF7CFD0DC01A4A47A20752080C9F955A35E63F0441FA3200E43AA9F019
+  InstallerSha256: 5CA78C0DFE36F9E49F4AABE662DB0891DBF8E0A202F2B9AD74E5AAA3B52551E6
   # Inno Setup appends "_is1" to the AppId when it writes its Uninstall registry key,
   # so this is packaging/windows/rudbman.iss's AppId plus that suffix. It is how winget
   # recognises an already-installed copy; see packaging/winget/README.md.
