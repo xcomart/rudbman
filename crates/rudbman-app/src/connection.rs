@@ -435,20 +435,83 @@ pub fn build_spec(
     spec
 }
 
-/// Opens a session for `profile`, tunnel and all.
+/// How long [`connect`] waits before its one-shot retry on "no route to
+/// host".
+///
+/// Long enough for macOS to finish re-evaluating the local-network
+/// permission it re-checks after every boot; short enough that a database
+/// that is genuinely unreachable does not keep the connect dialog hanging.
+const NO_ROUTE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Opens a session for `profile`, tunnel and all, retrying once if the first
+/// attempt is rejected with "no route to host".
 ///
 /// **Blocks.** Call it from `cx.background_spawn`.
+///
+/// Fresh after a reboot, macOS has to re-decide whether this app may touch
+/// the local network, and the socket connect a tunnel or a direct JDBC URL
+/// opens while that decision is still pending comes back `EHOSTUNREACH` —
+/// "No route to host" — even though the exact same address is reachable a
+/// moment later. [`is_no_route`] recognises that failure regardless of which
+/// layer raised it, and this wrapper waits [`NO_ROUTE_RETRY_DELAY`] and asks
+/// [`connect_once`] to try again, exactly once — a host that is actually
+/// unreachable fails the retry the same way and is reported as such.
+pub fn connect(
+    profile: &ConnectionProfile,
+    driver: &DriverDef,
+    credentials: &Credentials,
+    settings: &AppSettings,
+) -> Result<Connected, ConnectError> {
+    match connect_once(profile, driver, credentials, settings) {
+        Err(error) if is_no_route(&error) => {
+            log::warn!(
+                "connect: \"no route to host\" on the first attempt (likely macOS's \
+                 local-network permission still settling after boot); retrying once \
+                 after {NO_ROUTE_RETRY_DELAY:?}: {error}"
+            );
+            std::thread::sleep(NO_ROUTE_RETRY_DELAY);
+            connect_once(profile, driver, credentials, settings)
+        }
+        result => result,
+    }
+}
+
+/// Whether `error` is the "no route to host" (`EHOSTUNREACH`) failure that
+/// [`connect`] retries once.
+///
+/// Judged on [`ConnectError::message`] rather than the variant, because the
+/// same OS-level failure surfaces through two different variants depending
+/// on the path taken: an SSH tunnel reports it as [`ConnectError::Tunnel`]
+/// with the transport's "os error 65" text, while a direct JDBC connection
+/// reports it as [`ConnectError::Database`] with the driver's
+/// `NoRouteToHostException` message. [`ConnectError::NoDriverJar`] and
+/// [`ConnectError::JvmStart`] fail before any socket is touched, so they are
+/// rejected up front rather than pattern-matched against network wording.
+fn is_no_route(error: &ConnectError) -> bool {
+    match error {
+        ConnectError::NoDriverJar(_) | ConnectError::JvmStart(_) => false,
+        _ => error.message().to_lowercase().contains("no route to host"),
+    }
+}
+
+/// Opens a session for `profile`, tunnel and all — the work [`connect`]
+/// wraps with its one-shot "no route to host" retry.
+///
+/// **Blocks.** Called only from [`connect`], which is itself only ever
+/// called from `cx.background_spawn`.
 ///
 /// The order is architecture document §9.3 and is not negotiable: the tunnel
 /// first, then the port it actually bound, then the URL, then `OPEN_SESSION`.
 /// A failure anywhere after the tunnel came up releases the lease on the way
 /// out — an aborted connection that leaves a bastion channel open is a leak the
-/// user has no way to see, let alone close.
+/// user has no way to see, let alone close. That clean unwind is also what
+/// makes the retry in [`connect`] safe: a failed attempt leaves nothing
+/// behind for the next one to trip over.
 ///
 /// The JVM is started here rather than at application start-up: a user who
 /// never opens a connection never pays for a Java runtime, and a machine with
 /// no runtime at all only finds out in a dialog that is asking to connect.
-pub fn connect(
+fn connect_once(
     profile: &ConnectionProfile,
     driver: &DriverDef,
     credentials: &Credentials,
@@ -1289,5 +1352,36 @@ mod tests {
         assert!(message.contains("Connection refused"), "{message}");
         // Never the stack.
         assert!(!message.contains("at ..."), "{message}");
+    }
+
+    #[test]
+    fn no_route_to_host_is_recognised_from_either_layer() {
+        // The SSH tunnel path: `rudbman-ssh` surfaces the OS error as text.
+        assert!(is_no_route(&ConnectError::Tunnel(
+            "connect: No route to host (os error 65)".to_string()
+        )));
+        // A differently worded tunnel failure is not the same thing.
+        assert!(!is_no_route(&ConnectError::Tunnel(
+            "connect: Connection refused (os error 61)".to_string()
+        )));
+
+        // The direct JDBC path: the bridge's `NoRouteToHostException` message
+        // comes back inside a `BridgeError`.
+        let bridge: BridgeError = serde_json::from_str(
+            r#"{"kind":"io","sql_state":null,"vendor_code":0,
+                "message":"java.net.NoRouteToHostException: No route to host",
+                "causes":[],"stack":"at ..."}"#,
+        )
+        .expect("envelope");
+        assert!(is_no_route(&ConnectError::Database(bridge)));
+
+        // Variants that fail before any socket is touched are never it, even
+        // if their text happened to mention hosts or routes.
+        assert!(!is_no_route(&ConnectError::NoDriverJar(
+            "no route to host driver".to_string()
+        )));
+        assert!(!is_no_route(&ConnectError::JvmStart(
+            "no route to host".to_string()
+        )));
     }
 }
