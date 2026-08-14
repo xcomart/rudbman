@@ -53,10 +53,10 @@
 //!
 //! An unquoted identifier is normalized by the server before it is looked up:
 //! Oracle and H2 (and the generic profile, which follows the SQL standard) fold
-//! to upper case, PostgreSQL folds to lower case, and MySQL, SQL Server and
-//! SQLite preserve what they were given. So a name with a lower-case letter in
-//! it is quoted for Oracle, a name with an upper-case letter is quoted for
-//! PostgreSQL, and case is never a reason to quote for the other three.
+//! to upper case, PostgreSQL folds to lower case, and MySQL, MariaDB, SQL
+//! Server and SQLite preserve what they were given. So a name with a lower-case
+//! letter in it is quoted for Oracle, a name with an upper-case letter is quoted
+//! for PostgreSQL, and case is never a reason to quote for the other four.
 //!
 //! The test is ASCII-only, which is enough: a name with a non-ASCII letter has
 //! already been quoted by the rule above it.
@@ -67,7 +67,8 @@
 //!
 //! # Which quote character
 //!
-//! A double quote everywhere except MySQL, which needs a backtick: `"..."` is a
+//! A double quote everywhere except MySQL and MariaDB, which need a backtick:
+//! `"..."` is a
 //! *string literal* there unless the server runs in `ANSI_QUOTES` mode, which
 //! no client can see, so a double-quoted column name would silently become a
 //! comparison against its own text. A quote character inside the name is
@@ -90,7 +91,7 @@ enum Folding {
     Upper,
     /// Folded to lower case: PostgreSQL.
     Lower,
-    /// Stored as written: MySQL, SQL Server, SQLite.
+    /// Stored as written: MySQL, MariaDB, SQL Server, SQLite.
     Preserve,
 }
 
@@ -171,9 +172,12 @@ impl Dialect {
 
     /// Quotes unconditionally, doubling any quote character in the name.
     fn quote_always(&self, name: &str) -> String {
-        // `double_quoted_strings` is MySQL and only MySQL: it says a double
-        // quote opens a string here, which is exactly the reason to reach for
-        // the backtick. H2 and SQLite accept backticks too, but for them the
+        // `double_quoted_strings` is the MySQL family and only it: it says a
+        // double quote opens a string here, which is exactly the reason to
+        // reach for the backtick. It is also why this asks the `Syntax` row
+        // rather than the id — MariaDB shares MySQL's row, and a list of ids
+        // would have to grow every time the family does. H2 and SQLite accept
+        // backticks too, but for them the
         // double quote is the native form and the one their catalogs speak.
         let quote = if self.syntax().double_quoted_strings {
             '`'
@@ -197,7 +201,9 @@ impl Dialect {
         match self.id() {
             DialectId::Generic | DialectId::H2 | DialectId::Oracle => Folding::Upper,
             DialectId::Postgres => Folding::Lower,
-            DialectId::MySql | DialectId::MsSql | DialectId::Sqlite => Folding::Preserve,
+            DialectId::MySql | DialectId::MariaDb | DialectId::MsSql | DialectId::Sqlite => {
+                Folding::Preserve
+            }
         }
     }
 }

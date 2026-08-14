@@ -19,8 +19,13 @@ use crate::keywords::WordTables;
 /// The SQL dialects rudbman distinguishes.
 ///
 /// The names match the `dialect` strings that appear in `drivers.json`. MariaDB
-/// is not separate: it shares [`DialectId::MySql`], as it shares MySQL's
-/// grammar.
+/// is one of them, and was not always: it read as an alias for
+/// [`DialectId::MySql`] until a container test sent MySQL's
+/// `ALTER TABLE t DROP CHECK c` to a MariaDB 11 and got SQLSTATE 42000 back.
+/// The fork kept MySQL's *lexical* rules to the letter — this file's [`Syntax`]
+/// row and its word tables are shared, not copied — and differs in exactly one
+/// spelling of the [`ddl`](crate::ddl) table, which is a row that record can
+/// hold only if MariaDB has an id to hold it under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DialectId {
     /// Plain SQL: the common word tables and nothing vendor-specific.
@@ -31,8 +36,10 @@ pub enum DialectId {
     H2,
     /// PostgreSQL.
     Postgres,
-    /// MySQL, and MariaDB with it.
+    /// MySQL.
     MySql,
+    /// MariaDB: MySQL's lexis, and its own `DROP CONSTRAINT`.
+    MariaDb,
     /// SQLite.
     Sqlite,
     /// Oracle Database.
@@ -51,6 +58,7 @@ impl DialectId {
             Self::H2 => "h2",
             Self::Postgres => "postgres",
             Self::MySql => "mysql",
+            Self::MariaDb => "mariadb",
             Self::Sqlite => "sqlite",
             Self::Oracle => "oracle",
             Self::MsSql => "mssql",
@@ -183,6 +191,10 @@ impl Syntax {
 
     /// MySQL and MariaDB: `#` comments, the `-- ` rule, backslash escapes,
     /// backticks, `"..."` as a string, `@vars`.
+    ///
+    /// One row for two dialects rather than two identical ones. The fork's
+    /// disagreement with MySQL is a `DROP` spelling, and nothing a lexer can
+    /// see.
     const MYSQL: Self = Self {
         hash_line_comment: true,
         dash_dash_needs_space: true,
@@ -283,9 +295,17 @@ impl Dialect {
         syntax: &Syntax::POSTGRES,
         words: WordTables::POSTGRES,
     };
-    /// MySQL, and MariaDB with it.
+    /// MySQL.
     pub const MYSQL: Self = Self {
         id: DialectId::MySql,
+        syntax: &Syntax::MYSQL,
+        words: WordTables::MYSQL,
+    };
+    /// MariaDB, which borrows MySQL's lexis and its words and keeps only its
+    /// own id — the id is what the [`ddl`](crate::ddl) table hangs its one
+    /// differing spelling on.
+    pub const MARIADB: Self = Self {
+        id: DialectId::MariaDb,
         syntax: &Syntax::MYSQL,
         words: WordTables::MYSQL,
     };
@@ -312,9 +332,10 @@ impl Dialect {
     ///
     /// Case-insensitive, tolerant of surrounding whitespace, and forgiving of
     /// the spellings people write by hand: `postgresql`, `pgsql` and `pg` all
-    /// mean [`DialectId::Postgres`], `mariadb` means [`DialectId::MySql`],
-    /// `sqlserver` and `tsql` mean [`DialectId::MsSql`]. Anything else is
-    /// [`Self::GENERIC`].
+    /// mean [`DialectId::Postgres`], and `sqlserver` and `tsql` both mean
+    /// [`DialectId::MsSql`]. Anything else is [`Self::GENERIC`]. `mariadb` is
+    /// *not* among them any more: it names [`DialectId::MariaDb`], which is a
+    /// dialect of its own.
     pub fn from_id(id: &str) -> Self {
         let id = id.trim();
         // Two dozen candidates at most, all short: a linear scan of
@@ -330,7 +351,7 @@ impl Dialect {
             ("pgsql", Dialect::POSTGRES),
             ("pg", Dialect::POSTGRES),
             ("mysql", Dialect::MYSQL),
-            ("mariadb", Dialect::MYSQL),
+            ("mariadb", Dialect::MARIADB),
             ("sqlite", Dialect::SQLITE),
             ("sqlite3", Dialect::SQLITE),
             ("oracle", Dialect::ORACLE),
@@ -387,6 +408,7 @@ mod tests {
             Dialect::H2,
             Dialect::POSTGRES,
             Dialect::MYSQL,
+            Dialect::MARIADB,
             Dialect::SQLITE,
             Dialect::ORACLE,
             Dialect::MSSQL,
@@ -395,11 +417,27 @@ mod tests {
         }
     }
 
+    /// MariaDB is its own dialect and borrows MySQL's lexis: everything a
+    /// lexer asks about answers the same, and the id does not.
+    #[test]
+    fn mariadb_is_mysqls_lexis_under_an_id_of_its_own() {
+        assert_ne!(Dialect::MARIADB, Dialect::MYSQL);
+        assert_eq!(Dialect::MARIADB.syntax(), Dialect::MYSQL.syntax());
+        for word in ["straight_join", "auto_increment", "select"] {
+            assert!(Dialect::MARIADB.is_keyword(word), "{word}");
+        }
+        for word in ["mediumtext", "varchar"] {
+            assert!(Dialect::MARIADB.is_type(word), "{word}");
+        }
+    }
+
     /// The forgiving half of [`Dialect::from_id`].
     #[test]
     fn aliases_and_unknown_ids() {
         assert_eq!(Dialect::from_id("PostgreSQL"), Dialect::POSTGRES);
-        assert_eq!(Dialect::from_id("  MariaDB "), Dialect::MYSQL);
+        // `mariadb` is a name rather than an alias, and still tolerates the
+        // whitespace and the capitals a hand-edited file comes with.
+        assert_eq!(Dialect::from_id("  MariaDB "), Dialect::MARIADB);
         assert_eq!(Dialect::from_id("SqlServer"), Dialect::MSSQL);
         assert_eq!(Dialect::from_id("db2"), Dialect::GENERIC);
         assert_eq!(Dialect::from_id(""), Dialect::GENERIC);

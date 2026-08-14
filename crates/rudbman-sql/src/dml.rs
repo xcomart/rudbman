@@ -534,8 +534,11 @@ fn insert(
 /// The dialect's way of saying "a row of nothing but defaults".
 fn empty_insert(table: &str, dialect: &Dialect) -> Result<String, DmlError> {
     match dialect.id() {
-        // MySQL rejects `DEFAULT VALUES` and spells it with two empty lists.
-        DialectId::MySql => Ok(format!("INSERT INTO {table} () VALUES ()")),
+        // The MySQL family rejects `DEFAULT VALUES` and spells it with two
+        // empty lists. MariaDB is named beside MySQL rather than left to the
+        // fallback below: it inherited the refusal along with the grammar, and
+        // the arm it would otherwise fall into writes the form neither takes.
+        DialectId::MySql | DialectId::MariaDb => Ok(format!("INSERT INTO {table} () VALUES ()")),
         // Oracle has neither form. Its `INSERT INTO t VALUES (DEFAULT, ...)`
         // needs one `DEFAULT` per column, and a column without a default is a
         // different statement again — a shape only the catalog could build, and

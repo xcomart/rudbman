@@ -794,9 +794,11 @@ const BUILTIN_DRIVERS: &[BuiltinDriver] = &[
         maven: "org.mariadb.jdbc:mariadb-java-client:3.5.1",
         url_template: "jdbc:mariadb://{host}:{port}/{database}",
         default_port: Some(3306),
-        // MariaDB's SQL surface is MySQL's, so it shares the dialect rather
-        // than duplicating one.
-        dialect: "mysql",
+        // MariaDB read as `mysql` until a server disagreed: the fork spells a
+        // check-constraint drop `DROP CONSTRAINT` where MySQL spells it
+        // `DROP CHECK`, and answers a syntax error for MySQL's. It has a
+        // dialect of its own now, which is MySQL's in every other spelling.
+        dialect: "mariadb",
     },
     BuiltinDriver {
         id: "sqlite",
@@ -1479,6 +1481,30 @@ mod tests {
         assert_eq!(port("h2"), Some(9092));
         // SQLite is a file, not a service.
         assert_eq!(port("sqlite"), None);
+    }
+
+    /// Every built-in names the dialect `rudbman-sql` writes for its product.
+    ///
+    /// MariaDB is the row worth pinning. It said `mysql` until a container
+    /// test sent MySQL's `ALTER TABLE t DROP CHECK c` to a real MariaDB and
+    /// got a syntax error, and this field is where that fix reaches an actual
+    /// connection: everything downstream reads the dialect from here.
+    #[test]
+    fn builtin_dialects_are_the_products_own() {
+        let builtins = DriverDef::builtins();
+        let dialect = |id: &str| {
+            builtins
+                .iter()
+                .find(|d| d.id == id)
+                .unwrap_or_else(|| panic!("no built-in driver `{id}`"))
+                .dialect
+                .clone()
+        };
+        assert_eq!(dialect("postgresql"), "postgres");
+        assert_eq!(dialect("mysql"), "mysql");
+        assert_eq!(dialect("mariadb"), "mariadb");
+        assert_eq!(dialect("oracle-thin"), "oracle");
+        assert_eq!(dialect("mssql"), "mssql");
     }
 
     #[test]
