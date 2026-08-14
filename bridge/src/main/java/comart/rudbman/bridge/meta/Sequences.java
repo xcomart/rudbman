@@ -9,6 +9,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * {@code DESCRIBE kind: "sequences"}.
@@ -120,27 +121,49 @@ public final class Sequences {
         }
     }
 
+    /**
+     * Every label this reader knows, across all four catalogue layouts.
+     *
+     * <p>The row is fetched as a set rather than field by field because a row
+     * has to be read left to right - see {@link RsView} - and these products do
+     * not agree on what that order is: H2 puts {@code BASE_VALUE} before
+     * {@code CACHE} and Oracle puts {@code CACHE_SIZE} before
+     * {@code LAST_NUMBER}, so the same two output fields want opposite read
+     * orders. {@link RsView#strs} sorts by whatever positions this result set
+     * turned out to have, which leaves the composition below free to list the
+     * fields in the order the UI wants them.
+     */
+    private static final String[] LABELS = {
+        "SEQUENCE_CATALOG", "SEQUENCE_SCHEMA", "SEQUENCE_OWNER", "DB_NAME",
+        "SEQUENCE_NAME", "DATA_TYPE", "START_VALUE", "START_WITH",
+        "MINIMUM_VALUE", "MIN_VALUE", "MAXIMUM_VALUE", "MAX_VALUE",
+        "INCREMENT", "INCREMENT_BY", "CYCLE_OPTION", "CYCLE_FLAG", "CYCLE",
+        "CACHE", "CACHE_SIZE", "BASE_VALUE", "LAST_NUMBER", "CURRENT_VALUE",
+        "REMARKS", "COMMENT",
+    };
+
     private static JsonObject row(RsView v) throws SQLException {
+        Map<String, String> r = v.strs(LABELS);
         JsonObject o = new JsonObject();
-        o.addProperty("catalog", first(v, "SEQUENCE_CATALOG"));
-        o.addProperty("schema", first(v, "SEQUENCE_SCHEMA", "SEQUENCE_OWNER", "DB_NAME"));
-        o.addProperty("name", first(v, "SEQUENCE_NAME"));
-        o.addProperty("data_type", first(v, "DATA_TYPE"));
-        o.addProperty("start_value", first(v, "START_VALUE", "START_WITH"));
-        o.addProperty("min_value", first(v, "MINIMUM_VALUE", "MIN_VALUE"));
-        o.addProperty("max_value", first(v, "MAXIMUM_VALUE", "MAX_VALUE"));
-        o.addProperty("increment", first(v, "INCREMENT", "INCREMENT_BY"));
-        o.addProperty("cycle", yesNo(first(v, "CYCLE_OPTION", "CYCLE_FLAG", "CYCLE")));
-        o.addProperty("cache", first(v, "CACHE", "CACHE_SIZE"));
-        o.addProperty("current_value", first(v, "BASE_VALUE", "LAST_NUMBER", "CURRENT_VALUE"));
-        o.addProperty("remarks", first(v, "REMARKS", "COMMENT"));
+        o.addProperty("catalog", first(r, "SEQUENCE_CATALOG"));
+        o.addProperty("schema", first(r, "SEQUENCE_SCHEMA", "SEQUENCE_OWNER", "DB_NAME"));
+        o.addProperty("name", first(r, "SEQUENCE_NAME"));
+        o.addProperty("data_type", first(r, "DATA_TYPE"));
+        o.addProperty("start_value", first(r, "START_VALUE", "START_WITH"));
+        o.addProperty("min_value", first(r, "MINIMUM_VALUE", "MIN_VALUE"));
+        o.addProperty("max_value", first(r, "MAXIMUM_VALUE", "MAX_VALUE"));
+        o.addProperty("increment", first(r, "INCREMENT", "INCREMENT_BY"));
+        o.addProperty("cycle", yesNo(first(r, "CYCLE_OPTION", "CYCLE_FLAG", "CYCLE")));
+        o.addProperty("cache", first(r, "CACHE", "CACHE_SIZE"));
+        o.addProperty("current_value", first(r, "BASE_VALUE", "LAST_NUMBER", "CURRENT_VALUE"));
+        o.addProperty("remarks", first(r, "REMARKS", "COMMENT"));
         return o;
     }
 
-    /** @return the value of the first label this result set actually has */
-    private static String first(RsView v, String... labels) throws SQLException {
+    /** @return the value of the first label this row actually carried */
+    private static String first(Map<String, String> row, String... labels) {
         for (String label : labels) {
-            String s = v.str(label);
+            String s = row.get(label);
             if (s != null) {
                 return s;
             }

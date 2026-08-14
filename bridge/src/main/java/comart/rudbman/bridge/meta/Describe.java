@@ -173,25 +173,28 @@ public final class Describe {
             RsView v = new RsView(rs);
             while (rs.next()) {
                 JsonObject o = new JsonObject();
-                v.putStr(o, "catalog", "TABLE_CAT");
-                v.putStr(o, "schema", "TABLE_SCHEM");
-                v.putStr(o, "table", "TABLE_NAME");
-                v.putStr(o, "name", "COLUMN_NAME");
-                Integer type = v.i32("DATA_TYPE");
+                // getColumns column order, which the reads have to follow - see
+                // RsView. IS_NULLABLE is 18 and so comes after the default at 13,
+                // however oddly that reads next to the nullable code at 11.
+                v.putStr(o, "catalog", "TABLE_CAT");             // 1
+                v.putStr(o, "schema", "TABLE_SCHEM");            // 2
+                v.putStr(o, "table", "TABLE_NAME");              // 3
+                v.putStr(o, "name", "COLUMN_NAME");              // 4
+                Integer type = v.i32("DATA_TYPE");               // 5
                 o.addProperty("data_type", type);
                 o.addProperty("jdbc_type", type == null ? null : SqlTypes.name(type));
-                v.putStr(o, "type_name", "TYPE_NAME");
-                v.putI32(o, "size", "COLUMN_SIZE");
-                v.putI32(o, "digits", "DECIMAL_DIGITS");
-                v.putI32(o, "radix", "NUM_PREC_RADIX");
-                v.putI32(o, "nullable", "NULLABLE");
-                v.putYesNo(o, "is_nullable", "IS_NULLABLE");
-                v.putStr(o, "remarks", "REMARKS");
-                v.putStr(o, "default", "COLUMN_DEF");
-                v.putI32(o, "char_octet_length", "CHAR_OCTET_LENGTH");
-                v.putI32(o, "ordinal", "ORDINAL_POSITION");
-                v.putYesNo(o, "auto_increment", "IS_AUTOINCREMENT");
-                v.putYesNo(o, "generated", "IS_GENERATEDCOLUMN");
+                v.putStr(o, "type_name", "TYPE_NAME");           // 6
+                v.putI32(o, "size", "COLUMN_SIZE");              // 7
+                v.putI32(o, "digits", "DECIMAL_DIGITS");         // 9
+                v.putI32(o, "radix", "NUM_PREC_RADIX");          // 10
+                v.putI32(o, "nullable", "NULLABLE");             // 11
+                v.putStr(o, "remarks", "REMARKS");               // 12
+                v.putStr(o, "default", "COLUMN_DEF");            // 13
+                v.putI32(o, "char_octet_length", "CHAR_OCTET_LENGTH");  // 16
+                v.putI32(o, "ordinal", "ORDINAL_POSITION");      // 17
+                v.putYesNo(o, "is_nullable", "IS_NULLABLE");     // 18
+                v.putYesNo(o, "auto_increment", "IS_AUTOINCREMENT");    // 23
+                v.putYesNo(o, "generated", "IS_GENERATEDCOLUMN");       // 24
                 arr.add(o);
             }
         }

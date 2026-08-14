@@ -636,19 +636,23 @@ public final class Ddl {
                     // matches its neighbours too.
                     continue;
                 }
+                // getColumns column order, which the reads have to follow - see
+                // RsView. NULLABLE (11) and IS_NULLABLE (18) sit either side of
+                // the remarks and the default, so both are read where they fall
+                // and the flag they agree on is worked out afterwards.
                 Col c = new Col();
-                c.name = v.str("COLUMN_NAME");
-                c.typeName = v.str("TYPE_NAME");
-                c.dataType = v.i32("DATA_TYPE");
-                c.size = v.i32("COLUMN_SIZE");
-                c.digits = v.i32("DECIMAL_DIGITS");
-                Integer nullable = v.i32("NULLABLE");
-                Boolean isNullable = v.yesNo("IS_NULLABLE");
+                c.name = v.str("COLUMN_NAME");                  // 4
+                c.dataType = v.i32("DATA_TYPE");                // 5
+                c.typeName = v.str("TYPE_NAME");                // 6
+                c.size = v.i32("COLUMN_SIZE");                  // 7
+                c.digits = v.i32("DECIMAL_DIGITS");             // 9
+                Integer nullable = v.i32("NULLABLE");           // 11
+                c.remarks = v.str("REMARKS");                   // 12
+                c.def = v.str("COLUMN_DEF");                    // 13
+                Boolean isNullable = v.yesNo("IS_NULLABLE");    // 18
+                c.autoIncrement = Boolean.TRUE.equals(v.yesNo("IS_AUTOINCREMENT"));  // 23
                 c.notNull = isNullable != null ? !isNullable
                         : nullable != null && nullable == DatabaseMetaData.columnNoNulls;
-                c.def = v.str("COLUMN_DEF");
-                c.autoIncrement = Boolean.TRUE.equals(v.yesNo("IS_AUTOINCREMENT"));
-                c.remarks = v.str("REMARKS");
                 out.add(c);
             }
         }
@@ -679,10 +683,13 @@ public final class Ddl {
             RsView v = new RsView(rs);
             int fallbackSeq = 0;
             while (rs.next()) {
-                Integer seq = v.i32("KEY_SEQ");
-                ordered.put(seq != null ? seq : ++fallbackSeq, v.str("COLUMN_NAME"));
+                // getPrimaryKeys column order - see RsView.
+                String column = v.str("COLUMN_NAME");  // 4
+                Integer seq = v.i32("KEY_SEQ");        // 5
+                String pkName = v.str("PK_NAME");      // 6
+                ordered.put(seq != null ? seq : ++fallbackSeq, column);
                 if (name == null) {
-                    name = v.str("PK_NAME");
+                    name = pkName;
                 }
             }
         } catch (SQLException e) {
@@ -702,8 +709,19 @@ public final class Ddl {
             int anonymous = 0;
             String anonymousKey = null;
             while (rs.next()) {
-                Integer seq = v.i32("KEY_SEQ");
-                String fkName = v.str("FK_NAME");
+                // getImportedKeys column order - see RsView. The whole row goes
+                // into locals first because the grouping below reads the key
+                // sequence and the constraint name before the columns they
+                // order, and the result set will not be read backwards.
+                String pkCatalog = v.str("PKTABLE_CAT");     // 1
+                String pkSchema = v.str("PKTABLE_SCHEM");    // 2
+                String pkTable = v.str("PKTABLE_NAME");      // 3
+                String pkColumn = v.str("PKCOLUMN_NAME");    // 4
+                String fkColumn = v.str("FKCOLUMN_NAME");    // 8
+                Integer seq = v.i32("KEY_SEQ");              // 9
+                Integer updateRule = v.i32("UPDATE_RULE");   // 10
+                Integer deleteRule = v.i32("DELETE_RULE");   // 11
+                String fkName = v.str("FK_NAME");            // 12
                 String key;
                 if (fkName != null && !fkName.isEmpty()) {
                     key = fkName;
@@ -718,15 +736,15 @@ public final class Ddl {
                 Fk fk = byName.computeIfAbsent(key, k -> new Fk());
                 if (fk.pkTable == null) {
                     fk.name = fkName;
-                    fk.pkCatalog = v.str("PKTABLE_CAT");
-                    fk.pkSchema = v.str("PKTABLE_SCHEM");
-                    fk.pkTable = v.str("PKTABLE_NAME");
-                    fk.updateRule = v.i32("UPDATE_RULE");
-                    fk.deleteRule = v.i32("DELETE_RULE");
+                    fk.pkCatalog = pkCatalog;
+                    fk.pkSchema = pkSchema;
+                    fk.pkTable = pkTable;
+                    fk.updateRule = updateRule;
+                    fk.deleteRule = deleteRule;
                 }
                 int at = seq != null ? seq : fk.fkCols.size() + 1;
-                fk.fkCols.put(at, v.str("FKCOLUMN_NAME"));
-                fk.pkCols.put(at, v.str("PKCOLUMN_NAME"));
+                fk.fkCols.put(at, fkColumn);
+                fk.pkCols.put(at, pkColumn);
             }
         } catch (SQLException e) {
             LOG.log(Level.FINE, "no foreign key metadata", e);
@@ -747,21 +765,26 @@ public final class Ddl {
         try (ResultSet rs = dbm.getIndexInfo(catalog, schema, table, false, true)) {
             RsView v = new RsView(rs);
             while (rs.next()) {
-                Integer type = v.i32("TYPE");
+                // getIndexInfo column order - see RsView. The row is taken whole
+                // before any of it is judged: the statistics row and the unnamed
+                // index are both rejected on columns that sit right of ones read
+                // after them, and a rejected row costs nothing but the reads.
+                Boolean nonUnique = v.bool("NON_UNIQUE");        // 4
+                String name = v.str("INDEX_NAME");               // 6
+                Integer type = v.i32("TYPE");                    // 7
+                Integer ordinal = v.i32("ORDINAL_POSITION");     // 8
+                String col = v.str("COLUMN_NAME");               // 9
+                String dir = v.str("ASC_OR_DESC");               // 10
                 if (type != null && type == DatabaseMetaData.tableIndexStatistic) {
                     // A statistics row is a row count, not an index.
                     continue;
                 }
-                String name = v.str("INDEX_NAME");
                 if (name == null || name.isEmpty()) {
                     continue;
                 }
                 Idx ix = byName.computeIfAbsent(name, k -> new Idx());
                 ix.name = name;
-                Boolean nonUnique = v.bool("NON_UNIQUE");
                 ix.unique = nonUnique != null && !nonUnique;
-                Integer ordinal = v.i32("ORDINAL_POSITION");
-                String col = v.str("COLUMN_NAME");
                 if (col == null) {
                     // A function-based or expression index; JDBC gives no
                     // expression text, so the index cannot be reproduced.
@@ -770,7 +793,6 @@ public final class Ddl {
                 }
                 int at = ordinal != null ? ordinal : ix.cols.size() + 1;
                 ix.cols.put(at, col);
-                String dir = v.str("ASC_OR_DESC");
                 if (dir != null) {
                     ix.order.put(at, dir);
                 }

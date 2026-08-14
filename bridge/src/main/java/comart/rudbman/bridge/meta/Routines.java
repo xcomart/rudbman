@@ -71,16 +71,23 @@ public final class Routines {
             RsView v = new RsView(rs);
             while (rs.next()) {
                 JsonObject o = new JsonObject();
-                v.putStr(o, "catalog", "PROCEDURE_CAT");
-                v.putStr(o, "schema", "PROCEDURE_SCHEM");
-                v.putStr(o, "name", "PROCEDURE_NAME");
-                v.putStr(o, "specific_name", "SPECIFIC_NAME");
-                v.putStr(o, "remarks", "REMARKS");
-                Integer type = v.i32("PROCEDURE_TYPE");
+                // getProcedures column order, which the reads have to follow -
+                // see RsView. The specific name is column 9, so it cannot be
+                // fetched next to the name at 3 the way the output lists them,
+                // and both go into locals because the join below wants them a
+                // second time and a column may only be read once.
+                v.putStr(o, "catalog", "PROCEDURE_CAT");   // 1
+                v.putStr(o, "schema", "PROCEDURE_SCHEM");  // 2
+                String routine = v.str("PROCEDURE_NAME");  // 3
+                String remarks = v.str("REMARKS");         // 7
+                Integer type = v.i32("PROCEDURE_TYPE");    // 8
+                String specific = v.str("SPECIFIC_NAME");  // 9
+                o.addProperty("name", routine);
+                o.addProperty("specific_name", specific);
+                o.addProperty("remarks", remarks);
                 o.addProperty("type", type);
                 o.addProperty("type_name", procedureType(type));
-                o.add("parameters", params.forRoutine(v.str("SPECIFIC_NAME"),
-                        v.str("PROCEDURE_NAME")));
+                o.add("parameters", params.forRoutine(specific, routine));
                 arr.add(o);
             }
         }
@@ -111,16 +118,19 @@ public final class Routines {
             RsView v = new RsView(rs);
             while (rs.next()) {
                 JsonObject o = new JsonObject();
-                v.putStr(o, "catalog", "FUNCTION_CAT");
-                v.putStr(o, "schema", "FUNCTION_SCHEM");
-                v.putStr(o, "name", "FUNCTION_NAME");
-                v.putStr(o, "specific_name", "SPECIFIC_NAME");
-                v.putStr(o, "remarks", "REMARKS");
-                Integer type = v.i32("FUNCTION_TYPE");
+                // getFunctions column order, as in procedures above.
+                v.putStr(o, "catalog", "FUNCTION_CAT");    // 1
+                v.putStr(o, "schema", "FUNCTION_SCHEM");   // 2
+                String routine = v.str("FUNCTION_NAME");   // 3
+                String remarks = v.str("REMARKS");         // 4
+                Integer type = v.i32("FUNCTION_TYPE");     // 5
+                String specific = v.str("SPECIFIC_NAME");  // 6
+                o.addProperty("name", routine);
+                o.addProperty("specific_name", specific);
+                o.addProperty("remarks", remarks);
                 o.addProperty("type", type);
                 o.addProperty("type_name", functionType(type));
-                o.add("parameters", params.forRoutine(v.str("SPECIFIC_NAME"),
-                        v.str("FUNCTION_NAME")));
+                o.add("parameters", params.forRoutine(specific, routine));
                 arr.add(o);
             }
         }
@@ -163,31 +173,38 @@ public final class Routines {
             String catPrefix = procedure ? "PROCEDURE_" : "FUNCTION_";
             while (rs.next()) {
                 JsonObject p = new JsonObject();
-                v.putStr(p, "name", "COLUMN_NAME");
-                Integer mode = v.i32("COLUMN_TYPE");
+                // Both parameter result sets have to be read in column order -
+                // see RsView - and the two number their columns differently
+                // past the remarks, so the ordinals below are given as
+                // procedures / functions. The routine name is column 3, left of
+                // everything else, so it is taken first even though it is only
+                // wanted for the grouping at the end. getFunctionColumns has no
+                // COLUMN_DEF at all, which RsView reports as an absent label.
+                String routine = v.str(catPrefix + "NAME");   // 3
+                v.putStr(p, "name", "COLUMN_NAME");           // 4
+                Integer mode = v.i32("COLUMN_TYPE");          // 5
                 p.addProperty("mode", mode);
                 p.addProperty("mode_name", procedure ? procedureMode(mode) : functionMode(mode));
-                Integer type = v.i32("DATA_TYPE");
+                Integer type = v.i32("DATA_TYPE");            // 6
                 p.addProperty("data_type", type);
                 p.addProperty("jdbc_type", type == null ? null : SqlTypes.name(type));
-                v.putStr(p, "type_name", "TYPE_NAME");
-                v.putI32(p, "precision", "PRECISION");
-                v.putI32(p, "length", "LENGTH");
-                v.putI32(p, "scale", "SCALE");
-                v.putI32(p, "radix", "RADIX");
-                v.putI32(p, "nullable", "NULLABLE");
-                v.putYesNo(p, "is_nullable", "IS_NULLABLE");
-                v.putStr(p, "remarks", "REMARKS");
-                v.putStr(p, "default", "COLUMN_DEF");
-                v.putI32(p, "ordinal", "ORDINAL_POSITION");
+                v.putStr(p, "type_name", "TYPE_NAME");        // 7
+                v.putI32(p, "precision", "PRECISION");        // 8
+                v.putI32(p, "length", "LENGTH");              // 9
+                v.putI32(p, "scale", "SCALE");                // 10
+                v.putI32(p, "radix", "RADIX");                // 11
+                v.putI32(p, "nullable", "NULLABLE");          // 12
+                v.putStr(p, "remarks", "REMARKS");            // 13
+                v.putStr(p, "default", "COLUMN_DEF");         // 14 / absent
+                v.putI32(p, "ordinal", "ORDINAL_POSITION");   // 18 / 15
+                v.putYesNo(p, "is_nullable", "IS_NULLABLE");  // 19 / 16
+                String specific = v.str("SPECIFIC_NAME");     // 20 / 17
 
-                String specific = v.str("SPECIFIC_NAME");
-                String name = v.str(catPrefix + "NAME");
                 if (specific != null) {
                     out.bySpecific.computeIfAbsent(specific, k -> new JsonArray()).add(p);
                 }
-                if (name != null) {
-                    out.byName.computeIfAbsent(name, k -> new JsonArray()).add(p);
+                if (routine != null) {
+                    out.byName.computeIfAbsent(routine, k -> new JsonArray()).add(p);
                 }
             }
         } catch (SQLException | RuntimeException | AbstractMethodError e) {
