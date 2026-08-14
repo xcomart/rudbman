@@ -6,7 +6,8 @@ the work up. The design and the contracts all live in
 work has come, what is left, and how work is done in this repository**. It is
 updated whenever a milestone ends.
 
-Last updated: 2026-08-11 (after structure editing, §7.10).
+Last updated: 2026-08-14 (after container verification against all five
+products).
 
 ## Where things stand
 
@@ -30,7 +31,7 @@ Last updated: 2026-08-11 (after structure editing, §7.10).
 | Context menus (PR #7) | done | A right-click menu on every surface: the widgets learn only the gesture and emit an event, while the app owns the menu, the labels and the commands, because the widget layer carries no user-facing strings (§7.8). Rows that cannot run right now are drawn greyed rather than left out, so the menu doubles as the surface's documentation. Menus are described as MenuRow lists before they are drawn, and the tests read the description instead of clicking computed pixels. Escape closes a menu ahead of everything else — which uncovered and fixed the editor's find-bar binding swallowing the key with the bar shut |
 | Monospace font fix | done | The literal family `monospace` is a fontconfig generic that only Linux resolves; on Windows every surface asking for it logged an error and fell back to the proportional system font. The app now resolves the first installed candidate per OS (Windows: Cascadia Mono through Courier New) and falls back to the alias where nothing matches |
 | Table data editing, phase 1 (§7.9) | done | `PaneItem::TableData` plus `DataPane` — `SELECT *` at the settings' fetch size, paged by the query pane's own cursor walk (moved into `query_source` so both use one), sorted by an appended `ORDER BY`, opened from the explorer row and the detail header. `rudbman-sql::dml` (`plan_edits`: one `UPDATE`/`DELETE`/`INSERT` per row, deletes then updates then inserts, every value a bind parameter and every name through `quote_ident`). `data_edit` — the staging buffer keyed by base row index, the overlay the grid draws through, the `java.sql.Types` → bind-form table, and the planner that turns one into the other. The apply: the whole batch shown before any of it runs (which is the write confirmation, by superset), then autocommit off, one `execute` each, a row count of exactly 1 required of every `UPDATE` and `DELETE`, commit, reload — and on any failure a rollback *before* autocommit is restored. Proved end to end against H2 on both sides: the pane's own suite, and `rudbman-jdbc`'s `tests/h2.rs` for the wire mechanics |
-| Container verification, PostgreSQL and MySQL | done | `docker/compose.yml` (pinned `postgres:17` and `mysql:8.4` on 55432/33306 so a developer's own server is not shadowed; 8.4 because `DROP CHECK` needs 8.0.16+), a `drivers` configuration and task in `bridge/build.gradle` that fills the Gradle cache without claiming the Java suite uses those drivers, `crates/rudbman-jdbc/tests/containers.rs` (15 tests, opt-in, skipping green when the URLs are unset), and a Linux-only `containers` CI job so it keeps running. **Two claims of §7.10 confirmed against servers**: MySQL's `MODIFY COLUMN` really does restate the whole definition — the test sends the counterfactual by hand and watches `NOT NULL` and the default silently vanish — and its four separate constraint-drop spellings all work. **One claim refuted**: `FOREIGN KEY (c) REFERENCES parent` with no column list, which the document said "every product accepts", is refused by MySQL with error 1239; the generator now refuses that shape for MySQL by name (`Unsupported::ReferenceWithoutColumns`) instead of writing a statement the server will always reject. §7.9's driver-metadata questions were settled the same way — pgjdbc answers `""` for schema *and* catalog and reports a column's alias as `getColumnName`, and Connector/J does *not* report a table alias by default |
+| Container verification, all five products | done | `docker/compose.yml` grew from two services to five — `postgres:17`, `mysql:8.4`, `mariadb:11`, `mcr.microsoft.com/mssql/server:2022-latest` and `gvenzl/oracle-free:23-slim-faststart`, on 55432/33306/53306/51433/51521 so a developer's own servers are never shadowed — and `crates/rudbman-jdbc/tests/containers.rs` grew with it, from 15 tests to 38, every §7.10 DDL claim now checked against all five by writing the statement and reading the catalogue back. CI's `containers` job runs all five services. **Two bugs turned up and were fixed, not just documented**: MariaDB rejects `ALTER TABLE ... DROP CHECK` outright (error 1064) where MySQL accepts it, so the generator gained a `DialectId::MariaDb` distinct from MySQL — `DropStyle::PerKind { check }` now carries a MariaDB row that spells the same drop `DROP CONSTRAINT` instead (`ddl.rs`). Separately, the bridge was reading JDBC metadata `ResultSet`s out of column order, which every driver tried so far tolerated except Oracle's: describing a table with a defaulted column threw `ORA-17027`. Eight read paths in `bridge/src/main/java/comart/rudbman/bridge/meta/` (`Describe`'s columns, three in `Routines`, four in `Ddl`, and `Sequences`) now read every `ResultSet` by ascending ordinal. §7.9's driver-metadata picture is now complete rather than PostgreSQL/MySQL-only: pgjdbc answers `""` for schema *and* catalog and reports a column's alias as `getColumnName`; Connector/J does *not* report a table alias by default; MariaDB Connector/J behaves like Connector/J, not like pgjdbc; and mssql-jdbc and ojdbc11 answer `""` for the **table** itself on an ordinary column, so query-result editing's gate (§7.9) can never offer editing at all on SQL Server or Oracle — which is the gate's read-only default working as designed, not a hole in it |
 | Editing a query result (§7.9, "Editing a query result") | done | The apply machinery lifted out of `data_pane` into `row_apply` first, so the staging buffer, the planner, the batch, the preview and the transaction ordering (rollback *before* autocommit is restored) exist once rather than twice — `apply_batch` and `unwind` moved byte for byte. Then the gate in `query.rs`: a pure `source_table(&[ColumnInfo])` over metadata normalised for JDBC's empty-string-means-unknown, every naming column agreeing on the whole `(catalog, schema, table)` triple, at least one naming, and the primary key present in full through the same `key_index` the statement writer uses. Rows draw immediately; the key is a second round trip that flips the grid writable, guarded by the generation *and* the result tab's id. Updates and deletes only. Whether a column the driver named no table for is writable became `TableSource::{Known, Inferred}` — the data pane names its catalogue table in the statement whatever the columns say, so a nameless column stays writable there, and only an inferred table makes one a computed column. Fixed on the way: `mark_primary_keys` matched the heading where `plan_apply` matched the catalogue name, so `SELECT id AS pk` drew the key unmarked and wrote a `WHERE` from it anyway; they now ask one function |
 | Table creation (§7.10, "Creating a table") | done | `plan_create` beside `plan_alter` — one statement, multi-line because it is read before it is run, and the only place a `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` is born, since `plan_alter` drops constraints and never adds one. A table-level constraint turned out byte-identical on all seven dialects, so `AlterStyle` gained no row. No auto-increment flag and no `IF NOT EXISTS` (Oracle has neither). The pane takes a second mode rather than a second surface — a table being created is a table whose current shape is empty, so the column list, the form, the live batch and the apply are the ones already there, diverging in eight named places. Two calls worth knowing: the "no name"/"no columns" refusals are held until the apply is asked for, because a pane just opened is in both states; and a refused create *keeps* what was typed, where a refused alter discards it — the discard rule is about what a committed statement invalidates, and a create that failed committed nothing. On success the pane becomes the editor for the table it made |
 | Structure editing (§7.10) | done | `rudbman-sql::ddl` — `plan_alter` over a diff that carries **both sides** of every changed column, because MySQL's `MODIFY`/`CHANGE` restates a whole definition and SQL Server's `ALTER COLUMN` resets nullability when the clause is omitted. Statements are plain strings (no server takes a `?` in DDL) and a type or a default is the user's own SQL, passed through unread. The per-product spellings are one flat record per dialect in the shape `Syntax` is one; what a product cannot express is refused by name and reason (SQLite's type/nullability/default and constraint drops, SQL Server's defaults) rather than generated and rejected. `struct_edit` — the staging model, pure and unit-tested: a draft equal to its snapshot is dropped rather than refused, and a dropped column discards any change staged against it. `PaneItem::TableStruct` plus `StructPane` — its own four `DESCRIBE`s (the panel keeps display strings, so nothing an editor needs survives in it), the PK's own backing index matched away by name *and* by covering the key's columns, one column edited at a time in a form rather than an input per cell, and the batch shown live and read-only before it can be run. The apply forces autocommit on and never calls rollback — MySQL and Oracle commit at every DDL statement — stops at the first refusal, and on **either** outcome discards and reloads, saying how far it got |
@@ -40,28 +41,34 @@ Last updated: 2026-08-11 (after structure editing, §7.10).
 - The branch flow is logman's: **work on dev, main takes PR merge commits
   only**. CI is a three-platform matrix and runs the bridge (Java) suite
   before the Rust one.
-- Test count (2026-08-11): roughly 1080 Rust plus 141 Java. That includes the
-  integration tests, which boot a real JVM and a real H2.
+- Test count (2026-08-14): roughly 1080 Rust plus 141 Java. That includes the
+  integration tests, which boot a real JVM and a real H2, and the 38 opt-in
+  container tests (`crates/rudbman-jdbc/tests/containers.rs`, up from 15).
 
 ## What is next
 
 The planned milestones (M0–M7) are all finished, and the first release is
 out. What remains can be taken in any order:
 
-1. **Verification against real databases**: **PostgreSQL and MySQL are done for
-   the DDL generator** — `docker/compose.yml` plus
-   `crates/rudbman-jdbc/tests/containers.rs`, opt-in through
-   `RUDBMAN_TEST_PG_URL`/`RUDBMAN_TEST_MYSQL_URL` (unset, every one of them
-   passes by doing nothing, which is what keeps `cargo test --workspace` green
-   without Docker) and run continuously by CI's Linux-only `containers` job.
+1. **Verification against real databases**: **all five products the workspace
+   targets are now done for the DDL generator** — PostgreSQL, MySQL, MariaDB,
+   SQL Server and Oracle, not just the original two. `docker/compose.yml`
+   plus `crates/rudbman-jdbc/tests/containers.rs` (38 tests, opt-in through
+   `RUDBMAN_TEST_PG_URL`/`RUDBMAN_TEST_MYSQL_URL`/`RUDBMAN_TEST_MARIADB_URL`/
+   `RUDBMAN_TEST_MSSQL_URL`/`RUDBMAN_TEST_ORACLE_URL` — unset, every one of
+   them passes by doing nothing, which is what keeps `cargo test --workspace`
+   green without Docker) run continuously by CI's Linux-only `containers` job.
    They send what `rudbman-sql` writes to a real server and read the catalogue
-   back, and they earned their keep immediately: see the foreign-key entry
-   below. What is still unverified against a live server: the **transfer and
-   backup** paths, everything **Oracle and SQL Server** (heavy images and
-   licensing — their §7.10 spellings remain reasoned-from-documentation, which
-   is exactly the state MySQL's was in when it turned out to be wrong), and how
-   Oracle, SQL Server and DB2 spell the upsert MERGE (a known gap, named in the
-   bridge README).
+   back, and they earned their keep: see the container-verification entry
+   above for the two bugs that surfaced only once Oracle and MariaDB joined
+   the suite — a syntax error MariaDB throws that MySQL does not, and a
+   metadata-ordering bug in the bridge that only Oracle's driver was strict
+   enough to expose. What is still unverified against a live server: the
+   **transfer and backup** paths (no container test drives `TransferJob` or
+   `BackupJob` against any of the five yet), and **DB2**, which has no
+   container in the suite and no built-in driver definition at all — how it,
+   Oracle and SQL Server spell the upsert `MERGE` remains a known gap, named
+   in the bridge README.
 2. **Open features**: the list below (the LOB viewer is the largest — §12.7
    needs a re-read strategy decided).
 

@@ -105,18 +105,23 @@ jobs:
   # they get a job.
   #
   # Linux only, because that is where GitHub's `services:` can run containers at
-  # all — and one runner is enough: what these tests check is what PostgreSQL and
-  # MySQL do with the SQL rudbman-sql writes, which is a property of the servers
-  # and the drivers, not of the machine asking. They are also the only tests that
-  # can check it: everything else in the workspace proves the generator writes
-  # the string it was expected to write, and this proves the string was right.
+  # all — and one runner is enough: what these tests check is what the five
+  # servers do with the SQL rudbman-sql writes, which is a property of the
+  # servers and the drivers, not of the machine asking. They are also the only
+  # tests that can check it: everything else in the workspace proves the
+  # generator writes the string it was expected to write, and this proves the
+  # string was right.
   #
   # No apt step: this builds `rudbman-jdbc` and its three dependencies, none of
   # which is gpui, so the native libraries the matrix installs are not needed.
   containers:
-    name: PostgreSQL and MySQL
+    name: PostgreSQL, MySQL, MariaDB, SQL Server and Oracle
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 45 minutes covered the original two servers; the Oracle image is several
+    # gigabytes and gvenzl/oracle-free's own first-start init (on top of the
+    # pull) can take minutes on its own, so the job gets more room to still
+    # finish comfortably even on a slow pull.
+    timeout-minutes: 60
     services:
       # The ports match docker/compose.yml so one set of URLs works in both
       # places. On a runner nothing else is listening, but a developer reading
@@ -145,6 +150,43 @@ jobs:
         options: >-
           --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -prudbman --silent"
           --health-interval 3s --health-timeout 5s --health-retries 30
+      mariadb:
+        image: mariadb:11
+        env:
+          MYSQL_ROOT_PASSWORD: rudbman
+          MYSQL_DATABASE: rudbman
+          MYSQL_USER: rudbman
+          MYSQL_PASSWORD: rudbman
+        ports: ['53306:3306']
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 3s --health-timeout 5s --health-retries 30
+      # No `rudbman` login: the `sa` password complexity rule rules out
+      # `rudbman`, so this one gets `sa` / `Rudbman!Passw0rd` instead — see
+      # docker/compose.yml and `credentials()` in containers.rs, which already
+      # default to that pair.
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Rudbman!Passw0rd"
+        ports: ['51433:1433']
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"Rudbman!Passw0rd\" -Q \"SELECT 1\" -b"
+          --health-interval 3s --health-timeout 10s --health-retries 40
+      # gvenzl/oracle-free is several gigabytes and slow to first-start even
+      # once pulled, so it gets the longest interval and the most retries of
+      # the five.
+      oracle:
+        image: gvenzl/oracle-free:23-slim-faststart
+        env:
+          ORACLE_PASSWORD: rudbman
+          APP_USER: rudbman
+          APP_USER_PASSWORD: rudbman
+        ports: ['51521:1521']
+        options: >-
+          --health-cmd "healthcheck.sh"
+          --health-interval 5s --health-timeout 10s --health-retries 60
     steps:
       - uses: actions/checkout@v7
 
@@ -158,7 +200,7 @@ jobs:
 
       # `jar`, not `build`: the matrix above already runs the Java suite, and
       # rudbman-jdbc's build script only needs the JAR to exist. `drivers` is
-      # the task that pulls the two JDBC drivers into the Gradle cache.
+      # the task that pulls all five JDBC drivers into the Gradle cache.
       - name: Build the bridge JAR and fetch the drivers
         working-directory: bridge
         shell: bash
@@ -170,7 +212,10 @@ jobs:
       - name: Locate the JDBC drivers
         shell: bash
         run: |
-          for spec in "PG:org.postgresql:postgresql" "MYSQL:com.mysql:mysql-connector-j"; do
+          for spec in "PG:org.postgresql:postgresql" "MYSQL:com.mysql:mysql-connector-j" \
+                      "MARIADB:org.mariadb.jdbc:mariadb-java-client" \
+                      "ORACLE:com.oracle.database.jdbc:ojdbc11" \
+                      "MSSQL:com.microsoft.sqlserver:mssql-jdbc"; do
             var=${spec%%:*}; rest=${spec#*:}; group=${rest%%:*}; artifact=${rest#*:}
             jar=$(find ~/.gradle/caches/modules-2/files-2.1/"$group"/"$artifact" \
                     -name "$artifact-*.jar" ! -name '*-sources.jar' | head -1)
@@ -186,6 +231,9 @@ jobs:
         env:
           RUDBMAN_TEST_PG_URL: jdbc:postgresql://127.0.0.1:55432/rudbman
           RUDBMAN_TEST_MYSQL_URL: jdbc:mysql://127.0.0.1:33306/rudbman?allowPublicKeyRetrieval=true&useSSL=false
+          RUDBMAN_TEST_MARIADB_URL: jdbc:mariadb://127.0.0.1:53306/rudbman
+          RUDBMAN_TEST_MSSQL_URL: jdbc:sqlserver://127.0.0.1:51433;encrypt=false
+          RUDBMAN_TEST_ORACLE_URL: jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1
         # `--nocapture` so the skip lines are visible: a run where a URL went
         # missing would otherwise be a green job that tested nothing.
         run: cargo test -p rudbman-jdbc --test containers --locked -- --nocapture
