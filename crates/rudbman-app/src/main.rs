@@ -3756,36 +3756,70 @@ impl Workspace {
     /// nothing yet, so a row offering to split the empty state would promise
     /// something it cannot deliver; the shortcuts stay bound so that the layout
     /// code is exercised, and the rows arrive with the panels in M2.
+    ///
+    /// Every other row is greyed exactly when the action behind it would return
+    /// without doing anything — the welcome screen has no session, so all but
+    /// the connection, settings and about rows arrive muted. Drawn rather than
+    /// dropped, for the reason the explorer's menu draws its own: a command that
+    /// is missing tells the reader nothing about what the surface can do.
     fn render_app_menu(&self, cx: &mut Context<Self>) -> MenuButton {
         let this = cx.entity();
+        // The tab on screen, which is what the panes and the file picker open
+        // over, and the explorer's selection, which is what the object commands
+        // act on. The selection carries its own connection, so each of those is
+        // gated on *that* session rather than on the active one.
+        let live = self.has_live_connection();
+        let relation = self.explorer.read(cx).selected_relation(cx);
+        let scope = self.explorer.read(cx).selected_scope(cx);
+        let relation_live = relation
+            .as_ref()
+            .is_some_and(|target| self.session_of(target.connection).is_some());
+        let scope_live = scope
+            .as_ref()
+            .is_some_and(|(connection, _)| self.session_of(*connection).is_some());
+        // A builder holds only its own connection's tables, so the target has to
+        // belong to the tab in front as well as to a live session.
+        let addable = relation_live
+            && self.active_connection().map(|open| open.id)
+                == relation.as_ref().map(|target| target.connection);
         let entries = vec![
             MenuEntry::new(ts!("menu.new_connection"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+N"))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(NewConnection), cx)),
             MenuEntry::new(ts!("menu.new_query"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+T"))
+                .disabled(!live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(NewQuery), cx)),
             MenuEntry::new(ts!("menu.query_object"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+Enter"))
+                .disabled(!(live && relation.is_some()))
                 .on_activate(|window, cx| window.dispatch_action(Box::new(QueryObject), cx)),
             MenuEntry::new(ts!("menu.open_sql_file"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+O"))
+                .disabled(!live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSqlFile), cx)),
             MenuEntry::new(ts!("menu.extract_script"))
+                .disabled(!relation_live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ExtractScript), cx)),
             MenuEntry::new(ts!("menu.transfer_table"))
+                .disabled(!relation_live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(TransferTable), cx)),
             MenuEntry::new(ts!("menu.backup_schema"))
+                .disabled(!scope_live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(BackupSchema), cx)),
             MenuEntry::new(ts!("menu.erd"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+E"))
+                .disabled(!scope_live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenErd), cx)),
             MenuEntry::new(ts!("menu.new_builder"))
+                .disabled(!live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(NewBuilder), cx)),
             MenuEntry::new(ts!("menu.add_to_builder"))
+                .disabled(!addable)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(AddToBuilder), cx)),
             MenuEntry::new(ts!("menu.toggle_explorer"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
+                .disabled(self.connections.is_empty())
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
             MenuEntry::new(ts!("menu.settings"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+,"))
