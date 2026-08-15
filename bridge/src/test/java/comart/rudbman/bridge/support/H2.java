@@ -1,11 +1,13 @@
 package comart.rudbman.bridge.support;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import comart.rudbman.bridge.Bridge;
 import comart.rudbman.bridge.Json;
 import comart.rudbman.bridge.Ops;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** H2 in-memory helpers shared by the bridge tests. */
@@ -35,11 +37,28 @@ public final class H2 {
      * @return the session handle
      */
     public static long open(String url) {
+        return open(url, null);
+    }
+
+    /**
+     * Opens a session with extra members merged into the {@code OPEN_SESSION}
+     * request, for the optional parts of the spec.
+     *
+     * @param url   the JDBC URL
+     * @param extra members to add to the request, may be {@code null}
+     * @return the session handle
+     */
+    public static long open(String url, JsonObject extra) {
         JsonObject req = new JsonObject();
         req.addProperty("url", url);
         req.addProperty("driver_class", DRIVER);
         req.addProperty("username", "sa");
         req.addProperty("password", "");
+        if (extra != null) {
+            for (Map.Entry<String, JsonElement> e : extra.entrySet()) {
+                req.add(e.getKey(), e.getValue());
+            }
+        }
         Resp r = call(Ops.OPEN_SESSION, 0, 0, req);
         r.assertOk();
         return r.num("session");

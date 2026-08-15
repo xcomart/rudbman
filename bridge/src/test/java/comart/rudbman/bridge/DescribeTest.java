@@ -9,21 +9,28 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** DESCRIBE against a schema with keys, foreign keys and indexes. */
 class DescribeTest {
 
     private long session;
+    private String url;
+
+    /** Extra sessions opened by a test on the same database, closed with it. */
+    private final List<Long> extraSessions = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
-        session = H2.open(H2.freshUrl());
+        url = H2.freshUrl();
+        session = H2.open(url);
         H2.exec(session, "create schema app");
         H2.exec(session, "create table app.parent ("
                 + "id int not null, code varchar(20) not null, "
@@ -41,10 +48,17 @@ class DescribeTest {
 
     @AfterEach
     void tearDown() {
+        for (long s : extraSessions) {
+            H2.close(s);
+        }
         H2.close(session);
     }
 
     private JsonArray describe(String kind, String... kv) {
+        return describe(session, kind, kv);
+    }
+
+    private JsonArray describe(long session, String kind, String... kv) {
         JsonObject req = new JsonObject();
         req.addProperty("kind", kind);
         for (int i = 0; i < kv.length; i += 2) {
@@ -124,6 +138,138 @@ class DescribeTest {
         // Optional metadata columns are present as JSON null rather than absent.
         assertTrue(note.has("default"));
         assertTrue(note.has("remarks"));
+    }
+
+    /**
+     * Comments are topped up from the vendor catalogue only on the products
+     * whose drivers hide them - Oracle, SQL Server, MySQL, MariaDB. H2 reports
+     * REMARKS itself, so DESCRIBE has to answer exactly what the driver said,
+     * both where there is a comment and where there is none.
+     */
+    @Test
+    void driverSuppliedRemarksAreLeftAlone() {
+        H2.exec(session, "comment on column app.parent.code is 'lookup code'");
+
+        JsonArray tables = describe("tables", "schema", "APP");
+        assertEquals("parent rows", remarksOf(tables, "PARENT"));
+        // No comment was ever put on CHILD, and none is invented for it.
+        assertNull(remarksOf(tables, "CHILD"));
+
+        JsonArray cols = describe("columns", "schema", "APP", "table", "PARENT");
+        assertEquals(List.of("ID", "CODE"), pluck(cols, "name"));
+        assertEquals(Arrays.asList(null, "lookup code"), pluck(cols, "remarks"));
+    }
+
+    /** @return the remarks of the row named {@code name}, or null */
+    private static String remarksOf(JsonArray items, String name) {
+        for (JsonElement e : items) {
+            JsonObject o = e.getAsJsonObject();
+            if (name.equals(o.get("name").getAsString())) {
+                JsonElement r = o.get("remarks");
+                return r == null || r.isJsonNull() ? null : r.getAsString();
+            }
+        }
+        throw new AssertionError("no row named " + name + " in " + items);
+    }
+
+    /**
+     * A driver definition may bring its own comment queries, and where it does
+     * they replace the built-in lookup on every product - H2 included, whose
+     * driver reports {@code REMARKS} perfectly well. Nothing around the query
+     * changes: the driver still wins wherever it gave an answer, and only the
+     * holes are filled.
+     */
+    @Test
+    void aCustomTableQueryFillsTheHolesOnAnyProduct() {
+        long s = custom("select TABLE_NAME, 'custom:' || TABLE_NAME "
+                + "from INFORMATION_SCHEMA.TABLES where TABLE_SCHEMA = '${schema}'", null);
+
+        JsonArray items = describe(s, "tables", "schema", "APP");
+        // PARENT has a comment of its own, so the custom query does not get to
+        // overwrite it - the same rule the built-in queries live under.
+        assertEquals("parent rows", remarksOf(items, "PARENT"));
+        assertEquals("custom:CHILD", remarksOf(items, "CHILD"));
+        assertEquals("custom:V_CHILD", remarksOf(items, "V_CHILD"));
+    }
+
+    /**
+     * The column query is scoped to a schema and knows nothing of the table the
+     * request asked for; the overlay does that narrowing, which is why one query
+     * can answer a describe of any single table in the schema.
+     */
+    @Test
+    void aCustomColumnQueryIsScopedBySchemaAndNarrowedByTheOverlay() {
+        H2.exec(session, "comment on column app.parent.code is 'lookup code'");
+        long s = custom(null, "select TABLE_NAME, COLUMN_NAME, "
+                + "'custom:' || TABLE_NAME || '.' || COLUMN_NAME "
+                + "from INFORMATION_SCHEMA.COLUMNS where TABLE_SCHEMA = '${schema}'");
+
+        JsonArray items = describe(s, "columns", "schema", "APP", "table", "PARENT");
+        assertEquals(List.of("ID", "CODE"), pluck(items, "name"));
+        assertEquals(List.of("custom:PARENT.ID", "lookup code"), pluck(items, "remarks"));
+    }
+
+    /**
+     * A pattern filter does not describe the single scope these queries assume,
+     * so none is run - and the built-in path is not reached for it either. The
+     * answer is the driver's own, untouched.
+     */
+    @Test
+    void aPatternFilterLeavesACustomQueryUnrun() {
+        long s = custom("select TABLE_NAME, 'custom:' || TABLE_NAME "
+                + "from INFORMATION_SCHEMA.TABLES where TABLE_SCHEMA = '${schema}'", null);
+
+        JsonArray items = describe(s, "tables", "schema_pattern", "APP");
+        assertEquals("parent rows", remarksOf(items, "PARENT"));
+        assertNull(remarksOf(items, "CHILD"));
+    }
+
+    /** Same for a variable the request carries no exact filter for. */
+    @Test
+    void aVariableTheRequestCannotFillLeavesACustomQueryUnrun() {
+        long s = custom("select TABLE_NAME, 'custom:' || TABLE_NAME "
+                + "from INFORMATION_SCHEMA.TABLES where TABLE_CATALOG = '${catalog}'", null);
+
+        // The request names a schema but no catalog, so there is nothing to put
+        // where ${catalog} stands.
+        JsonArray items = describe(s, "tables", "schema", "APP");
+        assertEquals("parent rows", remarksOf(items, "PARENT"));
+        assertNull(remarksOf(items, "CHILD"));
+    }
+
+    /**
+     * A query the server rejects is the whole reason the lookup is fenced: the
+     * describe still answers, with exactly what the driver said.
+     */
+    @Test
+    void aBrokenCustomQueryCostsOnlyTheComments() {
+        long s = custom("select NOPE from NO_SUCH_TABLE", "this is not sql at all");
+
+        JsonArray tables = describe(s, "tables", "schema", "APP");
+        assertEquals("parent rows", remarksOf(tables, "PARENT"));
+        assertNull(remarksOf(tables, "CHILD"));
+
+        JsonArray cols = describe(s, "columns", "schema", "APP", "table", "CHILD");
+        assertEquals(List.of("ID", "PARENT_ID", "NOTE"), pluck(cols, "name"));
+        assertEquals(Arrays.asList(null, null, null), pluck(cols, "remarks"));
+    }
+
+    /**
+     * @return a second session on the same database, carrying the driver-defined
+     *         comment queries. Either may be {@code null}, which is how a
+     *         definition that names only one of them arrives.
+     */
+    private long custom(String tableSql, String columnSql) {
+        JsonObject spec = new JsonObject();
+        if (tableSql != null) {
+            spec.addProperty("table_comments_sql", tableSql);
+        }
+        if (columnSql != null) {
+            spec.addProperty("column_comments_sql", columnSql);
+        }
+        long s = H2.open(url, spec);
+        extraSessions.add(s);
+        return s;
     }
 
     @Test

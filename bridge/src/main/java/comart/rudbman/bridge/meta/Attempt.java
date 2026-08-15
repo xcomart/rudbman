@@ -40,11 +40,21 @@ final class Attempt {
         T run(Statement st) throws SQLException;
     }
 
+    /** What to do with the connection itself. */
+    interface Work<T> {
+        /**
+         * @param conn the connection, still owned by the caller
+         * @return the result
+         * @throws SQLException if the server rejects the query
+         */
+        T run(Connection conn) throws SQLException;
+    }
+
     private Attempt() {
     }
 
     /**
-     * Runs {@code body}, swallowing any failure.
+     * Runs {@code body} on a plain statement, swallowing any failure.
      *
      * @param conn     the connection
      * @param what     short description for the debug log
@@ -54,9 +64,32 @@ final class Attempt {
      * @return the body's result, or {@code fallback}
      */
     static <T> T run(Connection conn, String what, Body<T> body, T fallback) {
+        return on(conn, what, c -> {
+            try (Statement st = c.createStatement()) {
+                return body.run(st);
+            }
+        }, fallback);
+    }
+
+    /**
+     * Runs {@code work} on the connection itself, swallowing any failure.
+     *
+     * <p>Same fence, one layer lower: a probe that binds parameters needs a
+     * {@link java.sql.PreparedStatement}, which only the connection can make, and
+     * a probe that is several statements should share one savepoint rather than
+     * take one each.
+     *
+     * @param conn     the connection
+     * @param what     short description for the debug log
+     * @param work     the query
+     * @param fallback returned when the attempt fails
+     * @param <T>      result type
+     * @return the work's result, or {@code fallback}
+     */
+    static <T> T on(Connection conn, String what, Work<T> work, T fallback) {
         Savepoint sp = fence(conn);
-        try (Statement st = conn.createStatement()) {
-            T out = body.run(st);
+        try {
+            T out = work.run(conn);
             release(conn, sp);
             return out;
         } catch (SQLException | RuntimeException e) {

@@ -42,6 +42,8 @@ public final class Session implements AutoCloseable {
     private final String keepAliveQuery;
     private final String url;
     private final String driverClass;
+    private final String tableCommentsSql;
+    private final String columnCommentsSql;
 
     /** Attached after construction, because the timer task needs the session. */
     private ScheduledExecutorService keepAliveExec;
@@ -63,12 +65,14 @@ public final class Session implements AutoCloseable {
     private volatile long handle;
 
     private Session(Connection conn, Loaders.Lease lease, String url, String driverClass,
-                    String keepAliveQuery) {
+                    String keepAliveQuery, String tableCommentsSql, String columnCommentsSql) {
         this.conn = conn;
         this.lease = lease;
         this.url = url;
         this.driverClass = driverClass;
         this.keepAliveQuery = keepAliveQuery;
+        this.tableCommentsSql = tableCommentsSql;
+        this.columnCommentsSql = columnCommentsSql;
     }
 
     /**
@@ -77,7 +81,14 @@ public final class Session implements AutoCloseable {
      * <p>Recognised members: {@code url} (required), {@code driver_class}
      * (required), {@code jars[]}, {@code username}, {@code password},
      * {@code props{}}, {@code read_only}, {@code auto_commit},
-     * {@code login_timeout_s} and {@code keep_alive{enabled, interval_s, query}}.
+     * {@code login_timeout_s}, {@code keep_alive{enabled, interval_s, query}},
+     * {@code table_comments_sql} and {@code column_comments_sql}.
+     *
+     * <p>The last two belong to the driver definition rather than to the
+     * connection: they are the queries this product answers comments with, for
+     * a product whose driver does not, and they are carried on the session
+     * because {@code DESCRIBE} is where they are used. See
+     * {@code comart.rudbman.bridge.meta.Comments}.
      *
      * @param req the parsed request body
      * @return a live session, already registered in the {@link Registry}
@@ -154,7 +165,8 @@ public final class Session implements AutoCloseable {
                 }
             }
 
-            Session s = new Session(conn, lease, url, driverClass, kaQuery);
+            Session s = new Session(conn, lease, url, driverClass, kaQuery,
+                    sql(req, "table_comments_sql"), sql(req, "column_comments_sql"));
             s.handle = Registry.put(s);
             if (kaInterval > 0) {
                 try {
@@ -178,6 +190,18 @@ public final class Session implements AutoCloseable {
             lease.release();
             throw t;
         }
+    }
+
+    /**
+     * @return an optional SQL member of the open request, or {@code null} when
+     *         it is absent or holds nothing but whitespace. A driver definition
+     *         with an empty text box has to mean the same thing as one where the
+     *         box was never filled in, and the Rust side cannot tell the
+     *         difference either.
+     */
+    private static String sql(JsonObject req, String member) {
+        String s = Json.str(req, member);
+        return s == null || s.isBlank() ? null : s;
     }
 
     private static Driver instantiate(String driverClass, Loaders.Lease lease) throws Exception {
@@ -251,6 +275,22 @@ public final class Session implements AutoCloseable {
     /** @return the driver class name this session was opened with. */
     public String driverClass() {
         return driverClass;
+    }
+
+    /**
+     * @return the driver-defined table comment query, or {@code null} when this
+     *         session was opened without one
+     */
+    public String tableCommentsSql() {
+        return tableCommentsSql;
+    }
+
+    /**
+     * @return the driver-defined column comment query, or {@code null} when this
+     *         session was opened without one
+     */
+    public String columnCommentsSql() {
+        return columnCommentsSql;
     }
 
     /**

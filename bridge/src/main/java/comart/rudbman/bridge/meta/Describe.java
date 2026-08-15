@@ -34,10 +34,17 @@ import java.util.Map;
  * a one-element array would only make the Rust side unwrap it again. See
  * {@link Ddl}.
  *
- * <p>Three kinds reach past {@link DatabaseMetaData}: {@code ddl} and
+ * <p>Four kinds reach past {@link DatabaseMetaData}. {@code ddl} and
  * {@code sequences} need vendor catalogue queries ({@link Ddl},
  * {@link Sequences}), and both are written so that an unsupported or forbidden
  * query degrades to a reconstruction or an empty list rather than to an error.
+ * {@code tables} and {@code columns} stay pure JDBC reads, but their
+ * {@code remarks} are then reconciled against the vendor catalogue on the
+ * products whose drivers report comments badly ({@link Comments}): topped up
+ * where a driver reports none, and cleared where one reports a placeholder
+ * instead. The top-up happens only where the driver left a hole, and silently
+ * when the query fails. A session opened with {@code table_comments_sql} or
+ * {@code column_comments_sql} tops up from that query instead, on any product.
  */
 public final class Describe {
 
@@ -75,8 +82,16 @@ public final class Describe {
             switch (kind) {
                 case "catalogs":       items = catalogs(dbm); break;
                 case "schemas":        items = schemas(dbm, req); break;
-                case "tables":         items = tables(dbm, req); break;
-                case "columns":        items = columns(dbm, req); break;
+                case "tables":
+                    items = tables(dbm, req);
+                    Comments.tables(session.connection(), dbm, req, items,
+                            session.tableCommentsSql());
+                    break;
+                case "columns":
+                    items = columns(dbm, req);
+                    Comments.columns(session.connection(), dbm, req, items,
+                            session.columnCommentsSql());
+                    break;
                 case "primary_keys":   items = primaryKeys(dbm, req); break;
                 case "imported_keys":  items = importedKeys(dbm, req); break;
                 case "exported_keys":  items = exportedKeys(dbm, req); break;
