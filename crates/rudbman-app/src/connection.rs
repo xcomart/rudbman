@@ -432,6 +432,12 @@ pub fn build_spec(
         interval_s: keep.interval_s,
         query: keep.query.clone(),
     });
+    // The comment queries come from the *driver*, not the profile: they are a
+    // property of the product's metadata support, and every connection through
+    // that driver wants the same two. `None` unless the box is ticked over a
+    // statement that holds something — see `DriverDef::table_comments_query`.
+    spec.table_comments_sql = driver.table_comments_query().map(str::to_owned);
+    spec.column_comments_sql = driver.column_comments_query().map(str::to_owned);
     spec
 }
 
@@ -1130,6 +1136,46 @@ mod tests {
         // The password is in the spec and nowhere in its rendering.
         assert_eq!(spec.password.as_deref(), Some("hunter2"));
         assert!(!format!("{spec:?}").contains("hunter2"), "{spec:?}");
+    }
+
+    /// The driver's custom comment queries reach the spec, and only when the
+    /// driver actually asked for them.
+    #[test]
+    fn the_spec_carries_the_drivers_comment_queries_only_when_they_are_on() {
+        let profile = ConnectionProfile::new("x", "custom", "jdbc:x", "");
+        let spec_for = |driver: &DriverDef| {
+            build_spec(&profile, driver, &Credentials::typed(None, None), "jdbc:x")
+        };
+
+        let mut driver = DriverDef {
+            jars: vec!["/tmp/x.jar".into()],
+            table_comments_sql: "select t, c from meta where s = '${schema}'".into(),
+            column_comments_sql: "select t, c, m from cols".into(),
+            ..DriverDef::default()
+        };
+
+        // The statements are stored, the boxes are not ticked: nothing is sent.
+        let off = spec_for(&driver);
+        assert_eq!(off.table_comments_sql, None);
+        assert_eq!(off.column_comments_sql, None);
+
+        driver.use_table_comments = true;
+        driver.use_column_comments = true;
+        let on = spec_for(&driver);
+        assert_eq!(
+            on.table_comments_sql.as_deref(),
+            Some("select t, c from meta where s = '${schema}'"),
+            "the ${{schema}} hole is the bridge's to fill and travels untouched"
+        );
+        assert_eq!(
+            on.column_comments_sql.as_deref(),
+            Some("select t, c, m from cols")
+        );
+
+        // A ticked box over a blank statement is a half-finished edit, not a
+        // request to send the empty string.
+        driver.column_comments_sql = "   ".into();
+        assert_eq!(spec_for(&driver).column_comments_sql, None);
     }
 
     #[test]

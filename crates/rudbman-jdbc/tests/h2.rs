@@ -379,6 +379,65 @@ fn describe_answers_every_implemented_kind() {
     assert!(error.message.contains("unknown describe kind"), "{error:?}");
 }
 
+/// The driver definition's own comment queries, inherited from jdbgen.
+///
+/// H2 answers `getTables` and `getColumns` with an empty `REMARKS` for a table
+/// nobody commented, which is exactly the gap these two statements exist to
+/// fill — and H2 is not one of the products the bridge has a built-in comment
+/// query for, so anything that arrives here came from the spec.
+///
+/// `${schema}` travels **unsubstituted**: filling it in on this side would be
+/// doing the bridge's job and testing none of it.
+#[test]
+fn the_comment_queries_on_the_session_fill_in_what_the_driver_left_blank() {
+    let mut spec = spec(&fresh_url(), "sa", "");
+    spec.table_comments_sql = Some(
+        "SELECT TABLE_NAME, 'custom:' || TABLE_NAME FROM INFORMATION_SCHEMA.TABLES \
+         WHERE TABLE_SCHEMA = '${schema}'"
+            .to_string(),
+    );
+    spec.column_comments_sql = Some(
+        "SELECT TABLE_NAME, COLUMN_NAME, 'custom:' || COLUMN_NAME \
+         FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '${schema}'"
+            .to_string(),
+    );
+    let session = Session::open(jvm(), &spec).expect("H2 accepts the connection");
+    exec(&session, "create table plain (id integer primary key)");
+
+    let tables = session
+        .describe(&DescribeRequest::new("tables").with_schema("PUBLIC"))
+        .expect("describes tables");
+    let remarks = |items: &[serde_json::Map<String, serde_json::Value>], name: &str| {
+        items
+            .iter()
+            .find(|item| item.get("name").and_then(serde_json::Value::as_str) == Some(name))
+            .and_then(|item| item.get("remarks")?.as_str())
+            .map(str::to_owned)
+    };
+    assert_eq!(
+        remarks(&tables.items, "PLAIN").as_deref(),
+        Some("custom:PLAIN"),
+        "the table comment query did not reach the describe: {:?}",
+        tables.items
+    );
+
+    let columns = session
+        .describe(
+            &DescribeRequest::new("columns")
+                .with_schema("PUBLIC")
+                .with_table("PLAIN"),
+        )
+        .expect("describes columns");
+    assert_eq!(
+        remarks(&columns.items, "ID").as_deref(),
+        Some("custom:ID"),
+        "the column comment query did not reach the describe: {:?}",
+        columns.items
+    );
+
+    session.close().expect("closes");
+}
+
 #[test]
 fn routines_arrive_with_their_signatures_attached() {
     let session = session();

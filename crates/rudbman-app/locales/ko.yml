@@ -307,6 +307,12 @@ driver:
   delete: 삭제
   delete_confirm: "드라이버 정의 “%{name}”을(를) 삭제할까요?"
   none_selected: 드라이버를 선택하거나 새로 추가하세요.
+  table_comments: 테이블 설명
+  use_table_comments: 테이블 설명을 쿼리로 읽기
+  table_comments_hint: "드라이버가 설명을 주지 않을 때 사용합니다. ${catalog}와 ${schema}는 치환됩니다. 쿼리는 테이블 이름, 설명 순으로 반환해야 합니다."
+  column_comments: 열 설명
+  use_column_comments: 열 설명을 쿼리로 읽기
+  column_comments_hint: "드라이버가 설명을 주지 않을 때 사용합니다. ${catalog}와 ${schema}는 치환됩니다. 쿼리는 테이블 이름, 열 이름, 설명 순으로 반환해야 합니다."
 
 # 탐색기 사이드바.
 explorer:

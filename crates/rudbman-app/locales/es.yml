@@ -307,6 +307,12 @@ driver:
   delete: Eliminar
   delete_confirm: "¿Eliminar la definición de controlador «%{name}»?"
   none_selected: Elige un controlador o añade uno.
+  table_comments: Comentarios de tabla
+  use_table_comments: Leer los comentarios de tabla con una consulta
+  table_comments_hint: "Se usa cuando el controlador no devuelve ningún comentario. ${catalog} y ${schema} se sustituyen; la consulta debe devolver el nombre de la tabla y el comentario, en ese orden."
+  column_comments: Comentarios de columna
+  use_column_comments: Leer los comentarios de columna con una consulta
+  column_comments_hint: "Se usa cuando el controlador no devuelve ningún comentario. ${catalog} y ${schema} se sustituyen; la consulta debe devolver el nombre de la tabla, el nombre de la columna y el comentario, en ese orden."
 
 # La barra lateral del explorador.
 explorer:

@@ -307,6 +307,12 @@ driver:
   delete: Löschen
   delete_confirm: "Die Treiberdefinition „%{name}“ löschen?"
   none_selected: Einen Treiber auswählen oder einen neuen anlegen.
+  table_comments: Tabellenkommentare
+  use_table_comments: Tabellenkommentare mit einer Abfrage lesen
+  table_comments_hint: "Wird verwendet, wenn der Treiber keinen Kommentar meldet. ${catalog} und ${schema} werden eingesetzt; die Abfrage muss den Tabellennamen und den Kommentar liefern, in dieser Reihenfolge."
+  column_comments: Spaltenkommentare
+  use_column_comments: Spaltenkommentare mit einer Abfrage lesen
+  column_comments_hint: "Wird verwendet, wenn der Treiber keinen Kommentar meldet. ${catalog} und ${schema} werden eingesetzt; die Abfrage muss den Tabellennamen, den Spaltennamen und den Kommentar liefern, in dieser Reihenfolge."
 
 # Die Explorer-Seitenleiste.
 explorer:

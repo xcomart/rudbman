@@ -50,8 +50,8 @@ use gpui::{
 use rudbman_core::{DriverDef, DriverStore, drivers_dir};
 use rudbman_jdbc::{BridgeErrorKind, DriverProbe, Error as JdbcError};
 use rudbman_ui::{
-    Button, ButtonVariant, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, TextInput,
-    Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
+    Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
+    TextInput, Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
 };
 
 use crate::app_settings;
@@ -103,6 +103,14 @@ mod tab {
     pub const ADD_JAR: isize = 460;
     /// First index of the per-JAR remove buttons.
     pub const REMOVE_JAR: isize = 461;
+    /// "Read table comments with a query".
+    pub const USE_TABLE_COMMENTS: isize = 470;
+    /// The table-comment statement.
+    pub const TABLE_COMMENTS: isize = 471;
+    /// "Read column comments with a query".
+    pub const USE_COLUMN_COMMENTS: isize = 472;
+    /// The column-comment statement.
+    pub const COLUMN_COMMENTS: isize = 473;
     /// New driver.
     pub const NEW: isize = 500;
     /// Delete driver.
@@ -249,6 +257,10 @@ pub struct DriverManager {
     dialect_input: Entity<TextInput>,
     /// Maven coordinate, `group:artifact:version`.
     maven_input: Entity<TextInput>,
+    /// Query answering table comments the driver leaves blank.
+    table_comments_input: Entity<TextInput>,
+    /// Query answering column comments the driver leaves blank.
+    column_comments_input: Entity<TextInput>,
 }
 
 impl DriverManager {
@@ -299,6 +311,19 @@ impl DriverManager {
             port_input: field(cx, "5432".into(), tab::PORT),
             dialect_input: field(cx, "postgres".into(), tab::DIALECT),
             maven_input: field(cx, "org.postgresql:postgresql:42.7.4".into(), tab::MAVEN),
+            table_comments_input: field(
+                cx,
+                "SELECT table_name, comments FROM all_tab_comments WHERE owner = '${schema}'"
+                    .into(),
+                tab::TABLE_COMMENTS,
+            ),
+            column_comments_input: field(
+                cx,
+                "SELECT table_name, column_name, comments FROM all_col_comments \
+                 WHERE owner = '${schema}'"
+                    .into(),
+                tab::COLUMN_COMMENTS,
+            ),
         };
         manager.fill_form(cx);
         manager
@@ -325,6 +350,8 @@ impl DriverManager {
         );
         set_text(&self.dialect_input, driver.dialect, cx);
         set_text(&self.maven_input, driver.maven.unwrap_or_default(), cx);
+        set_text(&self.table_comments_input, driver.table_comments_sql, cx);
+        set_text(&self.column_comments_input, driver.column_comments_sql, cx);
     }
 
     /// Reads the fields back into the selected driver.
@@ -357,8 +384,34 @@ impl DriverManager {
                 }
             },
             maven: Some(text(&self.maven_input, cx)).filter(|text| !text.is_empty()),
+            // The statements are kept whatever their flags say: a user who
+            // turns a query off is switching it off, not throwing it away.
+            table_comments_sql: text(&self.table_comments_input, cx),
+            column_comments_sql: text(&self.column_comments_input, cx),
             ..existing
         });
+    }
+
+    /// Turns one of the two custom comment queries on or off.
+    ///
+    /// The flags are not text fields, so they are written straight into the
+    /// store the way the JAR list is, rather than being read back by
+    /// [`DriverManager::collect`].
+    fn toggle_comments(&mut self, table: bool, enabled: bool, cx: &mut Context<Self>) {
+        self.collect(cx);
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let Some(mut driver) = self.store.get(&id).cloned() else {
+            return;
+        };
+        if table {
+            driver.use_table_comments = enabled;
+        } else {
+            driver.use_column_comments = enabled;
+        }
+        self.store.upsert(driver);
+        cx.notify();
     }
 
     /// Selects `id`, keeping whatever was typed into the driver being left.
@@ -1203,6 +1256,67 @@ impl DriverManager {
             .children(progress)
     }
 
+    /// One custom comment query: the box that switches it on, the statement,
+    /// and the contract the statement has to keep.
+    ///
+    /// Inherited from jdbgen, and for the same reason: several products answer
+    /// `DatabaseMetaData` with an empty `REMARKS` and keep their comments in a
+    /// catalogue view instead, so the only way to see them is to name the query.
+    /// The flag is separate from the text on purpose — turning a query off must
+    /// not mean deleting it.
+    ///
+    /// The statement is a one-line field because that is the only text control
+    /// this dialog has; a long query still fits, it just scrolls.
+    fn render_comment_query(
+        &self,
+        table: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let this = cx.entity();
+        let enabled = self.current().is_some_and(|driver| {
+            if table {
+                driver.use_table_comments
+            } else {
+                driver.use_column_comments
+            }
+        });
+
+        let (id, label, hint_key, index, input) = if table {
+            (
+                "driver-use-table-comments",
+                ts!("driver.use_table_comments"),
+                ts!("driver.table_comments_hint"),
+                tab::USE_TABLE_COMMENTS,
+                self.table_comments_input.clone(),
+            )
+        } else {
+            (
+                "driver-use-column-comments",
+                ts!("driver.use_column_comments"),
+                ts!("driver.column_comments_hint"),
+                tab::USE_COLUMN_COMMENTS,
+                self.column_comments_input.clone(),
+            )
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(
+                Checkbox::new(id, label)
+                    .checked(enabled)
+                    .tab_index(index)
+                    .on_toggle(move |checked, _window, cx| {
+                        this.update(cx, |manager, cx| {
+                            manager.toggle_comments(table, checked, cx);
+                        });
+                    }),
+            )
+            .child(input)
+            .child(hint(hint_key, cx))
+    }
+
     /// The detail pane for the selected driver.
     fn render_details(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         if self.selected.is_none() {
@@ -1221,6 +1335,8 @@ impl DriverManager {
         let class_row = self.render_class_row(chrome, cx);
         let jars = self.render_jars(chrome, cx);
         let maven = self.render_maven(chrome, cx);
+        let table_comments = self.render_comment_query(true, cx);
+        let column_comments = self.render_comment_query(false, cx);
 
         div()
             .relative()
@@ -1251,7 +1367,9 @@ impl DriverManager {
                     ))
                     .child(form_row(ts!("driver.dialect"), self.dialect_input.clone()))
                     .child(form_row(ts!("driver.maven"), maven))
-                    .child(form_row(ts!("driver.jars"), jars)),
+                    .child(form_row(ts!("driver.jars"), jars))
+                    .child(form_row(ts!("driver.table_comments"), table_comments))
+                    .child(form_row(ts!("driver.column_comments"), column_comments)),
             )
             .children(self.hovering_scrollbar(BODY_SCROLLBAR, cx).render(chrome))
             .into_any_element()
@@ -1491,6 +1609,59 @@ mod tests {
             ..DriverDef::default()
         });
         assert_eq!(unique_id("driver", &store), "driver-2");
+    }
+
+    /// The two custom comment queries survive the trip through the form.
+    ///
+    /// The box and the statement are two separate decisions, and the form has
+    /// to keep both: turning a query off must leave the text where it was, so
+    /// that turning it back on does not mean typing it again.
+    #[gpui::test]
+    fn the_comment_queries_and_their_boxes_round_trip_through_the_form(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let manager = manager_over(Vec::new(), cx);
+        let query = "SELECT TABLE_NAME, 'x' FROM META WHERE OWNER = '${schema}'";
+
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| {
+                set_text(&manager.table_comments_input, query, cx);
+                manager.toggle_comments(true, true, cx);
+            });
+        });
+        cx.update(|cx| {
+            let driver = manager.read(cx).current().expect("H2 is selected");
+            assert!(driver.use_table_comments);
+            assert_eq!(driver.table_comments_query(), Some(query));
+            // The column query was never touched and stays off and empty.
+            assert!(!driver.use_column_comments);
+            assert!(driver.column_comments_sql.is_empty());
+        });
+
+        // Switching it off keeps the statement.
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| manager.toggle_comments(true, false, cx));
+        });
+        cx.update(|cx| {
+            let driver = manager.read(cx).current().expect("H2 is selected");
+            assert!(!driver.use_table_comments);
+            assert_eq!(driver.table_comments_sql, query);
+            assert_eq!(driver.table_comments_query(), None);
+        });
+
+        // And leaving the driver and coming back shows what was typed.
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| {
+                manager.select("postgresql".to_string(), cx);
+                manager.select("h2".to_string(), cx);
+            });
+        });
+        cx.update(|cx| {
+            assert_eq!(
+                manager.read(cx).table_comments_input.read(cx).content(),
+                query
+            );
+        });
     }
 
     /// A throwaway file under the temp directory, removed with the test.
@@ -1823,6 +1994,12 @@ mod tests {
             ts!("driver.probe_missing", error = "e"),
             ts!("driver.probe_jvm_failed", error = "e"),
             ts!("driver.probe_failed", error = "e"),
+            ts!("driver.table_comments"),
+            ts!("driver.use_table_comments"),
+            ts!("driver.table_comments_hint"),
+            ts!("driver.column_comments"),
+            ts!("driver.use_column_comments"),
+            ts!("driver.column_comments_hint"),
         ] {
             assert!(!label.is_empty(), "empty label");
             assert!(

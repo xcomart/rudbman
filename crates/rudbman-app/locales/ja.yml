@@ -307,6 +307,12 @@ driver:
   delete: 削除
   delete_confirm: "ドライバー定義「%{name}」を削除しますか？"
   none_selected: ドライバーを選ぶか、新しく追加してください。
+  table_comments: テーブルコメント
+  use_table_comments: テーブルコメントをクエリで読み取る
+  table_comments_hint: "ドライバーがコメントを返さないときに使います。${catalog} と ${schema} は置き換えられます。クエリはテーブル名、コメントの順に返してください。"
+  column_comments: 列コメント
+  use_column_comments: 列コメントをクエリで読み取る
+  column_comments_hint: "ドライバーがコメントを返さないときに使います。${catalog} と ${schema} は置き換えられます。クエリはテーブル名、列名、コメントの順に返してください。"
 
 # エクスプローラーのサイドバー。
 explorer:

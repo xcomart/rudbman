@@ -307,6 +307,12 @@ driver:
   delete: 删除
   delete_confirm: "删除驱动定义“%{name}”？"
   none_selected: 请选择一个驱动，或新建一个。
+  table_comments: 表注释
+  use_table_comments: 用查询读取表注释
+  table_comments_hint: "驱动不返回注释时使用。${catalog} 和 ${schema} 会被替换；查询必须按顺序返回表名和注释。"
+  column_comments: 列注释
+  use_column_comments: 用查询读取列注释
+  column_comments_hint: "驱动不返回注释时使用。${catalog} 和 ${schema} 会被替换；查询必须按顺序返回表名、列名和注释。"
 
 # 资源管理器侧边栏。
 explorer:
