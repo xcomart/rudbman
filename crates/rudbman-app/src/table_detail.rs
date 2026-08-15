@@ -63,6 +63,12 @@ pub type Row = Vec<SharedString>;
 /// What the panel shows, once the fetch has come back.
 #[derive(Clone, Debug, Default)]
 pub struct Details {
+    /// The catalog's comment on the object itself, where it carries one.
+    ///
+    /// Drawn in the header beside the qualified name rather than as a row of a
+    /// tab: it describes the whole object, and the tabs are all lists of its
+    /// parts.
+    pub table_remarks: Option<SharedString>,
     /// One row per column: name, type, nullability, default, key, comment.
     pub columns: Vec<Row>,
     /// The primary key's columns, in key order.
@@ -323,6 +329,13 @@ impl TableDetail {
     fn render_header(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let loading = self.is_loading();
+        // Beside the qualified name rather than under it: the header is one row
+        // tall and stays that way, so a long comment truncates instead of
+        // pushing the tab strip down.
+        let remarks = match &self.load {
+            Load::Ready(details) => details.table_remarks.clone(),
+            _ => None,
+        };
 
         div()
             .flex()
@@ -346,6 +359,15 @@ impl TableDetail {
                     .text_color(chrome.text)
                     .child(SharedString::from(self.target.qualified())),
             )
+            .children(remarks.map(|remarks| {
+                div()
+                    .min_w_0()
+                    .max_w(px(320.))
+                    .truncate()
+                    .text_size(px(11.))
+                    .text_color(chrome.text_muted)
+                    .child(remarks)
+            }))
             .child(div().flex_1().min_w_0())
             .when(loading, |header| {
                 header.child(
@@ -741,6 +763,26 @@ pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details,
         request
     };
 
+    // The object's own comment. `getTables` is the only call that carries one,
+    // and it takes a table *pattern*, so the exact name is passed as the filter
+    // and the answer is searched for it: a product whose pattern matching treats
+    // `_` as a wildcard would otherwise hand back a neighbour's comment.
+    let table_remarks = {
+        let mut request = scoped("tables");
+        // The same `types` filter the explorer's own folder uses, so a view and
+        // a table of the same name cannot answer for each other.
+        request.types = target
+            .folder
+            .table_types()
+            .map(|types| types.iter().map(|kind| (*kind).to_string()).collect());
+        items(session, &request)?
+            .iter()
+            .find(|item| text(item, "name") == Some(target.name.as_str()))
+            .and_then(|item| text(item, "remarks"))
+            .map(|remarks| SharedString::from(remarks.trim().to_owned()))
+            .filter(|remarks| !remarks.is_empty())
+    };
+
     // The primary key first: the column list marks its members, so it has to be
     // known before the columns are rendered into rows.
     let primary = items(session, &scoped("primary_keys"))?;
@@ -854,6 +896,7 @@ pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details,
         };
 
     Ok(Details {
+        table_remarks,
         columns: column_rows,
         primary_key: primary
             .iter()
@@ -1238,10 +1281,22 @@ mod tests {
         let salary = row_for(&details.columns, "SALARY");
         assert_eq!(salary[1], "NUMERIC(12,2)", "{salary:?}");
 
-        // And a comment comes through.
+        // And a comment comes through — the column's, and the table's own,
+        // which the header shows rather than any of the tabs.
         let (team, _held) = describe("TEAM", Folder::Tables, "detail-comment");
         let name = row_for(&team.columns, "NAME");
         assert_eq!(name[5], "what the team is called", "{name:?}");
+        assert_eq!(
+            team.table_remarks.as_ref().map(SharedString::as_ref),
+            Some("the squads people belong to")
+        );
+        // A table nobody commented has none, rather than the empty string some
+        // drivers answer with.
+        assert!(
+            details.table_remarks.is_none(),
+            "{:?}",
+            details.table_remarks
+        );
     }
 
     /// The keys tab: the primary key, and an index told apart by uniqueness.

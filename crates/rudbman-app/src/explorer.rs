@@ -391,6 +391,26 @@ pub struct RootInfo {
     pub live: bool,
 }
 
+/// One row a fetch produced: the node, and what the catalog says about it.
+///
+/// A pair rather than a field on [`NodeId`], because the id is what the tree is
+/// keyed, selected and expanded by and a comment is not part of an object's
+/// identity — see [`ExplorerSource::remarks`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Child {
+    /// The node itself.
+    pub id: NodeId,
+    /// The catalog's comment on it, where it carries one.
+    pub remarks: Option<SharedString>,
+}
+
+impl Child {
+    /// A node the catalog says nothing about — every level above the objects.
+    pub fn plain(id: NodeId) -> Self {
+        Self { id, remarks: None }
+    }
+}
+
 /// The tree's data: what has been fetched, and nothing that fetches.
 #[derive(Default)]
 pub struct ExplorerSource {
@@ -414,6 +434,13 @@ pub struct ExplorerSource {
     errors: HashMap<NodeId, SharedString>,
     /// How many items a folder holds, once it has been loaded.
     counts: HashMap<NodeId, usize>,
+    /// The catalog's comment on an object, for the objects that carry one.
+    ///
+    /// A side-map rather than a field of [`NodeId::Object`], for the reason the
+    /// counts are one: the id is what the tree is keyed, selected and expanded
+    /// by, and a comment edited in the database would otherwise make yesterday's
+    /// selection name a node that no longer exists.
+    remarks: HashMap<NodeId, SharedString>,
 }
 
 impl ExplorerSource {
@@ -437,6 +464,8 @@ impl ExplorerSource {
         self.errors
             .retain(|node, _| node.connection() != connection);
         self.counts
+            .retain(|node, _| node.connection() != connection);
+        self.remarks
             .retain(|node, _| node.connection() != connection);
     }
 
@@ -485,12 +514,30 @@ impl ExplorerSource {
     }
 
     /// Records the children a fetch produced.
-    pub fn set_children(&mut self, node: NodeId, children: Vec<NodeId>) {
+    pub fn set_children(&mut self, node: NodeId, children: Vec<Child>) {
         if matches!(node, NodeId::Folder { .. }) {
             self.counts.insert(node.clone(), children.len());
         }
         self.errors.remove(&node);
-        self.children.insert(node, ChildState::Loaded(children));
+        let ids = children
+            .into_iter()
+            .map(|child| {
+                match child.remarks {
+                    Some(remarks) => self.remarks.insert(child.id.clone(), remarks),
+                    // Removed rather than left: a comment dropped in the
+                    // database has to come off the row that a refresh redraws.
+                    None => self.remarks.remove(&child.id),
+                };
+                child.id
+            })
+            .collect();
+        self.children.insert(node, ChildState::Loaded(ids));
+    }
+
+    /// The catalog's comment on `id`, for the rows that carry one.
+    #[cfg(test)]
+    pub fn remarks_of(&self, id: &NodeId) -> Option<&SharedString> {
+        self.remarks.get(id)
     }
 
     /// Records that a node could not be loaded.
@@ -623,6 +670,27 @@ impl TreeSource for ExplorerSource {
                 .child(SharedString::from(count.to_string()))
         });
 
+        // The catalog's comment, after the name and quieter than it — the same
+        // treatment the folder count gets, and for the same reason: it is a
+        // second fact about the row rather than a second row. Never translated,
+        // because it is the database's own text.
+        //
+        // It is cut to keep the name readable, so the whole of it has to be
+        // reachable somewhere; the tooltip hangs off the comment itself rather
+        // than off the row, which is both where the reader is already pointing
+        // and the one part of the row every kind of object has.
+        let subtitle = self.remarks.get(id).map(|remarks| {
+            div()
+                .id(("tree-remarks", info.index))
+                .flex_none()
+                .max_w(px(160.))
+                .truncate()
+                .text_size(px(10.))
+                .text_color(chrome.text_muted)
+                .tooltip(rudbman_ui::tooltip_label(remarks.clone()))
+                .child(remarks.clone())
+        });
+
         let body = div()
             .flex()
             .flex_row()
@@ -638,6 +706,7 @@ impl TreeSource for ExplorerSource {
                     .when(info.selected, |label| label.text_color(chrome.text))
                     .child(label),
             )
+            .children(subtitle)
             .children(badge);
 
         // Only a table or a view can be dragged onto a query builder, which is
@@ -742,22 +811,28 @@ pub fn folders_of(connection: ConnectionId, scope: Scope) -> Vec<NodeId> {
 /// until it has been asked for. A level of one or none is therefore not
 /// returned — the fetch goes on to the next level in the same call, so opening a
 /// connection on a one-schema database lands directly on the folders.
-pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<NodeId>, String> {
+pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<Child>, String> {
     match node {
         NodeId::Connection(connection) => {
             let catalogs = names(session, &DescribeRequest::new("catalogs"))?;
             if catalogs.len() > 1 {
                 return Ok(catalogs
                     .into_iter()
-                    .map(|name| NodeId::Catalog {
-                        connection: *connection,
-                        name,
+                    .map(|(name, _)| {
+                        Child::plain(NodeId::Catalog {
+                            connection: *connection,
+                            name,
+                        })
                     })
                     .collect());
             }
             // One catalogue or none: it becomes part of the scope rather than a
             // row of its own.
-            next_level(session, *connection, catalogs.into_iter().next())
+            next_level(
+                session,
+                *connection,
+                catalogs.into_iter().next().map(|(name, _)| name),
+            )
         }
         NodeId::Catalog { connection, name } => {
             next_level(session, *connection, Some(name.clone()))
@@ -775,11 +850,14 @@ pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<NodeId>, St
             }
             Ok(names(session, &request)?
                 .into_iter()
-                .map(|name| NodeId::Object {
-                    connection: *connection,
-                    scope: scope.clone(),
-                    folder: *folder,
-                    name,
+                .map(|(name, remarks)| Child {
+                    id: NodeId::Object {
+                        connection: *connection,
+                        scope: scope.clone(),
+                        folder: *folder,
+                        name,
+                    },
+                    remarks,
                 })
                 .collect())
         }
@@ -799,7 +877,7 @@ fn next_level(
     session: &Session,
     connection: ConnectionId,
     catalog: Option<String>,
-) -> Result<Vec<NodeId>, String> {
+) -> Result<Vec<Child>, String> {
     let mut request = DescribeRequest::new("schemas");
     request.catalog = catalog.clone();
     let schemas = names(session, &request)?;
@@ -807,10 +885,12 @@ fn next_level(
     if schemas.len() > 1 {
         return Ok(schemas
             .into_iter()
-            .map(|name| NodeId::Schema {
-                connection,
-                catalog: catalog.clone(),
-                name,
+            .map(|(name, _)| {
+                Child::plain(NodeId::Schema {
+                    connection,
+                    catalog: catalog.clone(),
+                    name,
+                })
             })
             .collect());
     }
@@ -818,26 +898,44 @@ fn next_level(
         connection,
         Scope {
             catalog,
-            schema: schemas.into_iter().next(),
+            schema: schemas.into_iter().next().map(|(name, _)| name),
         },
-    ))
+    )
+    .into_iter()
+    .map(Child::plain)
+    .collect())
 }
 
-/// Runs a `DESCRIBE` and collects the `name` of every item.
+/// Runs a `DESCRIBE` and collects the `name` and the comment of every item.
 ///
 /// An item with no name is dropped rather than drawn as a blank row: a driver
 /// that answers `getSchemas` with a null `TABLE_SCHEM` — some do, for the
 /// default schema — would otherwise put an unclickable empty line in the tree.
-fn names(session: &Session, request: &DescribeRequest) -> Result<Vec<String>, String> {
+///
+/// The comment comes along for every kind, and is `None` for every kind but the
+/// objects: only `getTables` carries a `REMARKS`, and a level that has none
+/// simply has none rather than needing a second call to find that out.
+fn names(
+    session: &Session,
+    request: &DescribeRequest,
+) -> Result<Vec<(String, Option<SharedString>)>, String> {
     let result = session.describe(request).map_err(describe_failure)?;
     Ok(result
         .items
         .into_iter()
         .filter_map(|item| {
-            item.get("name")
+            let name = item
+                .get("name")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
-                .filter(|name| !name.is_empty())
+                .filter(|name| !name.is_empty())?;
+            let remarks = item
+                .get("remarks")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|remarks| !remarks.is_empty())
+                .map(|remarks| SharedString::from(remarks.to_owned()));
+            Some((name, remarks))
         })
         .collect())
 }
@@ -953,7 +1051,7 @@ impl Explorer {
     pub fn deliver(
         &mut self,
         node: NodeId,
-        outcome: Result<Vec<NodeId>, SharedString>,
+        outcome: Result<Vec<Child>, SharedString>,
         cx: &mut Context<Self>,
     ) {
         self.update_source(cx, |source| match outcome {
@@ -1174,8 +1272,8 @@ pub(crate) mod tests {
                 source.set_children(
                     NodeId::Connection(C),
                     vec![
-                        node(Folder::Tables, "PERSON"),
-                        node(Folder::Procedures, "REBUILD"),
+                        Child::plain(node(Folder::Tables, "PERSON")),
+                        Child::plain(node(Folder::Procedures, "REBUILD")),
                     ],
                 );
             });
@@ -1264,6 +1362,7 @@ pub(crate) mod tests {
         for sql in [
             "create schema if not exists APP",
             "create table APP.TEAM (ID int primary key, NAME varchar(40) not null)",
+            "comment on table APP.TEAM is 'the squads people belong to'",
             "comment on column APP.TEAM.NAME is 'what the team is called'",
             "create table APP.PERSON (\
                  ID int primary key, \
@@ -1299,12 +1398,12 @@ pub(crate) mod tests {
         assert!(
             children
                 .iter()
-                .all(|node| matches!(node, NodeId::Schema { .. })),
+                .all(|child| matches!(child.id, NodeId::Schema { .. })),
             "one catalogue must not be drawn as a level: {children:?}"
         );
         let names: Vec<String> = children
             .iter()
-            .filter_map(|node| match node {
+            .filter_map(|child| match &child.id {
                 NodeId::Schema { name, .. } => Some(name.clone()),
                 _ => None,
             })
@@ -1314,7 +1413,7 @@ pub(crate) mod tests {
 
         // And the single catalogue was folded into the scope rather than lost,
         // so the queries underneath stay qualified.
-        let NodeId::Schema { catalog, .. } = &children[0] else {
+        let NodeId::Schema { catalog, .. } = &children[0].id else {
             unreachable!()
         };
         assert!(catalog.is_some(), "the one catalogue is remembered");
@@ -1339,7 +1438,7 @@ pub(crate) mod tests {
             load_children(session, &folder(kind))
                 .unwrap_or_else(|error| panic!("{kind:?}: {error}"))
                 .into_iter()
-                .filter_map(|node| match node {
+                .filter_map(|child| match child.id {
                     NodeId::Object { name, .. } => Some(name),
                     _ => None,
                 })
@@ -1366,6 +1465,42 @@ pub(crate) mod tests {
         // with nothing, which the JNI layer documents; an empty folder is a
         // correct answer, not a failure.
         assert!(names(Folder::Functions).is_empty());
+    }
+
+    /// The catalogue's comment on an object comes down with the row and is kept
+    /// beside it, so the tree can draw it without a second describe.
+    #[test]
+    fn a_commented_table_carries_its_comment_onto_its_row() {
+        let connected = h2_fixture("explorer-remarks");
+        let folder = NodeId::Folder {
+            connection: C,
+            scope: Scope {
+                catalog: None,
+                schema: Some("APP".to_string()),
+            },
+            folder: Folder::Tables,
+        };
+        let children = load_children(connected.session(), &folder).expect("the folder loads");
+
+        let mut source = ExplorerSource::default();
+        source.set_children(folder, children);
+
+        let object = |name: &str| NodeId::Object {
+            connection: C,
+            scope: Scope {
+                catalog: None,
+                schema: Some("APP".to_string()),
+            },
+            folder: Folder::Tables,
+            name: name.to_string(),
+        };
+        assert_eq!(
+            source.remarks_of(&object("TEAM")).map(SharedString::as_ref),
+            Some("the squads people belong to")
+        );
+        // And a table nobody commented gets no subtitle at all, rather than an
+        // empty one that would draw as a gap after the name.
+        assert!(source.remarks_of(&object("PERSON")).is_none());
     }
 
     /// A node that will not load leaves the rest of the tree standing.
@@ -1538,13 +1673,15 @@ pub(crate) mod tests {
             scope: scope("public"),
             folder: Folder::Tables,
         };
-        let items: Vec<NodeId> = ["a", "b", "c"]
+        let items: Vec<Child> = ["a", "b", "c"]
             .iter()
-            .map(|name| NodeId::Object {
-                connection: C,
-                scope: scope("public"),
-                folder: Folder::Tables,
-                name: (*name).to_string(),
+            .map(|name| {
+                Child::plain(NodeId::Object {
+                    connection: C,
+                    scope: scope("public"),
+                    folder: Folder::Tables,
+                    name: (*name).to_string(),
+                })
             })
             .collect();
         source.set_children(folder.clone(), items);
@@ -1570,7 +1707,10 @@ pub(crate) mod tests {
             );
             source.set_children(
                 NodeId::Connection(connection),
-                folders_of(connection, scope("public")),
+                folders_of(connection, scope("public"))
+                    .into_iter()
+                    .map(Child::plain)
+                    .collect(),
             );
         }
 
@@ -1614,7 +1754,10 @@ pub(crate) mod tests {
             );
             source.set_children(
                 NodeId::Connection(connection),
-                folders_of(connection, scope("public")),
+                folders_of(connection, scope("public"))
+                    .into_iter()
+                    .map(Child::plain)
+                    .collect(),
             );
         }
 
