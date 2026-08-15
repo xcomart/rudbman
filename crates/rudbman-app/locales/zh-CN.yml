@@ -555,6 +555,9 @@ erd:
   load_failed: "无法绘制图表：%{error}"
   empty: 该模式中没有表。
   auto_arrange: 自动布局
+  names_physical: 物理名
+  names_logical: 逻辑名
+  logical_names: 显示逻辑名
   export_svg: 导出 SVG…
   export_done: "已写入 %{path}。"
   export_failed: "无法写入图表：%{error}"

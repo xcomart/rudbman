@@ -555,6 +555,9 @@ erd:
   load_failed: "Das Diagramm konnte nicht gezeichnet werden: %{error}"
   empty: Dieses Schema enthält keine Tabellen.
   auto_arrange: Anordnen
+  names_physical: Physisch
+  names_logical: Logisch
+  logical_names: Logische Namen
   export_svg: SVG exportieren…
   export_done: "Nach %{path} geschrieben."
   export_failed: "Das Diagramm konnte nicht geschrieben werden: %{error}"

@@ -37,7 +37,10 @@
 //!   (architecture document, §12.4).
 //! * **The screen and the file cannot drift apart.** [`svg`] is a second
 //!   renderer over the *same* [`layout::measure`] and [`layout::route`] the
-//!   canvas draws with, rather than a second guess at them.
+//!   canvas draws with, rather than a second guess at them. That is why the
+//!   [`NameMode`] is threaded through both: which vocabulary a box is measured
+//!   in decides where its text is elided, and an export that chose for itself
+//!   would cut the same name at a different character.
 //! * **The widget does not save anything.** It raises
 //!   [`ErdEvent::LayoutChanged`] once per gesture and the host writes the file,
 //!   exactly as the grid asks its host to fetch and to sort. The builder goes
@@ -68,7 +71,7 @@ pub mod view;
 pub use builder::{BUILDER_KEY_CONTEXT, BuilderEdge, BuilderEvent, BuilderView};
 pub use canvas::CANVAS_KEY_CONTEXT;
 pub use layout::{HEADER_HEIGHT, NodeRect, ROW_HEIGHT, auto_layout, grid_layout, measure, route};
-pub use model::{ErdColumn, ErdModel, ErdRelation, ErdTable};
+pub use model::{ErdColumn, ErdModel, ErdRelation, ErdTable, NameMode};
 pub use svg::{SvgPalette, to_svg};
 pub use view::{ErdEvent, ErdView, KEY_CONTEXT};
 

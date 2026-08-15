@@ -555,6 +555,9 @@ erd:
   load_failed: "다이어그램을 그리지 못했습니다: %{error}"
   empty: 이 스키마에는 테이블이 없습니다.
   auto_arrange: 자동 배치
+  names_physical: 물리명
+  names_logical: 논리명
+  logical_names: 논리명으로 표시
   export_svg: SVG 내보내기…
   export_done: "%{path}에 저장했습니다."
   export_failed: "다이어그램을 저장하지 못했습니다: %{error}"

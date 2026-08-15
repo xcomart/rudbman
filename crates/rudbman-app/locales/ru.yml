@@ -555,6 +555,9 @@ erd:
   load_failed: "Не удалось построить диаграмму: %{error}"
   empty: В этой схеме нет таблиц.
   auto_arrange: Расставить
+  names_physical: Физические
+  names_logical: Логические
+  logical_names: Логические имена
   export_svg: Экспорт в SVG…
   export_done: "Записано в %{path}."
   export_failed: "Не удалось записать диаграмму: %{error}"

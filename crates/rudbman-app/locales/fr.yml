@@ -555,6 +555,9 @@ erd:
   load_failed: "Le diagramme n'a pas pu être dessiné : %{error}"
   empty: Ce schéma ne contient aucune table.
   auto_arrange: Disposer
+  names_physical: Physiques
+  names_logical: Logiques
+  logical_names: Noms logiques
   export_svg: Exporter en SVG…
   export_done: "Écrit dans %{path}."
   export_failed: "Le diagramme n'a pas pu être écrit : %{error}"

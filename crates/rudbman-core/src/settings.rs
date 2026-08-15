@@ -259,6 +259,17 @@ pub struct AppSettings {
     /// On by default: a workbench whose object tree is hidden until it is found
     /// in a menu is a workbench that looks like it has none.
     pub explorer_visible: bool,
+    /// Whether a diagram opens drawn with the catalog's comments rather than
+    /// with the identifiers.
+    ///
+    /// Off by default: the identifiers are what the SQL beside the diagram is
+    /// written in, and a schema nobody has commented would otherwise open
+    /// looking exactly the same while claiming to show something else.
+    ///
+    /// One preference for every diagram rather than one per scope. Which
+    /// vocabulary a reader wants is a fact about the reader, not about the
+    /// schema they happen to have open.
+    pub erd_logical_names: bool,
     /// Window geometry and background treatment.
     pub window: WindowState,
     /// Release tag the user asked never to be told about again, e.g. `"v0.2.0"`.
@@ -301,6 +312,7 @@ impl Default for AppSettings {
             confirm_writes_default: true,
             explorer_width: DEFAULT_EXPLORER_WIDTH,
             explorer_visible: true,
+            erd_logical_names: false,
             window: WindowState::default(),
             ignored_update: None,
             extra: BTreeMap::new(),

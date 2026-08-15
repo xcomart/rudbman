@@ -911,6 +911,14 @@ erd:
   empty: This schema has no tables.
   # Re-runs the automatic layout over every box.
   auto_arrange: Arrange
+  # The two vocabularies a box can be drawn in: the identifiers the SQL is
+  # written in, and the comments the catalogue carries. Both label the same
+  # two-option control, so they read as a pair.
+  names_physical: Physical
+  names_logical: Logical
+  # The same switch as one context-menu row, ticked while the comments are
+  # showing.
+  logical_names: Logical names
   # Opens a save dialog, hence the ellipsis.
   export_svg: Export SVG…
   export_done: "Written to %{path}."

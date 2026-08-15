@@ -40,11 +40,12 @@ use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Pixels, Point, Render,
     SharedString, Subscription, Window, div, prelude::*, px,
 };
-use rudbman_erd::{ErdColumn, ErdEvent, ErdModel, ErdRelation, ErdTable, ErdView};
+use rudbman_erd::{ErdColumn, ErdEvent, ErdModel, ErdRelation, ErdTable, ErdView, NameMode};
 use rudbman_jdbc::{DescribeRequest, Session};
-use rudbman_ui::{Button, ButtonVariant, ContextMenu, Theme, theme};
+use rudbman_ui::{Button, ButtonVariant, ContextMenu, Segmented, Theme, theme};
 
 use crate::SHORTCUT_MODIFIER;
+use crate::app_settings;
 use crate::context_menu::{self, MenuRow};
 use crate::explorer::{ConnectionId, Folder, ObjectTarget, Scope};
 use crate::i18n::ts;
@@ -62,6 +63,14 @@ const ZOOM_ACTIONS: [(&str, &str); 3] = [
     ("rudbman_erd::ZoomOut", "-"),
     ("rudbman_erd::ZoomActual", "0"),
 ];
+
+/// Registered name of the action that swaps the diagram's two vocabularies.
+///
+/// Named as a string for the same reason the zoom rows are: `rudbman-erd` binds
+/// it to `Ctrl`+`Shift`+`L` and registers it, but exports neither the type nor
+/// the module holding it. `every_canvas_action_is_registered` keeps this string
+/// honest too.
+const TOGGLE_NAMES_ACTION: &str = "rudbman_erd::ToggleNames";
 
 /// The labels of [`ZOOM_ACTIONS`], in the same order.
 fn zoom_labels() -> [SharedString; 3] {
@@ -271,11 +280,22 @@ impl ErdPane {
     /// "loading…" for ever. The host subscribes and then calls
     /// [`ErdPane::refresh`].
     pub fn new(target: ErdTarget, cx: &mut Context<Self>) -> Self {
-        let view = cx.new(ErdView::new);
+        // Whatever the last diagram was left showing. A preference the user set
+        // on one schema is a preference about them rather than about that
+        // schema, so a diagram opened afterwards opens the same way.
+        let mode = name_mode(app_settings::current(cx).erd_logical_names);
+        let view = cx.new(|cx| {
+            let mut view = ErdView::new(cx);
+            view.set_name_mode(mode, cx);
+            view
+        });
         let events = cx.subscribe(&view, |pane, _view, event, cx| match event {
             ErdEvent::LayoutChanged => {
                 cx.emit(ErdPaneEvent::LayoutChanged(Box::new(pane.target.clone())));
             }
+            // The chord reached the canvas, which has already swapped; all that
+            // is left is to remember it, because the widget persists nothing.
+            ErdEvent::NameModeChanged(mode) => remember_names(*mode, cx),
             // The canvas holds no strings, so the menu is drawn here
             // (architecture document, §7.8).
             ErdEvent::ContextMenu { table, position } => {
@@ -403,6 +423,23 @@ impl ErdPane {
         handle.focus(window);
     }
 
+    /// Which vocabulary the boxes are drawn with.
+    fn name_mode(&self, cx: &App) -> NameMode {
+        self.view.read(cx).name_mode()
+    }
+
+    /// Draws the boxes with `mode`, and remembers the choice.
+    ///
+    /// The canvas only announces the *chord*, so this is the other half of the
+    /// same story: the toolbar and the menu ask for a mode outright, and both
+    /// have to leave the preference where the keyboard leaves it.
+    fn set_name_mode(&mut self, mode: NameMode, cx: &mut Context<Self>) {
+        self.view
+            .update(cx, |view, cx| view.set_name_mode(mode, cx));
+        remember_names(mode, cx);
+        cx.notify();
+    }
+
     /// Re-runs the automatic layout.
     ///
     /// The canvas announces the result itself, so the arrangement is saved
@@ -523,6 +560,24 @@ impl ErdPane {
                     this.update(cx, |pane, cx| pane.auto_arrange(cx));
                 })
         });
+        rows.push({
+            // Dispatched by name on the canvas, exactly as the zoom rows are:
+            // the action is the widget's and the row is only a second way to
+            // reach the chord, so the toggle and the preference are written in
+            // one place rather than two.
+            let canvas = canvas.clone();
+            MenuRow::new(ts!("erd.logical_names"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+Shift+L"))
+                .checked(matches!(self.name_mode(cx), NameMode::Logical))
+                .on_activate(
+                    move |window, cx| match cx.build_action(TOGGLE_NAMES_ACTION, None) {
+                        Ok(built) => canvas.dispatch_action(&*built, window, cx),
+                        Err(error) => {
+                            log::error!("the canvas action {TOGGLE_NAMES_ACTION} is gone: {error}");
+                        }
+                    },
+                )
+        });
         rows.extend(canvas_zoom_rows(&canvas));
         rows.push(MenuRow::separator());
         rows.push({
@@ -569,6 +624,7 @@ impl ErdPane {
         let this = cx.entity();
         let loading = self.is_loading();
         let ready = matches!(self.load, Load::Ready(_));
+        let logical = matches!(self.name_mode(cx), NameMode::Logical);
 
         div()
             .flex()
@@ -610,6 +666,24 @@ impl ErdPane {
                     })
                     .child(notice.message.clone())
             }))
+            .child({
+                // Two options rather than a checkbox: the pair names both
+                // vocabularies, and "logical" only reads as the opposite of
+                // something once the something is on screen beside it.
+                let this = this.clone();
+                div().flex_none().w(px(160.)).child(
+                    Segmented::new("erd-names")
+                        .options([
+                            ("physical", ts!("erd.names_physical")),
+                            ("logical", ts!("erd.names_logical")),
+                        ])
+                        .selected(usize::from(logical))
+                        .on_select(move |index, _window, cx| {
+                            let mode = name_mode(index == 1);
+                            this.update(cx, |pane, cx| pane.set_name_mode(mode, cx));
+                        }),
+                )
+            })
             .child({
                 let this = this.clone();
                 Button::new("erd-arrange", ts!("erd.auto_arrange"))
@@ -687,6 +761,30 @@ impl Render for ErdPane {
     }
 }
 
+/// The mode a stored `erd_logical_names` means.
+fn name_mode(logical: bool) -> NameMode {
+    if logical {
+        NameMode::Logical
+    } else {
+        NameMode::Physical
+    }
+}
+
+/// Writes the vocabulary the next diagram should open with.
+///
+/// A global rather than something `erd/<profile-uuid>.json` carries: that file
+/// is the *arrangement* of one scope's boxes, and which names are on them is
+/// neither about a scope nor about an arrangement.
+fn remember_names(mode: NameMode, cx: &mut App) {
+    let logical = matches!(mode, NameMode::Logical);
+    let mut settings = app_settings::current(cx);
+    if settings.erd_logical_names == logical {
+        return;
+    }
+    settings.erd_logical_names = logical;
+    app_settings::replace(settings, cx);
+}
+
 /// A one-line message where the canvas would be.
 fn note(message: SharedString, color: gpui::Hsla) -> impl IntoElement {
     div()
@@ -727,13 +825,21 @@ pub fn load_model(session: &Session, target: &ErdTarget) -> Result<ErdModel, Str
         request
     };
 
+    // The one call that carries a table's own comment, so the box titles the
+    // logical mode draws are collected here rather than fetched again per box.
+    let mut comments: HashMap<String, String> = HashMap::new();
     let mut names: Vec<String> = {
         let mut request = scoped("tables");
         request.types = Some(vec![TABLE_TYPE.to_string()]);
         items(session, &request)?
             .iter()
-            .filter_map(|table| text(table, "name"))
-            .map(str::to_owned)
+            .filter_map(|table| {
+                let name = text(table, "name")?;
+                if let Some(remarks) = text(table, "remarks") {
+                    comments.insert(name.to_owned(), remarks.to_owned());
+                }
+                Some(name.to_owned())
+            })
             .collect()
     };
     names.sort();
@@ -794,6 +900,7 @@ pub fn load_model(session: &Session, target: &ErdTarget) -> Result<ErdModel, Str
                         Some(ErdColumn {
                             name: column_name.to_string(),
                             type_name: type_of(column),
+                            comment: text(column, "remarks").map(str::to_owned),
                             nullable: flag(column, "is_nullable").unwrap_or(true),
                             primary_key: primary.contains(column_name),
                             foreign_key: fk_columns.contains(column_name),
@@ -805,6 +912,7 @@ pub fn load_model(session: &Session, target: &ErdTarget) -> Result<ErdModel, Str
 
         tables.push(ErdTable {
             name: name.clone(),
+            comment: comments.get(name).cloned(),
             columns,
         });
         edges.extend(edges_of(name, &imported, scope));
@@ -1026,6 +1134,18 @@ mod tests {
 
         // And both ends are inside the model, which is what the canvas draws.
         assert_eq!(model.valid_relations().count(), 1);
+
+        // The comments the logical mode draws with, on the box and on the row.
+        let team = table(&model, "TEAM");
+        assert_eq!(team.comment.as_deref(), Some("the squads people belong to"));
+        assert_eq!(
+            column(team, "NAME").comment.as_deref(),
+            Some("what the team is called")
+        );
+        // An uncommented table and an uncommented column carry nothing, so the
+        // logical mode falls back to their identifiers.
+        assert_eq!(person.comment, None);
+        assert_eq!(column(person, "ID").comment, None);
     }
 
     /// The same fetch twice has to produce the same thing, or a saved layout
@@ -1270,6 +1390,32 @@ mod tests {
         window
     }
 
+    /// Which vocabulary a reader wants is a fact about the reader, so the
+    /// choice made in one panel is what the next diagram opens with.
+    #[gpui::test]
+    fn switching_the_vocabulary_is_remembered_for_the_next_diagram(cx: &mut gpui::TestAppContext) {
+        let window = loaded(cx);
+        window
+            .update(cx, |panel, _window, cx| {
+                assert_eq!(panel.name_mode(cx), NameMode::Physical);
+                panel.set_name_mode(NameMode::Logical, cx);
+                assert_eq!(panel.name_mode(cx), NameMode::Logical);
+            })
+            .expect("the window is open");
+        cx.update(|cx| assert!(app_settings::current(cx).erd_logical_names));
+
+        let second = cx.add_window(|_window, cx| ErdPane::new(target("APP"), cx));
+        second
+            .update(cx, |panel, _window, cx| {
+                assert_eq!(
+                    panel.name_mode(cx),
+                    NameMode::Logical,
+                    "a diagram opened afterwards ignored the preference"
+                );
+            })
+            .expect("the window is open");
+    }
+
     /// The three zoom rows name actions `rudbman-erd` registers but does not
     /// export, so they are built the way a keymap builds one — by name. This is
     /// what turns a rename in that crate into a failing test rather than into
@@ -1278,7 +1424,11 @@ mod tests {
     fn every_canvas_action_is_registered(cx: &mut gpui::TestAppContext) {
         cx.update(rudbman_erd::init);
         cx.update(|cx| {
-            for (name, _) in ZOOM_ACTIONS {
+            let named = ZOOM_ACTIONS
+                .iter()
+                .map(|(name, _)| *name)
+                .chain([TOGGLE_NAMES_ACTION]);
+            for name in named {
                 assert!(
                     cx.build_action(name, None).is_ok(),
                     "{name} is not a registered action"
@@ -1295,6 +1445,7 @@ mod tests {
         let window = loaded(cx);
         let canvas = [
             ts!("erd.auto_arrange").to_string(),
+            ts!("erd.logical_names").to_string(),
             ts!("context.zoom_in").to_string(),
             ts!("context.zoom_out").to_string(),
             ts!("context.zoom_reset").to_string(),
@@ -1431,9 +1582,11 @@ mod tests {
             ts!("context.zoom_in"),
             ts!("context.zoom_out"),
             ts!("context.zoom_reset"),
+            ts!("erd.logical_names"),
         ] {
             assert!(!label.is_empty(), "empty label");
             assert!(!label.starts_with("context."), "untranslated {label:?}");
+            assert!(!label.starts_with("erd."), "untranslated {label:?}");
         }
     }
 
@@ -1446,6 +1599,9 @@ mod tests {
             ts!("erd.load_failed", error = "e"),
             ts!("erd.empty"),
             ts!("erd.auto_arrange"),
+            ts!("erd.names_physical"),
+            ts!("erd.names_logical"),
+            ts!("erd.logical_names"),
             ts!("erd.export_svg"),
             ts!("erd.export_done", path = "/tmp/a.svg"),
             ts!("erd.export_failed", error = "e"),
