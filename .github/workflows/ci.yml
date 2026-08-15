@@ -114,8 +114,12 @@ jobs:
   #
   # No apt step: this builds `rudbman-jdbc` and its three dependencies, none of
   # which is gpui, so the native libraries the matrix installs are not needed.
+  # SQLite rides along in the same job without a service of its own: it is a
+  # file rather than a server, so all it needs is a path on the runner, and what
+  # `tests/sqlite.rs` checks — that a product with no comments answers `remarks`
+  # as null rather than failing — is the other end of what the five prove.
   containers:
-    name: PostgreSQL, MySQL, MariaDB, SQL Server and Oracle
+    name: PostgreSQL, MySQL, MariaDB, SQL Server, Oracle and SQLite
     runs-on: ubuntu-latest
     # 45 minutes covered the original two servers; the Oracle image is several
     # gigabytes and gvenzl/oracle-free's own first-start init (on top of the
@@ -215,7 +219,8 @@ jobs:
           for spec in "PG:org.postgresql:postgresql" "MYSQL:com.mysql:mysql-connector-j" \
                       "MARIADB:org.mariadb.jdbc:mariadb-java-client" \
                       "ORACLE:com.oracle.database.jdbc:ojdbc11" \
-                      "MSSQL:com.microsoft.sqlserver:mssql-jdbc"; do
+                      "MSSQL:com.microsoft.sqlserver:mssql-jdbc" \
+                      "SQLITE:org.xerial:sqlite-jdbc"; do
             var=${spec%%:*}; rest=${spec#*:}; group=${rest%%:*}; artifact=${rest#*:}
             jar=$(find ~/.gradle/caches/modules-2/files-2.1/"$group"/"$artifact" \
                     -name "$artifact-*.jar" ! -name '*-sources.jar' | head -1)
@@ -234,6 +239,9 @@ jobs:
           RUDBMAN_TEST_MARIADB_URL: jdbc:mariadb://127.0.0.1:53306/rudbman
           RUDBMAN_TEST_MSSQL_URL: jdbc:sqlserver://127.0.0.1:51433;encrypt=false
           RUDBMAN_TEST_ORACLE_URL: jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1
+          # A path rather than a port: the driver makes the file on connect, and
+          # the runner's temp directory goes away with the runner.
+          RUDBMAN_TEST_SQLITE_URL: jdbc:sqlite:${{ runner.temp }}/rudbman-sqlite-test.db
         # `--nocapture` so the skip lines are visible: a run where a URL went
         # missing would otherwise be a green job that tested nothing.
-        run: cargo test -p rudbman-jdbc --test containers --locked -- --nocapture
+        run: cargo test -p rudbman-jdbc --test containers --test sqlite --locked -- --nocapture

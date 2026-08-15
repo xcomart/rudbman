@@ -21,7 +21,9 @@
 //!
 //! Five of the six products are reachable from here, which is to say all of
 //! them but SQLite, whose `ALTER` the generator refuses outright and whose
-//! refusals the unit tests already fix. So all four of §7.10's attribute-change
+//! refusals the unit tests already fix. The sixth has a file of its own,
+//! `tests/sqlite.rs`, which needs no container and asks the one question only a
+//! product with no comments can answer. So all four of §7.10's attribute-change
 //! families are settled against a server: the standard independent clauses
 //! (PostgreSQL), MySQL's restating (MySQL and MariaDB), Oracle's
 //! `MODIFY (...)` of only what changed, and SQL Server's `ALTER COLUMN`
@@ -336,14 +338,23 @@ struct Server {
     schema: Option<String>,
     /// Tables to drop when the test ends, in creation order.
     tables: RefCell<Vec<String>>,
+    /// Views to drop when the test ends, in creation order. A separate list
+    /// because a view has to go before every table, whenever it was made: it
+    /// is a reader of tables and never a table itself.
+    views: RefCell<Vec<String>>,
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
-        // Reverse order, so a child that references a parent goes first. Every
-        // drop is `IF EXISTS` and every failure is ignored: this runs on the
-        // way out of a panicking test too, and a cleanup that panicked would
-        // replace the real failure with its own.
+        // Views first, then tables in reverse order, so a child that references
+        // a parent goes first. Every drop is `IF EXISTS` and every failure is
+        // ignored: this runs on the way out of a panicking test too, and a
+        // cleanup that panicked would replace the real failure with its own.
+        for view in self.views.borrow().iter().rev() {
+            let _ = self
+                .session
+                .execute(&StatementSpec::new(format!("DROP VIEW IF EXISTS {view}")));
+        }
         for table in self.tables.borrow().iter().rev() {
             let _ = self
                 .session
@@ -398,6 +409,7 @@ impl Server {
             catalog,
             schema,
             tables: RefCell::new(Vec::new()),
+            views: RefCell::new(Vec::new()),
         })
     }
 
@@ -434,14 +446,28 @@ impl Server {
     /// DDL and this file's own hand-written SQL spell the table the same way
     /// without either of them quoting it — see the module documentation.
     fn table(&self, what: &str) -> String {
+        let name = self.fresh(what);
+        self.tables.borrow_mut().push(name.clone());
+        name
+    }
+
+    /// The same, for a view: a name nothing else uses, registered for the
+    /// cleanup that takes views before any table they read.
+    fn view(&self, what: &str) -> String {
+        let name = self.fresh(what);
+        self.views.borrow_mut().push(name.clone());
+        name
+    }
+
+    /// The unregistered half of [`Server::table`] and [`Server::view`]: one
+    /// name no other test and no other run of this one uses.
+    fn fresh(&self, what: &str) -> String {
         static SEQ: AtomicU32 = AtomicU32::new(0);
-        let name = self.name(&format!(
+        self.name(&format!(
             "rb_{what}_{}_{}",
             std::process::id(),
             SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
-        self.tables.borrow_mut().push(name.clone());
-        name
+        ))
     }
 
     /// A table-shaped name in the case this product's catalogue will hold it,
@@ -524,8 +550,44 @@ impl Server {
                     .get("default")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string),
+                remarks: remarks(item),
             })
             .collect()
+    }
+
+    /// One table's own `REMARKS`, out of the rows `describe tables` answers.
+    ///
+    /// The row has to be picked out by name rather than taken as the only one:
+    /// `getTables` takes its table argument as a `LIKE` pattern, and every name
+    /// this file makes has underscores in it — each of which matches any single
+    /// character, so a request for `rb_comment_9_0` can quite legitimately come
+    /// back with somebody else's table beside it.
+    fn table_remarks(&self, table: &str) -> Option<String> {
+        remarks(&self.table_item(table))
+    }
+
+    /// The `describe tables` row for exactly `table`, or a panic naming what
+    /// came back instead.
+    fn table_item(&self, table: &str) -> serde_json::Map<String, serde_json::Value> {
+        let items = self.describe("tables", table);
+        let item = items
+            .iter()
+            .find(|item| string(item, "name") == table)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{:?}: describe tables did not list {table}: {items:?}",
+                    self.product
+                )
+            });
+        // The wire contract, asserted where every reader of it passes: the key
+        // is always there, carrying a string or a JSON null. A driver that
+        // simply has no REMARKS column would otherwise read as "no comment".
+        assert!(
+            item.contains_key("remarks"),
+            "{:?}: no `remarks` in a tables item: {item:?}",
+            self.product
+        );
+        item.clone()
     }
 
     /// The one column named `name`, or a panic naming what was there instead.
@@ -652,6 +714,8 @@ struct CatalogColumn {
     /// `x` — so tests ask whether what they wrote survived rather than what it
     /// now looks like.
     default: Option<String>,
+    /// `REMARKS` — the column's comment — as [`remarks`] normalises it.
+    remarks: Option<String>,
 }
 
 impl CatalogColumn {
@@ -683,6 +747,24 @@ fn string(item: &serde_json::Map<String, serde_json::Value>, key: &str) -> Strin
         .and_then(serde_json::Value::as_str)
         .unwrap_or_else(|| panic!("no `{key}` in {item:?}"))
         .to_string()
+}
+
+/// A describe item's `REMARKS`, with the several spellings of *no comment*
+/// read as one.
+///
+/// Every `tables` and `columns` item carries the key, and what it carries for a
+/// thing nobody commented is not one value but three: PostgreSQL and Oracle
+/// answer SQL NULL, the MySQL family answers the empty string, and a column
+/// SQL Server has no extended property for arrives as either depending on how
+/// the enrichment reached it. None of the three is a comment, so all three
+/// arrive here as `None` — the distinction between them is a driver's habit,
+/// and a test that asserted one of them would be asserting the habit.
+fn remarks(item: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    item.get("remarks")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
 }
 
 /// The first column of the first row of `sql`, as text.
@@ -2319,4 +2401,216 @@ fn oracle_reports_no_source_table_at_all() {
 
     let sources = column_sources(&server.session, &format!("select b.{id} from {t} b"));
     assert_eq!(sources[0].2, "", "ojdbc11 started naming a table");
+}
+
+// --- comments, and the `remarks` they have to come back as -----------------
+//
+// A comment is the one piece of a table's documentation that lives in the
+// server, and the five products keep it in five places: PostgreSQL and Oracle
+// in a catalogue of their own that only `COMMENT ON` writes, MySQL and MariaDB
+// inside the table definition, SQL Server in extended properties that are not
+// part of the schema at all. JDBC has one word for all of it — `REMARKS`,
+// answered by both `getTables` and `getColumns` — and the drivers answer it
+// with wildly different diligence: ojdbc hands back nothing unless
+// `remarksReporting` is on, which costs a dictionary join per describe, and
+// mssql-jdbc has never looked at an extended property in its life.
+//
+// So the bridge fills the gap, and these five tests are what says it did. Each
+// writes a table comment and one column comment in the product's own spelling,
+// leaves a second column uncommented, and reads all three facts back out of
+// `describe`. The comments carry 한글 on purpose: a comment that survives the
+// round trip in ASCII proves the plumbing, and one that survives in Hangul
+// proves the plumbing is UTF-8 the whole way — through the driver's own
+// catalogue query, the bridge's JSON and this crate's decoder.
+
+/// The table comment every test below writes.
+const TABLE_COMMENT: &str = "주문 테이블 / orders";
+/// The comment on `id`. `note` is deliberately left without one.
+const COLUMN_COMMENT: &str = "식별자 / the key";
+
+#[test]
+fn postgres_comments_come_back_as_remarks() {
+    let server = server!(Product::Postgres);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+}
+
+/// MySQL's, with the placeholder its `information_schema` puts on a view.
+///
+/// `information_schema.TABLES.TABLE_COMMENT` is not a comment column: for a
+/// view it holds the literal word `VIEW`, which is MySQL's way of saying "this
+/// row is not a table" and not anything a user typed. Anything reading that
+/// view straight through to `REMARKS` would put `VIEW` in the detail panel's
+/// comment field for every view in the database, so the second half of this
+/// test creates one and insists that whatever comes back, it is not that word.
+///
+/// It was not a hypothetical: the first run of this assertion failed. Connector/J
+/// hands `TABLE_COMMENT` straight to `REMARKS`, so every view really did arrive
+/// commented `VIEW`, and the bridge normalises it away now.
+#[test]
+fn mysql_table_comment_survives_information_schema() {
+    let server = server!(Product::MySql);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+    assert_no_view_placeholder(&server, &t);
+}
+
+/// MariaDB's, including the view placeholder — see
+/// [`mysql_table_comment_survives_information_schema`] for what it is.
+///
+/// Pinned separately rather than assumed from MySQL's: the two products have
+/// two drivers and two dialect rows precisely because what they share has to be
+/// demonstrated one product at a time.
+#[test]
+fn mariadb_comments_come_back_as_remarks() {
+    let server = server!(Product::MariaDb);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+    assert_no_view_placeholder(&server, &t);
+}
+
+#[test]
+fn mssql_extended_properties_become_remarks() {
+    let server = server!(Product::MsSql);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+}
+
+/// Oracle's, and the connection property this deliberately does not set.
+///
+/// `oracle.jdbc.remarksReporting=true` is ojdbc's own answer to this, and it is
+/// not one worth taking: it makes every `getTables` and `getColumns` join
+/// `all_tab_comments` and `all_col_comments` for the whole schema, on a product
+/// where those describes are already the slowest of the five. No session opened
+/// by this file sets it — [`connect`] passes credentials and a JAR and nothing
+/// else — so a comment that arrives here arrived some other way.
+#[test]
+fn oracle_comments_come_back_without_remarks_reporting() {
+    let server = server!(Product::Oracle);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+}
+
+/// A two-column table carrying a table comment and one column comment, written
+/// the way this product spells them.
+///
+/// The table itself goes through `plan_create` on the three products whose
+/// comments are separate statements, so that Oracle's columns are quoted and
+/// stored lower-cased like every other column in this file. MySQL and MariaDB
+/// have no `COMMENT ON` and take a comment only inside the definition, so
+/// theirs is hand-written — which costs nothing there, since neither folds an
+/// unquoted name up.
+fn commented_table(server: &Server) -> String {
+    let t = server.table("comment");
+    match server.product {
+        Product::MySql | Product::MariaDb => {
+            server.exec(&format!(
+                "create table {t} (\
+                   id integer not null comment '{COLUMN_COMMENT}', \
+                   note varchar(40)\
+                 ) comment='{TABLE_COMMENT}'"
+            ));
+        }
+        _ => {
+            let mut create = TableCreate::new([t.as_str()]);
+            create
+                .columns
+                .push(ColumnDef::new("id", "integer").with_not_null(true));
+            create.columns.push(ColumnDef::new("note", "varchar(40)"));
+            server.run(&plan_create(&create, server.dialect()).expect("plans"));
+
+            match server.product {
+                // The SQL-standard spelling, which PostgreSQL and Oracle both
+                // take. The column has to be named the way it was stored, so it
+                // goes through `Server::col` — quoted on Oracle, bare elsewhere.
+                Product::Postgres | Product::Oracle => {
+                    server.exec(&format!("comment on table {t} is '{TABLE_COMMENT}'"));
+                    server.exec(&format!(
+                        "comment on column {t}.{} is '{COLUMN_COMMENT}'",
+                        server.col("id")
+                    ));
+                }
+                // SQL Server has no comment syntax at all: `MS_Description` is
+                // an extended property, a name-value pair hung off a schema
+                // object by a stored procedure, and the convention that it is
+                // *the* comment is SSMS's rather than the server's. The `N`
+                // prefixes make the literals `nvarchar`, without which the
+                // Hangul would arrive as question marks — which is the half of
+                // this test the ASCII would never have caught.
+                Product::MsSql => {
+                    let schema = server
+                        .schema
+                        .as_deref()
+                        .expect("SQL Server reports a schema");
+                    let level0 = format!(
+                        "@level0type=N'SCHEMA', @level0name=N'{schema}', \
+                         @level1type=N'TABLE', @level1name=N'{t}'"
+                    );
+                    server.exec(&format!(
+                        "exec sp_addextendedproperty @name=N'MS_Description', \
+                         @value=N'{TABLE_COMMENT}', {level0}"
+                    ));
+                    server.exec(&format!(
+                        "exec sp_addextendedproperty @name=N'MS_Description', \
+                         @value=N'{COLUMN_COMMENT}', {level0}, \
+                         @level2type=N'COLUMN', @level2name=N'id'"
+                    ));
+                }
+                Product::MySql | Product::MariaDb => unreachable!("handled above"),
+            }
+        }
+    }
+    t
+}
+
+/// The three facts every one of the five has to answer with: the table's
+/// comment, the commented column's, and nothing for the column that has none.
+///
+/// The last is the one that catches an enrichment that works by joining rather
+/// than by matching — a comment lookup that lost its column name would put the
+/// table's comment, or the neighbouring column's, on every column of the table,
+/// and both of those readings pass the first two assertions.
+fn assert_comments(server: &Server, table: &str) {
+    assert_eq!(
+        server.table_remarks(table).as_deref(),
+        Some(TABLE_COMMENT),
+        "{:?}: the table's comment, read back",
+        server.product
+    );
+
+    let id = server.column(table, "id");
+    assert_eq!(
+        id.remarks.as_deref(),
+        Some(COLUMN_COMMENT),
+        "{:?}: the column's comment, read back: {id:?}",
+        server.product
+    );
+
+    let note = server.column(table, "note");
+    assert_eq!(
+        note.remarks, None,
+        "{:?}: an uncommented column has no comment: {note:?}",
+        server.product
+    );
+}
+
+/// A view over `table` reports no comment, and above all not the literal word
+/// `VIEW` — the MySQL family's `information_schema` placeholder, and a real
+/// leak rather than a guarded-against one.
+fn assert_no_view_placeholder(server: &Server, table: &str) {
+    let v = server.view("cmtview");
+    server.exec(&format!("create view {v} as select id, note from {table}"));
+    let item = server.table_item(&v);
+    assert_ne!(
+        item.get("remarks").and_then(serde_json::Value::as_str),
+        Some("VIEW"),
+        "{:?}: the information_schema placeholder leaked into a view's remarks",
+        server.product
+    );
+    assert_eq!(
+        remarks(&item),
+        None,
+        "{:?}: a view nobody commented has no comment: {item:?}",
+        server.product
+    );
 }
