@@ -33,7 +33,7 @@ use crate::layout::{
     BOX_PADDING, HEADER_HEIGHT, NodeRect, ROW_HEIGHT, crow_foot, elide, extent, head_direction,
     key_bar, route, row_top, split_row, tail_direction,
 };
-use crate::model::ErdModel;
+use crate::model::{ErdModel, NameMode};
 
 /// Blank space left around the diagram, in logical units.
 const MARGIN: f32 = 24.;
@@ -78,7 +78,16 @@ pub struct SvgPalette {
 /// [`crate::layout`] produces; a table without a rect is skipped rather than
 /// panicked over, because the export should still write what it can when a
 /// model and a layout have fallen out of step.
-pub fn to_svg(model: &ErdModel, rects: &[NodeRect], palette: &SvgPalette) -> String {
+///
+/// `mode` has to be the one the boxes were measured in. The file is the picture
+/// on screen, and a document written in the other vocabulary would elide at
+/// characters the screen does not.
+pub fn to_svg(
+    model: &ErdModel,
+    rects: &[NodeRect],
+    palette: &SvgPalette,
+    mode: NameMode,
+) -> String {
     let bounds = extent(rects).unwrap_or(NodeRect {
         x: 0.,
         y: 0.,
@@ -125,7 +134,7 @@ pub fn to_svg(model: &ErdModel, rects: &[NodeRect], palette: &SvgPalette) -> Str
         let Some(rect) = rects.get(index) else {
             continue;
         };
-        write_table(&mut out, table, rect, palette);
+        write_table(&mut out, table, rect, palette, mode);
     }
 
     out.push_str("</svg>\n");
@@ -183,6 +192,7 @@ fn write_table(
     table: &crate::model::ErdTable,
     rect: &NodeRect,
     palette: &SvgPalette,
+    mode: NameMode,
 ) {
     let _ = writeln!(
         out,
@@ -214,12 +224,12 @@ fn write_table(
         num(rect.y + HEADER_HEIGHT * BASELINE),
         num(TITLE_SIZE),
         escape(&palette.text),
-        escape(&elide(&table.name, room))
+        escape(&elide(table.display_name(mode), room))
     );
 
     for (index, column) in table.columns.iter().enumerate() {
         let baseline = row_top(rect, index) + ROW_HEIGHT * BASELINE;
-        let (name_text, type_text) = split_row(&column.name, &column.type_name, room);
+        let (name_text, type_text) = split_row(column.display_name(mode), &column.type_name, room);
         let name_colour = if column.primary_key {
             &palette.pk
         } else {
@@ -334,7 +344,12 @@ mod tests {
     #[test]
     fn the_document_is_an_svg_and_names_everything_in_it() {
         let model = model();
-        let out = to_svg(&model, &grid_layout(&model), &palette());
+        let out = to_svg(
+            &model,
+            &grid_layout(&model, NameMode::Physical),
+            &palette(),
+            NameMode::Physical,
+        );
 
         assert!(out.starts_with("<svg"), "{}", &out[..40.min(out.len())]);
         assert!(out.trim_end().ends_with("</svg>"));
@@ -355,7 +370,12 @@ mod tests {
     #[test]
     fn a_relation_is_drawn_with_both_of_its_marks() {
         let model = model();
-        let out = to_svg(&model, &auto_layout(&model), &palette());
+        let out = to_svg(
+            &model,
+            &auto_layout(&model, NameMode::Physical),
+            &palette(),
+            NameMode::Physical,
+        );
         // The polyline, three prongs and one bar: five strokes at least.
         assert!(out.matches("stroke=\"#707070\"").count() >= 5, "{out}");
     }
@@ -363,7 +383,12 @@ mod tests {
     #[test]
     fn the_document_references_nothing_outside_itself() {
         let model = model();
-        let out = to_svg(&model, &grid_layout(&model), &palette());
+        let out = to_svg(
+            &model,
+            &grid_layout(&model, NameMode::Physical),
+            &palette(),
+            NameMode::Physical,
+        );
         for forbidden in ["url(", "<image", "@import", "<script", "xlink:href", "<use"] {
             assert!(
                 !out.contains(forbidden),
@@ -384,7 +409,12 @@ mod tests {
             ],
             relations: Vec::new(),
         };
-        let out = to_svg(&model, &grid_layout(&model), &palette());
+        let out = to_svg(
+            &model,
+            &grid_layout(&model, NameMode::Physical),
+            &palette(),
+            NameMode::Physical,
+        );
 
         assert!(out.contains("a&lt;b&amp;c"), "{out}");
         assert!(out.contains("&quot;hi&quot;"), "{out}");
@@ -397,7 +427,7 @@ mod tests {
 
     #[test]
     fn an_empty_model_still_produces_a_document() {
-        let out = to_svg(&ErdModel::default(), &[], &palette());
+        let out = to_svg(&ErdModel::default(), &[], &palette(), NameMode::Physical);
         assert!(out.starts_with("<svg"));
         assert!(out.contains("#101010"));
     }

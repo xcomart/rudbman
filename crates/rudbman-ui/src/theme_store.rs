@@ -1,6 +1,6 @@
 //! The user's own UI themes and editor themes, as files.
 //!
-//! rudbman ships six chrome themes and four editor themes; anything beyond that
+//! rudbman ships six chrome themes and six editor themes; anything beyond that
 //! comes from a `*.json` file dropped into [`rudbman_core::paths::ui_themes_dir`]
 //! or [`rudbman_core::paths::editor_themes_dir`]. Each file's stem is the id the
 //! theme is selected by, so `~/.config/rudbman/editor-themes/tokyo-night.json`
@@ -444,9 +444,11 @@ mod tests {
         assert_eq!(loaded[0].1.name, "Zed Ish");
     }
 
-    /// The same loader, the other format. The built-in tables differ, which is
-    /// what this checks: `dracula` is a chrome theme and not an editor theme,
-    /// so an editor theme may be called that and a chrome theme may not.
+    /// The same loader, the other format, consulting the other table of
+    /// built-in ids — which is what this checks. `tokyo-night` is a built-in of
+    /// neither table, so a file may be called that on either side; `dracula` is
+    /// a built-in of both, and is refused here because the *editor* table says
+    /// so and not because the chrome one does.
     #[test]
     fn load_dir_reads_editor_themes_against_their_own_builtin_table() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -454,9 +456,9 @@ mod tests {
 
         let file = EditorThemeFile::from_theme("Mine", &EditorTheme::solarized_light());
         let json = serde_json::to_vec(&file).expect("serialize");
-        fs::write(root.join("dracula.json"), &json).expect("write");
-        // But `tokyo-night` is one, and is skipped.
         fs::write(root.join("tokyo-night.json"), &json).expect("write");
+        // Skipped: an id this table already answers to.
+        fs::write(root.join("dracula.json"), &json).expect("write");
         // A chrome theme file in the editor directory does not parse as one.
         let chrome =
             serde_json::to_vec(&ThemeFile::from_theme("Wrong", &Theme::dark())).expect("serialize");
@@ -465,7 +467,7 @@ mod tests {
         let loaded =
             load_dir::<EditorThemeFile>(Ok(root), "editor theme", EditorThemeRegistry::is_builtin);
         let ids: Vec<&str> = loaded.iter().map(|(id, _)| id.as_str()).collect();
-        assert_eq!(ids, ["dracula"]);
+        assert_eq!(ids, ["tokyo-night"]);
         assert_eq!(loaded[0].1.to_theme(), EditorTheme::solarized_light());
     }
 
@@ -501,7 +503,7 @@ mod tests {
     fn an_editor_theme_saves_and_deletes_the_same_way() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().join("editor-themes");
-        let file = EditorThemeFile::from_theme("Mine", &EditorTheme::tokyo_night());
+        let file = EditorThemeFile::from_theme("Mine", &EditorTheme::dracula());
 
         let path = save_json(&root, "mine", &file).expect("save");
         assert!(path.exists());
@@ -613,15 +615,16 @@ mod tests {
     #[test]
     fn a_builtin_id_cannot_be_saved_over() {
         assert!(validated_id("Dracula", ThemeRegistry::is_builtin).is_err());
+        assert!(validated_id("Dracula", EditorThemeRegistry::is_builtin).is_err());
         assert!(validated_id("one-dark", EditorThemeRegistry::is_builtin).is_err());
         assert!(validated_id("   ", ThemeRegistry::is_builtin).is_err());
         assert_eq!(
             validated_id("My Theme", ThemeRegistry::is_builtin).expect("id"),
             "my-theme"
         );
-        // The two tables are independent: `dracula` is only taken on one side,
-        // `tokyo-night` only on the other.
-        assert!(validated_id("dracula", EditorThemeRegistry::is_builtin).is_ok());
+        // Each side is asked its own table, and neither one is asked about the
+        // ids nobody ships: `tokyo-night` is free on both.
+        assert!(validated_id("tokyo-night", EditorThemeRegistry::is_builtin).is_ok());
         assert!(validated_id("tokyo-night", ThemeRegistry::is_builtin).is_ok());
     }
 

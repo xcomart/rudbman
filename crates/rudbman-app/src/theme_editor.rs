@@ -1583,7 +1583,7 @@ mod tests {
 
     #[test]
     fn the_editor_slots_round_trip_through_the_fields() {
-        let file = EditorThemeFile::from_theme("Mine", &EditorTheme::tokyo_night());
+        let file = EditorThemeFile::from_theme("Mine", &EditorTheme::dracula());
         let values = editor_values(&file.colors);
         assert_eq!(values.len(), editor_slots().len());
         assert_eq!(values.len(), 19);
@@ -1618,8 +1618,10 @@ mod tests {
         for theme in [
             EditorTheme::one_dark(),
             EditorTheme::one_light(),
-            EditorTheme::tokyo_night(),
+            EditorTheme::solarized_dark(),
             EditorTheme::solarized_light(),
+            EditorTheme::gruvbox_dark(),
+            EditorTheme::dracula(),
         ] {
             let values = editor_values(&EditorThemeFile::from_theme("X", &theme).colors);
             for (index, slot) in editor_slots().into_iter().enumerate() {

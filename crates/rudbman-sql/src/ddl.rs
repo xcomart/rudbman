@@ -93,6 +93,13 @@
 //! order of `DEFAULT` and `NOT NULL` inside one definition is a field rather
 //! than a constant, since Oracle takes the default first.
 //!
+//! MariaDB is the row that shows what the shape is for. It is MySQL's row with
+//! one word replaced — the fork spells a check-constraint drop
+//! `DROP CONSTRAINT c` where MySQL spells it `DROP CHECK c`, and each product
+//! answers 1064 for the other's — so the whole of the difference between them
+//! is `..Self::MYSQL` and a string, and no emitter below asks which of the two
+//! it is writing for.
+//!
 //! # A refusal names the product and the reason
 //!
 //! SQLite can add, drop and rename a column and rename a table, and has no
@@ -101,8 +108,9 @@
 //! schema operation's clothes, and not what a user who typed a new type asked
 //! for. SQL Server keeps a default as a separately named constraint rather than
 //! a column attribute, so changing one is a drop and an add of a constraint
-//! whose name JDBC's `getColumns` does not report. MySQL will not resolve a
-//! foreign key whose referenced columns are left out, which is the third of
+//! whose name JDBC's `getColumns` does not report. Neither MySQL nor MariaDB
+//! will resolve a foreign key whose referenced columns are left out, which is
+//! the third of
 //! these and the only one found by sending the statement rather than by
 //! reading a manual — see [`Unsupported::ReferenceWithoutColumns`]. All three
 //! are [`DdlError::Unsupported`], in a line that says which product and why,
@@ -257,7 +265,7 @@ pub struct ColumnChange {
 
 /// Which kind of constraint a [`ConstraintDrop`] names.
 ///
-/// The kind travels with the name because MySQL has no generic
+/// The kind travels with the name because the MySQL family has no generic
 /// `DROP CONSTRAINT` and spells each kind separately. It costs the caller
 /// nothing: the detail panel's keys and references tabs already know which is
 /// which.
@@ -280,8 +288,8 @@ pub struct ConstraintDrop {
     pub kind: ConstraintKind,
     /// Its name, as the catalog spells it.
     ///
-    /// Unused for a primary key on MySQL, whose `DROP PRIMARY KEY` names no
-    /// constraint — a table has at most one.
+    /// Unused for a primary key on MySQL and MariaDB, whose `DROP PRIMARY KEY`
+    /// names no constraint — a table has at most one.
     pub name: String,
 }
 
@@ -412,10 +420,11 @@ pub enum TableConstraint {
         ///
         /// Empty means "the referenced table's own primary key", which most
         /// products read an omitted list as — and which is the form that stays
-        /// correct when that key is later re-ordered. **MySQL is not one of
-        /// them**: it resolves no reference on its own, so an empty list there
-        /// is [`Unsupported::ReferenceWithoutColumns`] rather than a statement
-        /// it would refuse. A non-empty list has to be exactly as long as
+        /// correct when that key is later re-ordered. **The MySQL family is
+        /// not among them**: MySQL and MariaDB alike resolve no reference on
+        /// their own, so an empty list there is
+        /// [`Unsupported::ReferenceWithoutColumns`] rather than a statement
+        /// they would refuse. A non-empty list has to be exactly as long as
         /// `columns`.
         referenced_columns: Vec<String>,
     },
@@ -442,10 +451,10 @@ impl TableConstraint {
     /// unnamed.
     ///
     /// The referenced columns are left out, which is how most products spell
-    /// "whatever that table's key is" — but not MySQL, which refuses the shape
-    /// outright ([`Unsupported::ReferenceWithoutColumns`]).
+    /// "whatever that table's key is" — but not MySQL or MariaDB, which refuse
+    /// the shape outright ([`Unsupported::ReferenceWithoutColumns`]).
     /// [`TableConstraint::foreign_key_to`] names them instead, and is the form
-    /// to build when the dialect may be MySQL.
+    /// to build when the dialect may be either of those.
     pub fn foreign_key(
         columns: impl IntoIterator<Item = impl Into<String>>,
         references: impl IntoIterator<Item = impl Into<String>>,
@@ -587,8 +596,9 @@ pub enum Unsupported {
     ConstraintDrop,
     /// Writing a foreign key that does not name the columns it references.
     ///
-    /// MySQL's alone, and the one entry in this enum that was found by sending
-    /// the statement rather than by reading a manual: the container tests in
+    /// The MySQL family's alone, and the one entry in this enum that was found
+    /// by sending the statement rather than by reading a manual: the container
+    /// tests in
     /// `rudbman-jdbc` ran `FOREIGN KEY (c) REFERENCES parent` against a real
     /// server and got error 1239, *"Incorrect foreign key definition for
     /// 'fk': Key reference and table reference don't match"* — a message that
@@ -733,9 +743,12 @@ impl fmt::Display for DdlError {
                          a column attribute, and the catalog does not report that name, so there \
                          is nothing to drop and re-add"
                     }
-                    (DialectId::MySql, Unsupported::ReferenceWithoutColumns) => {
-                        "MySQL resolves no reference on its own, so the columns of the parent's \
-                         key have to be spelled out, where the other products read an omitted \
+                    (
+                        DialectId::MySql | DialectId::MariaDb,
+                        Unsupported::ReferenceWithoutColumns,
+                    ) => {
+                        "this product resolves no reference on its own, so the columns of the \
+                         parent's key have to be spelled out, where the others read an omitted \
                          list as that table's own primary key"
                     }
                     (DialectId::Sqlite, _) => {
@@ -768,6 +781,7 @@ const fn product(dialect: DialectId) -> &'static str {
         DialectId::H2 => "H2",
         DialectId::Postgres => "PostgreSQL",
         DialectId::MySql => "MySQL",
+        DialectId::MariaDb => "MariaDB",
         DialectId::Sqlite => "SQLite",
         DialectId::Oracle => "Oracle",
         DialectId::MsSql => "SQL Server",
@@ -814,8 +828,21 @@ enum AttrStyle {
 enum DropStyle {
     /// `DROP CONSTRAINT n`, whatever the kind.
     Named,
-    /// One spelling per kind: MySQL, which has no generic form.
-    PerKind,
+    /// One spelling per kind: the MySQL family, which has no generic form for
+    /// a key or an index.
+    ///
+    /// The check constraint is the one the two members disagree about, so it
+    /// is carried rather than written: `DROP CHECK n` on MySQL, which is the
+    /// only spelling it has had since 8.0.16 and would answer 1064 for the
+    /// other, and `DROP CONSTRAINT n` on MariaDB, which is the only spelling
+    /// *it* has had since 10.2.22 and answers 1064 for MySQL's. A field is how
+    /// that fits the record: the difference between the two products is a
+    /// string in one row, not a branch in this emitter.
+    PerKind {
+        /// The word `DROP` takes for a check constraint: `CHECK` or
+        /// `CONSTRAINT`.
+        check: &'static str,
+    },
     /// Not at all: SQLite.
     Rebuild,
 }
@@ -854,9 +881,9 @@ struct AlterStyle {
     default_first: bool,
     /// A `REFERENCES` clause has to name the columns it references.
     ///
-    /// MySQL, which resolves no reference on its own and answers error 1239
-    /// for a `FOREIGN KEY (c) REFERENCES parent` that every other product
-    /// reads as the parent's own primary key. The other field
+    /// MySQL and MariaDB, which resolve no reference on their own and answer
+    /// error 1239 for a `FOREIGN KEY (c) REFERENCES parent` that every other
+    /// product reads as the parent's own primary key. The other field
     /// [`plan_create`] reads, and the one that turns into
     /// [`Unsupported::ReferenceWithoutColumns`].
     named_reference_columns: bool,
@@ -897,8 +924,24 @@ impl AlterStyle {
         named_reference_columns: true,
         column_rename: ColumnRename::Change,
         attrs: AttrStyle::Restate,
-        constraints: DropStyle::PerKind,
+        constraints: DropStyle::PerKind { check: "CHECK" },
         ..Self::GENERIC
+    };
+
+    /// MariaDB: MySQL's row with one word changed.
+    ///
+    /// The fork kept the grammar down to `CHANGE COLUMN` and the reference it
+    /// will not resolve, and parted company at the check constraint alone —
+    /// `ALTER TABLE t DROP CHECK c` is SQLSTATE 42000 on a MariaDB 11, which
+    /// spells it `DROP CONSTRAINT c` and has since 10.2.22. Both spellings are
+    /// exclusive to their product, so this is a row rather than a widened
+    /// MySQL one: MySQL 8.0.16 through 8.0.18 have no `DROP CONSTRAINT` to
+    /// share.
+    const MARIADB: Self = Self {
+        constraints: DropStyle::PerKind {
+            check: "CONSTRAINT",
+        },
+        ..Self::MYSQL
     };
 
     /// SQLite: adds, drops and renames only.
@@ -934,6 +977,7 @@ impl AlterStyle {
             DialectId::H2 => &Self::H2,
             DialectId::Postgres => &Self::POSTGRES,
             DialectId::MySql => &Self::MYSQL,
+            DialectId::MariaDb => &Self::MARIADB,
             DialectId::Sqlite => &Self::SQLITE,
             DialectId::Oracle => &Self::ORACLE,
             DialectId::MsSql => &Self::MSSQL,
@@ -1392,8 +1436,8 @@ fn rename_table(table: &str, new_name: &str, style: &AlterStyle, dialect: &Diale
     }
 }
 
-/// One constraint drop: `DROP CONSTRAINT n` everywhere but MySQL, which spells
-/// each kind separately, and SQLite, which cannot.
+/// One constraint drop: `DROP CONSTRAINT n` everywhere but the MySQL family,
+/// which spells each kind separately, and SQLite, which cannot.
 fn drop_constraint(
     table: &str,
     constraint: &ConstraintDrop,
@@ -1403,15 +1447,17 @@ fn drop_constraint(
     let name = dialect.quote_ident(&constraint.name);
     Ok(match style.constraints {
         DropStyle::Named => format!("ALTER TABLE {table} DROP CONSTRAINT {name}"),
-        DropStyle::PerKind => match constraint.kind {
-            // A table has one primary key, and MySQL's form names no
+        DropStyle::PerKind { check } => match constraint.kind {
+            // A table has one primary key, and the family's form names no
             // constraint because there is nothing to disambiguate.
             ConstraintKind::PrimaryKey => format!("ALTER TABLE {table} DROP PRIMARY KEY"),
             ConstraintKind::ForeignKey => format!("ALTER TABLE {table} DROP FOREIGN KEY {name}"),
-            // MySQL's unique constraint *is* its index, and that is the word
-            // its `DROP` takes.
+            // A unique constraint here *is* its index, and that is the word
+            // the `DROP` takes.
             ConstraintKind::Unique => format!("ALTER TABLE {table} DROP INDEX {name}"),
-            ConstraintKind::Check => format!("ALTER TABLE {table} DROP CHECK {name}"),
+            // The one word MySQL and MariaDB disagree about, which is why it
+            // comes from the row rather than from here.
+            ConstraintKind::Check => format!("ALTER TABLE {table} DROP {check} {name}"),
         },
         DropStyle::Rebuild => {
             return Err(DdlError::Unsupported {
@@ -1444,11 +1490,12 @@ mod tests {
     use super::*;
 
     /// Every dialect, so a test can say what each of them makes of one input.
-    const ALL: [Dialect; 7] = [
+    const ALL: [Dialect; 8] = [
         Dialect::GENERIC,
         Dialect::H2,
         Dialect::POSTGRES,
         Dialect::MYSQL,
+        Dialect::MARIADB,
         Dialect::SQLITE,
         Dialect::ORACLE,
         Dialect::MSSQL,
@@ -2003,7 +2050,8 @@ mod tests {
         );
     }
 
-    /// Dropping a constraint: one generic form, MySQL's four, SQLite's refusal.
+    /// Dropping a constraint: one generic form, the MySQL family's four,
+    /// SQLite's refusal.
     #[test]
     fn constraint_drops_are_spelled_per_dialect() {
         let kinds = [
@@ -2055,6 +2103,20 @@ mod tests {
             ]
         );
 
+        // MariaDB writes three of those four, and its own fourth: a real
+        // MariaDB 11 answers SQLSTATE 42000 to `DROP CHECK` and takes
+        // `DROP CONSTRAINT`, which it has had since 10.2.22. MySQL keeps
+        // `DROP CHECK` because 8.0.16 through 8.0.18 have nothing else.
+        assert_eq!(
+            sql(&alter, &Dialect::MARIADB),
+            [
+                "ALTER TABLE orders DROP PRIMARY KEY",
+                "ALTER TABLE orders DROP FOREIGN KEY c1",
+                "ALTER TABLE orders DROP INDEX c1",
+                "ALTER TABLE orders DROP CONSTRAINT c1",
+            ]
+        );
+
         assert_eq!(
             plan_alter(&alter, &Dialect::SQLITE),
             Err(DdlError::Unsupported {
@@ -2063,6 +2125,90 @@ mod tests {
                 column: None,
             })
         );
+    }
+
+    /// MariaDB's row is MySQL's with one word replaced, and this test says
+    /// both halves of that: one alter touching every spelling the two share
+    /// plans identically for them, and the spelling they disagree about
+    /// disagrees on its own.
+    #[test]
+    fn mariadb_is_mysql_but_for_the_check_drop() {
+        let mut alter = TableAlter::new(["app", "Orders"]);
+        for kind in [
+            ConstraintKind::PrimaryKey,
+            ConstraintKind::ForeignKey,
+            ConstraintKind::Unique,
+        ] {
+            alter.drop_constraints.push(ConstraintDrop {
+                kind,
+                name: "c1".to_string(),
+            });
+        }
+        alter
+            .adds
+            .push(ColumnDef::new("note", "varchar(80)").with_default("'x'"));
+        // A rename and a retype at once, which is where `CHANGE COLUMN`
+        // restating the whole definition shows.
+        alter.changes.push(change(
+            ColumnDef::new("qty", "integer"),
+            ColumnDef::new("quantity", "bigint").with_not_null(true),
+        ));
+        alter.drops.push("unit price".to_string());
+        alter.rename_to = Some("order lines".to_string());
+
+        // Down to the backticks and the preserved case, which MariaDB borrows
+        // from MySQL's `Syntax` row rather than copying.
+        assert_eq!(
+            sql(&alter, &Dialect::MARIADB),
+            [
+                "ALTER TABLE app.Orders DROP PRIMARY KEY",
+                "ALTER TABLE app.Orders DROP FOREIGN KEY c1",
+                "ALTER TABLE app.Orders DROP INDEX c1",
+                "ALTER TABLE app.Orders ADD COLUMN note varchar(80) DEFAULT 'x'",
+                "ALTER TABLE app.Orders CHANGE COLUMN qty quantity bigint NOT NULL",
+                "ALTER TABLE app.Orders DROP COLUMN `unit price`",
+                "ALTER TABLE app.Orders RENAME TO `order lines`",
+            ]
+        );
+        assert_eq!(sql(&alter, &Dialect::MARIADB), sql(&alter, &Dialect::MYSQL));
+
+        // The check drop is the whole of the difference.
+        let mut check = orders();
+        check.drop_constraints.push(ConstraintDrop {
+            kind: ConstraintKind::Check,
+            name: "qty_positive".to_string(),
+        });
+        assert_eq!(
+            sql(&check, &Dialect::MARIADB),
+            ["ALTER TABLE orders DROP CONSTRAINT qty_positive"]
+        );
+        assert_eq!(
+            sql(&check, &Dialect::MYSQL),
+            ["ALTER TABLE orders DROP CHECK qty_positive"]
+        );
+
+        // A `CREATE` reads the same two rows for both, so the reference the
+        // family will not resolve is refused for MariaDB too — under its own
+        // name, since the message is the only place the two dialects were ever
+        // distinguishable to a user.
+        let mut create = TableCreate::new(["order_lines"]);
+        create.columns.push(ColumnDef::new("order_id", "integer"));
+        create
+            .constraints
+            .push(TableConstraint::foreign_key(["order_id"], ["orders"]));
+        let error = plan_create(&create, &Dialect::MARIADB).unwrap_err();
+        assert_eq!(
+            error,
+            DdlError::Unsupported {
+                dialect: DialectId::MariaDb,
+                what: Unsupported::ReferenceWithoutColumns,
+                column: None,
+            }
+        );
+        let message = error.to_string();
+        assert!(message.contains("MariaDB"), "{message}");
+        assert!(message.contains("spelled out"), "{message}");
+        assert!(!message.contains("MySQL"), "{message}");
     }
 
     /// The table's new name is bare everywhere, and SQL Server's rename is a
@@ -2500,9 +2646,10 @@ mod tests {
         assert!(!message.contains("mysql"), "{message}");
 
         // Everyone else resolves the omitted list, and goes on writing the
-        // bare clause.
+        // bare clause. Everyone else is not MariaDB, which inherited the
+        // refusal along with the grammar.
         for dialect in ALL {
-            if dialect.id() == DialectId::MySql {
+            if matches!(dialect.id(), DialectId::MySql | DialectId::MariaDb) {
                 continue;
             }
             assert!(

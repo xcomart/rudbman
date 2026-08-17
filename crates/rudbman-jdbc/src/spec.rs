@@ -55,6 +55,24 @@ pub struct ConnectionSpec {
     pub login_timeout_s: u32,
     /// Keep-alive query, run by a timer inside the bridge.
     pub keep_alive: Option<KeepAliveSpec>,
+    /// Query answering table comments this product's driver leaves blank.
+    ///
+    /// A property of the *driver definition* rather than of the connection, and
+    /// it travels here because `DESCRIBE` is where it is used: the bridge holds
+    /// it on the session and reaches for it only when `REMARKS` came back
+    /// empty.
+    ///
+    /// `${catalog}` and `${schema}` in the text are substituted **by the
+    /// bridge**, verbatim, and the result set is read positionally: table name,
+    /// then comment. Nothing on this side parses or validates it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_comments_sql: Option<String>,
+    /// Query answering column comments the driver leaves blank.
+    ///
+    /// Same substitution as [`ConnectionSpec::table_comments_sql`]; three
+    /// columns positionally — table name, column name, comment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_comments_sql: Option<String>,
 }
 
 impl ConnectionSpec {
@@ -71,6 +89,8 @@ impl ConnectionSpec {
             auto_commit: true,
             login_timeout_s: 0,
             keep_alive: None,
+            table_comments_sql: None,
+            column_comments_sql: None,
         }
     }
 
@@ -121,6 +141,8 @@ impl fmt::Debug for ConnectionSpec {
             .field("auto_commit", &self.auto_commit)
             .field("login_timeout_s", &self.login_timeout_s)
             .field("keep_alive", &self.keep_alive)
+            .field("table_comments_sql", &self.table_comments_sql)
+            .field("column_comments_sql", &self.column_comments_sql)
             .finish()
     }
 }
@@ -1562,6 +1584,32 @@ mod tests {
         assert_eq!(base64(b"foob"), "Zm9vYg==");
         assert_eq!(base64(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn the_custom_comment_queries_appear_only_once_set() {
+        // Absent, not null: the bridge reads a missing key as "this driver
+        // answers its own comments" and would take a null as one too, but only
+        // absent is what the contract with `Session.open` says.
+        let plain = serde_json::to_string(&ConnectionSpec::new("jdbc:h2:mem:t", "org.h2.Driver"))
+            .expect("serialises");
+        assert!(!plain.contains("table_comments_sql"), "{plain}");
+        assert!(!plain.contains("column_comments_sql"), "{plain}");
+
+        let mut spec = ConnectionSpec::new("jdbc:h2:mem:t", "org.h2.Driver");
+        spec.table_comments_sql = Some("select t, c from meta where s = '${schema}'".into());
+        spec.column_comments_sql = Some("select t, c, m from cols".into());
+        let json = serde_json::to_string(&spec).expect("serialises");
+        // The `${schema}` hole travels untouched: the substitution is the
+        // bridge's, and escaping or filling it here would break it.
+        assert!(
+            json.contains(r#""table_comments_sql":"select t, c from meta where s = '${schema}'""#),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#""column_comments_sql":"select t, c, m from cols""#),
+            "{json}"
+        );
     }
 
     #[test]

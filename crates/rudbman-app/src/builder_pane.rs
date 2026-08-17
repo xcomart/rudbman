@@ -221,6 +221,9 @@ impl BuilderPane {
         });
         self.boxes.push(ErdTable {
             name: alias,
+            // The builder's canvas is always drawn with the identifiers, so a
+            // comment on the box would be carried around and never shown.
+            comment: None,
             columns,
         });
 

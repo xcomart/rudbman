@@ -41,8 +41,8 @@ use rudbman_ui::to_hex;
 use crate::canvas::{
     BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
 };
-use crate::layout::{NodeRect, auto_layout, grid_layout};
-use crate::model::ErdModel;
+use crate::layout::{NodeRect, auto_layout, grid_layout, measure};
+use crate::model::{ErdModel, NameMode};
 use crate::svg::{SvgPalette, to_svg};
 
 pub use crate::canvas::{ZoomActual, ZoomIn, ZoomOut};
@@ -52,6 +52,9 @@ actions!(
     [
         /// Re-run the automatic layout over the whole diagram.
         AutoArrange,
+        /// Draw the boxes with the catalog's comments instead of the
+        /// identifiers, or the other way round.
+        ToggleNames,
     ]
 );
 
@@ -74,6 +77,13 @@ pub enum ErdEvent {
     /// because a host that writes a file per frame is a host that writes a
     /// hundred files per gesture.
     LayoutChanged,
+    /// The keyboard asked for the other vocabulary, and the boxes are now drawn
+    /// in it.
+    ///
+    /// Only ever the *chord*: a host that set the mode itself already knows. It
+    /// carries the mode rather than "it changed" because the preference the
+    /// host persists is a value, not a gesture.
+    NameModeChanged(NameMode),
     /// The user right clicked, and wants the menu for what is under the
     /// pointer.
     ///
@@ -116,6 +126,8 @@ pub struct ErdView {
     labels: Rc<Vec<BoxLabels>>,
     /// The relations worth drawing, as box pairs, resolved once.
     edges: Rc<Vec<Edge>>,
+    /// Which of the two names the boxes are drawn with.
+    name_mode: NameMode,
     /// Where the diagram is looked at from, and how closely.
     viewport: Viewport,
     selected: Option<usize>,
@@ -141,6 +153,7 @@ impl ErdView {
             rects: Vec::new(),
             labels: Rc::new(Vec::new()),
             edges: Rc::new(Vec::new()),
+            name_mode: NameMode::default(),
             viewport: Viewport::default(),
             selected: None,
             drag: None,
@@ -166,7 +179,7 @@ impl ErdView {
         saved: HashMap<String, (f32, f32)>,
         cx: &mut Context<Self>,
     ) {
-        let mut rects = grid_layout(&model);
+        let mut rects = grid_layout(&model, self.name_mode);
         for (index, table) in model.tables.iter().enumerate() {
             if let (Some(rect), Some((x, y))) = (rects.get_mut(index), saved.get(&table.name)) {
                 rect.x = *x;
@@ -174,20 +187,54 @@ impl ErdView {
             }
         }
 
-        self.labels = Rc::new(labels_of(&model.tables, &rects));
+        self.model = model;
+        self.rects = rects;
         self.edges = Rc::new(
-            model
+            self.model
                 .valid_relations()
                 .map(|relation| Edge::between(relation.from, relation.to))
                 .collect(),
         );
-        self.model = model;
-        self.rects = rects;
+        self.cut_labels();
         self.selected = None;
         self.drag = None;
         self.panning = None;
         self.viewport.home();
         cx.notify();
+    }
+
+    /// Draws the boxes with the other vocabulary, without moving one of them.
+    ///
+    /// A comment is routinely longer than the identifier it describes, so every
+    /// box has to be measured again — but only its *size* changes. The corner
+    /// each box was left at is kept, because the arrangement is the user's work
+    /// and a toggle is a question about labels, not about layout. That is also
+    /// why nothing is announced: no position moved, so there is nothing new for
+    /// the host to save. The lines need no attention at all — they are box
+    /// pairs, and where they attach is worked out from the rects every frame.
+    pub fn set_name_mode(&mut self, mode: NameMode, cx: &mut Context<Self>) {
+        if self.name_mode == mode {
+            return;
+        }
+        self.name_mode = mode;
+        for (table, rect) in self.model.tables.iter().zip(&mut self.rects) {
+            (rect.w, rect.h) = measure(table, mode);
+        }
+        self.cut_labels();
+        cx.notify();
+    }
+
+    /// Which of the two names the boxes are drawn with.
+    pub fn name_mode(&self) -> NameMode {
+        self.name_mode
+    }
+
+    /// Re-cuts every box's text to the width its box now has.
+    ///
+    /// The one place the labels are made, so that a model arriving and a mode
+    /// changing cannot elide differently.
+    fn cut_labels(&mut self) {
+        self.labels = Rc::new(labels_of(&self.model.tables, &self.rects, self.name_mode));
     }
 
     /// Where every table's box is, keyed by table name.
@@ -213,7 +260,7 @@ impl ErdView {
         if self.model.tables.is_empty() {
             return;
         }
-        self.rects = auto_layout(&self.model);
+        self.rects = auto_layout(&self.model, self.name_mode);
         cx.emit(ErdEvent::LayoutChanged);
         cx.notify();
     }
@@ -234,7 +281,7 @@ impl ErdView {
             line: to_hex(palette.text_muted),
             pk: to_hex(palette.grid_pk),
         };
-        to_svg(&self.model, &self.rects, &colours)
+        to_svg(&self.model, &self.rects, &colours, self.name_mode)
     }
 
     /// The current scale, where 1.0 is one logical unit to one pixel.
@@ -266,6 +313,16 @@ impl ErdView {
 
     fn rearrange(&mut self, _: &AutoArrange, _: &mut Window, cx: &mut Context<Self>) {
         self.auto_arrange(cx);
+    }
+
+    /// Swaps the vocabulary and tells the host, which is what remembers it.
+    fn toggle_names(&mut self, _: &ToggleNames, _: &mut Window, cx: &mut Context<Self>) {
+        let wanted = match self.name_mode {
+            NameMode::Physical => NameMode::Logical,
+            NameMode::Logical => NameMode::Physical,
+        };
+        self.set_name_mode(wanted, cx);
+        cx.emit(ErdEvent::NameModeChanged(wanted));
     }
 
     fn on_mouse_down(
@@ -582,6 +639,7 @@ impl Render for ErdView {
             .on_action(cx.listener(Self::zoom_out))
             .on_action(cx.listener(Self::zoom_actual))
             .on_action(cx.listener(Self::rearrange))
+            .on_action(cx.listener(Self::toggle_names))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -609,11 +667,20 @@ pub fn init(cx: &mut App) {
         "ctrl"
     };
 
-    cx.bind_keys([KeyBinding::new(
-        &format!("{modifier}-shift-a"),
-        AutoArrange,
-        Some(KEY_CONTEXT),
-    )]);
+    cx.bind_keys([
+        KeyBinding::new(
+            &format!("{modifier}-shift-a"),
+            AutoArrange,
+            Some(KEY_CONTEXT),
+        ),
+        // `L` for logical, and free: nothing in the app, the editor, the grid
+        // or the other canvas claims this chord.
+        KeyBinding::new(
+            &format!("{modifier}-shift-l"),
+            ToggleNames,
+            Some(KEY_CONTEXT),
+        ),
+    ]);
 }
 
 #[cfg(test)]
@@ -677,6 +744,15 @@ mod tests {
                 columns: vec![("customer_id".into(), "id".into())],
             }],
         }
+    }
+
+    /// The same two tables, with the catalog's comments on one of them and
+    /// nothing on the other — which is what every real schema looks like.
+    fn commented() -> ErdModel {
+        let mut model = model();
+        model.tables[1].comment = Some("everyone we have ever billed".into());
+        model.tables[1].columns[1].comment = Some("what to call them in a letter".into());
+        model
     }
 
     /// Opens a focused diagram over `model` and hands back its handles.
@@ -989,6 +1065,102 @@ mod tests {
             modifiers: Modifiers::none(),
         });
         cx.run_until_parked();
+    }
+
+    /// The logical mode is the comments where there are comments and the
+    /// identifiers everywhere else, so a schema commented halfway still draws
+    /// every box and every row.
+    #[gpui::test]
+    fn the_logical_names_fall_back_to_the_physical_ones(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(commented(), HashMap::new(), cx);
+        erd.update(&mut cx, |erd, cx| {
+            erd.set_name_mode(NameMode::Logical, cx);
+        });
+
+        let titles = erd.read(&mut cx, |erd| {
+            (erd.labels[0].title.clone(), erd.labels[1].title.clone())
+        });
+        assert_eq!(titles.0, "orders", "an uncommented table lost its name");
+        assert_eq!(titles.1, "everyone we have ever billed");
+
+        let rows = erd.read(&mut cx, |erd| {
+            (
+                erd.labels[1].rows[0].name.clone(),
+                erd.labels[1].rows[1].name.clone(),
+            )
+        });
+        assert_eq!(rows.0, "id", "an uncommented column lost its name");
+        assert_eq!(rows.1, "what to call them in a letter");
+    }
+
+    /// A comment is longer than the identifier it describes, so the boxes have
+    /// to be measured again — but the arrangement is the user's work and a
+    /// question about labels must not undo it.
+    #[gpui::test]
+    fn switching_the_vocabulary_resizes_the_boxes_without_moving_them(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(commented(), HashMap::new(), cx);
+        let before = erd.read(&mut cx, |erd| erd.rects[1]);
+
+        erd.update(&mut cx, |erd, cx| {
+            erd.set_name_mode(NameMode::Logical, cx);
+        });
+        let after = erd.read(&mut cx, |erd| erd.rects[1]);
+
+        assert_eq!((after.x, after.y), (before.x, before.y), "a box moved");
+        assert!(after.w > before.w, "{after:?} is no wider than {before:?}");
+        // Nothing was announced: no position changed, so the host has no new
+        // arrangement to write.
+        assert_eq!(erd.drain(), Vec::new());
+    }
+
+    /// Swaps the vocabulary the way the chord does.
+    fn toggle(handles: &Handles, cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            handles.erd.update(cx, |erd, cx| {
+                erd.toggle_names(&ToggleNames, window, cx);
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    /// The chord swaps the vocabulary and says which one it landed on, because
+    /// the widget persists nothing and the host has to be told what to keep.
+    #[gpui::test]
+    fn the_chord_swaps_the_vocabulary_and_says_so(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(commented(), HashMap::new(), cx);
+        assert_eq!(erd.read(&mut cx, |erd| erd.name_mode()), NameMode::Physical);
+
+        toggle(&erd, &mut cx);
+        assert_eq!(erd.read(&mut cx, |erd| erd.name_mode()), NameMode::Logical);
+        assert_eq!(
+            erd.drain(),
+            vec![ErdEvent::NameModeChanged(NameMode::Logical)]
+        );
+
+        toggle(&erd, &mut cx);
+        assert_eq!(erd.read(&mut cx, |erd| erd.name_mode()), NameMode::Physical);
+        assert_eq!(
+            erd.drain(),
+            vec![ErdEvent::NameModeChanged(NameMode::Physical)]
+        );
+    }
+
+    /// The file is the picture: a diagram exported while the comments are
+    /// showing carries the comments.
+    #[gpui::test]
+    fn the_export_follows_the_vocabulary_on_screen(cx: &mut TestAppContext) {
+        let (erd, mut cx) = open(commented(), HashMap::new(), cx);
+        erd.update(&mut cx, |erd, cx| {
+            erd.set_name_mode(NameMode::Logical, cx);
+        });
+        let svg = cx.update(|_, cx| erd.erd.read(cx).export_svg(cx));
+
+        assert!(svg.contains("everyone we have ever billed"), "{svg}");
+        assert!(svg.contains("what to call them in a letter"), "{svg}");
+        // And the table nobody commented is still named by its identifier,
+        // while the commented one no longer draws both.
+        assert!(svg.contains("orders"), "{svg}");
+        assert!(!svg.contains(">customers<"), "{svg}");
     }
 
     #[gpui::test]

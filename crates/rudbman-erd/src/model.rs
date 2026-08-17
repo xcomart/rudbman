@@ -14,10 +14,29 @@
 //! from the catalog every time the diagram is opened, because a schema that
 //! changed underneath a saved copy is worse than no copy at all.
 
+/// Which of a table's or a column's two names a box is drawn with.
+///
+/// A schema has two vocabularies — the identifiers the SQL is written in and
+/// the sentences the catalog's comments carry — and which of them a diagram is
+/// worth reading in depends on who is reading it. Nothing here decides: the
+/// mode arrives from the host with every call that measures a box or cuts a
+/// label, so the screen, the export and the saved arrangement cannot disagree
+/// about which vocabulary is on show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum NameMode {
+    /// The identifiers — what the SQL says.
+    #[default]
+    Physical,
+    /// The comments, falling back to the identifier wherever there is none.
+    Logical,
+}
+
 /// One column of a table, as the diagram needs to draw it.
 ///
-/// Deliberately not the full JDBC column: precision, scale, default and remarks
-/// have no place on a box that has to stay readable at a quarter zoom.
+/// Deliberately not the full JDBC column: precision, scale and default have no
+/// place on a box that has to stay readable at a quarter zoom. The remark does,
+/// but only behind [`NameMode::Logical`] and only *instead of* the name — a row
+/// that carried both would be two rows.
 /// [`type_name`](Self::type_name) is the string the driver reported, already
 /// decorated with its size by the host if it wants it decorated.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -26,6 +45,13 @@ pub struct ErdColumn {
     pub name: String,
     /// The type as it should read, drawn muted on the right of its row.
     pub type_name: String,
+    /// The catalog's comment on the column, when it carries one.
+    ///
+    /// Drawn in place of the name under [`NameMode::Logical`]. `None` and the
+    /// empty string mean the same thing here — a product that answers every
+    /// column with `""` rather than with SQL NULL must not turn a box into a
+    /// column of blanks — so both fall back to the name.
+    pub comment: Option<String>,
     /// Whether the column accepts `NULL`.
     ///
     /// Not drawn as a glyph today — the box is tight enough already — but kept
@@ -48,10 +74,26 @@ impl ErdColumn {
         Self {
             name: name.into(),
             type_name: type_name.into(),
+            comment: None,
             nullable: true,
             primary_key: false,
             foreign_key: false,
         }
+    }
+
+    /// The same column with the catalog's comment on it.
+    #[must_use]
+    pub fn comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
+        self
+    }
+
+    /// What this column's row reads as in `mode`.
+    ///
+    /// The comment where there is one to show and the name everywhere else, so
+    /// a schema commented halfway still draws every row.
+    pub fn display_name(&self, mode: NameMode) -> &str {
+        display(&self.name, self.comment.as_deref(), mode)
     }
 
     /// The same column marked as part of the primary key, and so not nullable.
@@ -79,6 +121,12 @@ pub struct ErdTable {
     /// crate only requires that it be unique within the model, because
     /// [`crate::ErdView::positions`] is keyed by it.
     pub name: String,
+    /// The catalog's comment on the table, when it carries one.
+    ///
+    /// Drawn as the box's title under [`NameMode::Logical`]. It is *not* what
+    /// positions are keyed by: [`name`](Self::name) stays the key whichever
+    /// mode is showing, so toggling the names never moves a box.
+    pub comment: Option<String>,
     /// The columns, in the order the catalog reported them.
     pub columns: Vec<ErdColumn>,
 }
@@ -88,8 +136,16 @@ impl ErdTable {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            comment: None,
             columns: Vec::new(),
         }
+    }
+
+    /// The same table with the catalog's comment on it.
+    #[must_use]
+    pub fn comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
+        self
     }
 
     /// The same table with `column` appended.
@@ -97,6 +153,21 @@ impl ErdTable {
     pub fn column(mut self, column: ErdColumn) -> Self {
         self.columns.push(column);
         self
+    }
+
+    /// What this table's title reads as in `mode`.
+    pub fn display_name(&self, mode: NameMode) -> &str {
+        display(&self.name, self.comment.as_deref(), mode)
+    }
+}
+
+/// The one rule both display names follow: the comment in
+/// [`NameMode::Logical`], and the identifier whenever there is no comment worth
+/// drawing.
+fn display<'a>(name: &'a str, comment: Option<&'a str>, mode: NameMode) -> &'a str {
+    match mode {
+        NameMode::Physical => name,
+        NameMode::Logical => comment.filter(|text| !text.is_empty()).unwrap_or(name),
     }
 }
 

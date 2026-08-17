@@ -45,7 +45,14 @@ use crate::canvas::{
     BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
 };
 use crate::layout::{NODE_GAP, NodeRect, measure, row_anchor};
-use crate::model::ErdTable;
+use crate::model::{ErdTable, NameMode};
+
+/// The vocabulary the builder's boxes are always drawn in.
+///
+/// Not a setting, and deliberately not the diagram's: the panel around this
+/// canvas generates a `SELECT` out of what is picked on it, and a column picked
+/// by its comment would put a sentence where an identifier belongs.
+const NAMES: NameMode = NameMode::Physical;
 
 /// Key context the host names when it wants a key of its own to reach the
 /// builder's canvas rather than the window.
@@ -238,7 +245,7 @@ impl BuilderView {
         let mut rects: Vec<Option<NodeRect>> = tables
             .iter()
             .map(|table| {
-                let (w, h) = measure(table);
+                let (w, h) = measure(table, NAMES);
                 previous.get(table.name.as_str()).map(|old| NodeRect {
                     x: old.x,
                     y: old.y,
@@ -251,7 +258,7 @@ impl BuilderView {
             if rects[index].is_some() {
                 continue;
             }
-            let (w, h) = measure(&tables[index]);
+            let (w, h) = measure(&tables[index], NAMES);
             let taken: Vec<NodeRect> = rects.iter().flatten().copied().collect();
             let (x, y) = free_slot(&taken, w, h);
             rects[index] = Some(NodeRect { x, y, w, h });
@@ -297,7 +304,7 @@ impl BuilderView {
             .and_then(|node| moved.get(node).copied())
             .flatten();
 
-        self.labels = Rc::new(labels_of(&tables, &rects));
+        self.labels = Rc::new(labels_of(&tables, &rects, NAMES));
         self.tables = tables;
         self.rects = rects;
         self.drag = None;
@@ -1208,6 +1215,28 @@ mod tests {
         release(&mut cx, window_point(1300., 700.));
         assert_eq!(builder.read(&mut cx, |builder| builder.viewport.pan), pan);
         assert_eq!(builder.drain(), Vec::new());
+    }
+
+    /// The builder never draws a comment, whatever the diagram beside it is
+    /// showing: what is picked here becomes a `SELECT`, and a sentence is not
+    /// an identifier.
+    #[gpui::test]
+    fn a_commented_table_is_still_drawn_by_its_identifier(cx: &mut TestAppContext) {
+        let commented = vec![
+            table("orders", &["id"])
+                .comment("everything anyone has ever ordered")
+                .column(ErdColumn::new("total", "NUMBER(19)").comment("what it came to")),
+        ];
+        let (builder, mut cx) = open(commented, cx);
+
+        let drawn = builder.read(&mut cx, |builder| {
+            (
+                builder.labels[0].title.clone(),
+                builder.labels[0].rows[1].name.clone(),
+            )
+        });
+        assert_eq!(drawn.0, "orders");
+        assert_eq!(drawn.1, "total");
     }
 
     #[test]

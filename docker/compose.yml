@@ -1,10 +1,11 @@
-# The two servers the opt-in container tests run against.
+# The five servers the opt-in container tests run against.
 #
 # `crates/rudbman-jdbc/tests/containers.rs` sends the SQL `rudbman-sql`'s `ddl`
-# module writes to a real PostgreSQL and a real MySQL and reads the catalogue
-# back. Nothing in the workspace needs these to be up: with the environment
-# variables below unset every one of those tests passes by doing nothing, which
-# is what keeps `cargo test --workspace` green on a machine with no Docker.
+# module writes to a real PostgreSQL, MySQL, MariaDB, SQL Server, and Oracle,
+# and reads the catalogue back. Nothing in the workspace needs these to be up:
+# with the environment variables below unset every one of those tests passes
+# by doing nothing, which is what keeps `cargo test --workspace` green on a
+# machine with no Docker.
 #
 #     docker compose -f docker/compose.yml up -d
 #     docker compose -f docker/compose.yml ps          # wait for "healthy"
@@ -14,15 +15,24 @@
 #
 #     export RUDBMAN_TEST_PG_URL='jdbc:postgresql://127.0.0.1:55432/rudbman'
 #     export RUDBMAN_TEST_MYSQL_URL='jdbc:mysql://127.0.0.1:33306/rudbman?allowPublicKeyRetrieval=true&useSSL=false'
+#     export RUDBMAN_TEST_MARIADB_URL='jdbc:mariadb://127.0.0.1:53306/rudbman'
+#     export RUDBMAN_TEST_MSSQL_URL='jdbc:sqlserver://127.0.0.1:51433;encrypt=false'
+#     export RUDBMAN_TEST_ORACLE_URL='jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1'
 #     cargo test -p rudbman-jdbc --test containers
 #
-# The user and the password default to `rudbman`/`rudbman`, matching this file;
-# RUDBMAN_TEST_PG_USER, RUDBMAN_TEST_PG_PASSWORD, RUDBMAN_TEST_MYSQL_USER and
-# RUDBMAN_TEST_MYSQL_PASSWORD override them.
+# The user and the password default to `rudbman`/`rudbman`, matching this
+# file, for every service except SQL Server; RUDBMAN_TEST_PG_USER,
+# RUDBMAN_TEST_PG_PASSWORD, RUDBMAN_TEST_MYSQL_USER,
+# RUDBMAN_TEST_MYSQL_PASSWORD, and their MARIADB/ORACLE counterparts override
+# them. SQL Server has no `rudbman` login of its own: the `sa` password
+# complexity requirement rules out `rudbman`, so its account is
+# `sa` / `Rudbman!Passw0rd`, and its image does not create a `rudbman`
+# database — a test that needs one creates it, or connects to `master`.
 #
-# The ports are deliberately not 5432 and 3306. A developer with a server of
-# their own running would otherwise find these shadowing it — or, worse, find
-# the tests creating and dropping tables in it.
+# The ports are deliberately not the standard ones (5432, 3306, 1433, 1521,
+# ...). A developer with a server of their own running would otherwise find
+# these shadowing it — or, worse, find the tests creating and dropping tables
+# in it.
 #
 # The image tags are pinned. MySQL 8.4 in particular is a choice rather than
 # "the latest": `ALTER TABLE ... DROP CHECK` needs 8.0.16 or newer, and §7.10
@@ -63,3 +73,52 @@ services:
       interval: 3s
       timeout: 5s
       retries: 30
+
+  mariadb:
+    image: mariadb:11
+    container_name: rudbman-test-mariadb
+    environment:
+      MYSQL_ROOT_PASSWORD: rudbman
+      MYSQL_DATABASE: rudbman
+      MYSQL_USER: rudbman
+      MYSQL_PASSWORD: rudbman
+    ports:
+      - "127.0.0.1:53306:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: rudbman-test-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Rudbman!Passw0rd"
+    ports:
+      - "127.0.0.1:51433:1433"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"Rudbman!Passw0rd\" -Q \"SELECT 1\" -b",
+        ]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+
+  oracle:
+    image: gvenzl/oracle-free:23-slim-faststart
+    container_name: rudbman-test-oracle
+    environment:
+      ORACLE_PASSWORD: rudbman
+      APP_USER: rudbman
+      APP_USER_PASSWORD: rudbman
+    ports:
+      - "127.0.0.1:51521:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 5s
+      timeout: 10s
+      retries: 60

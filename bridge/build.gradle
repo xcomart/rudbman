@@ -54,6 +54,10 @@ dependencies {
     // not for anything in `src`.
     drivers 'org.postgresql:postgresql:42.7.4'
     drivers 'com.mysql:mysql-connector-j:9.1.0'
+    drivers 'org.mariadb.jdbc:mariadb-java-client:3.5.1'
+    drivers 'com.oracle.database.jdbc:ojdbc11:23.6.0.24.10'
+    drivers 'com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11'
+    drivers 'org.xerial:sqlite-jdbc:3.47.1.0'
 }
 
 // Resolution *is* the work: a file in the cache is all the Rust tests want.
@@ -62,8 +66,9 @@ dependencies {
 // off, and so that the task says something when it has nothing to download.
 tasks.register('drivers') {
     group = 'verification'
-    description = 'Downloads the PostgreSQL and MySQL JDBC drivers into the Gradle cache, ' +
-        'where the Rust container tests (crates/rudbman-jdbc/tests/containers.rs) find them.'
+    description = 'Downloads the PostgreSQL, MySQL, MariaDB, Oracle, SQL Server, and ' +
+        'SQLite JDBC drivers into the Gradle cache, where the Rust container tests ' +
+        '(crates/rudbman-jdbc/tests/containers.rs) find them.'
     def jars = configurations.drivers
     inputs.files jars
     doLast {

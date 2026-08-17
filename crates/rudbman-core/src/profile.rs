@@ -703,6 +703,25 @@ pub struct DriverDef {
     /// paging syntax used by the SQL layer, so an unknown value degrades to
     /// generic behaviour rather than failing.
     pub dialect: String,
+    /// Whether [`DriverDef::table_comments_sql`] is used at all.
+    ///
+    /// A flag beside the text rather than "empty means off", inherited from
+    /// jdbgen: a user turning a query off for one session must not have to
+    /// delete the statement they spent an afternoon on.
+    pub use_table_comments: bool,
+    /// Query answering table comments the driver leaves blank.
+    ///
+    /// Sent to the bridge, which substitutes `${catalog}` and `${schema}`
+    /// verbatim and reads the result set *positionally* — first column the
+    /// table name, second the comment. Nothing here parses it.
+    pub table_comments_sql: String,
+    /// Whether [`DriverDef::column_comments_sql`] is used at all.
+    pub use_column_comments: bool,
+    /// Query answering column comments the driver leaves blank.
+    ///
+    /// Same substitution as [`DriverDef::table_comments_sql`]; three columns
+    /// positionally — table name, column name, comment.
+    pub column_comments_sql: String,
 }
 
 impl Default for DriverDef {
@@ -717,6 +736,10 @@ impl Default for DriverDef {
             url_template: String::new(),
             default_port: None,
             dialect: DIALECT_GENERIC.to_string(),
+            use_table_comments: false,
+            table_comments_sql: String::new(),
+            use_column_comments: false,
+            column_comments_sql: String::new(),
         }
     }
 }
@@ -794,9 +817,11 @@ const BUILTIN_DRIVERS: &[BuiltinDriver] = &[
         maven: "org.mariadb.jdbc:mariadb-java-client:3.5.1",
         url_template: "jdbc:mariadb://{host}:{port}/{database}",
         default_port: Some(3306),
-        // MariaDB's SQL surface is MySQL's, so it shares the dialect rather
-        // than duplicating one.
-        dialect: "mysql",
+        // MariaDB read as `mysql` until a server disagreed: the fork spells a
+        // check-constraint drop `DROP CONSTRAINT` where MySQL spells it
+        // `DROP CHECK`, and answers a syntax error for MySQL's. It has a
+        // dialect of its own now, which is MySQL's in every other spelling.
+        dialect: "mariadb",
     },
     BuiltinDriver {
         id: "sqlite",
@@ -853,9 +878,37 @@ impl DriverDef {
                 url_template: builtin.url_template.to_string(),
                 default_port: builtin.default_port,
                 dialect: builtin.dialect.to_string(),
+                // The custom comment queries stay off: every product in this
+                // table has a driver that answers `REMARKS` or a vendor query
+                // the bridge already knows, so a built-in that shipped one
+                // would be second-guessing the bridge.
+                ..Self::default()
             })
             .collect()
     }
+
+    /// The table-comment query to send, or `None` when there is none to send.
+    ///
+    /// A query is effective when its flag is on *and* the text holds something
+    /// — a ticked box over an empty field is a half-finished edit, not a
+    /// request to run the empty string.
+    pub fn table_comments_query(&self) -> Option<&str> {
+        effective(self.use_table_comments, &self.table_comments_sql)
+    }
+
+    /// The column-comment query to send, or `None`. See
+    /// [`DriverDef::table_comments_query`].
+    pub fn column_comments_query(&self) -> Option<&str> {
+        effective(self.use_column_comments, &self.column_comments_sql)
+    }
+}
+
+/// The trimmed query text when `enabled` and there is any, otherwise `None`.
+fn effective(enabled: bool, sql: &str) -> Option<&str> {
+    if !enabled {
+        return None;
+    }
+    Some(sql.trim()).filter(|sql| !sql.is_empty())
 }
 
 /// Collection of [`DriverDef`]s, persisted as `drivers.json`.
@@ -1451,6 +1504,15 @@ mod tests {
                 driver.id
             );
             assert!(driver.icon.is_some(), "{} has no icon", driver.id);
+            assert_eq!(
+                (
+                    driver.table_comments_query(),
+                    driver.column_comments_query()
+                ),
+                (None, None),
+                "{} ships a custom comment query",
+                driver.id
+            );
             assert!(!driver.dialect.is_empty(), "{} has no dialect", driver.id);
             let maven = driver.maven.as_deref().expect("maven coordinate");
             assert_eq!(
@@ -1479,6 +1541,30 @@ mod tests {
         assert_eq!(port("h2"), Some(9092));
         // SQLite is a file, not a service.
         assert_eq!(port("sqlite"), None);
+    }
+
+    /// Every built-in names the dialect `rudbman-sql` writes for its product.
+    ///
+    /// MariaDB is the row worth pinning. It said `mysql` until a container
+    /// test sent MySQL's `ALTER TABLE t DROP CHECK c` to a real MariaDB and
+    /// got a syntax error, and this field is where that fix reaches an actual
+    /// connection: everything downstream reads the dialect from here.
+    #[test]
+    fn builtin_dialects_are_the_products_own() {
+        let builtins = DriverDef::builtins();
+        let dialect = |id: &str| {
+            builtins
+                .iter()
+                .find(|d| d.id == id)
+                .unwrap_or_else(|| panic!("no built-in driver `{id}`"))
+                .dialect
+                .clone()
+        };
+        assert_eq!(dialect("postgresql"), "postgres");
+        assert_eq!(dialect("mysql"), "mysql");
+        assert_eq!(dialect("mariadb"), "mariadb");
+        assert_eq!(dialect("oracle-thin"), "oracle");
+        assert_eq!(dialect("mssql"), "mssql");
     }
 
     #[test]
@@ -1523,6 +1609,66 @@ mod tests {
         assert_eq!(driver.default_port, None);
         assert!(driver.jars.is_empty());
         assert!(driver.maven.is_none());
+        // A `drivers.json` written before the custom comment queries existed
+        // has neither flag nor text in it, and must load with them off rather
+        // than fail to parse.
+        assert!(!driver.use_table_comments);
+        assert!(!driver.use_column_comments);
+        assert!(driver.table_comments_sql.is_empty());
+        assert!(driver.column_comments_sql.is_empty());
+        assert_eq!(driver.table_comments_query(), None);
+        assert_eq!(driver.column_comments_query(), None);
+    }
+
+    /// The flag and the text are two decisions, and only both together make a
+    /// query the session sends.
+    #[test]
+    fn a_comment_query_counts_only_when_it_is_switched_on_and_written() {
+        let mut driver = DriverDef {
+            id: "custom".to_string(),
+            table_comments_sql: "  select 1, 2 from dual  ".to_string(),
+            column_comments_sql: "   ".to_string(),
+            ..DriverDef::default()
+        };
+        // Text without the flag: kept, not sent.
+        assert_eq!(driver.table_comments_query(), None);
+
+        driver.use_table_comments = true;
+        driver.use_column_comments = true;
+        // Trimmed on the way out, so a trailing newline from the editor is not
+        // appended to a statement.
+        assert_eq!(driver.table_comments_query(), Some("select 1, 2 from dual"));
+        // A ticked box over a blank field is a half-finished edit.
+        assert_eq!(driver.column_comments_query(), None);
+    }
+
+    #[test]
+    fn the_comment_queries_survive_a_round_trip_through_drivers_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("drivers.json");
+
+        let mut store = DriverStore::default();
+        store.upsert(DriverDef {
+            id: "cubrid".to_string(),
+            class: "cubrid.jdbc.driver.CUBRIDDriver".to_string(),
+            use_table_comments: true,
+            table_comments_sql: "select t, c from meta where s = '${schema}'".to_string(),
+            // Off, but the text is kept: turning a query off must not lose it.
+            use_column_comments: false,
+            column_comments_sql: "select t, c, m from cols".to_string(),
+            ..DriverDef::default()
+        });
+        store.save_to(&path).expect("save");
+
+        let loaded = DriverStore::load_from(&path).expect("load");
+        let driver = loaded.get("cubrid").expect("cubrid");
+        assert_eq!(driver, store.get("cubrid").expect("cubrid"));
+        assert_eq!(
+            driver.table_comments_query(),
+            Some("select t, c from meta where s = '${schema}'")
+        );
+        assert!(!driver.use_column_comments);
+        assert_eq!(driver.column_comments_sql, "select t, c, m from cols");
     }
 
     #[test]

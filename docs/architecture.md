@@ -714,6 +714,15 @@ logman's `icon` slot works.
 A **different file, a different directory and a different token set** from the
 UI theme. `~/.config/rudbman/editor-themes/<id>.json`.
 
+Six editor themes ship built in, under the same six ids and names as the six UI
+themes — One Dark, One Light, Solarized Dark, Solarized Light, Gruvbox Dark,
+Dracula — so that every built-in UI theme has a syntax palette drawn by whoever
+drew the window around it. The two tables stay independent all the same: an id
+means nothing across them, and a theme of the user's own can exist on one side
+and not the other. The example below is one such palette — folke's Tokyo Night,
+which rudbman does *not* ship — because a file named after a built-in id would
+be skipped by the loader rather than loaded.
+
 ```json
 {
   "version": 1,
@@ -997,8 +1006,9 @@ gate with three clauses, and the machinery underneath is the data pane's own,
   1 that every generated `UPDATE` and `DELETE` is already checked against. The
   hint is only ever allowed to *offer* editing, never to make a statement safe.
 - **What the drivers actually answer**, measured rather than assumed
-  (`crates/rudbman-jdbc/tests/containers.rs` pins all of it; pgjdbc 42.7.4 and
-  Connector/J 9.1.0):
+  (`crates/rudbman-jdbc/tests/containers.rs` pins all of it, against all five
+  products the suite runs: pgjdbc 42.7.4, Connector/J 9.1.0, MariaDB
+  Connector/J 3.5.1, mssql-jdbc 12.8.1, and ojdbc11 23.6):
   * pgjdbc answers `""` for **both** schema and catalog on an ordinary column of
     an ordinary `public` table, so the gate can never lean on the schema, and
     only MySQL supplies a catalog at all.
@@ -1012,6 +1022,22 @@ gate with three clauses, and the machinery underneath is the data pane's own,
     on MySQL: the catalogue name the key is matched against is gone. It fails to
     the read-only side, which is the right direction, but it is a real
     difference in what the same query offers on two products.
+  * mssql-jdbc 12.8.1 and ojdbc11 23.6 answer `""` for the **table itself** —
+    not just schema and catalog — on an ordinary column of an ordinary table.
+    Nothing a query against SQL Server or Oracle returns ever satisfies "at
+    least one column names a table", so the gate's first clause fails before
+    the other two are even reached and query-result editing stays off for
+    both products, unconditionally. That is not a gap in the gate; it is the
+    gate doing exactly what it is for. The design never asked a driver to be
+    trustworthy, only to be checkable, and a driver that volunteers nothing is
+    handled by the same rule as one that volunteers something wrong: no table
+    name, no editing.
+  * MariaDB Connector/J 3.5.1 answers like Connector/J for MySQL rather than
+    like either of the above: it tells `name` and `label` apart, reports the
+    real table (not an alias, without needing a legacy switch), and answers a
+    catalog rather than an empty string for it — only schema comes back
+    `""`. Query-result editing on MariaDB works the same way it does on
+    MySQL.
 - **Updates and deletes only; no inserts.** A result carries the columns the
   user selected, not the columns the table requires, so a row typed into a
   `SELECT id, name FROM users` is missing every `NOT NULL` column that was not
@@ -1090,11 +1116,19 @@ clause, no bind parameters anywhere, and no undo on two of the six.
   planned. A generated statement that fails on the server would say less: the
   driver's message names a syntax error, not the fact that the product cannot do
   this at all.
-- **Dropping a constraint needs to know its kind.** Everywhere but MySQL it is
-  `DROP CONSTRAINT <name>`; MySQL has no generic form and spells each kind
-  separately (`DROP PRIMARY KEY`, `DROP FOREIGN KEY`, `DROP INDEX`,
+- **Dropping a constraint needs to know its kind.** Everywhere but the MySQL
+  family it is `DROP CONSTRAINT <name>`; MySQL has no generic form and spells
+  each kind separately (`DROP PRIMARY KEY`, `DROP FOREIGN KEY`, `DROP INDEX`,
   `DROP CHECK`). The kind travels with the name, which costs the caller nothing:
   the detail panel's keys and references tabs already know which is which.
+  **MariaDB takes three of those four and refuses the fourth**, which is why it
+  is a dialect of its own rather than an alias for MySQL's. A container test
+  sent `ALTER TABLE t DROP CHECK c` to a MariaDB 11 and got *"[SQLSTATE 42000,
+  code 1064] You have an error in your SQL syntax"*; the same server takes
+  `DROP CONSTRAINT c`, which MariaDB has had since 10.2.22 and MySQL did not
+  have at all before 8.0.19. Neither spelling covers both, so the difference is
+  a row in the per-dialect table — MariaDB's is MySQL's with one word replaced —
+  and no emitter asks which of the two it is writing for.
 - **Order within a batch**: constraint drops, then column adds, then column
   changes, then column drops, then the table rename. Constraints go first
   because one naming a column blocks that column's drop; the renames go last —
@@ -1158,11 +1192,11 @@ and the pane opens with nothing staged but its name field focused.
   a `CREATE TABLE` is standard everywhere rudbman speaks — **with one exception,
   and it was found by running it rather than by reading**. A `FOREIGN KEY` that
   omits the referenced column list is resolved by PostgreSQL to the parent's
-  primary key, and refused outright by MySQL, which answers *"Key reference and
-  table reference don't match"* — a message that names neither the omission nor
-  the fix. This document previously claimed every product took the short form.
-  It does not, so that shape is now refused for MySQL by name and reason, like
-  the other per-product refusals above.
+  primary key, and refused outright by MySQL and MariaDB alike, which answer
+  *"Key reference and table reference don't match"* — a message that names
+  neither the omission nor the fix. This document previously claimed every
+  product took the short form. It does not, so that shape is now refused for
+  both of them by name and reason, like the other per-product refusals above.
 - **Auto-increment is not modelled.** It is spelled at least five ways —
   `SERIAL`, `AUTO_INCREMENT` after the type, `IDENTITY`, `GENERATED BY DEFAULT
   AS IDENTITY`, `AUTOINCREMENT` — and some of those are a type, some a column

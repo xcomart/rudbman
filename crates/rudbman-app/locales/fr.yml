@@ -307,6 +307,12 @@ driver:
   delete: Supprimer
   delete_confirm: "Supprimer la définition de pilote « %{name} » ?"
   none_selected: Choisissez un pilote, ou ajoutez-en un.
+  table_comments: Commentaires de table
+  use_table_comments: Lire les commentaires de table avec une requête
+  table_comments_hint: "Utilisée lorsque le pilote ne renvoie aucun commentaire. ${catalog} et ${schema} sont substitués ; la requête doit renvoyer le nom de la table puis le commentaire, dans cet ordre."
+  column_comments: Commentaires de colonne
+  use_column_comments: Lire les commentaires de colonne avec une requête
+  column_comments_hint: "Utilisée lorsque le pilote ne renvoie aucun commentaire. ${catalog} et ${schema} sont substitués ; la requête doit renvoyer le nom de la table, le nom de la colonne puis le commentaire, dans cet ordre."
 
 # La barre latérale de l'explorateur.
 explorer:
@@ -555,6 +561,9 @@ erd:
   load_failed: "Le diagramme n'a pas pu être dessiné : %{error}"
   empty: Ce schéma ne contient aucune table.
   auto_arrange: Disposer
+  names_physical: Physiques
+  names_logical: Logiques
+  logical_names: Noms logiques
   export_svg: Exporter en SVG…
   export_done: "Écrit dans %{path}."
   export_failed: "Le diagramme n'a pas pu être écrit : %{error}"

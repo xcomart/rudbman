@@ -194,11 +194,19 @@ pub struct AppSettings {
     /// Ignored while [`AppSettings::editor_theme_follows_ui`] is on, but not
     /// forgotten: turning the switch off has to give the user their pick back.
     pub editor_theme: String,
-    /// Pick the editor theme from the UI theme's light/dark cast instead of
+    /// Match the editor theme to the UI theme instead of using
     /// [`AppSettings::editor_theme`].
     ///
+    /// The editor theme sharing the UI theme's id is preferred, which is what
+    /// keeps the palettes that ship under one name together and what makes
+    /// changing the UI theme move the editor with it; a UI theme of the user's
+    /// own, which no editor theme is named after, falls back to the configured
+    /// id and then to any editor theme of the right cast. Every candidate has to
+    /// be on the UI theme's side of light/dark to be taken at all.
+    ///
     /// On by default, because a dark editor inside a light window (or the other
-    /// way round) is the state nobody chooses on purpose.
+    /// way round) is the state nobody chooses on purpose. The rule itself lives
+    /// in the app layer, which is the only place that knows what is installed.
     pub editor_theme_follows_ui: bool,
     /// BCP 47 tag of the interface language, e.g. `"ko"` or `"zh-CN"`.
     ///
@@ -251,6 +259,17 @@ pub struct AppSettings {
     /// On by default: a workbench whose object tree is hidden until it is found
     /// in a menu is a workbench that looks like it has none.
     pub explorer_visible: bool,
+    /// Whether a diagram opens drawn with the catalog's comments rather than
+    /// with the identifiers.
+    ///
+    /// Off by default: the identifiers are what the SQL beside the diagram is
+    /// written in, and a schema nobody has commented would otherwise open
+    /// looking exactly the same while claiming to show something else.
+    ///
+    /// One preference for every diagram rather than one per scope. Which
+    /// vocabulary a reader wants is a fact about the reader, not about the
+    /// schema they happen to have open.
+    pub erd_logical_names: bool,
     /// Window geometry and background treatment.
     pub window: WindowState,
     /// Release tag the user asked never to be told about again, e.g. `"v0.2.0"`.
@@ -293,6 +312,7 @@ impl Default for AppSettings {
             confirm_writes_default: true,
             explorer_width: DEFAULT_EXPLORER_WIDTH,
             explorer_visible: true,
+            erd_logical_names: false,
             window: WindowState::default(),
             ignored_update: None,
             extra: BTreeMap::new(),

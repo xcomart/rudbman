@@ -47,7 +47,7 @@ use crate::layout::{
     BOX_PADDING, HEADER_HEIGHT, NodeRect, ROW_HEIGHT, crow_foot, elide, head_direction, key_bar,
     route_between, row_anchor, row_at, row_offset, split_row, tail_direction,
 };
-use crate::model::ErdTable;
+use crate::model::{ErdTable, NameMode};
 
 actions!(
     rudbman_erd,
@@ -500,9 +500,11 @@ pub(crate) struct RowLabel {
 
 /// One box's text, prepared once when the tables arrive.
 ///
-/// Elision depends only on a box's *width*, and a box's width never changes
-/// once it has been measured — dragging moves boxes, it does not resize them —
-/// so the cutting is done here and not once per frame.
+/// Elision depends only on a box's *width* and on which name is being drawn,
+/// and neither changes while the diagram is being used — dragging moves boxes,
+/// it does not resize them — so the cutting is done here and not once per
+/// frame. Switching [`NameMode`] changes both at once, which is why it goes
+/// back through the measure and through this.
 pub(crate) struct BoxLabels {
     /// The table's name, elided to the width of its box.
     pub(crate) title: SharedString,
@@ -514,7 +516,7 @@ pub(crate) struct BoxLabels {
 ///
 /// Takes the tables and the rects rather than a model, because the query
 /// builder has a table list and no relations to go with it.
-pub(crate) fn labels_of(tables: &[ErdTable], rects: &[NodeRect]) -> Vec<BoxLabels> {
+pub(crate) fn labels_of(tables: &[ErdTable], rects: &[NodeRect], mode: NameMode) -> Vec<BoxLabels> {
     tables
         .iter()
         .enumerate()
@@ -523,12 +525,13 @@ pub(crate) fn labels_of(tables: &[ErdTable], rects: &[NodeRect]) -> Vec<BoxLabel
                 .get(index)
                 .map_or(0., |rect| rect.w - 2. * BOX_PADDING);
             BoxLabels {
-                title: SharedString::from(elide(&table.name, room)),
+                title: SharedString::from(elide(table.display_name(mode), room)),
                 rows: table
                     .columns
                     .iter()
                     .map(|column| {
-                        let (name, type_name) = split_row(&column.name, &column.type_name, room);
+                        let (name, type_name) =
+                            split_row(column.display_name(mode), &column.type_name, room);
                         RowLabel {
                             name: SharedString::from(name),
                             type_name: SharedString::from(type_name),

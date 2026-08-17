@@ -33,7 +33,7 @@
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::model::{ErdModel, ErdTable};
+use crate::model::{ErdModel, ErdTable, NameMode};
 
 /// Height of a box's title band.
 pub const HEADER_HEIGHT: f32 = 26.;
@@ -227,10 +227,15 @@ pub(crate) fn split_row(name: &str, type_name: &str, room: f32) -> (String, Stri
 /// height is the title band plus one row per column. A table with no columns is
 /// a title band and nothing else, which is what a view without a fetched column
 /// list should look like.
-pub fn measure(table: &ErdTable) -> (f32, f32) {
-    let mut widest = text_width(&table.name);
+///
+/// `mode` decides which of the two names is measured, because a comment is
+/// routinely longer than the identifier it describes and a box measured in one
+/// vocabulary would elide every row of the other.
+pub fn measure(table: &ErdTable, mode: NameMode) -> (f32, f32) {
+    let mut widest = text_width(table.display_name(mode));
     for column in &table.columns {
-        let row = text_width(&column.name) + NAME_TYPE_GAP + text_width(&column.type_name);
+        let row =
+            text_width(column.display_name(mode)) + NAME_TYPE_GAP + text_width(&column.type_name);
         widest = widest.max(row);
     }
 
@@ -315,8 +320,12 @@ pub fn row_anchor(rect: &NodeRect, row: usize, rightwards: bool) -> (f32, f32) {
 /// not a pretty layout and it is not meant to be: it is the layout a diagram
 /// opens with before anyone has dragged anything, and the one that fills in
 /// around the tables a saved file did not mention.
-pub fn grid_layout(model: &ErdModel) -> Vec<NodeRect> {
-    let sizes: Vec<(f32, f32)> = model.tables.iter().map(measure).collect();
+pub fn grid_layout(model: &ErdModel, mode: NameMode) -> Vec<NodeRect> {
+    let sizes: Vec<(f32, f32)> = model
+        .tables
+        .iter()
+        .map(|table| measure(table, mode))
+        .collect();
     grid_of(&sizes, 0., 0.)
 }
 
@@ -387,9 +396,13 @@ fn grid_of(sizes: &[(f32, f32)], origin_x: f32, origin_y: f32) -> Vec<NodeRect> 
 /// Tables with no relations at all are gathered into a grid to the right of the
 /// ranks rather than being given ranks of their own, which would stretch the
 /// diagram sideways for nothing.
-pub fn auto_layout(model: &ErdModel) -> Vec<NodeRect> {
+pub fn auto_layout(model: &ErdModel, mode: NameMode) -> Vec<NodeRect> {
     let count = model.tables.len();
-    let sizes: Vec<(f32, f32)> = model.tables.iter().map(measure).collect();
+    let sizes: Vec<(f32, f32)> = model
+        .tables
+        .iter()
+        .map(|table| measure(table, mode))
+        .collect();
     if count == 0 {
         return Vec::new();
     }
@@ -1004,6 +1017,7 @@ mod tests {
     fn table(name: &str, columns: &[(&str, &str)]) -> ErdTable {
         ErdTable {
             name: name.to_string(),
+            comment: None,
             columns: columns
                 .iter()
                 .map(|(column, kind)| ErdColumn::new(*column, *kind))
@@ -1040,31 +1054,38 @@ mod tests {
             "orders",
             &[("id", "NUMBER(19)"), ("customer_id", "NUMBER(19)")],
         );
-        let first = measure(&table);
-        let second = measure(&table);
+        let first = measure(&table, NameMode::Physical);
+        let second = measure(&table, NameMode::Physical);
         assert_eq!(first, second);
         assert_eq!(first.1, HEADER_HEIGHT + 2. * ROW_HEIGHT);
     }
 
     #[test]
     fn a_box_is_never_narrower_or_wider_than_the_clamp() {
-        let tiny = measure(&table("a", &[]));
+        let tiny = measure(&table("a", &[]), NameMode::Physical);
         assert_eq!(tiny.0, MIN_BOX_WIDTH);
 
-        let huge = measure(&table(
-            "a",
-            &[(
-                "a_very_long_column_name_indeed_and_then_some_more",
-                "VARCHAR2(4000 CHAR) NOT NULL DEFAULT 'nothing at all'",
-            )],
-        ));
+        let huge = measure(
+            &table(
+                "a",
+                &[(
+                    "a_very_long_column_name_indeed_and_then_some_more",
+                    "VARCHAR2(4000 CHAR) NOT NULL DEFAULT 'nothing at all'",
+                )],
+            ),
+            NameMode::Physical,
+        );
         assert_eq!(huge.0, MAX_BOX_WIDTH);
     }
 
     #[test]
     fn a_wide_column_widens_its_box() {
-        let narrow = measure(&table("t", &[("id", "int")])).0;
-        let wide = measure(&table("t", &[("a_much_longer_column", "int")])).0;
+        let narrow = measure(&table("t", &[("id", "int")]), NameMode::Physical).0;
+        let wide = measure(
+            &table("t", &[("a_much_longer_column", "int")]),
+            NameMode::Physical,
+        )
+        .0;
         assert!(wide > narrow, "{wide} should exceed {narrow}");
     }
 
@@ -1082,7 +1103,7 @@ mod tests {
             relations: Vec::new(),
         };
 
-        let rects = grid_layout(&model);
+        let rects = grid_layout(&model, NameMode::Physical);
         assert_eq!(rects.len(), model.tables.len());
         for (first, a) in rects.iter().enumerate() {
             for b in &rects[first + 1..] {
@@ -1093,12 +1114,12 @@ mod tests {
 
     #[test]
     fn the_grid_of_nothing_is_nothing() {
-        assert!(grid_layout(&ErdModel::default()).is_empty());
+        assert!(grid_layout(&ErdModel::default(), NameMode::Physical).is_empty());
     }
 
     #[test]
     fn a_cycle_lays_out_without_panicking() {
-        let rects = auto_layout(&cyclic());
+        let rects = auto_layout(&cyclic(), NameMode::Physical);
         assert_eq!(rects.len(), 3);
         for (first, a) in rects.iter().enumerate() {
             for b in &rects[first + 1..] {
@@ -1110,9 +1131,9 @@ mod tests {
     #[test]
     fn the_same_model_always_lays_out_the_same_way() {
         let model = cyclic();
-        let first = auto_layout(&model);
+        let first = auto_layout(&model, NameMode::Physical);
         for _ in 0..8 {
-            assert_eq!(auto_layout(&model), first);
+            assert_eq!(auto_layout(&model, NameMode::Physical), first);
         }
     }
 
@@ -1126,7 +1147,7 @@ mod tests {
             relations: vec![relation(0, 0), relation(0, 1)],
         };
 
-        let rects = auto_layout(&model);
+        let rects = auto_layout(&model, NameMode::Physical);
         assert_eq!(rects.len(), 2);
         assert!(!rects[0].overlaps(&rects[1]));
         // The self-reference contributes no edge, so `employee` is ranked only
@@ -1140,7 +1161,7 @@ mod tests {
             tables: vec![table("employee", &[("id", "int"), ("manager_id", "int")])],
             relations: vec![relation(0, 0)],
         };
-        let rects = auto_layout(&model);
+        let rects = auto_layout(&model, NameMode::Physical);
         assert_eq!(rects.len(), 1);
         assert_eq!((rects[0].x, rects[0].y), (0., 0.));
     }
@@ -1155,7 +1176,7 @@ mod tests {
             ],
             relations: vec![relation(0, 1), relation(1, 2)],
         };
-        let rects = auto_layout(&model);
+        let rects = auto_layout(&model, NameMode::Physical);
         assert!(rects[0].x < rects[1].x);
         assert!(rects[1].x < rects[2].x);
     }
@@ -1170,7 +1191,7 @@ mod tests {
             ],
             relations: vec![relation(0, 1)],
         };
-        let rects = auto_layout(&model);
+        let rects = auto_layout(&model, NameMode::Physical);
         assert!(rects[2].x >= rects[1].right(), "{rects:?}");
     }
 
@@ -1180,7 +1201,7 @@ mod tests {
             tables: vec![table("a", &[("id", "int")])],
             relations: vec![relation(0, 9)],
         };
-        assert_eq!(auto_layout(&model).len(), 1);
+        assert_eq!(auto_layout(&model, NameMode::Physical).len(), 1);
     }
 
     #[test]

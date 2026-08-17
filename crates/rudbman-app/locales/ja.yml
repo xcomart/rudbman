@@ -307,6 +307,12 @@ driver:
   delete: 削除
   delete_confirm: "ドライバー定義「%{name}」を削除しますか？"
   none_selected: ドライバーを選ぶか、新しく追加してください。
+  table_comments: テーブルコメント
+  use_table_comments: テーブルコメントをクエリで読み取る
+  table_comments_hint: "ドライバーがコメントを返さないときに使います。${catalog} と ${schema} は置き換えられます。クエリはテーブル名、コメントの順に返してください。"
+  column_comments: 列コメント
+  use_column_comments: 列コメントをクエリで読み取る
+  column_comments_hint: "ドライバーがコメントを返さないときに使います。${catalog} と ${schema} は置き換えられます。クエリはテーブル名、列名、コメントの順に返してください。"
 
 # エクスプローラーのサイドバー。
 explorer:
@@ -555,6 +561,9 @@ erd:
   load_failed: "図を描画できませんでした: %{error}"
   empty: このスキーマにはテーブルがありません。
   auto_arrange: 自動整列
+  names_physical: 物理名
+  names_logical: 論理名
+  logical_names: 論理名で表示
   export_svg: SVG で書き出し…
   export_done: "%{path} に書き出しました。"
   export_failed: "図を書き出せませんでした: %{error}"

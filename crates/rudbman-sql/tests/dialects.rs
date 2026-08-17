@@ -227,6 +227,7 @@ fn bind_parameters() {
         Dialect::H2,
         Dialect::POSTGRES,
         Dialect::MYSQL,
+        Dialect::MARIADB,
         Dialect::SQLITE,
         Dialect::ORACLE,
         Dialect::MSSQL,
@@ -254,6 +255,26 @@ fn bind_parameters() {
     );
     // Oracle has no `@name` parameters: `@` there introduces a database link.
     assert_ne!(only_kinds("@x", &Dialect::ORACLE)[0], TokenKind::Parameter);
+}
+
+/// MariaDB is a dialect of its own and lexes as MySQL, which is not a
+/// contradiction: the two part company at one `ALTER TABLE` spelling, and a
+/// lexer never sees it. So every fork this file tests has to answer alike for
+/// both, and the same line read two ways would be the bug.
+#[test]
+fn mariadb_lexes_exactly_as_mysql_does() {
+    let soup = "select 1--2, # note\n'it\\'s', \"c\", `d`, 0x1f, @v, straight_join, mediumtext";
+    assert_eq!(kinds(soup, &Dialect::MARIADB), kinds(soup, &Dialect::MYSQL));
+    // And not as anyone else: the backtick alone separates it from PostgreSQL.
+    assert_eq!(
+        kinds("`order`", &Dialect::MARIADB)[0],
+        (TokenKind::QuotedIdentifier, "`order`".into())
+    );
+    // The dialect still knows its own name, which is what `drivers.json`
+    // writes and `Dialect::from_id` reads back.
+    assert_eq!(Dialect::MARIADB.name(), "mariadb");
+    assert_eq!(Dialect::from_id("mariadb"), Dialect::MARIADB);
+    assert_ne!(Dialect::from_id("mariadb"), Dialect::MYSQL);
 }
 
 /// The keyword tables are wired to the dialect and do not leak across.
@@ -318,6 +339,7 @@ fn nothing_panics_on_anything() {
         Dialect::H2,
         Dialect::POSTGRES,
         Dialect::MYSQL,
+        Dialect::MARIADB,
         Dialect::SQLITE,
         Dialect::ORACLE,
         Dialect::MSSQL,

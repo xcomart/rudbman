@@ -445,6 +445,20 @@ driver:
   delete: Delete
   delete_confirm: "Delete the driver definition “%{name}”?"
   none_selected: Select a driver, or add one.
+  # Comments the driver itself will not report. Several products answer
+  # DatabaseMetaData with an empty REMARKS and keep their comments in a
+  # catalogue view instead, so the query says where to find them. The tick box
+  # is separate from the text so that a query can be switched off without being
+  # thrown away. Inherited from jdbgen.
+  table_comments: Table comments
+  use_table_comments: Read table comments with a query
+  # The two variables are substituted by the bridge, and the result set is read
+  # by position rather than by column name — which is why the order is spelled
+  # out.
+  table_comments_hint: "Used where the driver reports no comment. ${catalog} and ${schema} are filled in; the query must return the table name and the comment, in that order."
+  column_comments: Column comments
+  use_column_comments: Read column comments with a query
+  column_comments_hint: "Used where the driver reports no comment. ${catalog} and ${schema} are filled in; the query must return the table name, the column name and the comment, in that order."
 
 # The explorer sidebar: one tree over every open connection.
 #
@@ -911,6 +925,14 @@ erd:
   empty: This schema has no tables.
   # Re-runs the automatic layout over every box.
   auto_arrange: Arrange
+  # The two vocabularies a box can be drawn in: the identifiers the SQL is
+  # written in, and the comments the catalogue carries. Both label the same
+  # two-option control, so they read as a pair.
+  names_physical: Physical
+  names_logical: Logical
+  # The same switch as one context-menu row, ticked while the comments are
+  # showing.
+  logical_names: Logical names
   # Opens a save dialog, hence the ellipsis.
   export_svg: Export SVG…
   export_done: "Written to %{path}."

@@ -34,10 +34,17 @@ import java.util.Map;
  * a one-element array would only make the Rust side unwrap it again. See
  * {@link Ddl}.
  *
- * <p>Three kinds reach past {@link DatabaseMetaData}: {@code ddl} and
+ * <p>Four kinds reach past {@link DatabaseMetaData}. {@code ddl} and
  * {@code sequences} need vendor catalogue queries ({@link Ddl},
  * {@link Sequences}), and both are written so that an unsupported or forbidden
  * query degrades to a reconstruction or an empty list rather than to an error.
+ * {@code tables} and {@code columns} stay pure JDBC reads, but their
+ * {@code remarks} are then reconciled against the vendor catalogue on the
+ * products whose drivers report comments badly ({@link Comments}): topped up
+ * where a driver reports none, and cleared where one reports a placeholder
+ * instead. The top-up happens only where the driver left a hole, and silently
+ * when the query fails. A session opened with {@code table_comments_sql} or
+ * {@code column_comments_sql} tops up from that query instead, on any product.
  */
 public final class Describe {
 
@@ -75,8 +82,16 @@ public final class Describe {
             switch (kind) {
                 case "catalogs":       items = catalogs(dbm); break;
                 case "schemas":        items = schemas(dbm, req); break;
-                case "tables":         items = tables(dbm, req); break;
-                case "columns":        items = columns(dbm, req); break;
+                case "tables":
+                    items = tables(dbm, req);
+                    Comments.tables(session.connection(), dbm, req, items,
+                            session.tableCommentsSql());
+                    break;
+                case "columns":
+                    items = columns(dbm, req);
+                    Comments.columns(session.connection(), dbm, req, items,
+                            session.columnCommentsSql());
+                    break;
                 case "primary_keys":   items = primaryKeys(dbm, req); break;
                 case "imported_keys":  items = importedKeys(dbm, req); break;
                 case "exported_keys":  items = exportedKeys(dbm, req); break;
@@ -173,25 +188,28 @@ public final class Describe {
             RsView v = new RsView(rs);
             while (rs.next()) {
                 JsonObject o = new JsonObject();
-                v.putStr(o, "catalog", "TABLE_CAT");
-                v.putStr(o, "schema", "TABLE_SCHEM");
-                v.putStr(o, "table", "TABLE_NAME");
-                v.putStr(o, "name", "COLUMN_NAME");
-                Integer type = v.i32("DATA_TYPE");
+                // getColumns column order, which the reads have to follow - see
+                // RsView. IS_NULLABLE is 18 and so comes after the default at 13,
+                // however oddly that reads next to the nullable code at 11.
+                v.putStr(o, "catalog", "TABLE_CAT");             // 1
+                v.putStr(o, "schema", "TABLE_SCHEM");            // 2
+                v.putStr(o, "table", "TABLE_NAME");              // 3
+                v.putStr(o, "name", "COLUMN_NAME");              // 4
+                Integer type = v.i32("DATA_TYPE");               // 5
                 o.addProperty("data_type", type);
                 o.addProperty("jdbc_type", type == null ? null : SqlTypes.name(type));
-                v.putStr(o, "type_name", "TYPE_NAME");
-                v.putI32(o, "size", "COLUMN_SIZE");
-                v.putI32(o, "digits", "DECIMAL_DIGITS");
-                v.putI32(o, "radix", "NUM_PREC_RADIX");
-                v.putI32(o, "nullable", "NULLABLE");
-                v.putYesNo(o, "is_nullable", "IS_NULLABLE");
-                v.putStr(o, "remarks", "REMARKS");
-                v.putStr(o, "default", "COLUMN_DEF");
-                v.putI32(o, "char_octet_length", "CHAR_OCTET_LENGTH");
-                v.putI32(o, "ordinal", "ORDINAL_POSITION");
-                v.putYesNo(o, "auto_increment", "IS_AUTOINCREMENT");
-                v.putYesNo(o, "generated", "IS_GENERATEDCOLUMN");
+                v.putStr(o, "type_name", "TYPE_NAME");           // 6
+                v.putI32(o, "size", "COLUMN_SIZE");              // 7
+                v.putI32(o, "digits", "DECIMAL_DIGITS");         // 9
+                v.putI32(o, "radix", "NUM_PREC_RADIX");          // 10
+                v.putI32(o, "nullable", "NULLABLE");             // 11
+                v.putStr(o, "remarks", "REMARKS");               // 12
+                v.putStr(o, "default", "COLUMN_DEF");            // 13
+                v.putI32(o, "char_octet_length", "CHAR_OCTET_LENGTH");  // 16
+                v.putI32(o, "ordinal", "ORDINAL_POSITION");      // 17
+                v.putYesNo(o, "is_nullable", "IS_NULLABLE");     // 18
+                v.putYesNo(o, "auto_increment", "IS_AUTOINCREMENT");    // 23
+                v.putYesNo(o, "generated", "IS_GENERATEDCOLUMN");       // 24
                 arr.add(o);
             }
         }
