@@ -48,7 +48,9 @@ use gpui::{
 use rudbman_erd::{BuilderEdge, BuilderEvent, BuilderView, ErdColumn, ErdTable};
 use rudbman_jdbc::{DescribeRequest, Session};
 use rudbman_sql::Dialect;
-use rudbman_ui::{Button, ButtonVariant, Checkbox, ContextMenu, Select, TextInput, Theme, theme};
+use rudbman_ui::{
+    Button, ButtonVariant, Checkbox, ContextMenu, Select, TextInput, Theme, WheelStaysOnAxis, theme,
+};
 
 use crate::builder_sql::{
     BuilderQuery, BuilderTable, Join, JoinKind, SortDir, generate, unique_alias,
@@ -913,6 +915,7 @@ impl Render for BuilderPane {
                     .border_t_1()
                     .border_color(chrome.border)
                     .overflow_y_scroll()
+                    .wheel_stays_on_axis()
                     .children(joins)
                     .child(conditions)
                     .children(columns)

@@ -77,8 +77,8 @@ use gpui::{
     canvas, div, point, prelude::*, px, size, uniform_list,
 };
 use rudbman_ui::scrollbar::{
-    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
-    scrolled,
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, WheelStaysOnAxis, hide_later, hide_now,
+    scroll_to, scrolled,
 };
 use rudbman_ui::text_input::TextInput;
 use rudbman_ui::theme::{Theme, theme, window_translucent};
@@ -2240,6 +2240,7 @@ impl<S: GridSource> Render for GridView<S> {
             })
         })
         .track_scroll(self.scroll.clone())
+        .wheel_stays_on_axis()
         .size_full();
 
         let body = div()
@@ -3373,6 +3374,40 @@ mod tests {
             probe.max_column.get()
         );
         assert!(probe.min_column.get() > 0, "the left edge never left");
+    }
+
+    /// The same sideways wheel leaves the vertical scroll exactly where it
+    /// was: `wheel_stays_on_axis` on the row list is what stops gpui's shared
+    /// listener from folding the X delta it doesn't otherwise use onto Y.
+    #[gpui::test]
+    fn the_wheel_scrolls_the_columns_sideways_without_scrolling_the_rows(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(10_000, 60, probe.clone()), cx);
+        probe.forget();
+        grid.update(&mut cx, |grid, cx| grid.refresh(cx));
+        let before_column = probe.max_column.get();
+        let before_rows = grid.read(&mut cx, |grid| grid.visible_rows());
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(column_x(2)), px(row_y(2))),
+            delta: gpui::ScrollDelta::Pixels(point(px(-600.), px(0.))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        probe.forget();
+        grid.update(&mut cx, |grid, cx| grid.refresh(cx));
+        assert!(
+            probe.max_column.get() > before_column,
+            "the wheel moved nothing sideways: still stopping at column {}",
+            probe.max_column.get()
+        );
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.visible_rows()),
+            before_rows,
+            "a sideways wheel scrolled the rows too"
+        );
     }
 
     /// A result the host replaces with a smaller one leaves no selection

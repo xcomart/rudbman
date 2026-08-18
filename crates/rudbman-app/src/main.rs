@@ -90,8 +90,8 @@ use rudbman_core::{
 use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
-    ThemeRegistry, WindowControlIcons, WindowControls, hide_later, hide_now, modal, scroll_to,
-    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
+    ThemeRegistry, WheelStaysOnAxis, WindowControlIcons, WindowControls, hide_later, hide_now,
+    modal, scroll_to, scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use uuid::Uuid;
 
@@ -4421,6 +4421,7 @@ impl Workspace {
                     .id("confirm-preview")
                     .max_h(px(200.))
                     .overflow_y_scroll()
+                    .wheel_stays_on_axis()
                     .p(px(8.))
                     .rounded_md()
                     .bg(theme.surface)
@@ -4806,6 +4807,7 @@ fn centered_scroll(
                 .min_h_0()
                 .items_center()
                 .overflow_y_scroll()
+                .wheel_stays_on_axis()
                 .child(
                     // `flex_none` so that a column taller than the box overflows
                     // it — and is scrolled to — rather than being squeezed into

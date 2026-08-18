@@ -56,8 +56,8 @@ use gpui::{
 };
 
 use crate::scrollbar::{
-    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
-    scrolled,
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, WheelStaysOnAxis, hide_later, hide_now,
+    scroll_to, scrolled,
 };
 use crate::theme::theme;
 
@@ -993,6 +993,7 @@ impl<S: TreeSource> Render for TreeView<S> {
             })
         })
         .track_scroll(self.scroll.clone())
+        .wheel_stays_on_axis()
         .size_full();
 
         div()

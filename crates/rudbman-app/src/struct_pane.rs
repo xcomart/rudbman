@@ -87,7 +87,8 @@ use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::{ConstraintDrop, ConstraintKind, Dialect, TableAlter, plan_alter};
 use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to, scrolled, theme,
+    TextInput, Theme, WheelStaysOnAxis, form_row, hide_later, hide_now, modal, scroll_to, scrolled,
+    theme,
 };
 
 use crate::builder_sql;
@@ -1289,6 +1290,7 @@ impl StructPane {
                     .gap(px(14.))
                     .p(px(10.))
                     .overflow_y_scroll()
+                    .wheel_stays_on_axis()
                     .child(content),
             )
             .children(
@@ -1960,6 +1962,7 @@ impl StructPane {
                     .id("struct-apply-preview")
                     .max_h(px(260.))
                     .overflow_y_scroll()
+                    .wheel_stays_on_axis()
                     .p(px(8.))
                     .rounded_md()
                     .bg(chrome.surface)

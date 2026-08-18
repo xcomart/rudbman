@@ -41,7 +41,7 @@ use gpui::{
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::DmlError;
-use rudbman_ui::{Button, ButtonVariant, Theme, modal, theme};
+use rudbman_ui::{Button, ButtonVariant, Theme, WheelStaysOnAxis, modal, theme};
 
 use crate::data_edit::{EditCounts, PlanError, PlannedStatement};
 use crate::i18n::ts;
@@ -289,6 +289,7 @@ pub(crate) fn render_apply_preview(
                 .id("data-apply-preview")
                 .max_h(px(260.))
                 .overflow_y_scroll()
+                .wheel_stays_on_axis()
                 .p(px(8.))
                 .rounded_md()
                 .bg(chrome.surface)
