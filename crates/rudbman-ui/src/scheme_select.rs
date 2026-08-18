@@ -23,7 +23,7 @@ use gpui::{
     SharedString, Window, anchored, deferred, div, point, prelude::*, px, transparent_black,
 };
 
-use crate::scrollbar::Scrollbar;
+use crate::scrollbar::{Scrollbar, WheelStaysOnAxis};
 use crate::theme::{Theme, theme};
 
 /// Height of the trigger, matching [`Select`](crate::Select) so a form that
@@ -541,6 +541,7 @@ impl RenderOnce for SchemeSelect {
             .max_h(px(LIST_MAX_HEIGHT))
             .py(px(4.))
             .overflow_y_scroll()
+            .wheel_stays_on_axis()
             .bg(theme.background)
             .border_1()
             .border_color(theme.border)
