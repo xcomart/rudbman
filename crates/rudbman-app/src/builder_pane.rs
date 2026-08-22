@@ -467,7 +467,7 @@ impl BuilderPane {
         } else {
             self.view.read(cx).focus_handle(cx)
         };
-        handle.focus(window);
+        handle.focus(window, cx);
     }
 
     /// Puts the canvas's right-click menu away, and says whether there was one.

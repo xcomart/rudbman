@@ -37,8 +37,8 @@ use std::rc::Rc;
 
 use gpui::{
     App, Bounds, ContentMask, Hsla, IsZero, KeyBinding, PaintQuad, PathBuilder, Pixels, Point,
-    ScrollWheelEvent, ShapedLine, SharedString, TextRun, Window, actions, fill, outline, point, px,
-    size,
+    ScrollWheelEvent, ShapedLine, SharedString, TextAlign, TextRun, Window, actions, fill, outline,
+    point, px, size,
 };
 use rudbman_ui::scrollbar::ScrollbarAxis;
 use rudbman_ui::theme::Theme;
@@ -921,7 +921,8 @@ impl Painted {
             }
 
             for (line, origin, line_height) in self.labels.drain(..) {
-                line.paint(origin, line_height, window, cx).ok();
+                line.paint(origin, line_height, TextAlign::Left, None, window, cx)
+                    .ok();
             }
         });
     }
@@ -1049,7 +1050,7 @@ pub(crate) mod test_support {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         cx.update(|window, cx| {
             let handle = widget.read(cx).focus_handle(cx);
-            handle.focus(window);
+            handle.focus(window, cx);
         });
         cx.run_until_parked();
 

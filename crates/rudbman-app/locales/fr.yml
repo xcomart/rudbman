@@ -71,7 +71,7 @@ about:
   version: "Version %{version}"
   tagline: Un outil de bases de données qui enveloppe les pilotes JDBC via JNI et dessine son interface avec gpui.
   license: "Distribué sous licence %{license}."
-  credits: Construit avec gpui 0.2.2 (intégré et corrigé).
+  credits: Construit avec gpui (intégré et corrigé).
 
 # La boîte de dialogue des réglages et l’éditeur de thèmes qu’elle contient.
 settings:

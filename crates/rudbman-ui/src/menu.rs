@@ -15,7 +15,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Corner, ElementId, Pixels, Point, SharedString, Size, Window, anchored,
+    Anchor, AnyElement, App, ElementId, Pixels, Point, SharedString, Size, Window, anchored,
     deferred, div, point, prelude::*, px, svg,
 };
 
@@ -458,7 +458,7 @@ impl RenderOnce for ContextMenu {
             .child(
                 deferred(
                     anchored()
-                        .anchor(Corner::TopLeft)
+                        .anchor(Anchor::TopLeft)
                         .position(self.position)
                         .snap_to_window_with_margin(px(WINDOW_MARGIN))
                         .child(panel),
@@ -656,7 +656,7 @@ impl RenderOnce for MenuButton {
             .child(
                 deferred(
                     anchored()
-                        .anchor(Corner::TopLeft)
+                        .anchor(Anchor::TopLeft)
                         .offset(point(px(0.), px(DROP_OFFSET)))
                         .snap_to_window_with_margin(px(WINDOW_MARGIN))
                         .child(panel),

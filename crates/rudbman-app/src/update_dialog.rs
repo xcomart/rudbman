@@ -297,7 +297,7 @@ impl UpdateDialog {
                     if installed == Installed::Staged {
                         log::debug!("the update will be applied as this process exits");
                     }
-                    cx.update(|cx| cx.restart()).ok();
+                    cx.update(|cx| cx.restart());
                 }
                 Err(message) => {
                     this.update(cx, |dialog, cx| dialog.fail(message, cx)).ok();
@@ -386,7 +386,7 @@ impl UpdateDialog {
         }
         self.pending_focus = false;
         let handle = self.focus_handle.clone();
-        window.focus(&handle);
+        window.focus(&handle, cx);
         cx.notify();
     }
 

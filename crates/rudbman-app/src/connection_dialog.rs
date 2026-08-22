@@ -1058,7 +1058,7 @@ impl ConnectionDialog {
         }
         self.pending_focus = false;
         let handle = self.name_input.read(cx).focus_handle(cx);
-        window.focus(&handle);
+        window.focus(&handle, cx);
     }
 
     /// The handle and bar state of one scrolling surface.
@@ -2636,7 +2636,8 @@ mod tests {
         // the template cannot produce.
         cx.update(|window, cx| {
             let input = dialog.read(cx).url_input.clone();
-            input.read(cx).focus_handle(cx).focus(window);
+            let handle = input.read(cx).focus_handle(cx);
+            handle.focus(window, cx);
             set_text(&input, "jdbc:postgresql://db:5432/app?ssl=true", cx);
         });
         cx.update(|window, _| window.refresh());
@@ -2678,7 +2679,8 @@ mod tests {
 
         cx.update(|window, cx| {
             let host = dialog.read(cx).url_parts["host"].clone();
-            host.read(cx).focus_handle(cx).focus(window);
+            let handle = host.read(cx).focus_handle(cx);
+            handle.focus(window, cx);
             set_text(&host, "replica", cx);
         });
         cx.update(|window, _| window.refresh());

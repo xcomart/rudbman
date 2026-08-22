@@ -71,7 +71,7 @@ about:
   version: "版本 %{version}"
   tagline: 一款用 JNI 封装 JDBC 驱动、并以 gpui 绘制界面的数据库工具。
   license: "以 %{license} 许可证发布。"
-  credits: 基于 gpui 0.2.2（已内置并打补丁）构建。
+  credits: 基于 gpui（已内置并打补丁）构建。
 
 # 设置对话框及其中的主题编辑器。
 settings:

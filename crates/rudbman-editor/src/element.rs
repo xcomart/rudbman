@@ -45,7 +45,7 @@ use std::ops::Range;
 use gpui::{
     App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, GlobalElementId,
     Hsla, InspectorElementId, LayoutId, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style,
-    TextRun, UnderlineStyle, Window, fill, point, prelude::*, px, relative, size,
+    TextAlign, TextRun, UnderlineStyle, Window, fill, point, prelude::*, px, relative, size,
 };
 use rudbman_sql::TokenKind;
 use rudbman_ui::{EditorTheme, editor_theme};
@@ -357,7 +357,14 @@ impl Element for EditorElement {
                         + line_height
                             * ((*line as f32) - f32::from(scroll.y) / f32::from(line_height));
                     shaped
-                        .paint(point(text_left, top), line_height, window, cx)
+                        .paint(
+                            point(text_left, top),
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        )
                         .ok();
                 }
 
@@ -378,7 +385,16 @@ impl Element for EditorElement {
                 let top = bounds.top()
                     + line_height * ((line as f32) - f32::from(scroll.y) / f32::from(line_height));
                 let left = bounds.left() + gutter - px(GUTTER_PADDING) - number.width;
-                number.paint(point(left, top), line_height, window, cx).ok();
+                number
+                    .paint(
+                        point(left, top),
+                        line_height,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .ok();
             }
         });
 

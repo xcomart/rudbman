@@ -1032,7 +1032,7 @@ impl<S: GridSource> GridView<S> {
             _blur: blur,
         });
         self.refocus = false;
-        handle.focus(window);
+        handle.focus(window, cx);
         cx.notify();
         true
     }
@@ -1537,7 +1537,7 @@ impl<S: GridSource> GridView<S> {
         let Some(hit) = self.hit(event.position) else {
             return;
         };
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
 
         let columns = self.laid_out.len();
         match hit {
@@ -1593,7 +1593,7 @@ impl<S: GridSource> GridView<S> {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.emit(GridEvent::ContextMenu {
             target: MenuTarget::Header { column },
             position: event.position,
@@ -1624,7 +1624,7 @@ impl<S: GridSource> GridView<S> {
         let Some(hit) = self.hit(event.position) else {
             return;
         };
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.stop_propagation();
 
         let columns = self.laid_out.len();
@@ -1794,14 +1794,14 @@ impl<S: GridSource> GridView<S> {
                     .border_color(theme.border)
                     .cursor_pointer()
                     .on_click(cx.listener(|grid, _: &ClickEvent, window, cx| {
-                        grid.focus_handle.focus(window);
+                        grid.focus_handle.focus(window, cx);
                         grid.select_all(cx);
                     })),
             )
             .child(
                 div()
                     .relative()
-                    .flex_grow()
+                    .flex_grow_1()
                     .h_full()
                     .overflow_hidden()
                     .child(
@@ -1853,7 +1853,7 @@ impl<S: GridSource> GridView<S> {
                 theme.text
             })
             .on_click(cx.listener(move |grid, _: &ClickEvent, window, cx| {
-                grid.focus_handle.focus(window);
+                grid.focus_handle.focus(window, cx);
                 grid.toggle_sort(source_column, cx);
             }))
             // A right click on a heading is a menu about that column and does
@@ -1996,7 +1996,7 @@ impl<S: GridSource> GridView<S> {
             .child(
                 div()
                     .relative()
-                    .flex_grow()
+                    .flex_grow_1()
                     .h_full()
                     .overflow_hidden()
                     .child(
@@ -2198,7 +2198,7 @@ impl<S: GridSource> Render for GridView<S> {
         // this is the first place after a close that has a window to hand — see
         // the field's docs.
         if std::mem::take(&mut self.refocus) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
 
         let palette = theme(cx);
@@ -2239,13 +2239,13 @@ impl<S: GridSource> Render for GridView<S> {
                     .collect::<Vec<_>>()
             })
         })
-        .track_scroll(self.scroll.clone())
+        .track_scroll(&self.scroll)
         .wheel_stays_on_axis()
         .size_full();
 
         let body = div()
             .relative()
-            .flex_grow()
+            .flex_grow_1()
             .w_full()
             .overflow_hidden()
             .child(measure)
@@ -2706,7 +2706,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         cx.update(|window, cx| {
             let handle = grid.read(cx).focus_handle(cx);
-            handle.focus(window);
+            handle.focus(window, cx);
         });
         cx.run_until_parked();
 
@@ -3787,7 +3787,7 @@ mod tests {
         // itself — what matters is that the field is not it.
         cx.update(|window, cx| {
             let handle = grid.grid.read(cx).focus_handle(cx);
-            handle.focus(window);
+            handle.focus(window, cx);
         });
         cx.run_until_parked();
 

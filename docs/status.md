@@ -13,7 +13,7 @@ products).
 
 | Milestone | State | What went in |
 |---|---|---|
-| M0 | done | Workspace shell, gpui 0.2.2 vendored (six logman patches, kept byte-identical), 16 rudbman-ui widgets, theme/editor-theme/settings/i18n in eight languages, an icon of its own |
+| M0 | done | Workspace shell, gpui from a pinned revision of Zed's monorepo (four crates vendored and patched, kept byte-identical with rulogman), 16 rudbman-ui widgets, theme/editor-theme/settings/i18n in eight languages, an icon of its own |
 | M1 | done | The bridge JAR (a single JNI entry point, `Bridge.call`, an error envelope, Gson merging), the JVM bootstrap (-Xrs, a dedicated thread, no DestroyJavaVM), the session worker, the driver manager (Maven download, class auto-detection), the connection dialog, SSH tunnels (russh, a bastion without a PTY, loopback binds), OS-keychain secret storage, URL/property masking |
 | M2 | done | The explorer tree (multiple roots, level-skipping rules), DESCRIBE for every kind, the four-tab table detail (columns, keys, references, DDL), DDL reconstruction (native and metadata, in that order) |
 | M3 | done | rudbman-sql (an incremental lexer, seven dialects, statement splitting), rudbman-editor (ropey, IME — with the composition-caret bug in the gpui example fixed), rudbman-grid (virtualized on both axes, a million rows), the query pipeline (run/cancel/generation guard/NearEnd paging/multiple results/write confirmation), the RDB1 codec on both ends |
@@ -130,8 +130,9 @@ out. What remains can be taken in any order:
   Co-authored-by.
 - **Merge with a merge commit once CI is green on all three platforms**
   (`gh pr merge --merge`).
-- vendor/gpui stays **byte-identical** with logman's vendor tree, so patches
-  can be exchanged as diffs. Do not edit it.
+- `vendor/gpui`, `vendor/gpui_linux`, `vendor/gpui_macos` and
+  `vendor/gpui_windows` stay **byte-identical** with rulogman's vendor tree, so
+  patches can be exchanged as diffs. Do not edit them.
 - Verification commands: `cargo test --workspace`, `cargo clippy --workspace
   --all-targets -- -D warnings`, `cargo fmt --check`, `cd bridge &&
   ./gradlew build`. The bridge JAR is regenerated with `cd bridge &&

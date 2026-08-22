@@ -1,9 +1,11 @@
 # Build, lint and test on every platform rudbman ships on.
 #
-# Inherited from logman, whose notes still hold here — russh and ureq are
+# Inherited from rulogman, whose notes still hold here — russh and ureq are
 # pinned to the `ring` backend so no NASM is needed anywhere, the OS-keychain
-# tests are `#[ignore]`d, and gpui is vendored so [patch.crates-io] resolves
-# from the checkout — plus one thing logman does not have: a JVM. The bridge
+# tests are `#[ignore]`d, and gpui comes from a pinned revision of Zed's
+# monorepo with the four crates patched on top of it under vendor/, so the only
+# network the build needs is crates.io plus that one git fetch — plus one thing
+# rulogman does not have: a JVM. The bridge
 # JAR is built and tested first, because rudbman-jdbc's build script refuses
 # to build without the JAR, and its integration tests then boot a real JVM
 # against a real H2. That H2 driver is handed to the tests explicitly through

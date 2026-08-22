@@ -78,9 +78,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
-    Focusable, Hsla, KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point,
-    ScrollHandle, SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
+    AnyElement, App, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, Hsla,
+    KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, ScrollHandle,
+    SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div, img,
     prelude::*, px, relative, size,
 };
@@ -1122,9 +1122,7 @@ impl Workspace {
         let explorer = self.explorer.clone();
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            explorer
-                .update(cx, |explorer, cx| explorer.deliver(node, outcome, cx))
-                .ok();
+            explorer.update(cx, |explorer, cx| explorer.deliver(node, outcome, cx));
         })
         .detach();
     }
@@ -1406,9 +1404,7 @@ impl Workspace {
         });
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            panel
-                .update(cx, |panel, cx| panel.deliver(outcome, cx))
-                .ok();
+            panel.update(cx, |panel, cx| panel.deliver(outcome, cx));
         })
         .detach();
     }
@@ -1707,9 +1703,7 @@ impl Workspace {
         cx.spawn(async move |_workspace, cx| {
             match fetch.await {
                 Ok(columns) => {
-                    panel
-                        .update(cx, |panel, cx| panel.add_table(&target, columns, cx))
-                        .ok();
+                    panel.update(cx, |panel, cx| panel.add_table(&target, columns, cx));
                 }
                 // Nowhere to put this on screen: the builder has no message
                 // strip, and a column list that could not be read is the same
@@ -2112,9 +2106,7 @@ impl Workspace {
         });
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            panel
-                .update(cx, |panel, cx| panel.deliver(outcome, cx))
-                .ok();
+            panel.update(cx, |panel, cx| panel.deliver(outcome, cx));
         })
         .detach();
     }
@@ -2477,7 +2469,7 @@ impl Workspace {
 
     /// Puts the keyboard back on the shell after a dialog closes.
     fn focus_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -3970,7 +3962,7 @@ impl Workspace {
         div()
             .flex()
             .flex_row()
-            .flex_grow()
+            .flex_grow_1()
             .min_w_0()
             .min_h_0()
             // Measured against this box rather than tracked as a delta, exactly
@@ -4752,7 +4744,7 @@ fn render_placeholder(theme: &Theme) -> AnyElement {
     div()
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow_1()
         .min_w_0()
         .min_h_0()
         .items_center()
@@ -4795,7 +4787,7 @@ fn centered_scroll(
         .relative()
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow_1()
         .min_h_0()
         .child(
             div()
@@ -4803,7 +4795,7 @@ fn centered_scroll(
                 .track_scroll(scroll)
                 .flex()
                 .flex_col()
-                .flex_grow()
+                .flex_grow_1()
                 .min_h_0()
                 .items_center()
                 .overflow_y_scroll()
@@ -4994,6 +4986,9 @@ impl Render for Workspace {
                             blur_radius: px(SHADOW_BAND / 2.),
                             spread_radius: px(0.),
                             offset: gpui::point(px(0.), px(2.)),
+                            // The band is drawn outside the window, not inside
+                            // its content, which is what this frame casts.
+                            inset: false,
                         }])
                     }),
             )
@@ -5410,6 +5405,7 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.mac.quit"), Quit),
             ],
+            disabled: false,
         },
         Menu {
             name: ts!("menu.connection"),
@@ -5426,6 +5422,7 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.new_builder"), NewBuilder),
                 MenuItem::action(ts!("menu.add_to_builder"), AddToBuilder),
             ],
+            disabled: false,
         },
         Menu {
             name: ts!("menu.view"),
@@ -5433,6 +5430,7 @@ fn app_menus() -> Vec<Menu> {
                 ts!("menu.toggle_explorer"),
                 ToggleExplorer,
             )],
+            disabled: false,
         },
     ]
 }
@@ -5507,7 +5505,8 @@ fn main() {
 
     // The icon set has to be installed before the app runs: `svg()` resolves
     // every path through this source, and the default one answers `None`.
-    Application::new().with_assets(Icons).run(|cx: &mut App| {
+    let app = gpui_platform::application().with_assets(Icons);
+    app.run(|cx: &mut App| {
         if let Err(error) = rudbman_core::init_secrets() {
             log::warn!("the OS keychain is unavailable: {error}");
         }
@@ -5555,7 +5554,7 @@ fn main() {
         // re-enters gpui — the file write is the whole of it — which is what
         // keeps it clear of the X11 backend's re-entrancy trap, the one the
         // vendored `client.rs` patch exists for.
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _closed| {
             if cx.windows().is_empty() {
                 app_settings::save(cx);
                 cx.quit();
@@ -5597,7 +5596,8 @@ fn main() {
             },
             |window, cx| {
                 let workspace = cx.new(|cx| Workspace::new(titlebar, window, cx));
-                window.focus(&workspace.read(cx).focus_handle);
+                let handle = workspace.read(cx).focus_handle.clone();
+                window.focus(&handle, cx);
                 apply_caption_theme(window, &theme(cx));
                 workspace
             },
@@ -5942,7 +5942,8 @@ mod tests {
         // What clicking a row in the tree amounts to, without the mouse.
         window
             .update(&mut cx, |workspace, window, cx| {
-                workspace.explorer.read(cx).focus_handle(cx).focus(window);
+                let handle = workspace.explorer.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -6202,7 +6203,8 @@ mod tests {
         // What clicking a row in the tree amounts to, without the mouse.
         window
             .update(&mut cx, |workspace, window, cx| {
-                workspace.explorer.read(cx).focus_handle(cx).focus(window);
+                let handle = workspace.explorer.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -8305,7 +8307,7 @@ mod centered_scroll_tests {
             "the column was not centred: {above} above, {below} below"
         );
         assert_eq!(
-            scroll.max_offset().height,
+            scroll.max_offset().y,
             px(0.),
             "a column that fits left something to scroll"
         );
@@ -8333,9 +8335,8 @@ mod centered_scroll_tests {
             box_
         );
         assert!(
-            (f32::from(scroll.max_offset().height)
-                - f32::from(column.size.height - box_.size.height))
-            .abs()
+            (f32::from(scroll.max_offset().y) - f32::from(column.size.height - box_.size.height))
+                .abs()
                 < SLACK,
             "the scrollable range did not cover the whole of the column"
         );
@@ -8350,7 +8351,7 @@ mod centered_scroll_tests {
     #[gpui::test]
     fn scrolling_to_the_end_reaches_the_foot_of_the_column(cx: &mut TestAppContext) {
         let scroll = open(cx, CRAMPED);
-        scroll.set_offset(point(px(0.), -scroll.max_offset().height));
+        scroll.set_offset(point(px(0.), -scroll.max_offset().y));
         let box_ = scroll.bounds();
         let column = scroll
             .bounds_for_item(0)

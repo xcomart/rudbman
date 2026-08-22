@@ -1129,14 +1129,14 @@ impl SettingsDialog {
     /// `Tab`: move focus to the next control. gpui's tab ring wraps on its own.
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
         self.close_lists(cx);
-        window.focus_next();
+        window.focus_next(cx);
         self.reveal_focused(window, cx);
     }
 
     /// `Shift+Tab`: move focus to the previous control, wrapping to the last.
     fn focus_prev(&mut self, _: &FocusPrev, window: &mut Window, cx: &mut Context<Self>) {
         self.close_lists(cx);
-        window.focus_prev();
+        window.focus_prev(cx);
         self.reveal_focused(window, cx);
     }
 
@@ -1266,13 +1266,13 @@ impl SettingsDialog {
                 OpenList::UiTheme => {
                     let current = ThemeRegistry::all(cx)
                         .iter()
-                        .position(|entry| *entry.id == **self.ui_theme);
+                        .position(|entry| *entry.id == *self.ui_theme);
                     (&self.ui_theme_scroll, current)
                 }
                 OpenList::EditorTheme => {
                     let current = EditorThemeRegistry::all(cx)
                         .iter()
-                        .position(|entry| *entry.id == **self.editor_theme);
+                        .position(|entry| *entry.id == *self.editor_theme);
                     (&self.editor_theme_scroll, current)
                 }
             };
@@ -1303,7 +1303,7 @@ impl SettingsDialog {
         }
         self.pending_focus = false;
         let handle = self.ui_font_size_input.read(cx).focus_handle(cx);
-        window.focus(&handle);
+        window.focus(&handle, cx);
     }
 
     /// The row of management buttons drawn under one picker.

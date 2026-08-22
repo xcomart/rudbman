@@ -71,7 +71,7 @@ about:
   version: "버전 %{version}"
   tagline: JDBC 드라이버를 JNI로 감싸고 gpui로 화면을 그리는 데이터베이스 작업 도구입니다.
   license: "%{license} 라이선스로 배포됩니다."
-  credits: gpui 0.2.2(벤더링 및 패치)로 만들었습니다.
+  credits: gpui(벤더링 및 패치)로 만들었습니다.
 
 # 설정 대화 상자와 그 안의 테마 편집기.
 settings:

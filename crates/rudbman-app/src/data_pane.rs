@@ -349,9 +349,9 @@ impl DataPane {
         match &self.load {
             Load::Ready(rows) => {
                 let handle = rows.grid.read(cx).focus_handle(cx);
-                window.focus(&handle);
+                window.focus(&handle, cx);
             }
-            Load::Running | Load::Failed(_) => window.focus(&self.focus_handle),
+            Load::Running | Load::Failed(_) => window.focus(&self.focus_handle, cx),
         }
     }
 

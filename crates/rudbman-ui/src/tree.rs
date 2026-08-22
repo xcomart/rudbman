@@ -912,7 +912,7 @@ impl<S: TreeSource> TreeView<S> {
             .cursor_pointer()
             .hover(|style| style.bg(theme.surface_hover))
             .on_click(cx.listener(move |tree, event: &ClickEvent, window, cx| {
-                tree.focus_handle.focus(window);
+                tree.focus_handle.focus(window, cx);
                 tree.set_selected(Some(id.clone()), cx);
                 if event.click_count() >= 2 {
                     // A double click means "open what I aimed at", and what
@@ -940,7 +940,7 @@ impl<S: TreeSource> TreeView<S> {
                 MouseButton::Right,
                 cx.listener(move |tree, event: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    tree.focus_handle.focus(window);
+                    tree.focus_handle.focus(window, cx);
                     // The menu's commands act on the selection — the host has
                     // no other handle on a row — so the right-click has to move
                     // it first, or "drop table" would name whatever the user
@@ -992,7 +992,7 @@ impl<S: TreeSource> Render for TreeView<S> {
                     .collect::<Vec<_>>()
             })
         })
-        .track_scroll(self.scroll.clone())
+        .track_scroll(&self.scroll)
         .wheel_stays_on_axis()
         .size_full();
 
@@ -1206,7 +1206,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         cx.update(|window, cx| {
             let handle = tree.read(cx).focus_handle(cx);
-            handle.focus(window);
+            handle.focus(window, cx);
         });
         cx.run_until_parked();
 
