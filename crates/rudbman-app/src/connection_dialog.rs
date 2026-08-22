@@ -2235,9 +2235,7 @@ fn decompose(template: &str, url: &str) -> Option<Vec<(String, String)>> {
 
         // The value runs up to the next literal, or to the end of the URL when
         // the hole is the last thing in the template.
-        let next_literal_end = rest_template
-            .find('{')
-            .map_or(rest_template.len(), |index| index);
+        let next_literal_end = rest_template.find('{').unwrap_or(rest_template.len());
         let next_literal = &rest_template[..next_literal_end];
         let value_end = if next_literal.is_empty() {
             rest_url.len()
