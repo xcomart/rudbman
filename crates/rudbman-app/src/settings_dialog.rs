@@ -37,8 +37,8 @@ use rudbman_core::{AppSettings, TitlebarStyle};
 use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorTheme, EditorThemeRegistry, SchemePreview,
     SchemeSelect, SchemeSwatch, Scrollbar, ScrollbarAxis, ScrollbarState, Segmented, Select,
-    TextInput, Theme, ThemeRegistry, WheelStaysOnAxis, form_row, hide_later, hide_now, modal,
-    scroll_to, scrolled, theme, theme_store,
+    TextInput, Theme, ThemeRegistry, form_row, hide_later, hide_now, modal, scroll_to, scrolled,
+    theme, theme_store,
 };
 
 use crate::app_settings;
@@ -1817,7 +1817,7 @@ impl SettingsDialog {
                             .gap(px(14.))
                             .max_h(px(BODY_MAX_HEIGHT))
                             .overflow_y_scroll()
-                            .wheel_stays_on_axis()
+                            .restrict_scroll_to_axis()
                             .child(self.render_appearance(cx))
                             .child(self.render_window(cx))
                             .child(self.render_language(cx))

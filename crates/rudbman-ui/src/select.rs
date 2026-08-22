@@ -16,7 +16,7 @@ use gpui::{
     Window, anchored, deferred, div, point, prelude::*, px, transparent_black,
 };
 
-use crate::scrollbar::{Scrollbar, WheelStaysOnAxis};
+use crate::scrollbar::Scrollbar;
 use crate::theme::theme;
 
 /// Height of the trigger, matching [`TextInput`](crate::TextInput) so the two
@@ -376,7 +376,7 @@ impl RenderOnce for Select {
             .max_h(px(LIST_MAX_HEIGHT))
             .py(px(4.))
             .overflow_y_scroll()
-            .wheel_stays_on_axis()
+            .restrict_scroll_to_axis()
             .bg(theme.background)
             .border_1()
             .border_color(theme.border)

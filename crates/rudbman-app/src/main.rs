@@ -79,7 +79,7 @@ use std::path::PathBuf;
 
 use gpui::{
     AnyElement, App, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, Hsla,
-    KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, ScrollHandle,
+    KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, QuitMode, ScrollHandle,
     SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div, img,
     prelude::*, px, relative, size,
@@ -90,8 +90,8 @@ use rudbman_core::{
 use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
-    ThemeRegistry, WheelStaysOnAxis, WindowControlIcons, WindowControls, hide_later, hide_now,
-    modal, scroll_to, scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
+    ThemeRegistry, WindowControlIcons, WindowControls, hide_later, hide_now, modal, scroll_to,
+    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use uuid::Uuid;
 
@@ -2969,7 +2969,7 @@ impl Workspace {
         // After the background appearance, never before: on Windows that call
         // re-arms the accent policy that would otherwise repaint the caption out
         // from under us.
-        apply_caption_theme(window, &theme(cx));
+        apply_caption_theme(window, &theme(cx), cx);
     }
 
     /// Re-applies the palettes the settings dialog is currently showing.
@@ -2985,7 +2985,7 @@ impl Workspace {
     fn apply_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         apply_themes(&app_settings::effective(cx), cx);
         cx.refresh_windows();
-        apply_caption_theme(window, &theme(cx));
+        apply_caption_theme(window, &theme(cx), cx);
     }
 
     /// Opens the connection dialog, closing whatever else was showing.
@@ -4413,7 +4413,7 @@ impl Workspace {
                     .id("confirm-preview")
                     .max_h(px(200.))
                     .overflow_y_scroll()
-                    .wheel_stays_on_axis()
+                    .restrict_scroll_to_axis()
                     .p(px(8.))
                     .rounded_md()
                     .bg(theme.surface)
@@ -4799,7 +4799,7 @@ fn centered_scroll(
                 .min_h_0()
                 .items_center()
                 .overflow_y_scroll()
-                .wheel_stays_on_axis()
+                .restrict_scroll_to_axis()
                 .child(
                     // `flex_none` so that a column taller than the box overflows
                     // it — and is scrolled to — rather than being squeezed into
@@ -5505,7 +5505,15 @@ fn main() {
 
     // The icon set has to be installed before the app runs: `svg()` resolves
     // every path through this source, and the default one answers `None`.
-    let app = gpui_platform::application().with_assets(Icons);
+    // `LastWindowClosed` rather than the default, which is this only away from
+    // macOS: there an app whose last window closes stays in the Dock, and
+    // rudbman has nothing to offer once its window is gone — no menu bar
+    // command that opens a new one, no connection or query worth keeping alive
+    // in the background. One rule on every platform is what the app has always
+    // done.
+    let app = gpui_platform::application()
+        .with_assets(Icons)
+        .with_quit_mode(QuitMode::LastWindowClosed);
     app.run(|cx: &mut App| {
         if let Err(error) = rudbman_core::init_secrets() {
             log::warn!("the OS keychain is unavailable: {error}");
@@ -5553,11 +5561,13 @@ fn main() {
         // write of `settings.json` the shell performs. Nothing in the closure
         // re-enters gpui — the file write is the whole of it — which is what
         // keeps it clear of the X11 backend's re-entrancy trap, the one the
-        // vendored `client.rs` patch exists for.
+        // vendored `client.rs` patch exists for. Quitting is no longer this
+        // closure's business: gpui does it, from the quit mode set on the
+        // application below, and it runs these observers first — so the
+        // settings are on disk before the process starts winding down.
         cx.on_window_closed(|cx, _closed| {
             if cx.windows().is_empty() {
                 app_settings::save(cx);
-                cx.quit();
             }
         })
         .detach();
@@ -5598,7 +5608,7 @@ fn main() {
                 let workspace = cx.new(|cx| Workspace::new(titlebar, window, cx));
                 let handle = workspace.read(cx).focus_handle.clone();
                 window.focus(&handle, cx);
-                apply_caption_theme(window, &theme(cx));
+                apply_caption_theme(window, &theme(cx), cx);
                 workspace
             },
         )

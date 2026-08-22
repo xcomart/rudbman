@@ -51,7 +51,7 @@ use rudbman_core::{DriverDef, DriverStore, drivers_dir};
 use rudbman_jdbc::{BridgeErrorKind, DriverProbe, Error as JdbcError};
 use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    TextInput, Theme, WheelStaysOnAxis, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
+    TextInput, Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
 };
 
 use crate::app_settings;
@@ -896,7 +896,7 @@ impl DriverManager {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
-                    .wheel_stays_on_axis()
+                    .restrict_scroll_to_axis()
                     .children(rows),
             )
             .children(self.hovering_scrollbar(LIST_SCROLLBAR, cx).render(chrome))
@@ -1356,7 +1356,7 @@ impl DriverManager {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
-                    .wheel_stays_on_axis()
+                    .restrict_scroll_to_axis()
                     .child(form_row(ts!("driver.name"), self.name_input.clone()))
                     .child(form_row(ts!("driver.class"), class_row))
                     .child(form_row(

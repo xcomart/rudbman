@@ -59,8 +59,8 @@ use rudbman_core::AppSettings;
 use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorThemeColors, EditorThemeFile,
     EditorThemePicker, EditorThemeRegistry, EditorThemeSwatch, Scrollbar, ScrollbarAxis,
-    ScrollbarState, TextInput, ThemeColors, ThemeFile, ThemeRegistry, WheelStaysOnAxis, form_row,
-    hide_later, hide_now, parse_hex, scroll_to, scrolled, theme, theme_store, to_hex,
+    ScrollbarState, TextInput, ThemeColors, ThemeFile, ThemeRegistry, form_row, hide_later,
+    hide_now, parse_hex, scroll_to, scrolled, theme, theme_store, to_hex,
 };
 
 use crate::i18n::ts;
@@ -1371,7 +1371,7 @@ impl Render for ThemeEditor {
             .gap(px(8.))
             .max_h(px(BODY_MAX_HEIGHT))
             .overflow_y_scroll()
-            .wheel_stays_on_axis()
+            .restrict_scroll_to_axis()
             .child(preview)
             .child(form_row(
                 ts!("settings.editor.name"),

@@ -49,8 +49,8 @@ use rudbman_core::{
 };
 use rudbman_ui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    Segmented, Select, TextInput, Theme, WheelStaysOnAxis, form_row, hide_later, hide_now, modal,
-    scroll_to, scrolled, theme,
+    Segmented, Select, TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to,
+    scrolled, theme,
 };
 use uuid::Uuid;
 
@@ -1190,7 +1190,7 @@ impl ConnectionDialog {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
-                    .wheel_stays_on_axis()
+                    .restrict_scroll_to_axis()
                     .children(rows),
             )
             .children(
@@ -1671,7 +1671,7 @@ impl ConnectionDialog {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
-                    .wheel_stays_on_axis()
+                    .restrict_scroll_to_axis()
                     .child(form_row(ts!("connect.name"), self.name_input.clone()))
                     .child(form_row(ts!("connect.folder"), self.folder_input.clone()))
                     .child(form_row(ts!("connect.color"), colors))

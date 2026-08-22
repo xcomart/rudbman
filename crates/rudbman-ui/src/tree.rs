@@ -56,8 +56,8 @@ use gpui::{
 };
 
 use crate::scrollbar::{
-    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, WheelStaysOnAxis, hide_later, hide_now,
-    scroll_to, scrolled,
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
+    scrolled,
 };
 use crate::theme::theme;
 
@@ -985,7 +985,7 @@ impl<S: TreeSource> Render for TreeView<S> {
 
         // Only the rows the viewport can reach are built, which is what lets a
         // schema with thousands of tables be opened at all.
-        let list = uniform_list("tree-rows", count, move |range, window, cx| {
+        let mut list = uniform_list("tree-rows", count, move |range, window, cx| {
             tree.update(cx, |tree, cx| {
                 range
                     .map(|ix| tree.render_row(ix, window, cx))
@@ -993,8 +993,16 @@ impl<S: TreeSource> Render for TreeView<S> {
             })
         })
         .track_scroll(&self.scroll)
-        .wheel_stays_on_axis()
         .size_full();
+        // Keeps a sideways wheel off this list's vertical scroll, the way every
+        // other scrolling surface here asks for it (see [`crate::scrollbar`]).
+        // Spelled against the interactivity rather than through
+        // `restrict_scroll_to_axis()` because that method belongs to gpui's
+        // *stateful* half of the interactive traits, which a `UniformList` —
+        // scrolled by a handle of its own rather than by an element id — does
+        // not implement. The flag itself lives on the shared style the same
+        // paint code reads for both, so the effect is identical.
+        list.interactivity().base_style.restrict_scroll_to_axis = Some(true);
 
         div()
             .key_context(KEY_CONTEXT)

@@ -77,8 +77,8 @@ use gpui::{
     canvas, div, point, prelude::*, px, size, uniform_list,
 };
 use rudbman_ui::scrollbar::{
-    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, WheelStaysOnAxis, hide_later, hide_now,
-    scroll_to, scrolled,
+    DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now, scroll_to,
+    scrolled,
 };
 use rudbman_ui::text_input::TextInput;
 use rudbman_ui::theme::{Theme, theme, window_translucent};
@@ -2230,7 +2230,7 @@ impl<S: GridSource> Render for GridView<S> {
             .size_full()
         };
 
-        let list = uniform_list("grid-rows", rows, move |range, _window, cx| {
+        let mut list = uniform_list("grid-rows", rows, move |range, _window, cx| {
             grid.update(cx, |grid, cx| {
                 grid.note_visible(range.clone(), cx);
                 let palette = theme(cx);
@@ -2240,8 +2240,17 @@ impl<S: GridSource> Render for GridView<S> {
             })
         })
         .track_scroll(&self.scroll)
-        .wheel_stays_on_axis()
         .size_full();
+        // Keeps the sideways wheel that pans the columns from also dragging the
+        // rows up and down — the grid is the one surface where both axes are
+        // driven at once, so folding one delta onto the other is immediately
+        // visible. Spelled against the interactivity rather than through
+        // `restrict_scroll_to_axis()` because that method belongs to gpui's
+        // *stateful* half of the interactive traits, which a `UniformList` —
+        // scrolled by a handle of its own rather than by an element id — does
+        // not implement. The flag itself lives on the shared style the same
+        // paint code reads for both, so the effect is identical.
+        list.interactivity().base_style.restrict_scroll_to_axis = Some(true);
 
         let body = div()
             .relative()
@@ -3377,7 +3386,7 @@ mod tests {
     }
 
     /// The same sideways wheel leaves the vertical scroll exactly where it
-    /// was: `wheel_stays_on_axis` on the row list is what stops gpui's shared
+    /// was: `restrict_scroll_to_axis` on the row list is what stops gpui's shared
     /// listener from folding the X delta it doesn't otherwise use onto Y.
     #[gpui::test]
     fn the_wheel_scrolls_the_columns_sideways_without_scrolling_the_rows(cx: &mut TestAppContext) {

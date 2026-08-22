@@ -41,7 +41,7 @@ use gpui::{
 };
 use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, Theme,
-    WheelStaysOnAxis, hide_later, hide_now, scroll_to, scrolled, theme,
+    hide_later, hide_now, scroll_to, scrolled, theme,
 };
 
 use rudbman_jdbc::{DdlSource, DescribeRequest, Session};
@@ -478,7 +478,7 @@ impl TableDetail {
                     .gap(px(12.))
                     .p(px(10.))
                     .overflow_y_scroll()
-                    .wheel_stays_on_axis()
+                    .restrict_scroll_to_axis()
                     .child(content),
             )
             .children(
