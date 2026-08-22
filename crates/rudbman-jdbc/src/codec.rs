@@ -473,8 +473,10 @@ impl Column {
                 expect_len(index, kind_byte, rows, values.len(), 8 * rows as u64)?;
                 ColumnValues::I64(
                     values
-                        .chunks_exact(8)
-                        .map(|chunk| i64::from_le_bytes(chunk.try_into().expect("8 bytes")))
+                        .as_chunks::<8>()
+                        .0
+                        .iter()
+                        .map(|chunk| i64::from_le_bytes(*chunk))
                         .collect(),
                 )
             }
@@ -482,10 +484,12 @@ impl Column {
                 expect_len(index, kind_byte, rows, values.len(), 8 * rows as u64)?;
                 ColumnValues::F64(
                     values
-                        .chunks_exact(8)
+                        .as_chunks::<8>()
+                        .0
+                        .iter()
                         // Raw bits, not a parsed decimal: NaN payloads and the
                         // infinities have to survive unchanged.
-                        .map(|chunk| f64::from_le_bytes(chunk.try_into().expect("8 bytes")))
+                        .map(|chunk| f64::from_le_bytes(*chunk))
                         .collect(),
                 )
             }
@@ -522,7 +526,7 @@ impl Column {
                 expect_len(index, kind_byte, rows, values.len(), 16 * rows as u64)?;
                 let mut ids = Vec::with_capacity(rows);
                 let mut sizes = Vec::with_capacity(rows);
-                for pair in values.chunks_exact(16) {
+                for pair in values.as_chunks::<16>().0 {
                     ids.push(u64::from_le_bytes(pair[..8].try_into().expect("8 bytes")));
                     sizes.push(u64::from_le_bytes(pair[8..].try_into().expect("8 bytes")));
                 }
@@ -562,8 +566,10 @@ fn decode_var(
     let (raw, data) = values.split_at(offsets_len as usize);
 
     let offsets: Vec<u32> = raw
-        .chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4 bytes")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
         .collect();
 
     // Monotonic, starting at 0 and ending exactly at the end of the data area:
