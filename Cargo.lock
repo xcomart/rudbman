@@ -5821,6 +5821,7 @@ name = "rudbman-editor"
 version = "0.1.9"
 dependencies = [
  "gpui",
+ "log",
  "ropey",
  "rudbman-sql",
  "rudbman-ui",
