@@ -6,3 +6,4 @@
 /runtime
 /bridge/build
 /bridge/.gradle
+/bridge/bin

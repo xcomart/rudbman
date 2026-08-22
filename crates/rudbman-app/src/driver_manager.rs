@@ -896,6 +896,7 @@ impl DriverManager {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .children(rows),
             )
             .children(self.hovering_scrollbar(LIST_SCROLLBAR, cx).render(chrome))
@@ -1355,6 +1356,7 @@ impl DriverManager {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .child(form_row(ts!("driver.name"), self.name_input.clone()))
                     .child(form_row(ts!("driver.class"), class_row))
                     .child(form_row(

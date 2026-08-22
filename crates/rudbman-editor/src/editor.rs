@@ -1152,14 +1152,40 @@ impl EditorView {
         self.edit(range, "", EditKind::Other, cx);
     }
 
+    /// Inserts the clipboard contents at the caret, replacing any selection.
+    ///
+    /// Read asynchronously rather than synchronously: the clipboard belongs to
+    /// whichever application last wrote to it, and on Wayland asking that
+    /// application for the bytes is a round trip that can stall for as long as
+    /// the owner takes to answer. Awaiting it leaves the editor scrolling and
+    /// typing while the answer is on its way.
+    ///
+    /// The selection is read once the text is in hand, not before, so a caret
+    /// the user moved during the wait is the one the paste lands on.
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            return;
-        };
-        // Line breaks are kept: this is a code editor, and a pasted script is
-        // the whole point of one.
-        let range = self.selected_range.clone();
-        self.edit(range, &text, EditKind::Other, cx);
+        let read = cx.read_from_clipboard_async();
+        cx.spawn(async move |this, cx| {
+            let text = match read.await {
+                Ok(item) => item.and_then(|item| item.text()),
+                Err(error) => {
+                    log::warn!("clipboard read failed: {error}");
+                    return;
+                }
+            };
+            let Some(text) = text else {
+                return;
+            };
+            // An editor closed while the read was in flight simply drops the
+            // paste.
+            this.update(cx, |this, cx| {
+                // Line breaks are kept: this is a code editor, and a pasted
+                // script is the whole point of one.
+                let range = this.selected_range.clone();
+                this.edit(range, &text, EditKind::Other, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
@@ -1256,7 +1282,7 @@ impl EditorView {
         }
         self.refresh_matches(cx);
         let handle = self.find_query.read(cx).focus_handle(cx);
-        handle.focus(window);
+        handle.focus(window, cx);
         cx.notify();
     }
 
@@ -1269,7 +1295,7 @@ impl EditorView {
         }
         self.find.open = false;
         self.find.matches.clear();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -1392,7 +1418,7 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         let offset = self.offset_for_position(event.position);
         self.is_selecting = true;
         self.granularity = match event.click_count {
@@ -1446,7 +1472,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.emit(EditorEvent::ContextMenu {
             position: event.position,
         });
@@ -1889,7 +1915,7 @@ impl Render for EditorView {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .relative()
-            .flex_grow()
+            .flex_grow_1()
             .size_full()
             .overflow_hidden()
             // Opaque even over a translucent window, unlike the result grid and
@@ -2037,7 +2063,7 @@ impl EditorView {
                     .flex_row()
                     .items_center()
                     .gap(px(6.))
-                    .child(div().flex_grow().child(query))
+                    .child(div().flex_grow_1().child(query))
                     .child(div().flex_none().min_w(px(56.)).child(position))
                     .child(
                         Checkbox::new("editor-find-case", "Aa")
@@ -2061,7 +2087,7 @@ impl EditorView {
                         .flex_row()
                         .items_center()
                         .gap(px(6.))
-                        .child(div().flex_grow().child(replacement)),
+                        .child(div().flex_grow_1().child(replacement)),
                 )
             })
     }

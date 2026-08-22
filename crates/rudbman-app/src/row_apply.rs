@@ -289,6 +289,7 @@ pub(crate) fn render_apply_preview(
                 .id("data-apply-preview")
                 .max_h(px(260.))
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .p(px(8.))
                 .rounded_md()
                 .bg(chrome.surface)

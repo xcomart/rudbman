@@ -78,9 +78,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, App, Application, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle,
-    Focusable, Hsla, KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point,
-    ScrollHandle, SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
+    AnyElement, App, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, Hsla,
+    KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, QuitMode, ScrollHandle,
+    SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div, img,
     prelude::*, px, relative, size,
 };
@@ -91,7 +91,7 @@ use rudbman_ui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
     ThemeRegistry, WindowControlIcons, WindowControls, hide_later, hide_now, modal, scroll_to,
-    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
+    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store, window_controls,
 };
 use uuid::Uuid;
 
@@ -719,6 +719,8 @@ struct Workspace {
     _update_events: Subscription,
     /// Records the window's placement as it is moved and resized.
     _bounds: Subscription,
+    /// Redraws the title bar when the desktop moves its caption buttons.
+    _button_layout: Subscription,
 }
 
 impl Workspace {
@@ -923,6 +925,17 @@ impl Workspace {
             record_window_geometry(window, cx);
         });
 
+        // The desktop decides where the caption buttons go, and it can be told
+        // to change its mind while the window is open — the settings dialog of
+        // GNOME or KDE moves them the moment the choice is made. Nothing else
+        // in the window changes when it does, so the layout is read afresh on
+        // every frame (see [`Workspace::render_toolbar`]) and this only has to
+        // ask for a frame.
+        let this = cx.weak_entity();
+        let button_layout = window.observe_button_layout_changed(move |_window, cx| {
+            this.update(cx, |_, cx| cx.notify()).ok();
+        });
+
         let settings_snapshot = app_settings::current(cx);
 
         Self {
@@ -957,6 +970,7 @@ impl Workspace {
             _backup_events: backup_events,
             _update_events: update_events,
             _bounds: bounds,
+            _button_layout: button_layout,
         }
     }
 
@@ -1122,9 +1136,7 @@ impl Workspace {
         let explorer = self.explorer.clone();
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            explorer
-                .update(cx, |explorer, cx| explorer.deliver(node, outcome, cx))
-                .ok();
+            explorer.update(cx, |explorer, cx| explorer.deliver(node, outcome, cx));
         })
         .detach();
     }
@@ -1406,9 +1418,7 @@ impl Workspace {
         });
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            panel
-                .update(cx, |panel, cx| panel.deliver(outcome, cx))
-                .ok();
+            panel.update(cx, |panel, cx| panel.deliver(outcome, cx));
         })
         .detach();
     }
@@ -1707,9 +1717,7 @@ impl Workspace {
         cx.spawn(async move |_workspace, cx| {
             match fetch.await {
                 Ok(columns) => {
-                    panel
-                        .update(cx, |panel, cx| panel.add_table(&target, columns, cx))
-                        .ok();
+                    panel.update(cx, |panel, cx| panel.add_table(&target, columns, cx));
                 }
                 // Nowhere to put this on screen: the builder has no message
                 // strip, and a column list that could not be read is the same
@@ -2112,9 +2120,7 @@ impl Workspace {
         });
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            panel
-                .update(cx, |panel, cx| panel.deliver(outcome, cx))
-                .ok();
+            panel.update(cx, |panel, cx| panel.deliver(outcome, cx));
         })
         .detach();
     }
@@ -2477,7 +2483,7 @@ impl Workspace {
 
     /// Puts the keyboard back on the shell after a dialog closes.
     fn focus_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -2977,7 +2983,7 @@ impl Workspace {
         // After the background appearance, never before: on Windows that call
         // re-arms the accent policy that would otherwise repaint the caption out
         // from under us.
-        apply_caption_theme(window, &theme(cx));
+        apply_caption_theme(window, &theme(cx), cx);
     }
 
     /// Re-applies the palettes the settings dialog is currently showing.
@@ -2993,7 +2999,7 @@ impl Workspace {
     fn apply_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         apply_themes(&app_settings::effective(cx), cx);
         cx.refresh_windows();
-        apply_caption_theme(window, &theme(cx));
+        apply_caption_theme(window, &theme(cx), cx);
     }
 
     /// Opens the connection dialog, closing whatever else was showing.
@@ -3709,17 +3715,33 @@ impl Workspace {
         });
 
         // The caption buttons the other two platforms have to draw themselves.
-        let controls = (custom && !cfg!(target_os = "macos")).then(|| {
-            WindowControls::new(
-                "window-controls",
-                WindowControlIcons {
-                    minimize: icons::WINDOW_MINIMIZE.into(),
-                    maximize: icons::WINDOW_MAXIMIZE.into(),
-                    restore: icons::WINDOW_RESTORE.into(),
-                    close: icons::WINDOW_CLOSE.into(),
-                },
-            )
-        });
+        //
+        // Two strips rather than one, because a Linux desktop decides where its
+        // caption buttons go and putting them on the left is a setting people
+        // actually use; [`rudbman_ui::window_controls::split`] turns what the
+        // platform reports into the two ends. Off Linux nothing is reported,
+        // which is the same answer as "the usual three on the right".
+        let (leading_buttons, trailing_buttons) = if custom && !cfg!(target_os = "macos") {
+            window_controls::split(cx.button_layout(), window.window_controls())
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let strip = |id: &'static str, buttons: Vec<gpui::WindowButton>| {
+            (!buttons.is_empty()).then(|| {
+                WindowControls::new(
+                    id,
+                    WindowControlIcons {
+                        minimize: icons::WINDOW_MINIMIZE.into(),
+                        maximize: icons::WINDOW_MAXIMIZE.into(),
+                        restore: icons::WINDOW_RESTORE.into(),
+                        close: icons::WINDOW_CLOSE.into(),
+                    },
+                    buttons,
+                )
+            })
+        };
+        let leading_controls = strip("window-controls-leading", leading_buttons);
+        let trailing_controls = strip("window-controls-trailing", trailing_buttons);
 
         div()
             .id("toolbar")
@@ -3739,11 +3761,15 @@ impl Workspace {
                 // press unclaimed.
                 titlebar_gestures(this.occlude().window_control_area(WindowControlArea::Drag))
             })
+            // Ahead of the wordmark, which is where a desktop that asks for
+            // left-hand caption buttons expects them: the buttons are the
+            // window's, the name is the application's.
+            .children(leading_controls)
             .children(traffic_lights)
             .children(title)
             .children(leading)
             .child(div().flex_1().min_w_0().child(tab_bar))
-            .children(controls)
+            .children(trailing_controls)
             .into_any_element()
     }
 
@@ -3970,7 +3996,7 @@ impl Workspace {
         div()
             .flex()
             .flex_row()
-            .flex_grow()
+            .flex_grow_1()
             .min_w_0()
             .min_h_0()
             // Measured against this box rather than tracked as a delta, exactly
@@ -4421,6 +4447,7 @@ impl Workspace {
                     .id("confirm-preview")
                     .max_h(px(200.))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .p(px(8.))
                     .rounded_md()
                     .bg(theme.surface)
@@ -4751,7 +4778,7 @@ fn render_placeholder(theme: &Theme) -> AnyElement {
     div()
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow_1()
         .min_w_0()
         .min_h_0()
         .items_center()
@@ -4794,7 +4821,7 @@ fn centered_scroll(
         .relative()
         .flex()
         .flex_col()
-        .flex_grow()
+        .flex_grow_1()
         .min_h_0()
         .child(
             div()
@@ -4802,10 +4829,11 @@ fn centered_scroll(
                 .track_scroll(scroll)
                 .flex()
                 .flex_col()
-                .flex_grow()
+                .flex_grow_1()
                 .min_h_0()
                 .items_center()
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .child(
                     // `flex_none` so that a column taller than the box overflows
                     // it — and is scrolled to — rather than being squeezed into
@@ -4992,6 +5020,9 @@ impl Render for Workspace {
                             blur_radius: px(SHADOW_BAND / 2.),
                             spread_radius: px(0.),
                             offset: gpui::point(px(0.), px(2.)),
+                            // The band is drawn outside the window, not inside
+                            // its content, which is what this frame casts.
+                            inset: false,
                         }])
                     }),
             )
@@ -5408,6 +5439,7 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.mac.quit"), Quit),
             ],
+            disabled: false,
         },
         Menu {
             name: ts!("menu.connection"),
@@ -5424,6 +5456,7 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.new_builder"), NewBuilder),
                 MenuItem::action(ts!("menu.add_to_builder"), AddToBuilder),
             ],
+            disabled: false,
         },
         Menu {
             name: ts!("menu.view"),
@@ -5431,6 +5464,7 @@ fn app_menus() -> Vec<Menu> {
                 ts!("menu.toggle_explorer"),
                 ToggleExplorer,
             )],
+            disabled: false,
         },
     ]
 }
@@ -5505,7 +5539,16 @@ fn main() {
 
     // The icon set has to be installed before the app runs: `svg()` resolves
     // every path through this source, and the default one answers `None`.
-    Application::new().with_assets(Icons).run(|cx: &mut App| {
+    // `LastWindowClosed` rather than the default, which is this only away from
+    // macOS: there an app whose last window closes stays in the Dock, and
+    // rudbman has nothing to offer once its window is gone — no menu bar
+    // command that opens a new one, no connection or query worth keeping alive
+    // in the background. One rule on every platform is what the app has always
+    // done.
+    let app = gpui_platform::application()
+        .with_assets(Icons)
+        .with_quit_mode(QuitMode::LastWindowClosed);
+    app.run(|cx: &mut App| {
         if let Err(error) = rudbman_core::init_secrets() {
             log::warn!("the OS keychain is unavailable: {error}");
         }
@@ -5552,11 +5595,13 @@ fn main() {
         // write of `settings.json` the shell performs. Nothing in the closure
         // re-enters gpui — the file write is the whole of it — which is what
         // keeps it clear of the X11 backend's re-entrancy trap, the one the
-        // vendored `client.rs` patch exists for.
-        cx.on_window_closed(|cx| {
+        // vendored `client.rs` patch exists for. Quitting is no longer this
+        // closure's business: gpui does it, from the quit mode set on the
+        // application below, and it runs these observers first — so the
+        // settings are on disk before the process starts winding down.
+        cx.on_window_closed(|cx, _closed| {
             if cx.windows().is_empty() {
                 app_settings::save(cx);
-                cx.quit();
             }
         })
         .detach();
@@ -5595,8 +5640,9 @@ fn main() {
             },
             |window, cx| {
                 let workspace = cx.new(|cx| Workspace::new(titlebar, window, cx));
-                window.focus(&workspace.read(cx).focus_handle);
-                apply_caption_theme(window, &theme(cx));
+                let handle = workspace.read(cx).focus_handle.clone();
+                window.focus(&handle, cx);
+                apply_caption_theme(window, &theme(cx), cx);
                 workspace
             },
         )
@@ -5940,7 +5986,8 @@ mod tests {
         // What clicking a row in the tree amounts to, without the mouse.
         window
             .update(&mut cx, |workspace, window, cx| {
-                workspace.explorer.read(cx).focus_handle(cx).focus(window);
+                let handle = workspace.explorer.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -6200,7 +6247,8 @@ mod tests {
         // What clicking a row in the tree amounts to, without the mouse.
         window
             .update(&mut cx, |workspace, window, cx| {
-                workspace.explorer.read(cx).focus_handle(cx).focus(window);
+                let handle = workspace.explorer.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -8303,7 +8351,7 @@ mod centered_scroll_tests {
             "the column was not centred: {above} above, {below} below"
         );
         assert_eq!(
-            scroll.max_offset().height,
+            scroll.max_offset().y,
             px(0.),
             "a column that fits left something to scroll"
         );
@@ -8331,9 +8379,8 @@ mod centered_scroll_tests {
             box_
         );
         assert!(
-            (f32::from(scroll.max_offset().height)
-                - f32::from(column.size.height - box_.size.height))
-            .abs()
+            (f32::from(scroll.max_offset().y) - f32::from(column.size.height - box_.size.height))
+                .abs()
                 < SLACK,
             "the scrollable range did not cover the whole of the column"
         );
@@ -8348,7 +8395,7 @@ mod centered_scroll_tests {
     #[gpui::test]
     fn scrolling_to_the_end_reaches_the_foot_of_the_column(cx: &mut TestAppContext) {
         let scroll = open(cx, CRAMPED);
-        scroll.set_offset(point(px(0.), -scroll.max_offset().height));
+        scroll.set_offset(point(px(0.), -scroll.max_offset().y));
         let box_ = scroll.bounds();
         let column = scroll
             .bounds_for_item(0)

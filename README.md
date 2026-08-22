@@ -176,11 +176,16 @@ lifecycle, and the milestone plan — lives in
 [docs/architecture.md](docs/architecture.md). Current progress and
 open items are tracked in [docs/status.md](docs/status.md).
 
-`vendor/gpui` is a vendored copy of gpui 0.2.2 carrying six crash/hang
-fixes, kept byte-identical with the same tree in
-[logman](https://github.com/xcomart/logman) so fixes move between the two
-projects as plain diffs.
+gpui comes from a pinned revision of Zed's monorepo rather than from crates.io,
+whose newest release (0.2.2) predates the split of the crate into a
+platform-independent core, a `gpui_platform` facade and per-OS backends. Four of
+those crates — `gpui`, `gpui_linux`, `gpui_macos`, `gpui_windows` — are vendored
+under `vendor/` and patched back over the git source, each change marked
+`RULOGMAN PATCH`: the live title-bar switch, and three X11 fixes upstream has no
+answer for. The trees are kept byte-identical with the same four in
+[rulogman](https://github.com/xcomart/rulogman), so a fix moves between the two
+projects as a plain diff.
 
 ## License
 
-[MIT](LICENSE). The vendored gpui keeps its upstream license.
+[MIT](LICENSE). The vendored gpui crates keep their upstream licenses.

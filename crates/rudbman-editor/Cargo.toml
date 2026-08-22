@@ -19,6 +19,10 @@ rudbman-sql.workspace = true
 rudbman-ui.workspace = true
 
 gpui.workspace = true
+# One call, in the paste handler: a clipboard read that fails is the only
+# failure in this crate that neither the caller nor the document can be told
+# about, and a paste that silently does nothing is worth a line in the log.
+log.workspace = true
 # The caret moves by grapheme cluster rather than by `char`, so that a Hangul
 # syllable or an emoji with a zero-width joiner in it is one cursor step -- the
 # same reason `rudbman-ui`'s text field depends on it. Here it is driven by

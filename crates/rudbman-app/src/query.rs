@@ -788,7 +788,7 @@ impl QueryPane {
     /// Puts the keyboard in the editor.
     pub fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
         let handle = self.editor.read(cx).focus_handle(cx);
-        window.focus(&handle);
+        window.focus(&handle, cx);
     }
 
     /// Whether the keyboard is anywhere inside this pane, as the last drawn
@@ -3368,7 +3368,8 @@ mod tests {
                 assert!(!pane.contains_focus(window, cx));
 
                 // What clicking a cell amounts to, without the mouse.
-                pane.grid_at(0).read(cx).focus_handle(cx).focus(window);
+                let handle = pane.grid_at(0).read(cx).focus_handle(cx);
+                handle.focus(window, cx);
                 assert!(
                     !pane.focus_handle(cx).contains_focused(window, cx),
                     "the editor's handle answered for a focus that is not inside it"

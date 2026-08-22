@@ -912,7 +912,7 @@ impl<S: TreeSource> TreeView<S> {
             .cursor_pointer()
             .hover(|style| style.bg(theme.surface_hover))
             .on_click(cx.listener(move |tree, event: &ClickEvent, window, cx| {
-                tree.focus_handle.focus(window);
+                tree.focus_handle.focus(window, cx);
                 tree.set_selected(Some(id.clone()), cx);
                 if event.click_count() >= 2 {
                     // A double click means "open what I aimed at", and what
@@ -940,7 +940,7 @@ impl<S: TreeSource> TreeView<S> {
                 MouseButton::Right,
                 cx.listener(move |tree, event: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    tree.focus_handle.focus(window);
+                    tree.focus_handle.focus(window, cx);
                     // The menu's commands act on the selection — the host has
                     // no other handle on a row — so the right-click has to move
                     // it first, or "drop table" would name whatever the user
@@ -985,15 +985,24 @@ impl<S: TreeSource> Render for TreeView<S> {
 
         // Only the rows the viewport can reach are built, which is what lets a
         // schema with thousands of tables be opened at all.
-        let list = uniform_list("tree-rows", count, move |range, window, cx| {
+        let mut list = uniform_list("tree-rows", count, move |range, window, cx| {
             tree.update(cx, |tree, cx| {
                 range
                     .map(|ix| tree.render_row(ix, window, cx))
                     .collect::<Vec<_>>()
             })
         })
-        .track_scroll(self.scroll.clone())
+        .track_scroll(&self.scroll)
         .size_full();
+        // Keeps a sideways wheel off this list's vertical scroll, the way every
+        // other scrolling surface here asks for it (see [`crate::scrollbar`]).
+        // Spelled against the interactivity rather than through
+        // `restrict_scroll_to_axis()` because that method belongs to gpui's
+        // *stateful* half of the interactive traits, which a `UniformList` —
+        // scrolled by a handle of its own rather than by an element id — does
+        // not implement. The flag itself lives on the shared style the same
+        // paint code reads for both, so the effect is identical.
+        list.interactivity().base_style.restrict_scroll_to_axis = Some(true);
 
         div()
             .key_context(KEY_CONTEXT)
@@ -1205,7 +1214,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         cx.update(|window, cx| {
             let handle = tree.read(cx).focus_handle(cx);
-            handle.focus(window);
+            handle.focus(window, cx);
         });
         cx.run_until_parked();
 

@@ -643,7 +643,7 @@ impl TransferDialog {
         }
         self.pending_focus = false;
         let handle = self.focus_handle.clone();
-        window.focus(&handle);
+        window.focus(&handle, cx);
         cx.notify();
     }
 

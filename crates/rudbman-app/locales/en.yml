@@ -146,7 +146,7 @@ about:
   version: "Version %{version}"
   tagline: A database workbench that wraps JDBC drivers in JNI and draws its interface with gpui.
   license: "Licensed under %{license}."
-  credits: Built with gpui 0.2.2 (vendored and patched).
+  credits: Built with gpui (vendored and patched).
 
 # The settings dialog and the theme editor inside it.
 #

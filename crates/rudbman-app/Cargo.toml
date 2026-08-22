@@ -28,11 +28,6 @@ windows.workspace = true
 windows-registry.workspace = true
 raw-window-handle.workspace = true
 
-# Used only by `src/caption.rs`, to pin the AppKit title bar to the app theme.
-[target.'cfg(target_os = "macos")'.dependencies]
-objc.workspace = true
-raw-window-handle.workspace = true
-
 [dependencies]
 rudbman-core.workspace = true
 rudbman-editor.workspace = true
@@ -85,6 +80,10 @@ anyhow.workspace = true
 # configuration directory but has no reason to expose the home one.
 directories.workspace = true
 gpui.workspace = true
+# One call, in `main`: `gpui_platform::application()`. gpui's core no longer
+# knows which windowing backend exists, so the façade is what links one in and
+# hands back the `Application` the rest of `main` drives.
+gpui_platform.workspace = true
 log.workspace = true
 env_logger.workspace = true
 rust-i18n.workspace = true

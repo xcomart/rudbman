@@ -478,6 +478,7 @@ impl TableDetail {
                     .gap(px(12.))
                     .p(px(10.))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .child(content),
             )
             .children(

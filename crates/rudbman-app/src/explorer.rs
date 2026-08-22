@@ -762,7 +762,7 @@ impl ExplorerSource {
         let live = info.is_some_and(|info| info.live);
         let dot = info
             .and_then(|info| info.color.as_deref())
-            .and_then(|hex| rudbman_ui::parse_hex(hex))
+            .and_then(rudbman_ui::parse_hex)
             .unwrap_or(if live {
                 chrome.success
             } else {

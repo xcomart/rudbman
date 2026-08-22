@@ -506,11 +506,12 @@ impl StructPane {
     /// field is a rename, and starting in it would invite one nobody asked for.
     pub fn take_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == Mode::Create && self.read_only_reason().is_none() {
-            window.focus(&self.rename_input.read(cx).focus_handle(cx));
+            let handle = self.rename_input.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
             cx.notify();
             return;
         }
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -1289,6 +1290,7 @@ impl StructPane {
                     .gap(px(14.))
                     .p(px(10.))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .child(content),
             )
             .children(
@@ -1960,6 +1962,7 @@ impl StructPane {
                     .id("struct-apply-preview")
                     .max_h(px(260.))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .p(px(8.))
                     .rounded_md()
                     .bg(chrome.surface)

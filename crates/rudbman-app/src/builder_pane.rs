@@ -465,7 +465,7 @@ impl BuilderPane {
         } else {
             self.view.read(cx).focus_handle(cx)
         };
-        handle.focus(window);
+        handle.focus(window, cx);
     }
 
     /// Puts the canvas's right-click menu away, and says whether there was one.
@@ -913,6 +913,7 @@ impl Render for BuilderPane {
                     .border_t_1()
                     .border_color(chrome.border)
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .children(joins)
                     .child(conditions)
                     .children(columns)

@@ -331,7 +331,7 @@ impl ErdView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
 
         match self.viewport.hit(&self.rects, event.position) {
             Some(node) => {
@@ -372,7 +372,7 @@ impl ErdView {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
 
         let table = self.viewport.hit(&self.rects, event.position);
         if table.is_some() {

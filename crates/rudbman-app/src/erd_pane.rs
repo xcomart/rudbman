@@ -420,7 +420,7 @@ impl ErdPane {
             Load::Ready(count) if count > 0 => self.view.read(cx).focus_handle(cx),
             _ => self.focus_handle.clone(),
         };
-        handle.focus(window);
+        handle.focus(window, cx);
     }
 
     /// Which vocabulary the boxes are drawn with.

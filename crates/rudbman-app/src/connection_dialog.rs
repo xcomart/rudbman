@@ -1058,7 +1058,7 @@ impl ConnectionDialog {
         }
         self.pending_focus = false;
         let handle = self.name_input.read(cx).focus_handle(cx);
-        window.focus(&handle);
+        window.focus(&handle, cx);
     }
 
     /// The handle and bar state of one scrolling surface.
@@ -1190,6 +1190,7 @@ impl ConnectionDialog {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .children(rows),
             )
             .children(
@@ -1670,6 +1671,7 @@ impl ConnectionDialog {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .child(form_row(ts!("connect.name"), self.name_input.clone()))
                     .child(form_row(ts!("connect.folder"), self.folder_input.clone()))
                     .child(form_row(ts!("connect.color"), colors))
@@ -2233,9 +2235,7 @@ fn decompose(template: &str, url: &str) -> Option<Vec<(String, String)>> {
 
         // The value runs up to the next literal, or to the end of the URL when
         // the hole is the last thing in the template.
-        let next_literal_end = rest_template
-            .find('{')
-            .map_or(rest_template.len(), |index| index);
+        let next_literal_end = rest_template.find('{').unwrap_or(rest_template.len());
         let next_literal = &rest_template[..next_literal_end];
         let value_end = if next_literal.is_empty() {
             rest_url.len()
@@ -2634,7 +2634,8 @@ mod tests {
         // the template cannot produce.
         cx.update(|window, cx| {
             let input = dialog.read(cx).url_input.clone();
-            input.read(cx).focus_handle(cx).focus(window);
+            let handle = input.read(cx).focus_handle(cx);
+            handle.focus(window, cx);
             set_text(&input, "jdbc:postgresql://db:5432/app?ssl=true", cx);
         });
         cx.update(|window, _| window.refresh());
@@ -2676,7 +2677,8 @@ mod tests {
 
         cx.update(|window, cx| {
             let host = dialog.read(cx).url_parts["host"].clone();
-            host.read(cx).focus_handle(cx).focus(window);
+            let handle = host.read(cx).focus_handle(cx);
+            handle.focus(window, cx);
             set_text(&host, "replica", cx);
         });
         cx.update(|window, _| window.refresh());

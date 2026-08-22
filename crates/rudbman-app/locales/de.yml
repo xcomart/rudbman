@@ -71,7 +71,7 @@ about:
   version: "Version %{version}"
   tagline: Ein Datenbankwerkzeug, das JDBC-Treiber über JNI einbindet und seine Oberfläche mit gpui zeichnet.
   license: "Lizenziert unter %{license}."
-  credits: Erstellt mit gpui 0.2.2 (eingebunden und gepatcht).
+  credits: Erstellt mit gpui (eingebunden und gepatcht).
 
 # Der Einstellungsdialog und der Themen-Editor darin.
 settings:

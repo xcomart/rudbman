@@ -398,7 +398,7 @@ impl BuilderView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
 
         match self.viewport.hit_row(&self.rects, event.position) {
             // A row: the gesture is about a column, and which of the two it is
@@ -449,7 +449,7 @@ impl BuilderView {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
 
         let hit = self.viewport.hit_row(&self.rects, event.position);
         if let Some((node, _)) = hit {

@@ -1032,7 +1032,7 @@ impl<S: GridSource> GridView<S> {
             _blur: blur,
         });
         self.refocus = false;
-        handle.focus(window);
+        handle.focus(window, cx);
         cx.notify();
         true
     }
@@ -1537,7 +1537,7 @@ impl<S: GridSource> GridView<S> {
         let Some(hit) = self.hit(event.position) else {
             return;
         };
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
 
         let columns = self.laid_out.len();
         match hit {
@@ -1593,7 +1593,7 @@ impl<S: GridSource> GridView<S> {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.emit(GridEvent::ContextMenu {
             target: MenuTarget::Header { column },
             position: event.position,
@@ -1624,7 +1624,7 @@ impl<S: GridSource> GridView<S> {
         let Some(hit) = self.hit(event.position) else {
             return;
         };
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.stop_propagation();
 
         let columns = self.laid_out.len();
@@ -1794,14 +1794,14 @@ impl<S: GridSource> GridView<S> {
                     .border_color(theme.border)
                     .cursor_pointer()
                     .on_click(cx.listener(|grid, _: &ClickEvent, window, cx| {
-                        grid.focus_handle.focus(window);
+                        grid.focus_handle.focus(window, cx);
                         grid.select_all(cx);
                     })),
             )
             .child(
                 div()
                     .relative()
-                    .flex_grow()
+                    .flex_grow_1()
                     .h_full()
                     .overflow_hidden()
                     .child(
@@ -1853,7 +1853,7 @@ impl<S: GridSource> GridView<S> {
                 theme.text
             })
             .on_click(cx.listener(move |grid, _: &ClickEvent, window, cx| {
-                grid.focus_handle.focus(window);
+                grid.focus_handle.focus(window, cx);
                 grid.toggle_sort(source_column, cx);
             }))
             // A right click on a heading is a menu about that column and does
@@ -1996,7 +1996,7 @@ impl<S: GridSource> GridView<S> {
             .child(
                 div()
                     .relative()
-                    .flex_grow()
+                    .flex_grow_1()
                     .h_full()
                     .overflow_hidden()
                     .child(
@@ -2198,7 +2198,7 @@ impl<S: GridSource> Render for GridView<S> {
         // this is the first place after a close that has a window to hand — see
         // the field's docs.
         if std::mem::take(&mut self.refocus) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
 
         let palette = theme(cx);
@@ -2230,7 +2230,7 @@ impl<S: GridSource> Render for GridView<S> {
             .size_full()
         };
 
-        let list = uniform_list("grid-rows", rows, move |range, _window, cx| {
+        let mut list = uniform_list("grid-rows", rows, move |range, _window, cx| {
             grid.update(cx, |grid, cx| {
                 grid.note_visible(range.clone(), cx);
                 let palette = theme(cx);
@@ -2239,12 +2239,22 @@ impl<S: GridSource> Render for GridView<S> {
                     .collect::<Vec<_>>()
             })
         })
-        .track_scroll(self.scroll.clone())
+        .track_scroll(&self.scroll)
         .size_full();
+        // Keeps the sideways wheel that pans the columns from also dragging the
+        // rows up and down — the grid is the one surface where both axes are
+        // driven at once, so folding one delta onto the other is immediately
+        // visible. Spelled against the interactivity rather than through
+        // `restrict_scroll_to_axis()` because that method belongs to gpui's
+        // *stateful* half of the interactive traits, which a `UniformList` —
+        // scrolled by a handle of its own rather than by an element id — does
+        // not implement. The flag itself lives on the shared style the same
+        // paint code reads for both, so the effect is identical.
+        list.interactivity().base_style.restrict_scroll_to_axis = Some(true);
 
         let body = div()
             .relative()
-            .flex_grow()
+            .flex_grow_1()
             .w_full()
             .overflow_hidden()
             .child(measure)
@@ -2705,7 +2715,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         cx.update(|window, cx| {
             let handle = grid.read(cx).focus_handle(cx);
-            handle.focus(window);
+            handle.focus(window, cx);
         });
         cx.run_until_parked();
 
@@ -3375,6 +3385,40 @@ mod tests {
         assert!(probe.min_column.get() > 0, "the left edge never left");
     }
 
+    /// The same sideways wheel leaves the vertical scroll exactly where it
+    /// was: `restrict_scroll_to_axis` on the row list is what stops gpui's shared
+    /// listener from folding the X delta it doesn't otherwise use onto Y.
+    #[gpui::test]
+    fn the_wheel_scrolls_the_columns_sideways_without_scrolling_the_rows(cx: &mut TestAppContext) {
+        let probe = Rc::new(Probe::default());
+        let (grid, mut cx) = open(Huge::new(10_000, 60, probe.clone()), cx);
+        probe.forget();
+        grid.update(&mut cx, |grid, cx| grid.refresh(cx));
+        let before_column = probe.max_column.get();
+        let before_rows = grid.read(&mut cx, |grid| grid.visible_rows());
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(column_x(2)), px(row_y(2))),
+            delta: gpui::ScrollDelta::Pixels(point(px(-600.), px(0.))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        probe.forget();
+        grid.update(&mut cx, |grid, cx| grid.refresh(cx));
+        assert!(
+            probe.max_column.get() > before_column,
+            "the wheel moved nothing sideways: still stopping at column {}",
+            probe.max_column.get()
+        );
+        assert_eq!(
+            grid.read(&mut cx, |grid| grid.visible_rows()),
+            before_rows,
+            "a sideways wheel scrolled the rows too"
+        );
+    }
+
     /// A result the host replaces with a smaller one leaves no selection
     /// hanging over rows that are gone.
     #[gpui::test]
@@ -3752,7 +3796,7 @@ mod tests {
         // itself — what matters is that the field is not it.
         cx.update(|window, cx| {
             let handle = grid.grid.read(cx).focus_handle(cx);
-            handle.focus(window);
+            handle.focus(window, cx);
         });
         cx.run_until_parked();
 

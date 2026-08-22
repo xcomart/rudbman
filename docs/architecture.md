@@ -47,7 +47,7 @@ What gets copied (paths relative to `crates/logman-app/src/`):
 | all of `logman-core/` | `crates/rudbman-core/` | `settings`/`profile`/`secrets`/`paths`. Only the profile schema is replaced |
 | `logman-ssh/` | `crates/rudbman-ssh/` | M1. Only transport, auth and host keys are inherited; shell and SFTP dropped, forwarding added (§9) |
 | `known_hosts.rs`, `verifier.rs` | `rudbman-core` / `rudbman-app` | Host key storage and the confirmation dialog |
-| `vendor/gpui/` | same | **Leave the `LOGMAN PATCH` comments exactly where they are** — the two vendored trees stay byte-identical so they can be synced with `diff`. Do not remove them before an upstream release |
+| `vendor/gpui/`, `vendor/gpui_linux/`, `vendor/gpui_macos/`, `vendor/gpui_windows/` | same | **Leave the `RULOGMAN PATCH` comments exactly where they are** — the two vendored trees stay byte-identical so they can be synced with `diff`. Do not remove them before upstream grows its own answer |
 
 What is not brought over: `logman-pty`, `logman-term`, `terminal_view.rs`,
 `file_panel.rs`, `connection.rs` (SSH shell only), `files.rs`, and
@@ -84,9 +84,11 @@ result schemas from `ResultSetMetaData`.
 
 ```
 rudbman/
-├── Cargo.toml                  workspace. [patch.crates-io] gpui → vendor/gpui
+├── Cargo.toml                  workspace. gpui from a pinned Zed revision,
+│                            patched from vendor/ by [patch."…/zed"]
 ├── docs/architecture.md        this document
-├── vendor/gpui/                logman's patched copy
+├── vendor/gpui{,_linux,_macos,_windows}/
+│                            rulogman's patched copies
 ├── bridge/                     Gradle project → rudbman-bridge.jar
 │   ├── build.gradle
 │   └── src/main/java/comart/rudbman/bridge/
@@ -1604,11 +1606,13 @@ for "a usable tool".
 
 Things logman and jdbgen already paid for.
 
-- **Deleting the gpui vendor patches** → typing with a Korean IME pins the CPU
-  at 100% and freezes. Closing the last window on X11 panics. Do not delete or
-  rename the six `LOGMAN PATCH` comments in `vendor/gpui` (taffy 1, x11 client
-  1, x11 window 5, windows 3) — they have to stay byte-identical to logman's
-  vendored copy so upstream patches can be exchanged with `diff`
+- **Deleting the gpui vendor patches** → the title-bar setting stops applying
+  to a live window, closing a window on X11 can panic, and a self-decorated X11
+  window loses both its transparent shadow band and its blur. Do not delete or
+  rename the `RULOGMAN PATCH` comments in `vendor/gpui`, `vendor/gpui_linux`,
+  `vendor/gpui_macos` and `vendor/gpui_windows` — they have to stay
+  byte-identical to rulogman's vendored copies so patches can be exchanged with
+  `diff`
 - **Using `DriverManager`** → when two drivers claim the same URL prefix there
   is no telling who wins. Call `Driver.connect` directly
 - **Ignoring a `null` return from `Driver.connect`** → per the spec that means
