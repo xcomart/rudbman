@@ -90,11 +90,15 @@ impl Highlighter for DialectHighlighter {
 
 /// Which palette slot a lexed token is painted in, if any.
 ///
-/// The mapping the editor's element used to hold, unchanged: a parameter is
-/// coloured like a number and a quoted identifier like a plain one, because the
-/// palette has no slot of its own for either. Whitespace gets no span at all —
-/// it used to be painted in the palette's foreground colour, which is what the
-/// editor draws the bytes no span covers in.
+/// The mapping the editor's element used to hold, save one split: a parameter
+/// is still coloured like a number, because the palette has no slot of its
+/// own for one. A quoted identifier used to land on plain [`Token::Identifier`]
+/// for the same reason, but the editor now has [`Token::QuotedIdentifier`] —
+/// painted in the same slot as `Identifier`, so the colour is unchanged, but
+/// opaque to the statement splitter and the bracket matcher the way a string
+/// is. Whitespace gets no span at all — it used to be painted in the
+/// palette's foreground colour, which is what the editor draws the bytes no
+/// span covers in.
 const fn paint(kind: TokenKind) -> Option<Token> {
     Some(match kind {
         TokenKind::Keyword => Token::Keyword,
@@ -105,7 +109,8 @@ const fn paint(kind: TokenKind) -> Option<Token> {
         TokenKind::Comment => Token::Comment,
         TokenKind::Operator => Token::Operator,
         TokenKind::Punctuation => Token::Punctuation,
-        TokenKind::Identifier | TokenKind::QuotedIdentifier => Token::Identifier,
+        TokenKind::Identifier => Token::Identifier,
+        TokenKind::QuotedIdentifier => Token::QuotedIdentifier,
         TokenKind::Error => Token::Error,
         TokenKind::Whitespace => return None,
     })
@@ -169,10 +174,12 @@ mod tests {
     }
 
     #[test]
-    fn a_quoted_identifier_is_painted_like_a_plain_one() {
-        // Each dialect gets the quoting form it actually has: the palette has
-        // no slot for a quoted identifier, so all three land on `Identifier`
-        // beside the bare names around them, exactly as they used to.
+    fn a_quoted_identifier_is_its_own_token_in_the_identifier_slot() {
+        // Each dialect gets the quoting form it actually has: `Token::
+        // QuotedIdentifier` shares `Identifier`'s colour slot, so all three
+        // still land beside the bare names around them the way they always
+        // have — but as their own token, opaque to the statement splitter
+        // and the bracket matcher the way a string is.
         for (script, quoted, dialect) in [
             ("select \"a\" from t;\n", "\"a\"", Dialect::POSTGRES),
             ("select `a` from t;\n", "`a`", Dialect::MYSQL),
@@ -181,7 +188,7 @@ mod tests {
             let (buffer, cache) = open(script, dialect);
             let spans = painted(script, &buffer, &cache, 0);
             assert!(
-                spans.contains(&(quoted, Token::Identifier)),
+                spans.contains(&(quoted, Token::QuotedIdentifier)),
                 "{quoted} in {:?} painted {spans:?}",
                 dialect.id()
             );
@@ -200,7 +207,7 @@ mod tests {
         let script = "select `x` # not sql\n";
         let (buffer, cache) = open(script, Dialect::MYSQL);
         let spans = painted(script, &buffer, &cache, 0);
-        assert!(spans.contains(&("`x`", Token::Identifier)));
+        assert!(spans.contains(&("`x`", Token::QuotedIdentifier)));
         assert!(spans.contains(&("# not sql", Token::Comment)));
 
         // Generic SQL: neither. The backtick is an error and the `#` is not a
@@ -266,6 +273,11 @@ mod tests {
         ),
         // SQL Server: `[..]` quotes an identifier, and `]]` escapes inside it.
         ("select [a] from [dbo].[t];\nselect 2;\n", Dialect::MSSQL),
+        // A `;` inside a quoted identifier is part of the name, not a
+        // terminator, in every dialect that allows one.
+        ("select \"a;b\" from t;\nselect 2;\n", Dialect::H2),
+        ("select `a;b` from t;\nselect 2;\n", Dialect::MYSQL),
+        ("select [a;b] from t;\nselect 2;\n", Dialect::MSSQL),
     ];
 
     #[test]
@@ -312,22 +324,15 @@ mod tests {
     }
 
     #[test]
-    fn a_semicolon_inside_a_quoted_identifier_is_the_one_disagreement() {
-        // KNOWN DIVERGENCE, and the only one the corpus above found.
-        //
-        // `ruui-editor` steps over a `;` the highlighter called part of a
-        // string or a comment, and the palette has no third slot for a quoted
-        // identifier — this module paints one `Identifier`, as the old editor's
-        // element did — so a `;` inside `"a;b"`, `` `a;b` `` or `[a;b]` splits a
-        // statement the SQL splitter keeps whole. It is a `Run statement` that
-        // sends half a query; `Run all`, which splits with `rudbman-sql`, is
-        // unaffected.
-        //
-        // The fix belongs in `ruui-editor`: either a `Token::Identifier` span
-        // has to be opaque to the splitter the way a string is, or the palette
-        // needs the quoted-identifier slot the lexer already distinguishes.
-        // This test pins the wrong answer so that fixing it there is noticed
-        // here — when it fails, delete it and put the script back in `SCRIPTS`.
+    fn a_semicolon_inside_a_quoted_identifier_does_not_split() {
+        // Used to be the one disagreement between the editor and the
+        // splitter: `ruui-editor` painted a quoted identifier the same
+        // `Identifier` token as a bare name, which is transparent to the
+        // statement splitter, so a `;` inside `"a;b"`, `` `a;b` `` or
+        // `[a;b]` cut a statement the SQL splitter kept whole. Now that the
+        // lexer's `QuotedIdentifier` paints its own `Token::QuotedIdentifier`
+        // — opaque to the splitter the way a string is — the two agree, here
+        // and across the wider corpus in `SCRIPTS` above.
         for (script, dialect) in [
             ("select \"a;b\" from t;\n", Dialect::H2),
             ("select `a;b` from t;\n", Dialect::MYSQL),
@@ -337,10 +342,10 @@ mod tests {
             let here = syntax::statement_at(&buffer, &cache, 0).expect("a statement");
             let whole = rudbman_sql::statement_at(script, 0, &dialect).expect("a statement");
             assert_eq!(whole.sql(script), script.trim_end().trim_end_matches(';'));
-            assert_ne!(
+            assert_eq!(
                 here.sql(script),
                 whole.sql(script),
-                "{script:?} ({:?}) no longer disagrees — see the comment above",
+                "{script:?} ({:?}) still disagrees",
                 dialect.id()
             );
         }
