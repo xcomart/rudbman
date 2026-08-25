@@ -157,7 +157,7 @@ installer will still raise "Windows protected your PC" on a machine that has
 not seen it before. winget is a distribution channel, not a trust anchor.
 
 **The built-in updater keeps the version in step, with a gap.** rudbman has an
-updater of its own (`ruui-shell`, given rudbman's endpoints and this
+updater of its own (`rugpui-shell`, given rudbman's endpoints and this
 uninstall key by `crates/rudbman-app/src/app_identity.rs`) that fetches a release
 and replaces the installation in place, and winget's record of the installed
 version is the `DisplayVersion` under the uninstall key Inno wrote. Those would

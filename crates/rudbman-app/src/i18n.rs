@@ -10,7 +10,7 @@
 //! the widget layer needs that `t!` does not give:
 //! a [`SharedString`][gpui::SharedString].
 //!
-//! The arithmetic behind that decision is [`ruui_shell::locale`]'s — matching a
+//! The arithmetic behind that decision is [`rugpui_shell::locale`]'s — matching a
 //! platform's spelling of a tag against the ones an application ships is the
 //! same problem in every application — and what is left here is the two ends of
 //! it: which tags rudbman ships, and telling `rust-i18n` the answer.
@@ -37,7 +37,7 @@ use std::sync::OnceLock;
 use gpui::SharedString;
 
 #[cfg(test)]
-pub use ruui_shell::locale::FALLBACK;
+pub use rugpui_shell::locale::FALLBACK;
 
 /// Translates a key and hands the result back as a [`SharedString`].
 ///
@@ -75,7 +75,7 @@ fn tags() -> &'static [String] {
     })
 }
 
-/// The same tags as [`ruui_shell::locale`] wants them: a sorted slice of
+/// The same tags as [`rugpui_shell::locale`] wants them: a sorted slice of
 /// `&'static str`, which is the order that makes its primary-subtag rule
 /// deterministic.
 pub fn shipped() -> &'static [&'static str] {
@@ -103,7 +103,7 @@ pub fn supported() -> &'static [(&'static str, SharedString)] {
 
 /// The endonym of `tag`, or `None` when rudbman ships no such translation.
 pub fn display_name(tag: &str) -> Option<&'static str> {
-    ruui_shell::locale::display_name(supported(), tag)
+    rugpui_shell::locale::display_name(supported(), tag)
 }
 
 /// The locale to render the UI in, given the configured `language`.
@@ -112,7 +112,7 @@ pub fn display_name(tag: &str) -> Option<&'static str> {
 /// through to the system locale, and from there to [`FALLBACK`].
 pub fn resolve(language: Option<&str>) -> String {
     let system = sys_locale::get_locale();
-    ruui_shell::locale::resolve(shipped(), language, system.as_deref())
+    rugpui_shell::locale::resolve(shipped(), language, system.as_deref())
 }
 
 /// Make [`resolve`]'s answer the locale `t!` reads from.
@@ -156,7 +156,7 @@ mod tests {
         // YAML swallows into something other than its text. Both are invisible
         // in a running app — the first because the per-key fallback answers in
         // English, the second because a swallowed value renders as a blank.
-        ruui_shell::locale::check_locale_dir(&locales(), shipped());
+        rugpui_shell::locale::check_locale_dir(&locales(), shipped());
     }
 
     #[test]

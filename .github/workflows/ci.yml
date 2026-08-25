@@ -5,9 +5,9 @@
 # tests are `#[ignore]`d, and gpui comes from a pinned revision of Zed's
 # monorepo with four crates patched on top of it — plus one thing rulogman does
 # not have: a JVM. Those four patched crates are no longer carried here: they
-# are vendored in [ruui](https://github.com/xcomart/ruui), the widget kit the
+# are vendored in [rugpui](https://github.com/xcomart/rugpui), the widget kit the
 # editor and the grid come from, and the root manifest's patch table points at
-# that copy — a `git`+`rev` dependency, the same revision as the three `ruui`
+# that copy — a `git`+`rev` dependency, the same revision as the three `rugpui`
 # crates themselves, so Cargo fetches it like any other dependency and this
 # workflow needs no extra checkout step for it. The bridge
 # JAR is built and tested first, because rudbman-jdbc's build script refuses

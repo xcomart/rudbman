@@ -40,8 +40,8 @@ use gpui::{
     ScrollWheelEvent, ShapedLine, SharedString, TextAlign, TextRun, Window, actions, fill, outline,
     point, px, size,
 };
-use ruui::scrollbar::ScrollbarAxis;
-use ruui::theme::Theme;
+use rugpui::scrollbar::ScrollbarAxis;
+use rugpui::theme::Theme;
 
 use crate::layout::{
     BOX_PADDING, HEADER_HEIGHT, NodeRect, ROW_HEIGHT, crow_foot, elide, head_direction, key_bar,
@@ -135,7 +135,7 @@ pub(crate) fn init(cx: &mut App) {
 
 /// What an overlay scrollbar over a canvas is drawn from, along one axis.
 ///
-/// The same three numbers [`ruui::scrollbar::thumb`] takes, in screen
+/// The same three numbers [`rugpui::scrollbar::thumb`] takes, in screen
 /// pixels. A canvas has no scroll container to read them off — it has a pan, a
 /// zoom and a list of boxes — so they are worked out from those instead, and
 /// the bar is then wired exactly as every other surface's is.
@@ -1028,7 +1028,7 @@ pub(crate) mod test_support {
         V: Render + Focusable + EventEmitter<E> + 'static,
         E: Clone + 'static,
     {
-        cx.update(ruui::init);
+        cx.update(rugpui::init);
         cx.update(crate::init);
 
         let events: Rc<RefCell<Vec<E>>> = Rc::new(RefCell::new(Vec::new()));

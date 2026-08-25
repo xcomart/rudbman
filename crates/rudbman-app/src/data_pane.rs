@@ -64,8 +64,8 @@ use gpui::{
 use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_jdbc::{ColumnInfo, Cursor, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::Dialect;
-use ruui::{Button, ButtonVariant, ContextMenu, Theme, theme};
-use ruui_grid::{
+use rugpui::{Button, ButtonVariant, ContextMenu, Theme, theme};
+use rugpui_grid::{
     GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
 };
 
@@ -553,7 +553,7 @@ impl DataPane {
                             });
                         }
                         GridEvent::EditCommitted { row, column, value } => {
-                            let ruui_grid::EditValue::Text(text) = value;
+                            let rugpui_grid::EditValue::Text(text) = value;
                             pane.stage(*row, *column, StagedCell::Text(text.clone()), cx);
                         }
                         // The grid holds no strings, so its menu is drawn here
@@ -1473,8 +1473,8 @@ fn open(
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, WindowHandle};
-    use ruui::TextInput;
-    use ruui_grid::GridCell;
+    use rugpui::TextInput;
+    use rugpui_grid::GridCell;
 
     use super::*;
     use crate::app_settings;
@@ -1528,8 +1528,8 @@ mod tests {
     ) -> WindowHandle<DataPane> {
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
-            ruui_grid::init(cx);
+            rugpui::init(cx);
+            rugpui_grid::init(cx);
         });
         let settings = AppSettings {
             fetch_batch_rows: batch_rows,

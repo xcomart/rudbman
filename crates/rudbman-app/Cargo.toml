@@ -27,18 +27,18 @@ rudbman-erd.workspace = true
 rudbman-jdbc.workspace = true
 rudbman-sql.workspace = true
 rudbman-ssh.workspace = true
-ruui.workspace = true
+rugpui.workspace = true
 # The code editor. It knows no SQL of its own: `src/sql_highlight.rs` is the
 # `Highlighter` that hands it `rudbman-sql`'s tokens, which is also what makes
 # the dialect a decision this crate takes rather than the widget.
-ruui-editor.workspace = true
-ruui-grid.workspace = true
+rugpui-editor.workspace = true
+rugpui-grid.workspace = true
 # The application shell: the window chrome, the updater and its dialog, the
 # about dialog, the split-pane tree, the palette catalogue and its editor, and
 # the pieces the settings form is built out of. It is told what rudbman is —
-# `ruui_shell::init`, `set_strings` and `set_update_policy`, all three in
+# `rugpui_shell::init`, `set_strings` and `set_update_policy`, all three in
 # `main` — and knows nothing else about it.
-ruui-shell.workspace = true
+rugpui-shell.workspace = true
 
 # `erd/<profile-uuid>.json` is the one file the shell itself persists, so it is
 # also the one place here that derives a serializer.

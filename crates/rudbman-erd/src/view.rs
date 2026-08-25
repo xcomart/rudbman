@@ -32,11 +32,11 @@ use gpui::{
     KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     ScrollWheelEvent, Window, actions, canvas, div, prelude::*,
 };
-use ruui::scrollbar::{
+use rugpui::scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
 };
-use ruui::theme::{Theme, theme, window_translucent};
-use ruui::to_hex;
+use rugpui::theme::{Theme, theme, window_translucent};
+use rugpui::to_hex;
 
 use crate::canvas::{
     BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
@@ -688,7 +688,7 @@ mod tests {
     use std::time::Duration;
 
     use gpui::{Entity, Modifiers, MouseMoveEvent, TestAppContext, VisualTestContext};
-    use ruui::scrollbar::{FADE_OUT, Fade, SCROLL_LINGER};
+    use rugpui::scrollbar::{FADE_OUT, Fade, SCROLL_LINGER};
 
     use crate::canvas::test_support::{
         self, drag_to, press, release, right_press, wheel, window_point,

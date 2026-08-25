@@ -33,17 +33,17 @@ use gpui::{
     Subscription, Window, actions, div, prelude::*, px,
 };
 use rudbman_core::{AppSettings, TitlebarStyle};
-use ruui::{
+use rugpui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorTheme, EditorThemeRegistry, SchemePreview,
     SchemeSelect, SchemeSwatch, Scrollbar, ScrollbarAxis, ScrollbarState, Segmented, Select,
     TextInput, Theme, ThemeRegistry, form_row, hide_later, hide_now, modal, scroll_to, scrolled,
     theme,
 };
-use ruui_shell::form::{
+use rugpui_shell::form::{
     format_number, hint, installed_fonts, parse_number, restrict_to_number, section, set_text,
     suffixed, text,
 };
-use ruui_shell::{
+use rugpui_shell::{
     CatalogActionEvent, CatalogActions, CatalogFile, EditorThemeCatalog, ThemeCatalog, ThemeEditor,
     ThemeEditorEvent, UiThemeCatalog,
 };
@@ -186,7 +186,7 @@ pub enum SettingsDialogEvent {
 
 /// Which of the dialog's two palette pickers is meant.
 ///
-/// The catalogues themselves are [`ruui_shell::catalog`]'s; what stays here is
+/// The catalogues themselves are [`rugpui_shell::catalog`]'s; what stays here is
 /// the *form field* each one is attached to, because the selected id is a
 /// setting and the dialog is what owns those.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,7 +220,7 @@ fn ui_theme_swatches(cx: &App) -> Vec<SchemeSwatch> {
 ///
 /// The four token colors a reader tells apart first — keyword, string, number
 /// and comment — on the editor's own page. A syntax palette really wants to be
-/// judged in arrangement, which is what [`ruui::EditorThemePicker`] is
+/// judged in arrangement, which is what [`rugpui::EditorThemePicker`] is
 /// for and what the theme editor still shows; a settings row that has to fit
 /// beside a dozen other settings gets the hues and the contrast, which is
 /// enough to choose between themes by name.
@@ -318,7 +318,7 @@ pub struct SettingsDialog {
     /// Keeps both rows' subscriptions alive.
     catalog_events: Vec<Subscription>,
     /// The colour editor, while one is open. The dialog renders it *instead of*
-    /// the form rather than over it; see [`ruui_shell::theme_editor`].
+    /// the form rather than over it; see [`rugpui_shell::theme_editor`].
     editor: Option<Entity<ThemeEditor>>,
     /// Keeps the open editor's subscription alive.
     editor_events: Option<Subscription>,
@@ -439,7 +439,7 @@ impl SettingsDialog {
         // directories and the id to fall back on, both of which are fixed.
         let dirs = crate::theme_dirs().unwrap_or_else(|err| {
             log::warn!("cannot locate the theme directories: {err:#}");
-            ruui::ThemeDirs {
+            rugpui::ThemeDirs {
                 ui_themes: std::path::PathBuf::new(),
                 editor_themes: None,
             }
@@ -1550,7 +1550,7 @@ impl Render for SettingsDialog {
         // While a colour is being edited the form steps aside entirely rather
         // than being covered up, so that the window's tab ring holds only the
         // controls that are actually on screen; see
-        // [`ruui_shell::theme_editor`]. The form is not even built in that
+        // [`rugpui_shell::theme_editor`]. The form is not even built in that
         // case — it would be built afresh on every keystroke in the editor and
         // thrown away again.
         let (title, body) = match self.editor.clone() {
@@ -1745,7 +1745,7 @@ mod tests {
     /// `Escape` only backs the layer on top of the form out; it does not
     /// dismiss the dialog around it. The delete-confirmation branch is not
     /// exercised here — driving a management row's own "Delete" button needs a
-    /// rendered window, and `ruui_shell::catalog_ui` already proves
+    /// rendered window, and `rugpui_shell::catalog_ui` already proves
     /// `is_confirming`/`cancel_confirm` correct in isolation
     /// (`a_confirmation_can_be_asked_about_and_cancelled_from_outside_the_row`);
     /// what is left to check here is only that [`SettingsDialog::escape`] asks
@@ -1779,7 +1779,7 @@ mod tests {
             dialog.update(cx, |dialog, cx| {
                 let catalog = dialog.ui_catalog.clone();
                 // Built from scratch rather than resolved through the
-                // registry, so the test needs no `ruui::init` of its own.
+                // registry, so the test needs no `rugpui::init` of its own.
                 let file = catalog.file_from("Test Theme".to_string(), &[], false);
                 dialog.open_editor(catalog, "test-theme".to_string(), &file, cx);
             });
@@ -1849,7 +1849,7 @@ mod tests {
             ts!("settings.manage.import_select"),
             ts!("settings.manage.import_skipped", count = 2),
             // The five buttons of a management row and the two refusals it can
-            // report. Drawn by `ruui-shell`, looked up by these keys, and so
+            // report. Drawn by `rugpui-shell`, looked up by these keys, and so
             // still rudbman's to translate.
             ts!("settings.manage.duplicate"),
             ts!("settings.manage.edit"),

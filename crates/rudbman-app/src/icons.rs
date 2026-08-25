@@ -22,11 +22,11 @@
 //! tab strip, the explorer's object glyphs and the panel controls. The four
 //! caption glyphs of the custom title bar are not — they belong to every
 //! self-drawn title bar rather than to this application, so they come from
-//! [`ruui_shell::icons`] and are concatenated into [`ICONS`] rather than copied
+//! [`rugpui_shell::icons`] and are concatenated into [`ICONS`] rather than copied
 //! into `assets/`.
 
-pub use ruui_shell::icons::icon;
-use ruui_shell::icons::{IconSet, WINDOW_CONTROL_ICONS};
+pub use rugpui_shell::icons::icon;
+use rugpui_shell::icons::{IconSet, WINDOW_CONTROL_ICONS};
 
 /// The button at the end of the tab strip that lists every open tab.
 ///
@@ -118,7 +118,7 @@ pub const SIDEBAR: &str = "icons/sidebar.svg";
 ///
 /// Like the window controls, it carries a heavier stroke than the set's usual
 /// `1.8` — `2.4` here. The tree renders it at 14 px (`ARROW_ICON_SIZE` in
-/// [`ruui::tree`]) out of the 24 of the viewBox, so what reaches the
+/// [`rugpui::tree`]) out of the 24 of the viewBox, so what reaches the
 /// screen is a little over half of what the file asks for: 1.4 px, which a row
 /// of pixels can hold, where `1.8` would have arrived as the same hairline the
 /// glyph was.
@@ -203,13 +203,13 @@ mod tests {
 
     #[test]
     fn the_caption_glyphs_come_from_the_shell_rather_than_from_a_copy_here() {
-        // The four files live in `ruui-shell/assets`, and this is the assertion
+        // The four files live in `rugpui-shell/assets`, and this is the assertion
         // that would fail if a copy of them crept back into `assets/icons`.
         for path in [
-            ruui_shell::icons::WINDOW_MINIMIZE,
-            ruui_shell::icons::WINDOW_MAXIMIZE,
-            ruui_shell::icons::WINDOW_RESTORE,
-            ruui_shell::icons::WINDOW_CLOSE,
+            rugpui_shell::icons::WINDOW_MINIMIZE,
+            rugpui_shell::icons::WINDOW_MAXIMIZE,
+            rugpui_shell::icons::WINDOW_RESTORE,
+            rugpui_shell::icons::WINDOW_CLOSE,
         ] {
             assert!(
                 !OWN.iter().any(|(name, _)| *name == path),

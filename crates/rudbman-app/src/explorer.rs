@@ -71,7 +71,7 @@ use gpui::{
     Point, Render, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session};
-use ruui::{ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView, theme};
+use rugpui::{ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView, theme};
 
 use crate::app_settings;
 use crate::i18n::ts;
@@ -687,7 +687,7 @@ impl TreeSource for ExplorerSource {
                 .truncate()
                 .text_size(px(10.))
                 .text_color(chrome.text_muted)
-                .tooltip(ruui::tooltip_label(remarks.clone()))
+                .tooltip(rugpui::tooltip_label(remarks.clone()))
                 .child(remarks.clone())
         });
 
@@ -762,7 +762,7 @@ impl ExplorerSource {
         let live = info.is_some_and(|info| info.live);
         let dot = info
             .and_then(|info| info.color.as_deref())
-            .and_then(ruui::parse_hex)
+            .and_then(rugpui::parse_hex)
             .unwrap_or(if live {
                 chrome.success
             } else {
@@ -1251,7 +1251,7 @@ pub(crate) mod tests {
             VisualTestContext, point,
         };
 
-        cx.update(ruui::init);
+        cx.update(rugpui::init);
         let dropped = std::rc::Rc::new(std::cell::RefCell::new(Vec::<ObjectTarget>::new()));
         let explorer = cx.new(Explorer::new);
 

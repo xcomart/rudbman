@@ -36,10 +36,10 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
     Window, canvas, div, prelude::*,
 };
-use ruui::scrollbar::{
+use rugpui::scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
 };
-use ruui::theme::{Theme, theme, window_translucent};
+use rugpui::theme::{Theme, theme, window_translucent};
 
 use crate::canvas::{
     BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,

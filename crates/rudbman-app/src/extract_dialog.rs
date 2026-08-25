@@ -56,7 +56,7 @@ use rudbman_jdbc::{
     Constraints, DataMode, DataOptions, DdlOptions, ExtractSpec, Job, JobProgress, JobState,
     ObjectRef,
 };
-use ruui::{Button, ButtonVariant, Checkbox, Select, TextInput, form_row, modal, theme};
+use rugpui::{Button, ButtonVariant, Checkbox, Select, TextInput, form_row, modal, theme};
 
 use crate::connection::SessionHandle;
 use crate::explorer::ObjectTarget;
@@ -1240,7 +1240,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> WindowHandle<ExtractDialog> {
         cx.update(|cx| {
-            ruui::init(cx);
+            rugpui::init(cx);
         });
         let session = connected.handle();
         let target = target(name);

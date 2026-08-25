@@ -1,6 +1,6 @@
 //! What a tab of the work area is, and how a pane is asked which one it holds.
 //!
-//! The layout itself is [`ruui_shell::pane`]: the binary tree of splits, the
+//! The layout itself is [`rugpui_shell::pane`]: the binary tree of splits, the
 //! promotion and collapse rules, and the strip of tabs a leaf holds. None of
 //! that is about a database — a split, a promotion and a collapse rearrange
 //! *shape* over a payload the tree never looks inside — so it is the shell's,
@@ -31,7 +31,7 @@
 //! the last tab must not rearrange a layout the user placed.
 
 use gpui::{App, Entity, SharedString};
-pub use ruui_shell::pane::{Axis, PaneId, PaneNode, PaneTree, SplitId};
+pub use rugpui_shell::pane::{Axis, PaneId, PaneNode, PaneTree, SplitId};
 
 use crate::builder_pane::BuilderPane;
 use crate::data_pane::DataPane;
@@ -184,12 +184,12 @@ impl PaneItem {
 
 /// One pane of the work area: its tabs, and which of them is on top.
 ///
-/// [`ruui_shell::pane::Pane`] at rudbman's own tab type. Only the active tab is
+/// [`rugpui_shell::pane::Pane`] at rudbman's own tab type. Only the active tab is
 /// rendered, which is what makes closing or switching one a focus hazard — gpui
 /// resolves actions against the focused element of the last drawn frame — and
 /// why the workspace reclaims the keyboard around every call that changes what
-/// [`Pane::active`](ruui_shell::pane::Pane::active) returns.
-pub type Pane = ruui_shell::pane::Pane<PaneItem>;
+/// [`Pane::active`](rugpui_shell::pane::Pane::active) returns.
+pub type Pane = rugpui_shell::pane::Pane<PaneItem>;
 
 /// Finding the tab that is already showing a given thing.
 ///
@@ -197,7 +197,7 @@ pub type Pane = ruui_shell::pane::Pane<PaneItem>;
 /// shell's and these questions are rudbman's: every one of them is "is this
 /// object already open here", and the answer decides whether a double click
 /// opens a tab or brings one forward. All five sit on
-/// [`Pane::position`](ruui_shell::pane::Pane::position), which is the hook the
+/// [`Pane::position`](rugpui_shell::pane::Pane::position), which is the hook the
 /// shell leaves for exactly this.
 pub trait PaneLookup {
     /// The index of the tab showing `target`, if one is open here.

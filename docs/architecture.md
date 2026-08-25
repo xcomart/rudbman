@@ -15,8 +15,8 @@ without changing this document.
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | **Copy** logman's gpui widget kit into `rudbman-ui` and let it evolve on its own | Early speed comes first. Extracting a shared crate waits until both sides are stable. **Done, and extracted since**: the kit, the grid and the editor are now [ruui](https://github.com/xcomart/ruui), shared by the three applications that had been carrying byte-identical copies (§3.2) |
-| D2 | **Vendor logman's patched gpui** and use it as is | The Korean IME infinite loop, the X11 re-entrancy panic and the KWin blur patch are all just as necessary here. **Since D1's extraction**: ruui vendors the four crates and rudbman's patch table points at that copy, so there is one patched gpui for all three applications rather than three |
+| D1 | **Copy** logman's gpui widget kit into `rudbman-ui` and let it evolve on its own | Early speed comes first. Extracting a shared crate waits until both sides are stable. **Done, and extracted since**: the kit, the grid and the editor are now [rugpui](https://github.com/xcomart/rugpui), shared by the three applications that had been carrying byte-identical copies (§3.2) |
+| D2 | **Vendor logman's patched gpui** and use it as is | The Korean IME infinite loop, the X11 re-entrancy panic and the KWin blur patch are all just as necessary here. **Since D1's extraction**: rugpui vendors the four crates and rudbman's patch table points at that copy, so there is one patched gpui for all three applications rather than three |
 | D3 | The JNI boundary is **one coarse-grained bridge JAR**, with exactly **one** static method as its entry point | A per-cell JNI round trip becomes tens of millions of calls at 100k rows × 20 columns. Unusable |
 | D4 | The **data plane** of backup and DB-to-DB transfer **completes inside the JVM** | Gigabytes never get ferried across JNI. Rust only issues commands and polls progress |
 | D5 | Every connection gets a **dedicated Rust worker thread** that stays attached to the JVM | JDBC connections are not thread-safe and the gpui UI thread must never block |
@@ -25,7 +25,7 @@ without changing this document.
 | D8 | Result batches use a **custom columnar binary codec**; metadata is JSON | Arrow Java demands 40MB+ of dependencies and `--add-opens`. What the grid needs is far less than that |
 | D9 | The **UI theme and the editor theme are separate** token sets | The 11 colors of the window chrome and the twenty-odd colors of syntax highlighting are different axes |
 | D10 | **SSH local port forwarding is in scope for M1** | Production databases usually sit behind a bastion. Bolting it on later means fixing the connection profile schema and session lifetime management twice |
-| D11 | The **application shell** — window chrome, self-updater, about and update dialogs, split-pane tree, palette catalogue and editor, settings-form pieces — is **`ruui-shell`**, not code in this repository | D1's reasoning one layer up. None of it is about a database, and all of it had been written once here and copied twice; a fix to a resize grip or a staged-update swap should be one fix. Everything specific to rudbman is injected by `app_identity.rs` — the name, the version, the release endpoints, the words, the ignored-release tag (§3.2) |
+| D11 | The **application shell** — window chrome, self-updater, about and update dialogs, split-pane tree, palette catalogue and editor, settings-form pieces — is **`rugpui-shell`**, not code in this repository | D1's reasoning one layer up. None of it is about a database, and all of it had been written once here and copied twice; a fix to a resize grip or a staged-update swap should be one fix. Everything specific to rudbman is injected by `app_identity.rs` — the name, the version, the release endpoints, the words, the ignored-release tag (§3.2) |
 
 ---
 
@@ -56,9 +56,9 @@ What is not brought over: `logman-pty`, `logman-term`, `terminal_view.rs`,
 
 The table above is the record of the port as it was made, and several of its
 destinations have moved on since. `rudbman-ui`, and the editor and grid that
-grew on top of it, are now [ruui](https://github.com/xcomart/ruui), and the four
+grew on top of it, are now [rugpui](https://github.com/xcomart/rugpui), and the four
 vendored gpui crates went with them; `theme_editor.rs`, `caption.rs` and
-`pane_tree.rs`'s generic core followed into `ruui-shell` (D11), which is also
+`pane_tree.rs`'s generic core followed into `rugpui-shell` (D11), which is also
 where the self-updater and the about and update dialogs now live. §3.2 has the
 shape that resulted; the rows are left as written because they are what was
 copied, from where, and when.
@@ -95,7 +95,7 @@ result schemas from `ResultSetMetaData`.
 ```
 rudbman/
 ├── Cargo.toml                  workspace. gpui from a pinned Zed revision,
-│                            patched from ruui's vendor/ by [patch."…/zed"]
+│                            patched from rugpui's vendor/ by [patch."…/zed"]
 ├── docs/architecture.md        this document
 ├── bridge/                     Gradle project → rudbman-bridge.jar
 │   ├── build.gradle
@@ -115,14 +115,14 @@ rudbman/
 and, beside it rather than inside it:
 
 ```
-ruui/                           github.com/xcomart/ruui
+rugpui/                           github.com/xcomart/rugpui
 ├── vendor/gpui{,_linux,_macos,_windows}/
 │                            rulogman's patched copies
 └── crates/
-    ├── ruui/                   gpui widget kit + UI theme + editor theme
-    ├── ruui-grid/              virtualized result grid widget
-    ├── ruui-editor/            multi-line code editor widget
-    └── ruui-shell/             the layer above the widgets: window chrome,
+    ├── rugpui/                   gpui widget kit + UI theme + editor theme
+    ├── rugpui-grid/              virtualized result grid widget
+    ├── rugpui-editor/            multi-line code editor widget
+    └── rugpui-shell/             the layer above the widgets: window chrome,
                                 self-updater, about/update dialogs, pane tree,
                                 palette catalogue + editor, form pieces
 ```
@@ -132,9 +132,9 @@ ruui/                           github.com/xcomart/ruui
 ```
 rudbman-app
  ├─→ rudbman-erd ─┐
- ├─→ ruui-grid    │
- ├─→ ruui-editor  ┼─→ ruui ─→ gpui
- ├─→ ruui-shell ──┘
+ ├─→ rugpui-grid    │
+ ├─→ rugpui-editor  ┼─→ rugpui ─→ gpui
+ ├─→ rugpui-shell ──┘
  ├─→ rudbman-sql
  ├─→ rudbman-jdbc ─→ rudbman-core
  ├─→ rudbman-ssh  ─→ rudbman-core
@@ -151,21 +151,21 @@ There are no reverse dependencies. `rudbman-jdbc` **knows nothing about gpui**
 `rudbman-app`'s job. That boundary is what lets the JNI layer be unit-tested
 without gpui.
 
-`ruui` knows nothing about databases, and neither does `ruui-shell`. Same
+`rugpui` knows nothing about databases, and neither does `rugpui-shell`. Same
 discipline that kept logman's `ui/` modules ignorant of SSH — and the reason the
 kit, and then the shell above it, could be lifted out of this repository at all.
 
 ### 3.2 The widget kit is a repository of its own
 
-`ruui`, `ruui-grid`, `ruui-editor` and `ruui-shell` live in
-[ruui](https://github.com/xcomart/ruui), because rudbman was the third
+`rugpui`, `rugpui-grid`, `rugpui-editor` and `rugpui-shell` live in
+[rugpui](https://github.com/xcomart/rugpui), because rudbman was the third
 application carrying byte-identical copies of them. Nothing there knows what an
 application does: the grid is pointed at a `GridSource` the host implements, and
 the editor at a `Highlighter` — a line lexer the host supplies. That is the one
 seam this move cut.
 
 `rudbman-editor` used to call `rudbman_sql::lex_line` itself and used to hold a
-`Dialect`. It no longer can: `ruui-editor` is also the log viewer's editor and
+`Dialect`. It no longer can: `rugpui-editor` is also the log viewer's editor and
 the template editor's. So the call turned around, and
 `crates/rudbman-app/src/sql_highlight.rs` is what stands where the dependency
 edge used to be — a `Highlighter` that lexes with `rudbman-sql` in the dialect
@@ -183,7 +183,7 @@ into the other. Three of the four carries fit in a `u32`; a PostgreSQL dollar
 quote's tag does not, so the codec keeps a side table and the code holds an
 index into it.
 
-`ruui-shell` came out the same way and one layer up. It is not a widget: it is
+`rugpui-shell` came out the same way and one layer up. It is not a widget: it is
 the *application* pieces that turned out not to be about the application — a
 window that draws its own title bar (the drag, the resize grips, the caption
 buttons, the shadow band), an updater that downloads a GitHub release and
@@ -195,17 +195,17 @@ the generator.
 Its whole contract with rudbman is three calls, all in
 `crates/rudbman-app/src/app_identity.rs`:
 
-- `ruui_shell::init(IDENTITY, cx)` — the constants. The version is deliberately
+- `rugpui_shell::init(IDENTITY, cx)` — the constants. The version is deliberately
   the *application's* `env!("CARGO_PKG_VERSION")`; the shell has one of its own
   and it is not this one. `IDENTITY` also carries the Windows uninstall key,
   which is a published identifier of rudbman and one corner of a triangle with
   `packaging/windows/rudbman.iss` and the winget manifests — the test beside it
   is what keeps two of those corners together.
-- `ruui_shell::set_strings(…)` — one line over `rust-i18n`. The shell looks its
+- `rugpui_shell::set_strings(…)` — one line over `rust-i18n`. The shell looks its
   words up by the keys `locales/*.yml` already carried, so adopting it changed
   no translation; interpolation is the shell's, which is what lets it fill a
   `%{app}` into a line whose key never mentioned one.
-- `ruui_shell::set_update_policy(…)` — reading and writing `ignored_update` in
+- `rugpui_shell::set_update_policy(…)` — reading and writing `ignored_update` in
   rudbman's own `settings.json`.
 
 What stayed here is what the shell cannot know: the `Workspace`, what a tab is
@@ -217,11 +217,11 @@ and the `Workspace` decides that means `cx.restart()`.
 
 Two spellings of one setting survive the split. `rudbman_core::TitlebarStyle`
 has to stay free of gpui because `rudbman-core` reads and writes
-`settings.json`; `ruui_shell::TitlebarStyle` cannot, because the chrome around
+`settings.json`; `rugpui_shell::TitlebarStyle` cannot, because the chrome around
 it is gpui. `main.rs`'s `chrome_titlebar` is the one line between them, and the
 test beside it asserts that both serialise to the same two `snake_case` words.
 
-The four patched gpui crates went to ruui with the widgets, and rudbman's
+The four patched gpui crates went to rugpui with the widgets, and rudbman's
 `[patch."https://github.com/zed-industries/zed"]` table points at that copy.
 Keeping one gpui in the binary is not a tidiness question: two would put two
 copies of every `Global` in the process, and the ones the widgets install would
@@ -755,8 +755,8 @@ count.
 ### 7.1 Window structure
 
 logman's self-drawn title bar and pane tree were inherited as they were, and
-both have since moved to `ruui-shell` (§3.2, D11): the chrome is
-`ruui_shell::chrome` and the split layout `ruui_shell::pane`, instantiated here
+both have since moved to `rugpui-shell` (§3.2, D11): the chrome is
+`rugpui_shell::chrome` and the split layout `rugpui_shell::pane`, instantiated here
 as `PaneTree<Pane<PaneItem>>`. What a tab *is* stays in
 `crates/rudbman-app/src/pane_tree.rs`, along with the lookups that decide
 whether opening an object makes a tab or brings one forward.
@@ -852,10 +852,10 @@ The UI theme and the editor theme are chosen independently, but a "follow the
 UI theme" option in the settings prevents the accident of a light UI dragging a
 dark editor along with it.
 
-### 7.4 The SQL editor (`ruui-editor`)
+### 7.4 The SQL editor (`rugpui-editor`)
 
 logman's `TextInput` is single-line only (it replaces `\n` with a space). This
-was written fresh, as `rudbman-editor`, and has since moved to `ruui-editor`
+was written fresh, as `rudbman-editor`, and has since moved to `rugpui-editor`
 (§3.2) — which is why the lexer below is now handed *in* rather than reached
 for.
 
@@ -876,7 +876,7 @@ for.
   schema index. The index is filled in the background right after connecting
   and kept in memory
 
-### 7.5 The result grid (`ruui-grid`)
+### 7.5 The result grid (`rugpui-grid`)
 
 - `uniform_list` virtualization plus horizontal virtualization (tables with
   hundreds of columns exist)
@@ -905,7 +905,7 @@ for.
   modules — tested without a window
 - Rendering: gpui `canvas`. Entity boxes, orthogonally routed relationship
   lines and cardinality notation. Hit testing is arithmetic, not listeners
-  (the same call as in ruui-grid)
+  (the same call as in rugpui-grid)
 - Widget/pane separation: `rudbman-erd`'s `ErdView` is a widget that knows only
   drawing, dragging, zooming and panning, while loading state, the toolbar,
   i18n and persistence are wrapped by `rudbman-app`'s `ErdPane` — the same
@@ -977,7 +977,7 @@ list. The discipline:
   running the commands are the host's business — an extension of the standing
   rule that the widget layer holds no strings. Menu state (open, coordinates)
   is owned by the host view that receives the event.
-- Presentation comes from `ruui`'s `ContextMenu` (deferred + anchored,
+- Presentation comes from `rugpui`'s `ContextMenu` (deferred + anchored,
   anchored to the pointer and snapped inside the window). Items support
   disabled and checked states, and the width follows the content.
 - **A right click moves the selection but does not select tabs**: tree rows and
@@ -1545,7 +1545,7 @@ unsigned JAR. `Contents/lib/` is sealed as a plain resource instead — the
 first v0.1.0 release run failed exactly this way.
 
 **Why Windows ships twice.** The zip is not redundant and cannot be dropped:
-the in-app updater (`ruui-shell`, told what to fetch by
+the in-app updater (`rugpui-shell`, told what to fetch by
 `crates/rudbman-app/src/app_identity.rs`) downloads that asset by name and
 unpacks it over the running install. What the zip cannot do is tell
 Windows anything. Unzipping leaves no entry under *Apps & features*, and that
@@ -1714,25 +1714,25 @@ Things logman and jdbgen already paid for.
 - **Deleting the gpui vendor patches** → the title-bar setting stops applying
   to a live window, closing a window on X11 can panic, and a self-decorated X11
   window loses both its transparent shadow band and its blur. The four trees
-  now live in ruui rather than here; do not delete or rename the
+  now live in rugpui rather than here; do not delete or rename the
   `RULOGMAN PATCH` comments in them — they have to stay byte-identical to
   rulogman's vendored copies so patches can be exchanged with `diff`
 - **Dropping rudbman's `[patch."https://github.com/zed-industries/zed"]`
-  table** → this workspace resolves gpui from Zed's monorepo while `ruui`
+  table** → this workspace resolves gpui from Zed's monorepo while `rugpui`
   resolves it from the patched copy, two gpui crates end up in one binary, and
   the `Global`s the widgets install become invisible to the application:
-  nothing draws, and nothing says why. The table's revision and the four `ruui`
+  nothing draws, and nothing says why. The table's revision and the four `rugpui`
   dependencies' revision have to match — all eight entries move together, for
   the same reason
 - **Calling `apply_pending` or `clean_leftovers` before
-  `ruui_shell::init_process_identity`** → both read the identity through a
+  `rugpui_shell::init_process_identity`** → both read the identity through a
   process-wide slot that call fills, and answer as if there were nothing to do
   rather than panicking without one — silent, not loud, so the mistake is easy
   to miss. `main` calls `init_process_identity` first, ahead of
   `gpui_platform::application()`, which is what quietly loads a JVM into the
   process; `apply_pending` and `clean_leftovers` follow it, both still before
   an `App` exists, so the renames they may do never race that load.
-  `app.run`'s `app_identity::install` calls `ruui_shell::init` again — safe to
+  `app.run`'s `app_identity::install` calls `rugpui_shell::init` again — safe to
   repeat — which additionally installs the gpui global the rest of the shell
   (`ignored_release`, `remember_ignored`, the dialogs) reads through `cx`;
   *those* calls still panic without it, because by the time they run an `App`
@@ -1740,7 +1740,7 @@ Things logman and jdbgen already paid for.
 - **Letting a test build a `Workspace` without turning the start-up check off**
   → gpui's test executor runs background tasks inline whenever a test parks, so
   every workspace a suite builds makes a live request to github.com.
-  `Workspace::new` calls `ruui_shell::update::set_startup_check_enabled(false)`
+  `Workspace::new` calls `rugpui_shell::update::set_startup_check_enabled(false)`
   under `cfg(test)`; the shell's own `cfg!(test)` cannot help, because it is
   about the shell's tests
 - **Using `DriverManager`** → when two drivers claim the same URL prefix there

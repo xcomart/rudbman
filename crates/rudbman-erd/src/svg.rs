@@ -16,8 +16,8 @@
 //!
 //! The colours arrive as a [`SvgPalette`] of CSS strings rather than being read
 //! from a theme, which is what keeps this module pure: the view converts the
-//! active [`Theme`](ruui::Theme) with
-//! [`to_hex`](ruui::to_hex) and hands the result in, and a test hands in
+//! active [`Theme`](rugpui::Theme) with
+//! [`to_hex`](rugpui::to_hex) and hands the result in, and a test hands in
 //! whatever it likes.
 //!
 //! ## Escaping
@@ -50,7 +50,7 @@ const BASELINE: f32 = 0.72;
 /// The colours an exported diagram is drawn in.
 ///
 /// Every field is a CSS colour — in practice the `#rrggbb` that
-/// [`to_hex`](ruui::to_hex) produces — because this module has no opinion
+/// [`to_hex`](rugpui::to_hex) produces — because this module has no opinion
 /// about themes and no way to read one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SvgPalette {
