@@ -1,14 +1,6 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# The `vendor/*` directories are patched dependencies, not members: they keep
-# their own manifests and must not inherit workspace settings.
-exclude = [
-    "vendor/gpui",
-    "vendor/gpui_linux",
-    "vendor/gpui_macos",
-    "vendor/gpui_windows",
-]
 
 # gpui comes from a pinned revision of Zed's monorepo rather than from
 # crates.io. 0.2.2 is still the newest published version and it predates the
@@ -20,58 +12,34 @@ exclude = [
 # dependency would make two checkouts of this repository build different
 # applications.
 #
-# Zed has no answer of its own for the four things listed below, so the crates
-# that need one are vendored under `vendor/` and patched back over the git
-# source by the `[patch."https://github.com/zed-industries/zed"]` table. Each
-# vendored copy is the upstream directory with its manifest flattened —
-# `workspace = true` resolved to concrete specifications, sibling crates
-# repointed at this same revision, examples and dev-dependencies dropped — and
-# every change to the code marked `RULOGMAN PATCH`, so diffing a vendored crate
-# against upstream at this revision shows the whole of what we carry. The marker
-# keeps the name of the project the trees are shared with: these four
-# directories are meant to stay byte-identical with the same four in
-# [rulogman](https://github.com/xcomart/rulogman), so a fix found in either
-# project moves across as a plain `diff`.
-#
-#   * `gpui/src/platform.rs`, `gpui/src/window.rs`, `gpui_macos/src/window.rs`
-#     and `gpui_windows/src/window.rs` — `set_titlebar_transparent`, which moves
-#     an open window between the caption the platform draws and the one the app
-#     draws. gpui settles that at window creation and offers no way back;
-#     rudbman offers it as a setting, and reopening the window to honour a
-#     change would drop every connection and result grid inside it. It has to
-#     reach the backends, so it is a `PlatformWindow` method, which is why the
-#     core is vendored at all rather than only the two backends that implement
-#     it.
-#   * `gpui_linux/src/linux/x11/client.rs` — the WM_DELETE_WINDOW handler runs
-#     the close callbacks with the client `RefCell` borrowed, and both of them
-#     re-enter the application, where anything that reaches the platform borrows
-#     that same cell and panics with "already borrowed". Upstream learnt half of
-#     it when the crate was split: `close()` now runs outside the borrow, which
-#     is what quitting from a window-closed observer — as this app does — needs.
-#     `should_close()` did not move, so an `on_should_close` handler is still
-#     standing on the trapdoor; this app registers none today, and the patch is
-#     what keeps that from being a condition of closing a window.
-#   * `gpui_linux/src/linux/x11/window.rs` — `is_transparent` ignores
-#     client-side decorations, unlike its Wayland counterpart, so the
-#     transparent shadow band around a self-decorated window composited as
-#     solid black.
-#   * `gpui_linux/src/linux/x11/window.rs` — the X11 backend has no counterpart
-#     to the Wayland one's `org_kde_kwin_blur`, so a blurred background
-#     appearance did nothing on KDE X11; `update_blur_region` keeps KWin's
-#     `_KDE_NET_WM_BLUR_BEHIND_REGION` in step with the window.
+# Zed has no answer of its own for four things rudbman needs — moving an open
+# window between the platform's caption and the application's own
+# (`set_titlebar_transparent`), the X11 backend running its close callbacks with
+# the client `RefCell` borrowed, X11's `is_transparent` ignoring client-side
+# decorations, and X11 having no counterpart to Wayland's `org_kde_kwin_blur` —
+# so four crates of the monorepo are carried patched. rudbman no longer carries
+# them itself: [ruui](https://github.com/xcomart/ruui), the widget kit the
+# editor and the grid come from, vendors them under `vendor/` and its root
+# manifest tells the whole story hunk by hunk. What rudbman has to do is point
+# its own patch table at that same copy, because otherwise this workspace
+# resolves gpui from Zed's monorepo while `ruui` resolves it from the patched
+# one, two gpui crates end up in one binary, and the `Global`s the widgets
+# install are invisible to the application.
 #
 # `gpui_platform` is taken from git unpatched — it is a hundred lines of
 # `cfg`-directed re-exports — but it still has to be named in the patch table's
 # sibling crates, because it is what resolves `gpui_linux` and friends.
 #
-# Moving the revision forward means re-flattening the manifests and replaying
-# the marked hunks. Delete a hunk, and then the vendored crate once it holds
-# none, whenever upstream grows its own answer.
+# The four entries below, and the three `ruui` dependencies further down, are
+# `path` dependencies on a sibling checkout for as long as ruui has no remote of
+# its own. Once `https://github.com/xcomart/ruui` exists, both turn into
+# `git`+`rev` dependencies in the form ruui's own README spells out — all seven
+# at the *same* revision, for the reason in the paragraph above.
 [patch."https://github.com/zed-industries/zed"]
-gpui = { path = "vendor/gpui" }
-gpui_linux = { path = "vendor/gpui_linux" }
-gpui_macos = { path = "vendor/gpui_macos" }
-gpui_windows = { path = "vendor/gpui_windows" }
+gpui = { path = "../ruui/vendor/gpui" }
+gpui_linux = { path = "../ruui/vendor/gpui_linux" }
+gpui_macos = { path = "../ruui/vendor/gpui_macos" }
+gpui_windows = { path = "../ruui/vendor/gpui_windows" }
 
 [workspace.package]
 version = "0.1.9"
@@ -153,7 +121,7 @@ sys-locale = "0.3"
 # git dependency is identified by URL *and* revision, so naming the same commit
 # twice is what makes them one source rather than two checkouts of the same
 # repository. See the patch table at the top of this file for why a revision at
-# all, and for what `vendor/` puts back on top of it.
+# all, and for what ruui's vendored copy puts back on top of it.
 #
 # `gpui` is the platform-independent core, and everything the application
 # writes is against it. `gpui_platform` is the façade that links a backend in
@@ -220,15 +188,26 @@ russh = { version = "0.62", default-features = false, features = [
 # own JVM rather than be loaded into one. ---
 jni = { version = "0.22", features = ["invocation"] }
 
+# --- the shared widget kit ---
+# The gpui widget kit, the virtualised grid and the code editor, extracted so
+# that the three desktop applications built on them stop carrying
+# byte-identical copies. Nothing there knows what a database is: the editor is
+# handed a `Highlighter` (`crates/rudbman-app/src/sql_highlight.rs` is
+# rudbman's, over `rudbman-sql`) and the grid a `GridSource`.
+#
+# A sibling checkout for now, and one `rev` of `https://github.com/xcomart/ruui`
+# once that exists — the same `rev` as the patch table at the top of this file,
+# which is what keeps one gpui in the binary.
+ruui = { path = "../ruui/crates/ruui" }
+ruui-grid = { path = "../ruui/crates/ruui-grid" }
+ruui-editor = { path = "../ruui/crates/ruui-editor" }
+
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }
-rudbman-ui = { path = "crates/rudbman-ui" }
 rudbman-ssh = { path = "crates/rudbman-ssh" }
 rudbman-jdbc = { path = "crates/rudbman-jdbc" }
-rudbman-grid = { path = "crates/rudbman-grid" }
 rudbman-erd = { path = "crates/rudbman-erd" }
 rudbman-sql = { path = "crates/rudbman-sql" }
-rudbman-editor = { path = "crates/rudbman-editor" }
 rudbman-app = { path = "crates/rudbman-app" }
 
 [profile.dev]

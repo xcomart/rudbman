@@ -17,8 +17,8 @@
 use std::rc::Rc;
 
 use gpui::{App, ClipboardItem, Entity, SharedString, Window};
-use rudbman_grid::{CopyFormat, GridSource, GridView, SortDirection};
-use rudbman_ui::MenuEntry;
+use ruui::MenuEntry;
+use ruui_grid::{CopyFormat, GridSource, GridView, SortDirection};
 
 use crate::SHORTCUT_MODIFIER;
 use crate::i18n::ts;

@@ -60,6 +60,7 @@ mod query;
 mod query_source;
 mod row_apply;
 mod settings_dialog;
+mod sql_highlight;
 mod struct_edit;
 mod struct_pane;
 mod table_detail;
@@ -87,7 +88,7 @@ use gpui::{
 use rudbman_core::{
     AppSettings, ConnectionProfile, ConnectionStore, DriverStore, TitlebarStyle, WindowState,
 };
-use rudbman_ui::{
+use ruui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
     ThemeRegistry, WindowControlIcons, WindowControls, hide_later, hide_now, modal, scroll_to,
@@ -3039,7 +3040,7 @@ impl Workspace {
         };
 
         Some(
-            rudbman_ui::ContextMenu::new("workspace-context")
+            ruui::ContextMenu::new("workspace-context")
                 .position(menu.position)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
@@ -3636,7 +3637,7 @@ impl Workspace {
     /// name at its left end, and — off macOS, which keeps its native traffic
     /// lights — grows a set of caption buttons at its right end. Every *control*
     /// inside it occludes, so the drag area only ever answers for the gaps
-    /// between them; see [`rudbman_ui::window_controls`]. The name is not a
+    /// between them; see [`ruui::window_controls`]. The name is not a
     /// control and deliberately does not.
     fn render_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
@@ -3718,7 +3719,7 @@ impl Workspace {
         //
         // Two strips rather than one, because a Linux desktop decides where its
         // caption buttons go and putting them on the left is a setting people
-        // actually use; [`rudbman_ui::window_controls::split`] turns what the
+        // actually use; [`ruui::window_controls::split`] turns what the
         // platform reports into the two ends. Off Linux nothing is reported,
         // which is the same answer as "the usual three on the right".
         let (leading_buttons, trailing_buttons) = if custom && !cfg!(target_os = "macos") {
@@ -3956,7 +3957,7 @@ impl Workspace {
                     .connections
                     .iter()
                     .filter_map(|open| {
-                        let color = rudbman_ui::parse_hex(open.profile.color.as_deref()?)?;
+                        let color = ruui::parse_hex(open.profile.color.as_deref()?)?;
                         Some((open.id, color))
                     })
                     .collect(),
@@ -5033,6 +5034,36 @@ impl Render for Workspace {
     }
 }
 
+/// Where the two theme catalogues live, for `ruui`'s theme store.
+///
+/// The widget kit is shared with applications that put their configuration
+/// somewhere else, so it takes the directories rather than guessing at them:
+/// [`rudbman_core`] resolves them, and this is the one place that turns the two
+/// answers into the pair `ruui` asks for.
+///
+/// # Errors
+///
+/// Fails when the platform's configuration directory cannot be resolved at
+/// all, which is the same condition that used to fail a save or a delete.
+fn theme_dirs() -> anyhow::Result<ruui::ThemeDirs> {
+    Ok(ruui::ThemeDirs {
+        ui_themes: rudbman_core::ui_themes_dir()?,
+        editor_themes: Some(rudbman_core::editor_themes_dir()?),
+    })
+}
+
+/// Reads both theme directories and installs what they hold.
+///
+/// Never fails, which is what every caller wants: a configuration directory
+/// that cannot be resolved is a warning in the log and no themes of the user's
+/// own, exactly as an unreadable directory has always been.
+fn reload_themes(cx: &mut App) {
+    match theme_dirs() {
+        Ok(dirs) => theme_store::reload(&dirs, cx),
+        Err(err) => log::warn!("cannot locate the theme directories: {err:#}"),
+    }
+}
+
 /// Installs both palettes the settings name.
 ///
 /// The chrome theme comes straight from the configured id; the editor theme
@@ -5572,18 +5603,18 @@ fn main() {
         // so nothing is ever built in the wrong language and then corrected.
         i18n::apply(settings.language.as_deref());
 
-        rudbman_ui::init(cx);
+        ruui::init(cx);
         // After the widget layer, because both scope their bindings to key
         // contexts the shell's own bindings have to be able to outrank.
-        rudbman_editor::init(cx);
-        rudbman_grid::init(cx);
+        ruui_editor::init(cx);
+        ruui_grid::init(cx);
         rudbman_erd::init(cx);
         bind_shortcuts(cx);
         cx.set_menus(app_menus());
 
         // Before the palettes are applied: the ids in the settings may well
         // name themes of the user's own.
-        theme_store::reload(cx);
+        reload_themes(cx);
         apply_themes(&settings, cx);
         // The same value `window_appearance` below reads, handed to the widget
         // layer so the result grid and the ERD canvases know whether to paint a
@@ -5841,7 +5872,7 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
 
@@ -5905,7 +5936,7 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
 
@@ -5957,7 +5988,7 @@ mod tests {
     fn hiding_the_explorer_takes_the_focus_back(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         // The setting on disk decides how the sidebar starts, and this is about
@@ -6049,7 +6080,7 @@ mod tests {
     ) -> gpui::WindowHandle<Workspace> {
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         window
@@ -6343,8 +6374,8 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
-            rudbman_editor::init(cx);
+            ruui::init(cx);
+            ruui_editor::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         window
@@ -6454,9 +6485,9 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
-            rudbman_editor::init(cx);
-            rudbman_grid::init(cx);
+            ruui::init(cx);
+            ruui_editor::init(cx);
+            ruui_grid::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         let id = window
@@ -6992,7 +7023,7 @@ mod tests {
 
     /// The chord the SQL editor binds "run everything" to.
     ///
-    /// Follows `rudbman_editor::init`, which is what the test harness
+    /// Follows `ruui_editor::init`, which is what the test harness
     /// registers; the action itself is that crate's and is not exported.
     const RUN_ALL: &str = if cfg!(target_os = "macos") {
         "cmd-shift-enter"
@@ -7661,9 +7692,9 @@ mod tests {
     fn a_sql_file_needs_a_connection_to_open_into(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
-            rudbman_editor::init(cx);
-            rudbman_grid::init(cx);
+            ruui::init(cx);
+            ruui_editor::init(cx);
+            ruui_grid::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);

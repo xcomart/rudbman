@@ -1,7 +1,7 @@
 //! What a running query hands the grid: batches, already rendered.
 //!
 //! [`ResultSource`] is the adapter between `rudbman-jdbc`'s columnar
-//! [`Batch`] and `rudbman-grid`'s [`GridSource`]. Everything here is free of
+//! [`Batch`] and `ruui-grid`'s [`GridSource`]. Everything here is free of
 //! gpui and free of the JVM once a batch has been decoded, which is what lets
 //! the awkward halves — batch boundaries, null against empty, a `REAL` that
 //! must not print the noise of its widening — be asserted without a window.
@@ -48,8 +48,8 @@
 //! pane (architecture document, §7.9) runs a `SELECT` of its own, and both page
 //! the answer the same way.
 
-use rudbman_grid::{GridCell, GridColumn, GridColumnKind, GridSource, GridSourceState};
 use rudbman_jdbc::{Batch, ColumnInfo, ColumnKind, Cursor, Error as JdbcError, Value};
+use ruui_grid::{GridCell, GridColumn, GridColumnKind, GridSource, GridSourceState};
 
 /// `java.sql.Types` constants the app branches on.
 ///
@@ -766,10 +766,10 @@ pub(crate) mod tests {
         let source = ResultSource::new(&columns);
         assert_eq!(
             source.column(0).align,
-            rudbman_grid::GridColumnAlign::Right,
+            ruui_grid::GridColumnAlign::Right,
             "digits line up by place value"
         );
-        assert_eq!(source.column(1).align, rudbman_grid::GridColumnAlign::Left);
+        assert_eq!(source.column(1).align, ruui_grid::GridColumnAlign::Left);
         assert!(!source.column(0).primary_key, "a query result has no key");
     }
 

@@ -63,11 +63,11 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
-use rudbman_grid::{GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
 use rudbman_jdbc::{ColumnInfo, Param};
 use rudbman_sql::{
     Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
+use ruui_grid::{GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
 
 use crate::query_source::{ResultSource, bit_is_boolean, column_name, key_index, sql_types};
 
@@ -1023,7 +1023,7 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use rudbman_grid::GridColumnKind;
+    use ruui_grid::GridColumnKind;
 
     use super::*;
     use crate::query_source::render_batch;

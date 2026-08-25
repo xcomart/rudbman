@@ -42,7 +42,7 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use rudbman_jdbc::{Job, JobProgress, JobState, ObjectRef, OnError, TransferMode, TransferSpec};
-use rudbman_ui::{Button, ButtonVariant, Select, TextInput, form_row, modal, theme};
+use ruui::{Button, ButtonVariant, Select, TextInput, form_row, modal, theme};
 
 use crate::connection::SessionHandle;
 use crate::explorer::{ConnectionId, ObjectTarget};
@@ -1073,7 +1073,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> WindowHandle<TransferDialog> {
         cx.update(|cx| {
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let candidates = vec![
             TransferTarget {

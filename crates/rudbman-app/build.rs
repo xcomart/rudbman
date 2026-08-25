@@ -3,7 +3,7 @@
 //!
 //! The icon goes in under resource ID 1, which is not arbitrary: gpui's
 //! Windows backend loads exactly `LoadImageW(module, MAKEINTRESOURCE(1), ...)`
-//! for the window class icon (see vendor/gpui_windows/src/platform.rs,
+//! for the window class icon (see ruui's `vendor/gpui_windows/src/platform.rs`,
 //! `load_icon`). One embedded icon therefore covers Explorer,
 //! the taskbar and the running window. Other platforms have no build step:
 //! a bare binary carries no icon on macOS (that needs an .app bundle) or

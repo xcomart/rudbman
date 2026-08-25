@@ -32,7 +32,7 @@ use rudbman_jdbc::{
     BackupDataOptions, BackupSpec, Compression, Constraints, DdlOptions, Job, JobProgress,
     JobState, ScopeRef,
 };
-use rudbman_ui::{Button, ButtonVariant, Checkbox, TextInput, form_row, modal, theme};
+use ruui::{Button, ButtonVariant, Checkbox, TextInput, form_row, modal, theme};
 
 use crate::connection::SessionHandle;
 use crate::explorer::Scope;
@@ -968,7 +968,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> WindowHandle<BackupDialog> {
         cx.update(|cx| {
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let session = connected.handle();
         let scope = scope(schema);

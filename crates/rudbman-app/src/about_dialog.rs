@@ -9,7 +9,7 @@ use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render, Window,
     div, prelude::*, px,
 };
-use rudbman_ui::{Button, ButtonVariant, modal, theme};
+use ruui::{Button, ButtonVariant, modal, theme};
 
 use crate::i18n::ts;
 
