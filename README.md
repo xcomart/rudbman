@@ -187,6 +187,15 @@ the editor a `Highlighter` over `rudbman-sql`
 (`crates/rudbman-app/src/sql_highlight.rs`) and the grid a `GridSource` over a
 JDBC cursor.
 
+Neither is the layer *above* the widgets. `ruui-shell`, from the same
+repository, is the window that draws its own title bar, the self-updater that
+replaces the installed copy with the one GitHub published, the about and update
+dialogs, the split-pane tree, the palette catalogue and its editor, and the
+pieces the settings form is built out of — each of them written once here and
+then copied twice. It knows nothing about rudbman either: the name, the version,
+the release endpoints, the words and the ignored-release tag are handed to it by
+`crates/rudbman-app/src/app_identity.rs` at start-up.
+
 gpui comes from a pinned revision of Zed's monorepo rather than from crates.io,
 whose newest release (0.2.2) predates the split of the crate into a
 platform-independent core, a `gpui_platform` facade and per-OS backends. Four of

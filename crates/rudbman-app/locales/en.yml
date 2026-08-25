@@ -277,6 +277,8 @@ settings:
       type: Type names
       operator: Operators
       identifier: Identifiers
+      key: Keys
+      variable: Variables
       punctuation: Punctuation
       bracket_match: Matching bracket
       error: Errors
@@ -975,6 +977,16 @@ builder:
   # Sends the statement to a new query pane, where it can be run.
   open_editor: Open in editor
 
+# The right-click menu every plain text field opens — every field
+# `ruui::TextInput` draws, across every dialog in the application. Four rows
+# shared by all of them, which is why they are worded here once instead of by
+# each dialog that puts a field on screen; see `ruui_shell::input_menu_labels`.
+input:
+  menu_cut: Cut
+  menu_copy: Copy
+  menu_paste: Paste
+  menu_select_all: Select all
+
 # The right-click menus, on every surface that has one: the explorer tree, the
 # connection and pane tab strips, the result grid, the SQL editor, the two
 # canvases and the welcome list (architecture document, §7.8).
@@ -1050,7 +1062,7 @@ context:
 # are values, not words, and the name `rudbman` is not translated either.
 update:
   title: Update available
-  available: "rudbman %{version} is available."
+  available: "%{app} %{version} is available."
   # Second line, quieter than the first: which build the user is looking at
   # right now, so the offer means something without them going to the about box.
   installed: "You are currently running %{version}."

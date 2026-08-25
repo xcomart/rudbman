@@ -30,22 +30,23 @@ members = ["crates/*"]
 # `cfg`-directed re-exports — but it still has to be named in the patch table's
 # sibling crates, because it is what resolves `gpui_linux` and friends.
 #
-# The four entries below, and the three `ruui` dependencies further down, are
+# The four entries below, and the four `ruui` dependencies further down, are
 # `git`+`rev` dependencies on `https://github.com/xcomart/ruui`, in the form
-# ruui's own README spells out — all seven at the *same* revision, for the
-# reason in the paragraph above. Bumping the revision means bumping all seven
+# ruui's own README spells out — all eight at the *same* revision, for the
+# reason in the paragraph above. Bumping the revision means bumping all eight
 # together; letting them drift apart is exactly the two-copies-of-gpui bug
 # this table exists to avoid.
 #
-# Working on ruui locally: rather than editing seven revisions by hand, point
+# Working on ruui locally: rather than editing eight revisions by hand, point
 # these at a sibling checkout by adding a `[patch."https://github.com/xcomart/ruui"]`
-# table with `path = "../ruui/crates/ruui"` (and its `ruui-grid`, `ruui-editor`
-# and `vendor/gpui*` siblings) to `.cargo/config.toml`, which is not committed.
+# table with `path = "../ruui/crates/ruui"` (and its `ruui-grid`, `ruui-editor`,
+# `ruui-shell` and `vendor/gpui*` siblings) to `.cargo/config.toml`, which is
+# not committed.
 [patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
-gpui_linux = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
-gpui_macos = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
-gpui_windows = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
+gpui = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+gpui_linux = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+gpui_macos = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+gpui_windows = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
 
 [workspace.package]
 version = "0.1.9"
@@ -92,12 +93,15 @@ bitflags = "2"
 tempfile = "3"
 libc = "0.2"
 
-# --- HTTP: the driver downloader and the update check ---
+# --- HTTP: the driver downloader, and the shell's update check ---
 # Maven Central and the GitHub releases API are the only hosts rudbman ever
 # fetches from, and both are fetched from a background thread that is already
 # blocking on a file write — so a synchronous client is the right shape and an
 # async runtime would be a second one beside the tunnel's. `ureq` is the
-# smallest such client that still speaks TLS. `rustls` is pinned to the `ring`
+# smallest such client that still speaks TLS. The releases API is
+# `ruui-shell`'s caller now; the entry stays here because the workspace still
+# resolves it for the driver downloader, and because the shell resolves the
+# same crate through this workspace's lock. `rustls` is pinned to the `ring`
 # provider for the same reason `russh` is: `aws-lc-rs` needs NASM to build on
 # Windows. `gzip` is the update check's addition — the GitHub API answers with
 # compressed JSON, and without it the body arrives unreadable.
@@ -107,12 +111,12 @@ ureq = { version = "3", default-features = false, features = [
     "gzip",
 ] }
 
-# --- SHA-256, for the self-updater.  The GitHub releases API publishes a
-# `digest` field for every asset, and an updater that overwrites its own
-# installation should check it.  `ring` is already in the tree twice over — it
-# is the crypto backend both `russh` and `ureq`'s `rustls` resolve to — so
-# naming it directly adds a dependency edge and not a crate: the version below
-# is the one the lockfile already pins for them. ---
+# --- SHA-256, for `ruui-shell`'s self-updater.  The GitHub releases API
+# publishes a `digest` field for every asset, and an updater that overwrites its
+# own installation should check it.  No crate of this workspace names `ring`
+# any more — the shell does — but it is already in the tree twice over as the
+# crypto backend both `russh` and `ureq`'s `rustls` resolve to, so this entry
+# only pins the version they and the shell share. ---
 ring = "0.17"
 
 # --- localization ---
@@ -149,21 +153,16 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fd82517a
 #
 # `winresource` embeds `assets/icon.ico` into the Windows executable at
 # resource ID 1, which is the id gpui's Windows backend loads for the window
-# class icon. `windows` is what `src/caption.rs` pins the native caption to the
-# app theme with, pinned to the version gpui already links (0.61) so the
-# bindings are shared rather than duplicated in the tree; `raw-window-handle` is
-# how gpui hands out the `HWND` it needs. Nothing here is wanted on macOS any
-# more: gpui now overrides the `NSAppearance` itself, so that half of
-# `src/caption.rs` is a single call into gpui rather than a shim of its own.
+# class icon, and it is the one of the four `rudbman-app` still names itself.
 #
-# `windows-registry` is the one registry consumer in the tree: after a
-# self-update `src/update.rs` corrects the `DisplayVersion` in the uninstall
-# entry the Inno installer wrote, so that winget still recognises the installed
-# copy. It is picked over `winreg` for the same reason as `windows` above — gpui
-# already links this exact crate at this exact version, so it costs an edge in
-# the dependency graph rather than a crate in the build, whereas `winreg`
-# appears today only as a *build*-dependency of `embed-resource` and would drag
-# a second registry binding, and its own `windows-sys`, into the linked binary.
+# The other three are `ruui-shell`'s: `windows` is what its caption code pins
+# the DWM title bar to the app theme with, `raw-window-handle` is how gpui hands
+# out the `HWND` that needs, and `windows-registry` is what corrects the
+# `DisplayVersion` of the "Apps & features" entry after a self-update. All three
+# are pinned here to the versions gpui already links, so they cost an edge in
+# the dependency graph rather than a crate in the build — which is also why
+# `windows-registry` is picked over `winreg`, whose own `windows-sys` would be a
+# second registry binding in the linked binary.
 winresource = "0.1"
 windows = { version = "0.61", features = ["Win32_Graphics_Dwm"] }
 windows-registry = "0.5"
@@ -194,18 +193,27 @@ russh = { version = "0.62", default-features = false, features = [
 # own JVM rather than be loaded into one. ---
 jni = { version = "0.22", features = ["invocation"] }
 
-# --- the shared widget kit ---
+# --- the shared widget kit, and the shell above it ---
 # The gpui widget kit, the virtualised grid and the code editor, extracted so
 # that the three desktop applications built on them stop carrying
 # byte-identical copies. Nothing there knows what a database is: the editor is
 # handed a `Highlighter` (`crates/rudbman-app/src/sql_highlight.rs` is
 # rudbman's, over `rudbman-sql`) and the grid a `GridSource`.
 #
+# `ruui-shell` is the layer *above* the widgets, and it is here for the same
+# reason: the window that draws its own title bar, the self-updater, the about
+# and update dialogs, the split-pane tree, the palette editor and the pieces a
+# settings form is built out of had each been written once here and copied
+# twice. It knows nothing about rudbman either — the name, the version, the
+# release endpoints, the words and the ignored-release tag are injected by
+# `main` at start-up.
+#
 # The same `rev` of `https://github.com/xcomart/ruui` as the patch table at
 # the top of this file, which is what keeps one gpui in the binary.
-ruui = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
-ruui-grid = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
-ruui-editor = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
+ruui = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+ruui-grid = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+ruui-editor = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+ruui-shell = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
 
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }

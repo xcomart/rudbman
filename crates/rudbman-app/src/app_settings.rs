@@ -4,7 +4,7 @@
 //! reads one consistent snapshot. The settings dialog replaces the global and
 //! saves to disk when the user applies changes; everything else only reads.
 //!
-//! The window geometry is the one part that flows the other way: the shell
+//! The window geometry is the one part that flows the other way: the workspace
 //! records where the window is as it is moved and resized (see
 //! [`record_window_geometry`]), and [`save`] writes the result out once, when
 //! the last window closes. Writing it as it changes would put a file write in
@@ -20,93 +20,19 @@
 //! persisted settings rather than writing it into them is what makes cancelling
 //! free: dropping the override is the revert, and a window closed mid-dialog
 //! still saves the settings the user last committed to.
+//!
+//! # What is not here
+//!
+//! The globals and the two snapshots are rudbman's, because the settings type
+//! is: three applications share the shell and each spells its settings
+//! differently. What is *not* rudbman's — where a window was, which fixed-pitch
+//! family to fall back on, and how a translucent window tints a fill — comes
+//! from [`ruui_shell::settings`] and is re-exported here so that the call sites
+//! go on reading as one module.
 
-use std::sync::OnceLock;
-
-use gpui::{App, Bounds, Global, Hsla, Pixels, Point, SharedString, Size, px};
+use gpui::{App, Global};
 use rudbman_core::{AppSettings, WindowState};
-
-/// fontconfig's generic alias for a fixed-pitch face.
-///
-/// Only Linux resolves it. It is the last answer [`monospace_family`] gives,
-/// and the only one it gives there.
-const GENERIC_MONOSPACE: &str = "monospace";
-
-/// Fixed-pitch families to look for on Windows, best first.
-///
-/// Cascadia Mono ships with Windows 11 and with the Terminal on 10; Cascadia
-/// Code is the same face with programming ligatures and stands in when only the
-/// Terminal's own install is present. Consolas has been in Windows since Vista
-/// and Courier New since far earlier, so between them the list cannot come up
-/// empty on a real machine.
-#[cfg(target_os = "windows")]
-const MONOSPACE_CANDIDATES: &[&str] =
-    &["Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"];
-
-/// Fixed-pitch families to look for on macOS, best first.
-///
-/// SF Mono arrives with the Terminal and with Xcode and is what the system's
-/// own developer tools draw code in; Menlo has shipped since 10.6 and Monaco
-/// since long before that.
-#[cfg(target_os = "macos")]
-const MONOSPACE_CANDIDATES: &[&str] = &["SF Mono", "Menlo", "Monaco"];
-
-/// No candidates anywhere else: see [`monospace_family`].
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const MONOSPACE_CANDIDATES: &[&str] = &[];
-
-/// The family to draw fixed-pitch text with when no editor font is configured.
-///
-/// This is the app layer keeping the promise
-/// [`rudbman_core::AppSettings::editor_font_family`] documents: a `None` there
-/// means "the per-OS monospace default chosen by the app layer", and this is
-/// that choice.
-///
-/// The naive answer — the literal `"monospace"` — is a *fontconfig* alias, so
-/// it resolves to a real fixed-pitch face on Linux and nowhere else. Windows
-/// DirectWrite has no such family: gpui logs `monospace not found` and falls
-/// back to the system UI font, which is proportional, so SQL and `CREATE`
-/// statements lose their columns. CoreText has no alias either. So on those two
-/// platforms a family that actually exists has to be named, and the only way to
-/// know which ones exist is to ask.
-///
-/// Off the two platforms that need it — Linux, and gpui's headless test
-/// platform, whose font list is the fallback stack and nothing else — the
-/// candidate list is empty or matches nothing and the alias is returned
-/// unchanged, which is the behaviour that was there before.
-///
-/// Resolved once per process and cached: enumerating every installed family is
-/// a platform call far too heavy for a render pass. A font installed while
-/// rudbman is running is therefore not picked up until the next start, which is
-/// a trade we make knowingly — the alternative is paying for the enumeration on
-/// every frame that draws a line of SQL.
-pub fn monospace_family(cx: &App) -> SharedString {
-    static RESOLVED: OnceLock<SharedString> = OnceLock::new();
-    RESOLVED
-        .get_or_init(|| {
-            pick(MONOSPACE_CANDIDATES, &cx.text_system().all_font_names())
-                .map_or_else(|| SharedString::new_static(GENERIC_MONOSPACE), Into::into)
-        })
-        .clone()
-}
-
-/// The first of `candidates` that `installed` offers, spelled as `installed`
-/// spells it.
-///
-/// Compared without ASCII case, and the *installed* spelling is what comes
-/// back: the platforms report families in their own casing (and DirectWrite in
-/// the system locale), and the name handed to the text system afterwards should
-/// be one it has already said it has. Order is the candidate list's, not the
-/// installed list's — this answers "the best face that is here", not "the first
-/// face alphabetically".
-fn pick(candidates: &[&str], installed: &[String]) -> Option<String> {
-    candidates.iter().find_map(|candidate| {
-        installed
-            .iter()
-            .find(|name| name.eq_ignore_ascii_case(candidate))
-            .cloned()
-    })
-}
+pub use ruui_shell::settings::{WindowGeometry, monospace_family, window_tint};
 
 /// Global wrapper holding the current [`AppSettings`].
 pub struct CurrentSettings(pub AppSettings);
@@ -121,91 +47,36 @@ struct PreviewSettings(AppSettings);
 
 impl Global for PreviewSettings {}
 
-/// Where a window is and how big it is, as `settings.json` records it.
+/// Writes `geometry` into `state`, leaving its appearance alone.
 ///
-/// A type of its own rather than a [`WindowState`], because only these five
-/// values follow a live window. The opacity, the blur and the title bar style
-/// sitting beside them in the settings are the user's choices and are never
-/// written back from the window they were applied to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowGeometry {
-    /// Left edge in screen coordinates.
-    pub x: i32,
-    /// Top edge in screen coordinates.
-    pub y: i32,
-    /// Width in logical pixels.
-    pub width: u32,
-    /// Height in logical pixels.
-    pub height: u32,
-    /// Whether the window was maximized. The bounds above are then the size it
-    /// un-maximizes back to, which is what gpui hands out and what has to be
-    /// restored alongside the maximized state.
-    pub maximized: bool,
+/// The two halves of a [`WindowState`] answer to different owners: the
+/// placement follows the live window and is written back from it, while the
+/// opacity, the blur and the title bar style are the user's choices and must
+/// survive being recorded over.
+fn apply_to(geometry: WindowGeometry, state: &mut WindowState) {
+    state.x = Some(geometry.x);
+    state.y = Some(geometry.y);
+    state.width = geometry.width;
+    state.height = geometry.height;
+    state.maximized = geometry.maximized;
 }
 
-impl WindowGeometry {
-    /// Reads a window's placement, rounded to whole logical pixels.
-    ///
-    /// The settings file is hand-editable, and a fractional window position is
-    /// noise in it; a compositor that reports halves would otherwise write
-    /// `1439.5` into a file a user is expected to read.
-    pub fn of(bounds: Bounds<Pixels>, maximized: bool) -> Self {
-        let value = |pixels: Pixels| f32::from(pixels).round();
-        Self {
-            x: value(bounds.origin.x) as i32,
-            y: value(bounds.origin.y) as i32,
-            width: value(bounds.size.width).max(0.) as u32,
-            height: value(bounds.size.height).max(0.) as u32,
-            maximized,
-        }
-    }
+/// Whether `state` already records `geometry`.
+fn matches(geometry: WindowGeometry, state: &WindowState) -> bool {
+    state.x == Some(geometry.x)
+        && state.y == Some(geometry.y)
+        && state.width == geometry.width
+        && state.height == geometry.height
+        && state.maximized == geometry.maximized
+}
 
-    /// The saved placement of `state`, or `None` when it carries no position.
-    ///
-    /// `None` is a first run, or a window that was never moved: the platform
-    /// picks the placement then, and the caller centres the saved *size* on the
-    /// active display rather than guessing at coordinates.
-    pub fn saved(state: &WindowState) -> Option<Self> {
-        Some(Self {
-            x: state.x?,
-            y: state.y?,
-            width: state.width,
-            height: state.height,
-            maximized: state.maximized,
-        })
-    }
-
-    /// The placement as gpui bounds.
-    pub fn bounds(&self) -> Bounds<Pixels> {
-        Bounds {
-            origin: Point {
-                x: px(self.x as f32),
-                y: px(self.y as f32),
-            },
-            size: Size {
-                width: px(self.width as f32),
-                height: px(self.height as f32),
-            },
-        }
-    }
-
-    /// Writes the placement into `state`, leaving its appearance alone.
-    fn apply_to(&self, state: &mut WindowState) {
-        state.x = Some(self.x);
-        state.y = Some(self.y);
-        state.width = self.width;
-        state.height = self.height;
-        state.maximized = self.maximized;
-    }
-
-    /// Whether `state` already records this placement.
-    fn matches(&self, state: &WindowState) -> bool {
-        state.x == Some(self.x)
-            && state.y == Some(self.y)
-            && state.width == self.width
-            && state.height == self.height
-            && state.maximized == self.maximized
-    }
+/// The placement `state` records, or `None` when it carries no position.
+///
+/// `None` is a first run, or a window that was never moved: the platform picks
+/// the placement then, and the caller centres the saved *size* on the active
+/// display rather than guessing at coordinates.
+pub fn saved_geometry(state: &WindowState) -> Option<WindowGeometry> {
+    WindowGeometry::saved(state.x, state.y, state.width, state.height, state.maximized)
 }
 
 /// Install the settings global from disk. Call once at start-up.
@@ -275,10 +146,10 @@ pub fn record_window_geometry(geometry: WindowGeometry, cx: &mut App) {
     let Some(settings) = cx.try_global::<CurrentSettings>() else {
         return;
     };
-    if geometry.matches(&settings.0.window) {
+    if matches(geometry, &settings.0.window) {
         return;
     }
-    geometry.apply_to(&mut cx.global_mut::<CurrentSettings>().0.window);
+    apply_to(geometry, &mut cx.global_mut::<CurrentSettings>().0.window);
 }
 
 /// Writes the settings global to `settings.json`.
@@ -292,57 +163,8 @@ pub fn save(cx: &App) {
     }
 }
 
-/// Applies the configured window opacity to a background fill.
-///
-/// **At most one such fill may cover any given pixel**, and between them they
-/// must leave no pixel of the body uncovered. The window surface starts out
-/// fully transparent, so a single translucent fill lets the desktop (or the
-/// acrylic blur behind the window) show through. A second one on top does not:
-/// gpui's Windows renderer blends the alpha channel additively
-/// (`SrcBlendAlpha = ONE, DestBlendAlpha = ONE`), so two fills of, say, 0.75 and
-/// 0.62 saturate the surface alpha at 1.0 and the window goes opaque. That is
-/// why the toolbar and the status bar paint their surface untinted.
-///
-/// Two fills go through here, and they tile the body rather than stack: the
-/// explorer's surface under the sidebar, and the body's background over the work
-/// area beside it. The row holding the two paints nothing itself, so neither one
-/// ever lands on a pixel the other already has. Splitting it that way is what
-/// lets the blur carry on behind the sidebar instead of stopping at its edge.
-///
-/// What sits *over* the work area's fill would each be a second fill on the same
-/// pixels, so while the window is translucent the result grid and the ERD and
-/// query-builder canvases paint no background at all: they ask
-/// [`ruui::window_translucent`] and skip it, leaving the fill below as the
-/// only tinted one. Tinting them instead of skipping is the trap this whole
-/// comment is about.
-///
-/// The SQL editor is the deliberate exception and stays opaque, translucent
-/// window or not: code is read a character at a time and a desktop behind it is
-/// the wrong place for contrast to go. It costs the blur the editor's share of
-/// the window, which is the trade. Nothing about the additive alpha above
-/// constrains it — an *opaque* fill over a tinted one has no saturation problem,
-/// it simply wins.
-///
-/// The opacity itself lives in a widget-layer global, so that the leaves which
-/// have to agree with this can reach it; the shell pushes it there with
-/// [`ruui::set_window_tint`] at start-up and on a settings *save*. Which
-/// means this follows neither [`current`] nor [`effective`] directly, and in
-/// particular does not follow a preview — deliberately. The fill is only half of
-/// what makes a window translucent: the other half is the platform surface being
-/// told to permit alpha, which happens in
-/// [`gpui::Window::set_background_appearance`] and only when the settings are
-/// saved. Tinting ahead of that would compose against an opaque surface and
-/// merely darken the window, which is a worse answer than not previewing at all.
-pub fn window_tint(color: Hsla, cx: &App) -> Hsla {
-    // Deferred to the widget layer, which is where the leaves that have to agree
-    // with this can reach it; `current` and the global are set from the same
-    // value at the same moment.
-    ruui::window_tint(color, cx)
-}
-
 #[cfg(test)]
 mod tests {
-    use gpui::size;
     use rudbman_core::TitlebarStyle;
 
     use super::*;
@@ -367,43 +189,13 @@ mod tests {
             titlebar: TitlebarStyle::System,
             ..WindowState::default()
         };
-        geometry().apply_to(&mut state);
+        apply_to(geometry(), &mut state);
 
-        assert_eq!(WindowGeometry::saved(&state), Some(geometry()));
+        assert_eq!(saved_geometry(&state), Some(geometry()));
         // The appearance is the user's and must not have been touched.
         assert_eq!(state.background_opacity, 0.8);
         assert!(state.background_blur);
         assert_eq!(state.titlebar, TitlebarStyle::System);
-    }
-
-    #[test]
-    fn a_placement_survives_the_trip_through_gpui_bounds() {
-        let geometry = geometry();
-        assert_eq!(
-            WindowGeometry::of(geometry.bounds(), geometry.maximized),
-            geometry
-        );
-    }
-
-    #[test]
-    fn a_fractional_placement_is_rounded_to_whole_pixels() {
-        let bounds = Bounds {
-            origin: Point {
-                x: px(1439.5),
-                y: px(-0.4),
-            },
-            size: size(px(1280.6), px(719.2)),
-        };
-        assert_eq!(
-            WindowGeometry::of(bounds, false),
-            WindowGeometry {
-                x: 1440,
-                y: 0,
-                width: 1281,
-                height: 719,
-                maximized: false,
-            }
-        );
     }
 
     #[test]
@@ -412,13 +204,13 @@ mod tests {
         // caller has to centre rather than place.
         let state = WindowState::default();
         assert_eq!(state.x, None);
-        assert_eq!(WindowGeometry::saved(&state), None);
+        assert_eq!(saved_geometry(&state), None);
 
         let half_placed = WindowState {
             x: Some(10),
             ..WindowState::default()
         };
-        assert_eq!(WindowGeometry::saved(&half_placed), None);
+        assert_eq!(saved_geometry(&half_placed), None);
     }
 
     #[test]
@@ -427,14 +219,14 @@ mod tests {
         // a window that is repainting but has not moved must not dirty the
         // settings global.
         let mut state = WindowState::default();
-        geometry().apply_to(&mut state);
-        assert!(geometry().matches(&state));
+        apply_to(geometry(), &mut state);
+        assert!(matches(geometry(), &state));
 
         let moved = WindowGeometry {
             x: 121,
             ..geometry()
         };
-        assert!(!moved.matches(&state));
+        assert!(!matches(moved, &state));
     }
 
     /// The whole of the settings dialog's live preview, and its undo: an
@@ -466,58 +258,6 @@ mod tests {
             // to run twice.
             clear_preview(cx);
             assert_eq!(effective(cx).theme, "one-dark");
-        });
-    }
-
-    /// The candidate list decides, not the installed list's order: a machine
-    /// with both Consolas and Cascadia Mono has to get the better of the two.
-    #[test]
-    fn the_best_installed_monospace_family_wins() {
-        let installed = vec![
-            "Arial".to_string(),
-            "Consolas".to_string(),
-            "Cascadia Mono".to_string(),
-        ];
-        assert_eq!(
-            pick(&["Cascadia Mono", "Consolas"], &installed),
-            Some("Cascadia Mono".to_string())
-        );
-        // And the next one down when the first is missing.
-        assert_eq!(
-            pick(&["Cascadia Code", "Consolas"], &installed),
-            Some("Consolas".to_string())
-        );
-    }
-
-    /// Matched without case, returned in the platform's spelling — that name is
-    /// what the text system is asked for afterwards.
-    #[test]
-    fn a_candidate_is_matched_without_case_and_answered_in_the_installed_spelling() {
-        let installed = vec!["CONSOLAS".to_string()];
-        assert_eq!(
-            pick(&["Consolas"], &installed),
-            Some("CONSOLAS".to_string())
-        );
-    }
-
-    /// Nothing installed, or nothing worth having: the caller falls back to the
-    /// fontconfig alias, which is what Linux and the headless test platform get
-    /// and what the app drew with before there was a candidate list at all.
-    #[test]
-    fn nothing_to_pick_is_left_to_the_generic_alias() {
-        assert_eq!(pick(&["Consolas"], &["Arial".to_string()]), None);
-        assert_eq!(pick(&["Consolas"], &[]), None);
-        // The empty candidate list every other platform carries.
-        assert_eq!(pick(&[], &["Consolas".to_string()]), None);
-    }
-
-    /// The headless test platform offers no fixed-pitch family, so the helper
-    /// has to hand back the alias — the string every render test was written
-    /// against.
-    #[gpui::test]
-    fn the_test_platform_falls_back_to_the_generic_alias(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            assert_eq!(monospace_family(cx), GENERIC_MONOSPACE);
         });
     }
 

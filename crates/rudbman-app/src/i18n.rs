@@ -2,15 +2,24 @@
 //!
 //! The translations themselves live in `crates/rudbman-app/locales/<tag>.yml`
 //! and are compiled into the binary by `rust_i18n::i18n!` in [`crate`]'s root,
-//! so nothing here touches the filesystem. This module only decides *which*
-//! locale `t!` should read from, and offers [`ts!`] for the one thing the
-//! widget layer needs that `t!` does not give: a [`SharedString`][gpui::SharedString].
+//! so nothing here touches the filesystem. `rust-i18n` compiles a crate's
+//! locale files into *that* crate and keeps the active locale in a process
+//! global, which is why the table cannot move into the shell and why
+//! [`crate::AppStrings`] exists to lend it out. What this module does is decide
+//! *which* locale `t!` should read from, and offer [`ts!`] for the one thing
+//! the widget layer needs that `t!` does not give:
+//! a [`SharedString`][gpui::SharedString].
+//!
+//! The arithmetic behind that decision is [`ruui_shell::locale`]'s — matching a
+//! platform's spelling of a tag against the ones an application ships is the
+//! same problem in every application — and what is left here is the two ends of
+//! it: which tags rudbman ships, and telling `rust-i18n` the answer.
 //!
 //! Resolution order, applied by [`apply`] at start-up and again whenever the
 //! settings dialog saves:
 //!
 //! 1. the tag stored in `settings.json`, when rudbman ships that language;
-//! 2. the operating system's locale, matched loosely (see [`match_tag`]);
+//! 2. the operating system's locale, matched loosely;
 //! 3. English.
 //!
 //! Step 3 is also `rust-i18n`'s compile-time `fallback`, so a key missing from
@@ -27,10 +36,8 @@ use std::sync::OnceLock;
 
 use gpui::SharedString;
 
-/// Locale used when neither the settings nor the system offer a supported one.
-///
-/// Must stay in step with the `fallback` argument of `rust_i18n::i18n!`.
-pub const FALLBACK: &str = "en";
+#[cfg(test)]
+pub use ruui_shell::locale::FALLBACK;
 
 /// Translates a key and hands the result back as a [`SharedString`].
 ///
@@ -68,6 +75,14 @@ fn tags() -> &'static [String] {
     })
 }
 
+/// The same tags as [`ruui_shell::locale`] wants them: a sorted slice of
+/// `&'static str`, which is the order that makes its primary-subtag rule
+/// deterministic.
+pub fn shipped() -> &'static [&'static str] {
+    static SHIPPED: OnceLock<Vec<&'static str>> = OnceLock::new();
+    SHIPPED.get_or_init(|| tags().iter().map(String::as_str).collect())
+}
+
 /// The locales rudbman ships translations for, as `(BCP 47 tag, endonym)`,
 /// ordered by tag.
 ///
@@ -79,83 +94,36 @@ fn tags() -> &'static [String] {
 pub fn supported() -> &'static [(&'static str, SharedString)] {
     static SUPPORTED: OnceLock<Vec<(&'static str, SharedString)>> = OnceLock::new();
     SUPPORTED.get_or_init(|| {
-        tags()
+        shipped()
             .iter()
-            .map(|tag| {
-                let tag = tag.as_str();
-                (tag, ts!("language.name", locale = tag))
-            })
+            .map(|tag| (*tag, ts!("language.name", locale = tag)))
             .collect()
     })
 }
 
 /// The endonym of `tag`, or `None` when rudbman ships no such translation.
-pub fn display_name(tag: &str) -> Option<SharedString> {
-    supported()
-        .iter()
-        .find(|(code, _)| *code == tag)
-        .map(|(_, name)| name.clone())
+pub fn display_name(tag: &str) -> Option<&'static str> {
+    ruui_shell::locale::display_name(supported(), tag)
 }
 
 /// The locale to render the UI in, given the configured `language`.
 ///
 /// `None`, a blank string, or a tag rudbman has no translation for all fall
 /// through to the system locale, and from there to [`FALLBACK`].
-pub fn resolve(language: Option<&str>) -> &'static str {
-    if let Some(tag) = language.and_then(match_tag) {
-        return tag;
-    }
-    sys_locale::get_locale()
-        .as_deref()
-        .and_then(match_tag)
-        .unwrap_or(FALLBACK)
+pub fn resolve(language: Option<&str>) -> String {
+    let system = sys_locale::get_locale();
+    ruui_shell::locale::resolve(shipped(), language, system.as_deref())
 }
 
 /// Make [`resolve`]'s answer the locale `t!` reads from.
 pub fn apply(language: Option<&str>) {
-    rust_i18n::set_locale(resolve(language));
-}
-
-/// Matches one locale identifier against the shipped locales.
-///
-/// Deliberately forgiving, because the string can come from a hand-edited
-/// `settings.json` or from a platform that spells locales its own way:
-/// case is ignored, the POSIX `_` separator is accepted alongside `-`, and any
-/// trailing encoding or modifier suffix (`ko_KR.UTF-8`, `de_DE@euro`) is cut
-/// off.
-///
-/// A tag with no exact match falls back to the first shipped locale — first in
-/// tag order — sharing its primary subtag, so `ko-KR` finds `ko`, `en-GB` finds
-/// `en`, and `zh-TW` finds `zh-CN` for as long as Simplified Chinese is the
-/// only Chinese translation. Shipping `zh-TW.yml` would take over that exact
-/// tag, while the remaining `zh-*` regions would keep landing on `zh-CN`.
-fn match_tag(tag: &str) -> Option<&'static str> {
-    let normalized: String = tag
-        .trim()
-        .split(['.', '@'])
-        .next()
-        .unwrap_or_default()
-        .replace('_', "-")
-        .to_ascii_lowercase();
-    if normalized.is_empty() {
-        return None;
-    }
-
-    let codes = || supported().iter().map(|(code, _)| *code);
-    if let Some(exact) = codes().find(|code| code.eq_ignore_ascii_case(&normalized)) {
-        return Some(exact);
-    }
-
-    let primary = normalized.split('-').next().unwrap_or_default();
-    codes().find(|code| {
-        code.split('-')
-            .next()
-            .is_some_and(|shipped| shipped.eq_ignore_ascii_case(primary))
-    })
+    rust_i18n::set_locale(&resolve(language));
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use rust_i18n::t;
 
     use super::*;
@@ -176,100 +144,26 @@ mod tests {
         "update.ignore",
     ];
 
-    /// Every `key: value` pair of one locale file, as a dotted path.
-    ///
-    /// A hand-rolled reader rather than a YAML dependency: the files are two
-    /// levels of plain `key: value` by construction, and the two properties the
-    /// tests below need — the key set and whether a value is blank — do not
-    /// need a parser. It reads the *files*, not the compiled-in table, which is
-    /// the point: `rust-i18n`'s per-key fallback makes a missing key look like
-    /// a working lookup, and a value YAML swallowed looks like an empty string
-    /// with nothing to say where it went.
-    fn pairs(tag: &str) -> Vec<(String, String)> {
-        let path = format!("{}/locales/{tag}.yml", env!("CARGO_MANIFEST_DIR"));
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{path}: {err}"));
-
-        let mut pairs = Vec::new();
-        let mut stack: Vec<String> = Vec::new();
-        for line in text.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            let Some((key, value)) = trimmed.split_once(':') else {
-                continue;
-            };
-            if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                continue;
-            }
-            let depth = (line.len() - trimmed.len()) / 2;
-            stack.truncate(depth);
-            stack.push(key.to_string());
-            let value = value.trim();
-            if !value.is_empty() {
-                pairs.push((stack.join("."), value.to_string()));
-            }
-        }
-        pairs
+    /// The directory `i18n!` compiles the translations out of.
+    fn locales() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("locales")
     }
 
     #[test]
-    fn every_locale_carries_exactly_the_keys_english_does() {
-        // A key missing from a translation is answered in English by the
-        // per-key fallback, so it is invisible on screen; a key *extra* in one
-        // is a rename nobody finished. Neither shows up in a running app.
-        let english: Vec<String> = pairs(FALLBACK).into_iter().map(|(key, _)| key).collect();
-        for (tag, _) in supported().iter().filter(|(tag, _)| *tag != FALLBACK) {
-            let theirs: Vec<String> = pairs(tag).into_iter().map(|(key, _)| key).collect();
-            let missing: Vec<&String> =
-                english.iter().filter(|key| !theirs.contains(key)).collect();
-            let extra: Vec<&String> = theirs.iter().filter(|key| !english.contains(key)).collect();
-            assert!(missing.is_empty(), "{tag} is missing {missing:?}");
-            assert!(
-                extra.is_empty(),
-                "{tag} has {extra:?}, which en.yml does not"
-            );
-        }
-    }
-
-    #[test]
-    fn no_translated_value_is_something_yaml_reads_as_a_keyword() {
-        // The one that got through: `nullable: Null` is YAML's *null literal*,
-        // so the column heading loaded as an empty string and the tab drew a
-        // blank. Every other keyword scalar has the same trap, and so do bare
-        // numbers, which load as numbers and render without their formatting.
-        const KEYWORDS: [&str; 22] = [
-            "null", "Null", "NULL", "~", "true", "True", "TRUE", "false", "False", "FALSE", "yes",
-            "Yes", "YES", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF",
-        ];
-        for (tag, _) in supported() {
-            for (key, value) in pairs(tag) {
-                // `_version` is a number on purpose; everything else is text.
-                if key == "_version" {
-                    continue;
-                }
-                assert!(
-                    !KEYWORDS.contains(&value.as_str()),
-                    "{tag}: {key} is the bare YAML keyword {value:?} and loads as nothing; quote it"
-                );
-                assert!(
-                    value.parse::<f64>().is_err(),
-                    "{tag}: {key} is the bare number {value:?} and loads as one; quote it"
-                );
-            }
-        }
+    fn every_locale_file_is_sound() {
+        // The whole of what can be checked by reading the *files* rather than
+        // the compiled-in table: the same key set everywhere, and no value that
+        // YAML swallows into something other than its text. Both are invisible
+        // in a running app — the first because the per-key fallback answers in
+        // English, the second because a swallowed value renders as a blank.
+        ruui_shell::locale::check_locale_dir(&locales(), shipped());
     }
 
     #[test]
     fn the_shipped_languages_are_the_compiled_in_locales_in_tag_order() {
         let mut expected = rust_i18n::available_locales!();
         expected.sort();
-        let tags: Vec<_> = supported().iter().map(|(tag, _)| *tag).collect();
-        assert_eq!(tags, expected);
-        assert!(
-            tags.contains(&FALLBACK),
-            "the fallback locale ships no file of its own"
-        );
+        assert_eq!(shipped(), expected.as_slice());
     }
 
     #[test]
@@ -297,11 +191,11 @@ mod tests {
         // `every_locale_translates_every_namespace` probe already catches the
         // leak; this catches the collision, including one between two locales
         // that both spell out a name of their own.
-        let mut seen: Vec<&SharedString> = Vec::new();
+        let mut seen: Vec<&str> = Vec::new();
         for (tag, name) in supported() {
             assert!(!name.is_empty(), "{tag} names itself with an empty string");
             assert!(
-                !seen.contains(&name),
+                !seen.contains(&name.as_str()),
                 "{tag} shares the display name {name:?} with another locale"
             );
             seen.push(name);
@@ -309,47 +203,10 @@ mod tests {
     }
 
     #[test]
-    fn every_supported_tag_matches_itself() {
+    fn every_supported_tag_is_found_by_its_own_name() {
         for (tag, name) in supported() {
-            assert_eq!(match_tag(tag), Some(*tag), "tag {tag}");
-            assert_eq!(display_name(tag).as_ref(), Some(name), "name of {tag}");
+            assert_eq!(display_name(tag), Some(name.as_str()), "name of {tag}");
         }
-    }
-
-    #[test]
-    fn matching_ignores_case_and_the_posix_separator() {
-        assert_eq!(match_tag("KO"), Some("ko"));
-        assert_eq!(match_tag("  ja  "), Some("ja"));
-        assert_eq!(match_tag("zh_cn"), Some("zh-CN"));
-        assert_eq!(match_tag("ZH-Hans-CN"), Some("zh-CN"));
-    }
-
-    #[test]
-    fn matching_falls_back_to_the_primary_subtag() {
-        assert_eq!(match_tag("ko-KR"), Some("ko"));
-        assert_eq!(match_tag("en-GB"), Some("en"));
-        assert_eq!(match_tag("es-419"), Some("es"));
-        assert_eq!(match_tag("fr_CA.UTF-8"), Some("fr"));
-        assert_eq!(match_tag("de_DE@euro"), Some("de"));
-    }
-
-    #[test]
-    fn a_region_with_no_file_of_its_own_takes_the_first_of_its_language() {
-        // No `zh.yml` and no `zh-TW.yml`, so every Chinese tag reaches the one
-        // Chinese translation there is through the primary-subtag rule.
-        assert_eq!(match_tag("zh"), Some("zh-CN"));
-        assert_eq!(match_tag("zh-TW"), Some("zh-CN"));
-        assert_eq!(match_tag("zh-Hant-HK"), Some("zh-CN"));
-    }
-
-    #[test]
-    fn an_unknown_or_empty_tag_matches_nothing() {
-        assert_eq!(match_tag(""), None);
-        assert_eq!(match_tag("   "), None);
-        assert_eq!(match_tag("xx-YZ"), None);
-        assert_eq!(match_tag("kor"), None);
-        // A prefix of a supported tag is still a different language.
-        assert_eq!(match_tag("e"), None);
     }
 
     #[test]
@@ -367,7 +224,7 @@ mod tests {
         for language in [None, Some(""), Some("xx-YZ")] {
             let resolved = resolve(language);
             assert!(
-                supported().iter().any(|(code, _)| *code == resolved),
+                shipped().contains(&resolved.as_str()),
                 "resolve({language:?}) returned {resolved}"
             );
         }

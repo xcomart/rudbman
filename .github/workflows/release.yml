@@ -260,7 +260,8 @@ jobs:
 
       # The second Windows artifact: an Inno Setup installer wrapped around the
       # very tree the step above just vouched for. The zip stays — the in-app
-      # updater downloads and unpacks it (crates/rudbman-app/src/update.rs), so
+      # updater downloads and unpacks it (ruui-shell, pointed at this product
+      # by crates/rudbman-app/src/app_identity.rs), so
       # removing it would break every copy already installed. The installer is
       # what makes the package installable by winget: unzipping registers
       # nothing with Windows, and winget reads the "Apps & features" registry

@@ -176,6 +176,8 @@ settings:
       type: Noms de type
       operator: Opérateurs
       identifier: Identifiants
+      key: Clés
+      variable: Variables
       punctuation: Ponctuation
       bracket_match: Parenthèse associée
       error: Erreurs
@@ -591,6 +593,12 @@ builder:
   no_sql: Ajoutez une table pour générer une instruction.
   open_editor: Ouvrir dans l'éditeur
 
+input:
+  menu_cut: Couper
+  menu_copy: Copier
+  menu_paste: Coller
+  menu_select_all: Tout sélectionner
+
 context:
   copy_as: "Copier en %{format}"
   select_all: Tout sélectionner
@@ -631,7 +639,7 @@ context:
 
 update:
   title: Mise à jour disponible
-  available: "rudbman %{version} est disponible."
+  available: "%{app} %{version} est disponible."
   installed: "Vous utilisez actuellement la %{version}."
   update: Mettre à jour
   ignore: Ignorer cette version

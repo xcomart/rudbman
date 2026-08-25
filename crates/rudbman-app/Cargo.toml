@@ -18,16 +18,6 @@ path = "src/main.rs"
 [target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true
 
-# `windows` and `raw-window-handle` are used only by `src/caption.rs`, to colour
-# the DWM title bar from the app theme. `windows-registry` is used only by
-# `src/update.rs`, which rewrites the `DisplayVersion` of the "Apps & features"
-# entry the Inno installer left behind, so that a copy which updates itself does
-# not go on looking out of date to winget.
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
-windows-registry.workspace = true
-raw-window-handle.workspace = true
-
 [dependencies]
 rudbman-core.workspace = true
 # The ERD canvas. The shell wraps it in `ErdPane`, which owns the loading
@@ -43,6 +33,12 @@ ruui.workspace = true
 # the dialect a decision this crate takes rather than the widget.
 ruui-editor.workspace = true
 ruui-grid.workspace = true
+# The application shell: the window chrome, the updater and its dialog, the
+# about dialog, the split-pane tree, the palette catalogue and its editor, and
+# the pieces the settings form is built out of. It is told what rudbman is —
+# `ruui_shell::init`, `set_strings` and `set_update_policy`, all three in
+# `main` — and knows nothing else about it.
+ruui-shell.workspace = true
 
 # `erd/<profile-uuid>.json` is the one file the shell itself persists, so it is
 # also the one place here that derives a serializer.
@@ -62,25 +58,17 @@ async-trait.workspace = true
 parking_lot.workspace = true
 # Profile and driver identifiers.
 uuid.workspace = true
-# Two callers: the driver downloader in `src/maven.rs`, and `src/update.rs`,
-# which asks the GitHub releases API for the latest tag and then downloads the
-# archive it names. gpui's own `cx.http_client()` is a `NullHttpClient` unless
-# the application installs one, and installing a real one to serve two
-# background requests would be a much larger dependency. See the note beside
-# the entry in the workspace manifest.
+# One caller: the driver downloader in `src/maven.rs`. gpui's own
+# `cx.http_client()` is a `NullHttpClient` unless the application installs one,
+# and installing a real one to serve one background request would be a much
+# larger dependency. See the note beside the entry in the workspace manifest.
 ureq.workspace = true
-# Only for `src/update.rs`: the SHA-256 the self-updater checks a downloaded
-# release asset against. Already linked as the crypto backend of both `russh`
-# and `ureq`'s `rustls`, so this is an edge in the graph rather than a crate in
-# the build.
-ring.workspace = true
-
-# The theme editor's catalogue hands file writes and deletions straight back
-# from `ruui::theme_store`, which reports them as `anyhow::Result`.
+# The saved ERD layout reports its file errors as `anyhow::Result`, and so does
+# the pair of theme directories the shell's catalogues are built over.
 anyhow.workspace = true
-# The export save dialog falls back to the user's home directory when the
-# catalogue's own directory does not exist yet; `rudbman-core` resolves the
-# configuration directory but has no reason to expose the home one.
+# The extract and ERD export dialogs fall back to the user's home directory;
+# `rudbman-core` resolves the configuration directory but has no reason to
+# expose the home one.
 directories.workspace = true
 gpui.workspace = true
 # One call, in `main`: `gpui_platform::application()`. gpui's core no longer

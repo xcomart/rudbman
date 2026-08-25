@@ -176,6 +176,8 @@ settings:
       type: 类型名
       operator: 运算符
       identifier: 标识符
+      key: 键名
+      variable: 变量
       punctuation: 标点
       bracket_match: 匹配括号
       error: 错误
@@ -591,6 +593,12 @@ builder:
   no_sql: 添加一个表以生成语句。
   open_editor: 在编辑器中打开
 
+input:
+  menu_cut: 剪切
+  menu_copy: 复制
+  menu_paste: 粘贴
+  menu_select_all: 全选
+
 context:
   copy_as: "复制为 %{format}"
   select_all: 全选
@@ -631,7 +639,7 @@ context:
 
 update:
   title: 有可用更新
-  available: "rudbman %{version} 已发布。"
+  available: "%{app} %{version} 已发布。"
   installed: "当前运行的是 %{version}。"
   update: 更新
   ignore: 忽略此版本
