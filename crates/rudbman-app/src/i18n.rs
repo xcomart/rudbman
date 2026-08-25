@@ -34,6 +34,8 @@
 
 use std::sync::OnceLock;
 
+use gpui::SharedString;
+
 #[cfg(test)]
 pub use ruui_shell::locale::FALLBACK;
 
@@ -89,17 +91,12 @@ pub fn shipped() -> &'static [&'static str] {
 /// file. The endonym comes from that file's `language.name`; it is written in
 /// the language it names and is deliberately not translated, so caching it is
 /// safe — unlike most lookups it does not depend on the active locale.
-pub fn supported() -> &'static [(&'static str, String)] {
-    static SUPPORTED: OnceLock<Vec<(&'static str, String)>> = OnceLock::new();
+pub fn supported() -> &'static [(&'static str, SharedString)] {
+    static SUPPORTED: OnceLock<Vec<(&'static str, SharedString)>> = OnceLock::new();
     SUPPORTED.get_or_init(|| {
         shipped()
             .iter()
-            .map(|tag| {
-                (
-                    *tag,
-                    rust_i18n::t!("language.name", locale = tag).into_owned(),
-                )
-            })
+            .map(|tag| (*tag, ts!("language.name", locale = tag)))
             .collect()
     })
 }

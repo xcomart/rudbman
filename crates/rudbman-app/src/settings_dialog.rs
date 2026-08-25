@@ -922,15 +922,14 @@ impl SettingsDialog {
     /// What `Escape` means, one layer at a time.
     ///
     /// Anything layered on top of the form takes the key first and only undoes
-    /// itself, so that backing out of a list or the colour editor does not also
-    /// throw away the whole form. The editor is checked before the dropdowns
-    /// because it replaces the form outright: while it is up there is no list to
-    /// close.
-    ///
-    /// A delete confirmation is *not* a layer here: it lives inside
-    /// [`ruui_shell::CatalogActions`], which offers no way to ask whether one is
-    /// showing, so `Escape` under one dismisses the dialog. Its own "Cancel" is
-    /// the way out.
+    /// itself, so that backing out of a list, a delete confirmation or the
+    /// colour editor does not also throw away the whole form. The editor is
+    /// checked before the dropdowns because it replaces the form outright:
+    /// while it is up there is no list to close. A management row's delete
+    /// confirmation is checked last, ahead of dismissing the dialog outright,
+    /// through [`CatalogActions::is_confirming`] and
+    /// [`CatalogActions::cancel_confirm`] — the row itself offers no other way
+    /// to ask whether one is showing.
     ///
     /// Public because the key does not actually arrive here: gpui matches key
     /// bindings before it delivers key events, so the shell's `Escape` binding
@@ -944,6 +943,13 @@ impl SettingsDialog {
         if self.open_list.is_some() {
             self.close_lists(cx);
             return;
+        }
+        for catalog in [Catalog::UiTheme, Catalog::EditorTheme] {
+            let row = self.actions(catalog).clone();
+            if row.read(cx).is_confirming() {
+                row.update(cx, |row, cx| row.cancel_confirm(cx));
+                return;
+            }
         }
         self.dismiss(cx);
     }
@@ -993,11 +999,7 @@ impl SettingsDialog {
         let supported = i18n::supported();
         let mut options = Vec::with_capacity(supported.len() + 1);
         options.push(system_default());
-        options.extend(
-            supported
-                .iter()
-                .map(|(_, name)| SharedString::from(name.clone())),
-        );
+        options.extend(supported.iter().map(|(_, name)| name.clone()));
         options
     }
 
@@ -1737,6 +1739,62 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(app_settings::effective(cx).theme, saved.theme);
             assert_eq!(app_settings::current(cx), saved);
+        });
+    }
+
+    /// `Escape` only backs the layer on top of the form out; it does not
+    /// dismiss the dialog around it. The delete-confirmation branch is not
+    /// exercised here — driving a management row's own "Delete" button needs a
+    /// rendered window, and `ruui_shell::catalog_ui` already proves
+    /// `is_confirming`/`cancel_confirm` correct in isolation
+    /// (`a_confirmation_can_be_asked_about_and_cancelled_from_outside_the_row`);
+    /// what is left to check here is only that [`SettingsDialog::escape`] asks
+    /// the editor and the open list first.
+    #[gpui::test]
+    fn escape_backs_out_of_a_layer_before_it_ever_dismisses(cx: &mut gpui::TestAppContext) {
+        let saved = AppSettings::default();
+        let dialog = cx.update(|cx| {
+            app_settings::replace(saved.clone(), cx);
+            let dialog = cx.new(SettingsDialog::new);
+            dialog.update(cx, |dialog, cx| dialog.open(cx));
+            dialog
+        });
+
+        // A dropdown open: `escape` closes it and leaves the dialog up.
+        cx.update(|cx| {
+            dialog.update(cx, |dialog, cx| {
+                dialog.set_list_open(OpenList::Language, true, cx);
+                dialog.escape(cx);
+                assert!(dialog.open, "the dialog closed instead of just the list");
+                assert!(dialog.open_list.is_none(), "the list is still open");
+            });
+        });
+
+        // The colour editor up: `escape` cancels it in place. `cancel` reports
+        // itself through an emitted event rather than a direct field write —
+        // see `ThemeEditor::cancel` — so the close it causes only lands once
+        // this update's effects flush, which is why the two checks below are
+        // split across two `cx.update` calls rather than made inline.
+        cx.update(|cx| {
+            dialog.update(cx, |dialog, cx| {
+                let catalog = dialog.ui_catalog.clone();
+                // Built from scratch rather than resolved through the
+                // registry, so the test needs no `ruui::init` of its own.
+                let file = catalog.file_from("Test Theme".to_string(), &[], false);
+                dialog.open_editor(catalog, "test-theme".to_string(), &file, cx);
+            });
+        });
+        cx.update(|cx| {
+            assert!(dialog.read(cx).editor.is_some(), "the editor did not open");
+        });
+
+        cx.update(|cx| {
+            dialog.update(cx, |dialog, cx| dialog.escape(cx));
+        });
+        cx.update(|cx| {
+            let dialog = dialog.read(cx);
+            assert!(dialog.open, "the dialog closed instead of just the editor");
+            assert!(dialog.editor.is_none(), "the editor is still open");
         });
     }
 
