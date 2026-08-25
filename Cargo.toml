@@ -43,10 +43,10 @@ members = ["crates/*"]
 # `ruui-shell` and `vendor/gpui*` siblings) to `.cargo/config.toml`, which is
 # not committed.
 [patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
-gpui_linux = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
-gpui_macos = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
-gpui_windows = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
+gpui = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+gpui_linux = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+gpui_macos = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+gpui_windows = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
 
 [workspace.package]
 version = "0.1.9"
@@ -210,10 +210,10 @@ jni = { version = "0.22", features = ["invocation"] }
 #
 # The same `rev` of `https://github.com/xcomart/ruui` as the patch table at
 # the top of this file, which is what keeps one gpui in the binary.
-ruui = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
-ruui-grid = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
-ruui-editor = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
-ruui-shell = { git = "https://github.com/xcomart/ruui", rev = "6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c" }
+ruui = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+ruui-grid = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+ruui-editor = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
+ruui-shell = { git = "https://github.com/xcomart/ruui", rev = "041fa13c5225a6601a61476572ba75b387248f63" }
 
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }

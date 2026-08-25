@@ -2696,7 +2696,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2791,7 +2791,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2837,7 +2837,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2977,7 +2977,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -6128,7 +6128,7 @@ dependencies = [
 [[package]]
 name = "ruui"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "anyhow",
  "gpui",
@@ -6141,7 +6141,7 @@ dependencies = [
 [[package]]
 name = "ruui-editor"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "gpui",
  "log",
@@ -6153,7 +6153,7 @@ dependencies = [
 [[package]]
 name = "ruui-grid"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "gpui",
  "ruui",
@@ -6163,7 +6163,7 @@ dependencies = [
 [[package]]
 name = "ruui-shell"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/ruui?rev=6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c#6a6563afcc7f12b175e90f54ffca4cd74b4c8d3c"
+source = "git+https://github.com/xcomart/ruui?rev=041fa13c5225a6601a61476572ba75b387248f63#041fa13c5225a6601a61476572ba75b387248f63"
 dependencies = [
  "anyhow",
  "futures",
