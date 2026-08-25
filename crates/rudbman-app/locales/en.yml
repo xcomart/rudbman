@@ -978,9 +978,9 @@ builder:
   open_editor: Open in editor
 
 # The right-click menu every plain text field opens — every field
-# `ruui::TextInput` draws, across every dialog in the application. Four rows
+# `rugpui::TextInput` draws, across every dialog in the application. Four rows
 # shared by all of them, which is why they are worded here once instead of by
-# each dialog that puts a field on screen; see `ruui_shell::input_menu_labels`.
+# each dialog that puts a field on screen; see `rugpui_shell::input_menu_labels`.
 input:
   menu_cut: Cut
   menu_copy: Copy

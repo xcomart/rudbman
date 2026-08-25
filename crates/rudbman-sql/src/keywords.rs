@@ -9,7 +9,7 @@
 //! bug nobody reports.
 //!
 //! The split into *keywords* and *types* is not cosmetic: the editor palette has
-//! separate `keyword` and `type` slots (see `ruui`'s `editor_theme`), and
+//! separate `keyword` and `type` slots (see `rugpui`'s `editor_theme`), and
 //! `VARCHAR2` wants the second one.
 //!
 //! Two things are deliberately absent.

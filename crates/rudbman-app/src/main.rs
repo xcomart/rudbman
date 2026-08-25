@@ -83,21 +83,21 @@ use gpui::{
 use rudbman_core::{
     AppSettings, ConnectionProfile, ConnectionStore, DriverStore, TitlebarStyle, WindowState,
 };
-use ruui::{
+use rugpui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
     ThemeRegistry, hide_later, hide_now, modal, scroll_to, scrolled, set_editor_theme, set_theme,
     set_window_tint, theme, theme_store,
 };
-use ruui_shell::chrome::{
+use rugpui_shell::chrome::{
     SHADOW_BAND, client_tiling, draws_own_titlebar, render_resize_edges, titlebar_gestures,
     window_appearance, window_control_strips,
 };
-pub(crate) use ruui_shell::menu_rows::SHORTCUT_MODIFIER;
-use ruui_shell::settings::{window_bounds, window_geometry};
-use ruui_shell::update;
-use ruui_shell::{AboutDialog, AboutDialogEvent, UpdateDialog, UpdateDialogEvent};
-use ruui_shell::{apply_caption_theme, window_control_icons};
+pub(crate) use rugpui_shell::menu_rows::SHORTCUT_MODIFIER;
+use rugpui_shell::settings::{window_bounds, window_geometry};
+use rugpui_shell::update;
+use rugpui_shell::{AboutDialog, AboutDialogEvent, UpdateDialog, UpdateDialogEvent};
+use rugpui_shell::{apply_caption_theme, window_control_icons};
 use uuid::Uuid;
 
 use backup_dialog::{BackupDialog, BackupDialogEvent};
@@ -893,7 +893,7 @@ impl Workspace {
                     // `None` — the platform never said, or no identity was
                     // installed — is left unset, which is gpui's own default
                     // and therefore exactly the same thing.
-                    if let Some(path) = ruui_shell::restart_path() {
+                    if let Some(path) = rugpui_shell::restart_path() {
                         cx.set_restart_path(path);
                     }
                     cx.restart();
@@ -3063,7 +3063,7 @@ impl Workspace {
         };
 
         Some(
-            ruui::ContextMenu::new("workspace-context")
+            rugpui::ContextMenu::new("workspace-context")
                 .position(menu.position)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
@@ -3660,7 +3660,7 @@ impl Workspace {
     /// name at its left end, and — off macOS, which keeps its native traffic
     /// lights — grows a set of caption buttons at its right end. Every *control*
     /// inside it occludes, so the drag area only ever answers for the gaps
-    /// between them; see [`ruui::window_controls`]. The name is not a
+    /// between them; see [`rugpui::window_controls`]. The name is not a
     /// control and deliberately does not.
     fn render_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
@@ -3740,7 +3740,7 @@ impl Workspace {
 
         // The caption buttons the other two platforms have to draw themselves,
         // as the two strips a Linux desktop may ask for; see
-        // [`ruui_shell::chrome::window_control_strips`].
+        // [`rugpui_shell::chrome::window_control_strips`].
         let (leading_controls, trailing_controls) =
             window_control_strips(&window_control_icons(), custom, window, cx);
 
@@ -3957,7 +3957,7 @@ impl Workspace {
                     .connections
                     .iter()
                     .filter_map(|open| {
-                        let color = ruui::parse_hex(open.profile.color.as_deref()?)?;
+                        let color = rugpui::parse_hex(open.profile.color.as_deref()?)?;
                         Some((open.id, color))
                     })
                     .collect(),
@@ -5034,19 +5034,19 @@ impl Render for Workspace {
     }
 }
 
-/// Where the two theme catalogues live, for `ruui`'s theme store.
+/// Where the two theme catalogues live, for `rugpui`'s theme store.
 ///
 /// The widget kit is shared with applications that put their configuration
 /// somewhere else, so it takes the directories rather than guessing at them:
 /// [`rudbman_core`] resolves them, and this is the one place that turns the two
-/// answers into the pair `ruui` asks for.
+/// answers into the pair `rugpui` asks for.
 ///
 /// # Errors
 ///
 /// Fails when the platform's configuration directory cannot be resolved at
 /// all, which is the same condition that used to fail a save or a delete.
-fn theme_dirs() -> anyhow::Result<ruui::ThemeDirs> {
-    Ok(ruui::ThemeDirs {
+fn theme_dirs() -> anyhow::Result<rugpui::ThemeDirs> {
+    Ok(rugpui::ThemeDirs {
         ui_themes: rudbman_core::ui_themes_dir()?,
         editor_themes: Some(rudbman_core::editor_themes_dir()?),
     })
@@ -5168,10 +5168,10 @@ fn opening_bounds(state: &WindowState, cx: &mut App) -> WindowBounds {
 /// neither can be the other's. Both serialise to the same two `snake_case`
 /// words — the test below is what says so — and this is the one line between
 /// them.
-fn chrome_titlebar(style: TitlebarStyle) -> ruui_shell::TitlebarStyle {
+fn chrome_titlebar(style: TitlebarStyle) -> rugpui_shell::TitlebarStyle {
     match style {
-        TitlebarStyle::Custom => ruui_shell::TitlebarStyle::Custom,
-        TitlebarStyle::System => ruui_shell::TitlebarStyle::System,
+        TitlebarStyle::Custom => rugpui_shell::TitlebarStyle::Custom,
+        TitlebarStyle::System => rugpui_shell::TitlebarStyle::System,
     }
 }
 
@@ -5295,8 +5295,8 @@ fn main() {
     // of everything below: `apply_pending` and `clean_leftovers` both read it,
     // and both have to run before `gpui_platform::application()` does, because
     // that call is what loads a JVM into the process — the very thing an
-    // applied update must not race. See `ruui_shell::init_process_identity`.
-    ruui_shell::init_process_identity(app_identity::IDENTITY);
+    // applied update must not race. See `rugpui_shell::init_process_identity`.
+    rugpui_shell::init_process_identity(app_identity::IDENTITY);
 
     // An update the previous run could only stage — because a JVM was loaded
     // into it and Windows will not let its files be renamed — is applied here,
@@ -5350,11 +5350,11 @@ fn main() {
         // so nothing is ever built in the wrong language and then corrected.
         i18n::apply(settings.language.as_deref());
 
-        ruui::init(cx);
+        rugpui::init(cx);
         // After the widget layer, because both scope their bindings to key
         // contexts the shell's own bindings have to be able to outrank.
-        ruui_editor::init(cx);
-        ruui_grid::init(cx);
+        rugpui_editor::init(cx);
+        rugpui_grid::init(cx);
         rudbman_erd::init(cx);
         bind_shortcuts(cx);
         cx.set_menus(app_menus());
@@ -5622,7 +5622,7 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
+            rugpui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
 
@@ -5686,7 +5686,7 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
+            rugpui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
 
@@ -5738,7 +5738,7 @@ mod tests {
     fn hiding_the_explorer_takes_the_focus_back(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
+            rugpui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         // The setting on disk decides how the sidebar starts, and this is about
@@ -5830,7 +5830,7 @@ mod tests {
     ) -> gpui::WindowHandle<Workspace> {
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
+            rugpui::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         window
@@ -6124,8 +6124,8 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
-            ruui_editor::init(cx);
+            rugpui::init(cx);
+            rugpui_editor::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         window
@@ -6235,9 +6235,9 @@ mod tests {
 
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
-            ruui_editor::init(cx);
-            ruui_grid::init(cx);
+            rugpui::init(cx);
+            rugpui_editor::init(cx);
+            rugpui_grid::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         let id = window
@@ -6773,7 +6773,7 @@ mod tests {
 
     /// The chord the SQL editor binds "run everything" to.
     ///
-    /// Follows `ruui_editor::init`, which is what the test harness
+    /// Follows `rugpui_editor::init`, which is what the test harness
     /// registers; the action itself is that crate's and is not exported.
     const RUN_ALL: &str = if cfg!(target_os = "macos") {
         "cmd-shift-enter"
@@ -7442,9 +7442,9 @@ mod tests {
     fn a_sql_file_needs_a_connection_to_open_into(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
-            ruui_editor::init(cx);
-            ruui_grid::init(cx);
+            rugpui::init(cx);
+            rugpui_editor::init(cx);
+            rugpui_grid::init(cx);
         });
         let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
         let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
@@ -8001,13 +8001,13 @@ mod tests {
 
     #[test]
     fn the_two_titlebar_spellings_are_one_setting() {
-        // `rudbman-core` and `ruui-shell` each declare a `TitlebarStyle`,
+        // `rudbman-core` and `rugpui-shell` each declare a `TitlebarStyle`,
         // because one has to stay free of gpui and the other cannot. What makes
         // `chrome_titlebar` a conversion rather than a translation is that both
         // write the same two words into `settings.json`.
         for (mine, theirs) in [
-            (TitlebarStyle::Custom, ruui_shell::TitlebarStyle::Custom),
-            (TitlebarStyle::System, ruui_shell::TitlebarStyle::System),
+            (TitlebarStyle::Custom, rugpui_shell::TitlebarStyle::Custom),
+            (TitlebarStyle::System, rugpui_shell::TitlebarStyle::System),
         ] {
             assert_eq!(chrome_titlebar(mine), theirs);
             assert_eq!(
@@ -8019,7 +8019,7 @@ mod tests {
         // settings file with no `titlebar` key gets.
         assert_eq!(
             chrome_titlebar(TitlebarStyle::default()),
-            ruui_shell::TitlebarStyle::default()
+            rugpui_shell::TitlebarStyle::default()
         );
     }
 }

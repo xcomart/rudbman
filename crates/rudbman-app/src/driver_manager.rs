@@ -49,7 +49,7 @@ use gpui::{
 };
 use rudbman_core::{DriverDef, DriverStore, drivers_dir};
 use rudbman_jdbc::{BridgeErrorKind, DriverProbe, Error as JdbcError};
-use ruui::{
+use rugpui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
     TextInput, Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
 };
@@ -1703,7 +1703,7 @@ mod tests {
     ) -> gpui::Entity<DriverManager> {
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
+            rugpui::init(cx);
         });
         let manager = cx.new(DriverManager::new);
         cx.update(|cx| {

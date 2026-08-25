@@ -7,7 +7,7 @@ The mark is a database cylinder with a gold cap on a dark One Dark tile. One
 subject, filling the tile, because 16 px — a taskbar, a window list — is the
 size an app icon is mostly seen at and there is room for one shape there. The
 body is the app's `accent` blue and the cap is its `grid_pk` gold, both from
-`ruui`'s `src/theme.rs`; the reasoning for those two colours, and for
+`rugpui`'s `src/theme.rs`; the reasoning for those two colours, and for
 not using the palette's green, is in the comment at the top of `icon.svg`.
 
 ## Regenerating

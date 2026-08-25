@@ -1,6 +1,6 @@
 //! The SQL dialect, handed to an editor that has never heard of one.
 //!
-//! `ruui-editor` holds a [`Highlighter`] — "give me the coloured runs of this
+//! `rugpui-editor` holds a [`Highlighter`] — "give me the coloured runs of this
 //! line, given the state the line before it ended in" — and nothing else. It
 //! knows no SQL, no dialects, and no `rudbman-sql`. [`DialectHighlighter`] is
 //! the whole of what rudbman puts on the other side of that trait: it lexes a
@@ -36,7 +36,7 @@
 use std::sync::Arc;
 
 use rudbman_sql::{Dialect, LineStateCodec, TokenKind, lex_line};
-use ruui_editor::{Highlighter, LineState, Span, Token};
+use rugpui_editor::{Highlighter, LineState, Span, Token};
 
 /// A [`Highlighter`] that lexes one SQL dialect.
 ///
@@ -118,7 +118,7 @@ const fn paint(kind: TokenKind) -> Option<Token> {
 
 #[cfg(test)]
 mod tests {
-    use ruui_editor::{Buffer, SyntaxCache, syntax};
+    use rugpui_editor::{Buffer, SyntaxCache, syntax};
 
     use super::*;
 
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn a_semicolon_inside_a_quoted_identifier_does_not_split() {
         // Used to be the one disagreement between the editor and the
-        // splitter: `ruui-editor` painted a quoted identifier the same
+        // splitter: `rugpui-editor` painted a quoted identifier the same
         // `Identifier` token as a bare name, which is transparent to the
         // statement splitter, so a `;` inside `"a;b"`, `` `a;b` `` or
         // `[a;b]` cut a statement the SQL splitter kept whole. Now that the

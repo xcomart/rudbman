@@ -27,12 +27,12 @@
 //! is: three applications share the shell and each spells its settings
 //! differently. What is *not* rudbman's — where a window was, which fixed-pitch
 //! family to fall back on, and how a translucent window tints a fill — comes
-//! from [`ruui_shell::settings`] and is re-exported here so that the call sites
+//! from [`rugpui_shell::settings`] and is re-exported here so that the call sites
 //! go on reading as one module.
 
 use gpui::{App, Global};
 use rudbman_core::{AppSettings, WindowState};
-pub use ruui_shell::settings::{WindowGeometry, monospace_family, window_tint};
+pub use rugpui_shell::settings::{WindowGeometry, monospace_family, window_tint};
 
 /// Global wrapper holding the current [`AppSettings`].
 pub struct CurrentSettings(pub AppSettings);

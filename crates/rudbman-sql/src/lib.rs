@@ -1,7 +1,7 @@
 //! SQL lexing, dialects, and statement splitting: everything rudbman needs to
 //! understand the *shape* of a script without understanding the script.
 //!
-//! Two things are built on this crate. The editor — `ruui-editor`, driven
+//! Two things are built on this crate. The editor — `rugpui-editor`, driven
 //! through the `Highlighter` that `rudbman-app`'s `sql_highlight` module wraps
 //! this lexer in — colors a buffer with it and finds the statement under the
 //! cursor with it; the query runner takes the statements it cuts. A future

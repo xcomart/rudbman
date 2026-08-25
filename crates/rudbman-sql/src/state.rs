@@ -3,7 +3,7 @@
 //! [`LineState`] is sixteen bytes and opaque, which is the right shape for this
 //! crate and the wrong one for a general-purpose editor widget: a widget that
 //! holds a highlighter behind `dyn` cannot name the state type, so it stores
-//! four bytes per line and hands them back untouched. `ruui-editor` is such a
+//! four bytes per line and hands them back untouched. `rugpui-editor` is such a
 //! widget. This module is the adapter between the two.
 //!
 //! # Why it needs a table

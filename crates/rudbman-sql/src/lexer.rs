@@ -56,7 +56,7 @@ use crate::dialect::Dialect;
 
 /// What a run of characters is.
 ///
-/// The names line up with the syntax slots of `ruui`'s editor palette, so
+/// The names line up with the syntax slots of `rugpui`'s editor palette, so
 /// the editor's mapping from token to color is a `match` with no thinking in it.
 /// The palette has no `parameter` or `quoted_identifier` slot of its own; the
 /// editor decides what to do with those two (`parameter` next to `number`,

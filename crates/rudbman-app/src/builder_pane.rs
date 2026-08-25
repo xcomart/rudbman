@@ -48,7 +48,7 @@ use gpui::{
 use rudbman_erd::{BuilderEdge, BuilderEvent, BuilderView, ErdColumn, ErdTable};
 use rudbman_jdbc::{DescribeRequest, Session};
 use rudbman_sql::Dialect;
-use ruui::{Button, ButtonVariant, Checkbox, ContextMenu, Select, TextInput, Theme, theme};
+use rugpui::{Button, ButtonVariant, Checkbox, ContextMenu, Select, TextInput, Theme, theme};
 
 use crate::builder_sql::{
     BuilderQuery, BuilderTable, Join, JoinKind, SortDir, generate, unique_alias,
@@ -1023,7 +1023,7 @@ mod tests {
 
     /// A panel in a window of its own.
     fn open(cx: &mut TestAppContext) -> gpui::WindowHandle<BuilderPane> {
-        cx.update(ruui::init);
+        cx.update(rugpui::init);
         cx.add_window(|_window, cx| BuilderPane::new(ConnectionId(1), "h2", cx))
     }
 
@@ -1137,7 +1137,7 @@ mod tests {
     /// The panel's one message reaches a subscriber, carrying the statement.
     #[gpui::test]
     fn opening_in_the_editor_hands_the_statement_over(cx: &mut TestAppContext) {
-        cx.update(ruui::init);
+        cx.update(rugpui::init);
         let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         let pane = cx.new(|cx| BuilderPane::new(ConnectionId(1), "h2", cx));
 
@@ -1242,7 +1242,7 @@ mod tests {
     /// loading it, because the session is not its to hold.
     #[gpui::test]
     fn a_table_dropped_on_the_canvas_is_asked_for(cx: &mut TestAppContext) {
-        cx.update(ruui::init);
+        cx.update(rugpui::init);
         let dropped = std::rc::Rc::new(std::cell::RefCell::new(Vec::<ObjectTarget>::new()));
 
         let pane = cx.new(|cx| BuilderPane::new(ConnectionId(1), "h2", cx));

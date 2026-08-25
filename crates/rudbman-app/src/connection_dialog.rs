@@ -47,7 +47,7 @@ use rudbman_core::{
     ConnectionProfile, ConnectionStore, DriverDef, DriverStore, KeepAlive, SecretSlot, SecretStore,
     TunnelAuth, TunnelConfig,
 };
-use ruui::{
+use rugpui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
     Segmented, Select, TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to,
     scrolled, theme,
@@ -1205,7 +1205,7 @@ impl ConnectionDialog {
         let swatch = |index: usize, value: Option<&'static str>| {
             let selected = self.color.as_ref().map(SharedString::as_ref) == value;
             let fill = value
-                .and_then(ruui::parse_hex)
+                .and_then(rugpui::parse_hex)
                 .unwrap_or(chrome.surface_active);
             let this = this.clone();
             div()
@@ -2091,7 +2091,7 @@ pub(crate) fn profile_rows(
             let tag = profile
                 .color
                 .as_deref()
-                .and_then(ruui::parse_hex)
+                .and_then(rugpui::parse_hex)
                 .map(|color| {
                     div()
                         .flex_none()
@@ -2541,7 +2541,7 @@ mod tests {
         // A swatch whose value the theme layer cannot read would draw as the
         // fallback and two tags would look the same.
         for color in COLORS {
-            assert!(ruui::parse_hex(color).is_some(), "{color}");
+            assert!(rugpui::parse_hex(color).is_some(), "{color}");
         }
         let mut unique = COLORS.to_vec();
         unique.sort_unstable();
@@ -2593,7 +2593,7 @@ mod tests {
     ) -> (Entity<ConnectionDialog>, VisualTestContext) {
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
+            rugpui::init(cx);
         });
 
         let window = cx.add_window(|_, cx| ConnectionDialog::new(cx));

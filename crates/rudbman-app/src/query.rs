@@ -86,13 +86,13 @@ use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
 use rudbman_sql::{Dialect, TokenKind, lex, split_statements};
-use ruui::{Button, ButtonVariant, ContextMenu, Theme, theme};
-use ruui_editor::editor::{
+use rugpui::{Button, ButtonVariant, ContextMenu, Theme, theme};
+use rugpui_editor::editor::{
     Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
     ToggleComment, Undo,
 };
-use ruui_editor::{EditorEvent, EditorView};
-use ruui_grid::{
+use rugpui_editor::{EditorEvent, EditorView};
+use rugpui_grid::{
     GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
     SortDirection,
 };
@@ -1213,7 +1213,7 @@ impl QueryPane {
                 // read-only, so anything that arrives here is a value the user
                 // meant to change.
                 GridEvent::EditCommitted { row, column, value } => {
-                    let ruui_grid::EditValue::Text(text) = value;
+                    let rugpui_grid::EditValue::Text(text) = value;
                     pane.stage(id, *row, *column, StagedCell::Text(text.clone()), cx);
                 }
                 // The grid holds no strings, so its menu is drawn here
@@ -2178,7 +2178,7 @@ impl QueryPane {
 
     /// Opens the editor's menu, as a right click in it would.
     ///
-    /// Test-only: the widget's own gesture is covered in `ruui-editor`, and
+    /// Test-only: the widget's own gesture is covered in `rugpui-editor`, and
     /// what the shell's tests need is a pane with a menu open on it.
     #[cfg(test)]
     pub(crate) fn open_editor_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
@@ -2791,9 +2791,9 @@ mod tests {
     ) -> WindowHandle<QueryPane> {
         cx.update(|cx| {
             app_settings::init(cx);
-            ruui::init(cx);
-            ruui_editor::init(cx);
-            ruui_grid::init(cx);
+            rugpui::init(cx);
+            rugpui_editor::init(cx);
+            rugpui_grid::init(cx);
         });
         let settings = AppSettings {
             fetch_batch_rows: batch_rows,
@@ -3876,7 +3876,7 @@ mod tests {
                         return false;
                     }
                     let input = grid.editor().cloned().expect("the field is open");
-                    input.update(cx, |input: &mut ruui::TextInput, cx| {
+                    input.update(cx, |input: &mut rugpui::TextInput, cx| {
                         input.set_content(text.to_owned(), cx);
                     });
                     grid.commit_edit(cx);

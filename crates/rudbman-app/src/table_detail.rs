@@ -31,7 +31,7 @@
 //!
 //! The tables here are plain rows in a scroll area. A column list is tens of
 //! rows, occasionally hundreds, and never the millions the query grid has to
-//! survive — that one is `ruui-grid`, and it virtualises. What this panel
+//! survive — that one is `rugpui-grid`, and it virtualises. What this panel
 //! does need is the vertical scrollbar, because a wide table really can have
 //! several hundred columns.
 
@@ -39,7 +39,7 @@ use gpui::{
     App, ClipboardItem, Context, DragMoveEvent, EventEmitter, FocusHandle, Focusable, IntoElement,
     MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
-use ruui::{
+use rugpui::{
     Button, ButtonVariant, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, Theme,
     hide_later, hide_now, scroll_to, scrolled, theme,
 };

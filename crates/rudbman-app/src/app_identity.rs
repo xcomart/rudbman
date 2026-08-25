@@ -1,6 +1,6 @@
 //! Who rudbman is, as far as the shell is concerned.
 //!
-//! [`ruui_shell`] is written against an application it deliberately knows
+//! [`rugpui_shell`] is written against an application it deliberately knows
 //! nothing about: the about dialog draws a name it was handed, the updater asks
 //! an endpoint it was handed, and every word either of them says is looked up
 //! in a table it was handed. This module is the whole of what rudbman hands
@@ -23,7 +23,7 @@
 //! the bottom of this file is what keeps two of those three corners together.
 
 use gpui::{App, SharedString};
-use ruui_shell::{AppIdentity, Strings, UpdatePolicy};
+use rugpui_shell::{AppIdentity, Strings, UpdatePolicy};
 
 use crate::app_settings;
 use crate::i18n::ts;
@@ -132,13 +132,13 @@ impl UpdatePolicy for IgnoredUpdate {
 /// Hands the shell all three, once, before the first window opens.
 ///
 /// Order matters only in that nothing may render or check for a release until
-/// this has run: [`ruui_shell::identity`] panics without it, deliberately,
+/// this has run: [`rugpui_shell::identity`] panics without it, deliberately,
 /// because reaching it unwired is a mistake in `main` and not a runtime
 /// condition.
 pub fn install(cx: &mut App) {
-    ruui_shell::init(IDENTITY, cx);
-    ruui_shell::set_strings(Box::new(AppStrings), cx);
-    ruui_shell::set_update_policy(Box::new(IgnoredUpdate), cx);
+    rugpui_shell::init(IDENTITY, cx);
+    rugpui_shell::set_strings(Box::new(AppStrings), cx);
+    rugpui_shell::set_update_policy(Box::new(IgnoredUpdate), cx);
 }
 
 #[cfg(test)]

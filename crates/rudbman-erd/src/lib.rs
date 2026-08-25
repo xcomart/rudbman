@@ -17,7 +17,7 @@
 //!
 //! ## What this crate knows
 //!
-//! `ruui` and gpui, and nothing else (architecture document, §3.1). In
+//! `rugpui` and gpui, and nothing else (architecture document, §3.1). In
 //! particular it does **not** know `rudbman-jdbc`: an [`ErdModel`] is assembled
 //! by the host from the `imported_keys` and column metadata it has already
 //! fetched, so this crate's tests need no JVM and no driver. The query builder
@@ -79,7 +79,7 @@ use gpui::App;
 
 /// Registers everything the two canvases need before the first window opens.
 ///
-/// Only key bindings, for now; [`ruui::init`] still has to be called for
+/// Only key bindings, for now; [`rugpui::init`] still has to be called for
 /// the palette they draw with.
 pub fn init(cx: &mut App) {
     canvas::init(cx);

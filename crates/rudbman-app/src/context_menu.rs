@@ -2,7 +2,7 @@
 //!
 //! Every surface of the window has a menu and every one of them is built out of
 //! [`MenuRow`] (architecture document, §7.8) — the shell's row type, because a
-//! menu described as data rather than as [`MenuEntry`](ruui::MenuEntry) is what
+//! menu described as data rather than as [`MenuEntry`](rugpui::MenuEntry) is what
 //! makes "what does this node offer" a testable question in every application
 //! that asks it. [`entries`] turns a list of rows into the widget's own rows on
 //! the way to being drawn, and [`labels`], [`greyed`] and [`row`] are what the
@@ -11,14 +11,14 @@
 //! What is left here is the two menus that are *about a result grid*: the cell
 //! menu and the heading menu. They are generic over the grid's source rather
 //! than over the application, but they are still rudbman's — the wording is its
-//! own, the ordering row re-runs a statement, and `ruui-grid` is not something
+//! own, the ordering row re-runs a statement, and `rugpui-grid` is not something
 //! the shell depends on.
 
 use gpui::{App, ClipboardItem, Entity, Window};
-use ruui_grid::{CopyFormat, GridSource, GridView, SortDirection};
-pub(crate) use ruui_shell::menu_rows::{MenuRow, entries};
+use rugpui_grid::{CopyFormat, GridSource, GridView, SortDirection};
+pub(crate) use rugpui_shell::menu_rows::{MenuRow, entries};
 #[cfg(test)]
-pub(crate) use ruui_shell::menu_rows::{greyed, labels, row};
+pub(crate) use rugpui_shell::menu_rows::{greyed, labels, row};
 
 use crate::SHORTCUT_MODIFIER;
 use crate::i18n::ts;
