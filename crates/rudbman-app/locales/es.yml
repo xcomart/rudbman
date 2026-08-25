@@ -593,6 +593,12 @@ builder:
   no_sql: Añada una tabla para generar una sentencia.
   open_editor: Abrir en el editor
 
+input:
+  menu_cut: Cortar
+  menu_copy: Copiar
+  menu_paste: Pegar
+  menu_select_all: Seleccionar todo
+
 context:
   copy_as: "Copiar como %{format}"
   select_all: Seleccionar todo

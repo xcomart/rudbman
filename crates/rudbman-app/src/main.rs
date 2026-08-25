@@ -885,6 +885,17 @@ impl Workspace {
                     // the application's call and not the shell's — a staged
                     // update merely spends its restart applying itself and
                     // re-executing once more.
+                    //
+                    // The path comes from the shell because only it knows that
+                    // the install just renamed the running image aside:
+                    // `restart_path` is the `current_exe()` of the moment
+                    // `init_process_identity` ran, before any of that happened.
+                    // `None` — the platform never said, or no identity was
+                    // installed — is left unset, which is gpui's own default
+                    // and therefore exactly the same thing.
+                    if let Some(path) = ruui_shell::restart_path() {
+                        cx.set_restart_path(path);
+                    }
                     cx.restart();
                 }
                 UpdateDialogEvent::Dismissed => {
@@ -5280,6 +5291,34 @@ fn bind_shortcuts(cx: &mut App) {
 fn main() {
     env_logger::init();
 
+    // The half of the identity that needs no `App`, installed first and ahead
+    // of everything below: `apply_pending` and `clean_leftovers` both read it,
+    // and both have to run before `gpui_platform::application()` does, because
+    // that call is what loads a JVM into the process — the very thing an
+    // applied update must not race. See `ruui_shell::init_process_identity`.
+    ruui_shell::init_process_identity(app_identity::IDENTITY);
+
+    // An update the previous run could only stage — because a JVM was loaded
+    // into it and Windows will not let its files be renamed — is applied here,
+    // synchronously, before a window, a settings load or a connection exists,
+    // and therefore before anything can load a JVM into *this* process. It
+    // answers `true` only when it has already spawned a fresh process on the
+    // new build, at which point the one useful thing left to do is return
+    // without ever building an `App`. See `update::apply_pending`.
+    if update::apply_pending() {
+        return;
+    }
+
+    // A self-update renames the copies it replaces aside instead of deleting
+    // them — Windows cannot delete a running image, and one code path for
+    // three platforms is worth more than an immediate unlink on the two that
+    // could. This is the other half: the leftovers are swept up on the next
+    // launch. Off the main thread, on a plain thread rather than
+    // `cx.background_executor()` — there is no `App` yet to hand it to —
+    // because removing a bundled JRE or a `.app` bundle is a recursive delete
+    // of thousands of files and nothing this early depends on it.
+    std::thread::spawn(update::clean_leftovers);
+
     // The icon set has to be installed before the app runs: `svg()` resolves
     // every path through this source, and the default one answers `None`.
     // `LastWindowClosed` rather than the default, which is this only away from
@@ -5292,37 +5331,16 @@ fn main() {
         .with_assets(icons::ICONS)
         .with_quit_mode(QuitMode::LastWindowClosed);
     app.run(|cx: &mut App| {
-        // First of all, and before anything else reaches the updater: every
-        // path in it reads the identity, including the two that run at
-        // start-up, and the only way to install one is with an `App` in hand.
+        // The other half of the identity — the gpui global `identity`, `text`
+        // and the rest of the shell's UI-facing paths read — plus the words
+        // and the update policy. Safe alongside the `init_process_identity`
+        // call above: `init` calls it again itself, and installing the same
+        // identity twice leaves nothing different behind.
         app_identity::install(cx);
-
-        // An update the previous run could only stage — because a JVM was
-        // loaded into it and Windows will not let its files be renamed — is
-        // applied here, synchronously, before a window, a settings load or a
-        // connection exists, and therefore before anything can load a JVM into
-        // *this* process. It answers `true` only when it has already spawned a
-        // fresh process on the new build, at which point the one useful thing
-        // left to do is get out of its way. See `update::apply_pending`.
-        if update::apply_pending() {
-            cx.quit();
-            return;
-        }
 
         if let Err(error) = rudbman_core::init_secrets() {
             log::warn!("the OS keychain is unavailable: {error}");
         }
-
-        // A self-update renames the copies it replaces aside instead of
-        // deleting them — Windows cannot delete a running image, and one code
-        // path for three platforms is worth more than an immediate unlink on
-        // the two that could. This is the other half: the leftovers are swept
-        // up on the next launch. On the background executor because a bundled
-        // JRE or a `.app` bundle is a recursive delete of thousands of files
-        // and nothing on screen depends on it.
-        cx.background_executor()
-            .spawn(async { update::clean_leftovers() })
-            .detach();
 
         // Load the settings before the widget layer installs its default
         // palettes, then override those to match what the user configured.

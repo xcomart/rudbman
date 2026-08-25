@@ -593,6 +593,12 @@ builder:
   no_sql: Добавьте таблицу, чтобы получить запрос.
   open_editor: Открыть в редакторе
 
+input:
+  menu_cut: Вырезать
+  menu_copy: Копировать
+  menu_paste: Вставить
+  menu_select_all: Выделить всё
+
 context:
   copy_as: "Копировать как %{format}"
   select_all: Выделить всё

@@ -593,6 +593,12 @@ builder:
   no_sql: テーブルを追加するとステートメントが作られます。
   open_editor: エディタで開く
 
+input:
+  menu_cut: 切り取り
+  menu_copy: コピー
+  menu_paste: 貼り付け
+  menu_select_all: すべて選択
+
 context:
   copy_as: "%{format} でコピー"
   select_all: すべて選択

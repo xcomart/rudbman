@@ -977,6 +977,16 @@ builder:
   # Sends the statement to a new query pane, where it can be run.
   open_editor: Open in editor
 
+# The right-click menu every plain text field opens — every field
+# `ruui::TextInput` draws, across every dialog in the application. Four rows
+# shared by all of them, which is why they are worded here once instead of by
+# each dialog that puts a field on screen; see `ruui_shell::input_menu_labels`.
+input:
+  menu_cut: Cut
+  menu_copy: Copy
+  menu_paste: Paste
+  menu_select_all: Select all
+
 # The right-click menus, on every surface that has one: the explorer tree, the
 # connection and pane tab strips, the result grid, the SQL editor, the two
 # canvases and the welcome list (architecture document, §7.8).

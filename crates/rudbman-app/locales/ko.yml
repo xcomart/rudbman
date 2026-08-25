@@ -593,6 +593,12 @@ builder:
   no_sql: 테이블을 추가하면 문장이 만들어집니다.
   open_editor: 에디터에서 열기
 
+input:
+  menu_cut: 잘라내기
+  menu_copy: 복사
+  menu_paste: 붙여넣기
+  menu_select_all: 모두 선택
+
 context:
   copy_as: "%{format}(으)로 복사"
   select_all: 모두 선택

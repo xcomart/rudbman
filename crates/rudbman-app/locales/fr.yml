@@ -593,6 +593,12 @@ builder:
   no_sql: Ajoutez une table pour générer une instruction.
   open_editor: Ouvrir dans l'éditeur
 
+input:
+  menu_cut: Couper
+  menu_copy: Copier
+  menu_paste: Coller
+  menu_select_all: Tout sélectionner
+
 context:
   copy_as: "Copier en %{format}"
   select_all: Tout sélectionner

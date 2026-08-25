@@ -1724,11 +1724,19 @@ Things logman and jdbgen already paid for.
   nothing draws, and nothing says why. The table's revision and the four `ruui`
   dependencies' revision have to match — all eight entries move together, for
   the same reason
-- **Calling anything in `ruui_shell::update` before `ruui_shell::init`** → the
-  updater reads the identity through a process-wide slot that `init` fills, and
-  it panics without one. `apply_pending`, which has to run before a JVM can be
-  loaded into the process, is therefore the *first* thing inside `app.run`
-  rather than the first thing in `main`
+- **Calling `apply_pending` or `clean_leftovers` before
+  `ruui_shell::init_process_identity`** → both read the identity through a
+  process-wide slot that call fills, and answer as if there were nothing to do
+  rather than panicking without one — silent, not loud, so the mistake is easy
+  to miss. `main` calls `init_process_identity` first, ahead of
+  `gpui_platform::application()`, which is what quietly loads a JVM into the
+  process; `apply_pending` and `clean_leftovers` follow it, both still before
+  an `App` exists, so the renames they may do never race that load.
+  `app.run`'s `app_identity::install` calls `ruui_shell::init` again — safe to
+  repeat — which additionally installs the gpui global the rest of the shell
+  (`ignored_release`, `remember_ignored`, the dialogs) reads through `cx`;
+  *those* calls still panic without it, because by the time they run an `App`
+  always exists to install it into
 - **Letting a test build a `Workspace` without turning the start-up check off**
   → gpui's test executor runs background tasks inline whenever a test parks, so
   every workspace a suite builds makes a live request to github.com.
