@@ -15,8 +15,8 @@ without changing this document.
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | **Copy** logman's gpui widget kit into `rudbman-ui` and let it evolve on its own | Early speed comes first. Extracting a shared crate waits until both sides are stable |
-| D2 | **Vendor logman's patched gpui** and use it as is | The Korean IME infinite loop, the X11 re-entrancy panic and the KWin blur patch are all just as necessary here |
+| D1 | **Copy** logman's gpui widget kit into `rudbman-ui` and let it evolve on its own | Early speed comes first. Extracting a shared crate waits until both sides are stable. **Done, and extracted since**: the kit, the grid and the editor are now [ruui](https://github.com/xcomart/ruui), shared by the three applications that had been carrying byte-identical copies (§3.2) |
+| D2 | **Vendor logman's patched gpui** and use it as is | The Korean IME infinite loop, the X11 re-entrancy panic and the KWin blur patch are all just as necessary here. **Since D1's extraction**: ruui vendors the four crates and rudbman's patch table points at that copy, so there is one patched gpui for all three applications rather than three |
 | D3 | The JNI boundary is **one coarse-grained bridge JAR**, with exactly **one** static method as its entry point | A per-cell JNI round trip becomes tens of millions of calls at 100k rows × 20 columns. Unusable |
 | D4 | The **data plane** of backup and DB-to-DB transfer **completes inside the JVM** | Gigabytes never get ferried across JNI. Rust only issues commands and polls progress |
 | D5 | Every connection gets a **dedicated Rust worker thread** that stays attached to the JVM | JDBC connections are not thread-safe and the gpui UI thread must never block |
@@ -53,6 +53,12 @@ What is not brought over: `logman-pty`, `logman-term`, `terminal_view.rs`,
 `file_panel.rs`, `connection.rs` (SSH shell only), `files.rs`, and
 `logman-ssh`'s `sftp.rs`.
 
+The table above is the record of the port as it was made. Three of its
+destinations have moved on since: `rudbman-ui`, and the editor and grid that
+grew on top of it, are now [ruui](https://github.com/xcomart/ruui), and the four
+vendored gpui crates went with them. §3.2 has the shape that resulted; the rows
+are left as written because they are what was copied, from where, and when.
+
 `ui/scheme_picker.rs` previews terminal color schemes, but its shape carries
 over almost unchanged as an editor-theme preview. Copy it, then rework it.
 
@@ -85,10 +91,8 @@ result schemas from `ResultSetMetaData`.
 ```
 rudbman/
 ├── Cargo.toml                  workspace. gpui from a pinned Zed revision,
-│                            patched from vendor/ by [patch."…/zed"]
+│                            patched from ruui's vendor/ by [patch."…/zed"]
 ├── docs/architecture.md        this document
-├── vendor/gpui{,_linux,_macos,_windows}/
-│                            rulogman's patched copies
 ├── bridge/                     Gradle project → rudbman-bridge.jar
 │   ├── build.gradle
 │   └── src/main/java/comart/rudbman/bridge/
@@ -97,14 +101,23 @@ rudbman/
 ├── packaging/                  linux/macos/windows packaging
 └── crates/
     ├── rudbman-core/           settings, profiles, secrets, paths, known_hosts
-    ├── rudbman-ui/             gpui widget kit + UI theme + editor theme
     ├── rudbman-ssh/            SSH local port forwarding (M1)
     ├── rudbman-jdbc/           JNI. JVM bootstrap, session workers, wire codec
     ├── rudbman-sql/            SQL lexer, dialects, formatter, completion index
-    ├── rudbman-editor/         multi-line code editor widget
-    ├── rudbman-grid/           virtualized result grid widget
     ├── rudbman-erd/            ERD model, layout, canvas, SVG export
     └── rudbman-app/            the binary
+```
+
+and, beside it rather than inside it:
+
+```
+ruui/                           github.com/xcomart/ruui
+├── vendor/gpui{,_linux,_macos,_windows}/
+│                            rulogman's patched copies
+└── crates/
+    ├── ruui/                   gpui widget kit + UI theme + editor theme
+    ├── ruui-grid/              virtualized result grid widget
+    └── ruui-editor/            multi-line code editor widget
 ```
 
 ### 3.1 Crate dependency direction
@@ -112,8 +125,9 @@ rudbman/
 ```
 rudbman-app
  ├─→ rudbman-erd ─┐
- ├─→ rudbman-grid ┼─→ rudbman-ui ─→ gpui
- ├─→ rudbman-editor ─→ rudbman-sql
+ ├─→ ruui-grid    ┼─→ ruui ─→ gpui
+ ├─→ ruui-editor ─┘
+ ├─→ rudbman-sql
  ├─→ rudbman-jdbc ─→ rudbman-core
  ├─→ rudbman-ssh  ─→ rudbman-core
  └─→ rudbman-core
@@ -129,8 +143,43 @@ There are no reverse dependencies. `rudbman-jdbc` **knows nothing about gpui**
 `rudbman-app`'s job. That boundary is what lets the JNI layer be unit-tested
 without gpui.
 
-`rudbman-ui` knows nothing about databases. Same discipline that kept logman's
-`ui/` modules ignorant of SSH.
+`ruui` knows nothing about databases. Same discipline that kept logman's `ui/`
+modules ignorant of SSH — and the reason the kit could be lifted out of this
+repository at all.
+
+### 3.2 The widget kit is a repository of its own
+
+`ruui`, `ruui-grid` and `ruui-editor` live in
+[ruui](https://github.com/xcomart/ruui), because rudbman was the third
+application carrying byte-identical copies of them. Nothing there knows what an
+application does: the grid is pointed at a `GridSource` the host implements, and
+the editor at a `Highlighter` — a line lexer the host supplies. That is the one
+seam this move cut.
+
+`rudbman-editor` used to call `rudbman_sql::lex_line` itself and used to hold a
+`Dialect`. It no longer can: `ruui-editor` is also the log viewer's editor and
+the template editor's. So the call turned around, and
+`crates/rudbman-app/src/sql_highlight.rs` is what stands where the dependency
+edge used to be — a `Highlighter` that lexes with `rudbman-sql` in the dialect
+of the session's driver and maps its tokens onto the palette's twelve slots.
+Two things travelled with it: the comment toggle's `--`, and the fact that a
+statement is `;`-terminated. What did *not* travel is
+`rudbman_sql::statement_at`: the editor now cuts statements out of the spans it
+is drawing anyway, stepping over a `;` the highlighter called part of a string
+or a comment. That module's tests hold the two answers together across the
+dialects where they could drift.
+
+`rudbman-sql` gained one thing for the move, in `src/state.rs`: a `LineState` is
+sixteen bytes and the editor stores four per line, so `LineStateCodec` packs one
+into the other. Three of the four carries fit in a `u32`; a PostgreSQL dollar
+quote's tag does not, so the codec keeps a side table and the code holds an
+index into it.
+
+The four patched gpui crates went to ruui with the widgets, and rudbman's
+`[patch."https://github.com/zed-industries/zed"]` table points at that copy.
+Keeping one gpui in the binary is not a tidiness question: two would put two
+copies of every `Global` in the process, and the ones the widgets install would
+be invisible to the application.
 
 ---
 
@@ -752,10 +801,12 @@ The UI theme and the editor theme are chosen independently, but a "follow the
 UI theme" option in the settings prevents the accident of a light UI dragging a
 dark editor along with it.
 
-### 7.4 The SQL editor (`rudbman-editor`)
+### 7.4 The SQL editor (`ruui-editor`)
 
 logman's `TextInput` is single-line only (it replaces `\n` with a space). This
-is written fresh.
+was written fresh, as `rudbman-editor`, and has since moved to `ruui-editor`
+(§3.2) — which is why the lexer below is now handed *in* rather than reached
+for.
 
 - Buffer: `ropey`. Editing stays O(log n) even with a 100MB script open
 - Rendering: virtualized on gpui's `uniform_list`. Only the lines on screen get
@@ -763,8 +814,10 @@ is written fresh.
 - Input: implements `EntityInputHandler`. **IME composition follows exactly
   what logman's `text_input.rs` already solved** — byte offset to UTF-16 offset
   conversion, and caret handling during composition
-- Syntax highlighting: `rudbman-sql`'s lexer. Tree-sitter is not adopted (SQL
-  grammar splits per dialect, and what highlighting needs is the token level)
+- Syntax highlighting: `rudbman-sql`'s lexer, reaching the widget as the
+  `Highlighter` that `rudbman-app`'s `sql_highlight` module implements — the
+  widget knows no dialects, and no SQL. Tree-sitter is not adopted (SQL grammar
+  splits per dialect, and what highlighting needs is the token level)
 - Features: line numbers, current-line highlight, bracket matching, multiple
   cursors, statement-at-cursor execution (detecting the statement under the
   caret), folding, find and replace, auto-indent, comment toggling
@@ -772,7 +825,7 @@ is written fresh.
   schema index. The index is filled in the background right after connecting
   and kept in memory
 
-### 7.5 The result grid (`rudbman-grid`)
+### 7.5 The result grid (`ruui-grid`)
 
 - `uniform_list` virtualization plus horizontal virtualization (tables with
   hundreds of columns exist)
@@ -801,7 +854,7 @@ is written fresh.
   modules — tested without a window
 - Rendering: gpui `canvas`. Entity boxes, orthogonally routed relationship
   lines and cardinality notation. Hit testing is arithmetic, not listeners
-  (the same call as in rudbman-grid)
+  (the same call as in ruui-grid)
 - Widget/pane separation: `rudbman-erd`'s `ErdView` is a widget that knows only
   drawing, dragging, zooming and panning, while loading state, the toolbar,
   i18n and persistence are wrapped by `rudbman-app`'s `ErdPane` — the same
@@ -873,7 +926,7 @@ list. The discipline:
   running the commands are the host's business — an extension of the standing
   rule that the widget layer holds no strings. Menu state (open, coordinates)
   is owned by the host view that receives the event.
-- Presentation comes from `rudbman-ui`'s `ContextMenu` (deferred + anchored,
+- Presentation comes from `ruui`'s `ContextMenu` (deferred + anchored,
   anchored to the pointer and snapped inside the window). Items support
   disabled and checked states, and the width follows the content.
 - **A right click moves the selection but does not select tabs**: tree rows and
@@ -1608,11 +1661,16 @@ Things logman and jdbgen already paid for.
 
 - **Deleting the gpui vendor patches** → the title-bar setting stops applying
   to a live window, closing a window on X11 can panic, and a self-decorated X11
-  window loses both its transparent shadow band and its blur. Do not delete or
-  rename the `RULOGMAN PATCH` comments in `vendor/gpui`, `vendor/gpui_linux`,
-  `vendor/gpui_macos` and `vendor/gpui_windows` — they have to stay
-  byte-identical to rulogman's vendored copies so patches can be exchanged with
-  `diff`
+  window loses both its transparent shadow band and its blur. The four trees
+  now live in ruui rather than here; do not delete or rename the
+  `RULOGMAN PATCH` comments in them — they have to stay byte-identical to
+  rulogman's vendored copies so patches can be exchanged with `diff`
+- **Dropping rudbman's `[patch."https://github.com/zed-industries/zed"]`
+  table** → this workspace resolves gpui from Zed's monorepo while `ruui`
+  resolves it from the patched copy, two gpui crates end up in one binary, and
+  the `Global`s the widgets install become invisible to the application:
+  nothing draws, and nothing says why. The table's revision and the `ruui`
+  dependencies' revision have to match, for the same reason
 - **Using `DriverManager`** → when two drivers claim the same URL prefix there
   is no telling who wins. Call `Driver.connect` directly
 - **Ignoring a `null` return from `Driver.connect`** → per the spec that means

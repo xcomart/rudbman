@@ -38,7 +38,7 @@ use gpui::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, IntoElement, KeyDownEvent,
     Render, SharedString, Window, div, prelude::*, px, relative,
 };
-use rudbman_ui::{Button, ButtonVariant, modal, theme};
+use ruui::{Button, ButtonVariant, modal, theme};
 
 use crate::i18n::ts;
 use crate::update::{self, Check, Installed, Progress, Release, release_url};

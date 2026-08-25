@@ -32,11 +32,11 @@ use gpui::{
     KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     ScrollWheelEvent, Window, actions, canvas, div, prelude::*,
 };
-use rudbman_ui::scrollbar::{
+use ruui::scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
 };
-use rudbman_ui::theme::{Theme, theme, window_translucent};
-use rudbman_ui::to_hex;
+use ruui::theme::{Theme, theme, window_translucent};
+use ruui::to_hex;
 
 use crate::canvas::{
     BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,
@@ -688,7 +688,7 @@ mod tests {
     use std::time::Duration;
 
     use gpui::{Entity, Modifiers, MouseMoveEvent, TestAppContext, VisualTestContext};
-    use rudbman_ui::scrollbar::{FADE_OUT, Fade, SCROLL_LINGER};
+    use ruui::scrollbar::{FADE_OUT, Fade, SCROLL_LINGER};
 
     use crate::canvas::test_support::{
         self, drag_to, press, release, right_press, wheel, window_point,

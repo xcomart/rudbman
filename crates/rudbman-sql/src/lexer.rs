@@ -56,7 +56,7 @@ use crate::dialect::Dialect;
 
 /// What a run of characters is.
 ///
-/// The names line up with the syntax slots of `rudbman-ui`'s editor palette, so
+/// The names line up with the syntax slots of `ruui`'s editor palette, so
 /// the editor's mapping from token to color is a `match` with no thinking in it.
 /// The palette has no `parameter` or `quoted_identifier` slot of its own; the
 /// editor decides what to do with those two (`parameter` next to `number`,
@@ -163,7 +163,7 @@ impl Token {
 /// *means* — whether `"..."` is a string or an identifier is a question for the
 /// dialect at the time the token is emitted, not something to remember.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum QuoteKind {
+pub(crate) enum QuoteKind {
     /// `'...'`, where `''` is an escaped quote.
     Single,
     /// `'...'` where a backslash escapes as well: MySQL's default, and
@@ -186,7 +186,7 @@ enum QuoteKind {
 /// inline buffer — would put a hard limit on tag length instead, and a limit
 /// that silently mis-lexes is worse than a bound nobody will reach.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct DollarTag {
+pub(crate) struct DollarTag {
     /// Length of the tag in bytes, `$` delimiters excluded. Zero for `$$`.
     len: u32,
     /// FNV-1a of the tag.
@@ -210,7 +210,7 @@ impl DollarTag {
 
 /// What the scanner was in the middle of when the input ran out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-enum Carry {
+pub(crate) enum Carry {
     /// Between tokens. The state every buffer starts in.
     #[default]
     None,
@@ -247,7 +247,7 @@ enum Carry {
 /// assert_eq!(after, LineState::START);          // and closed
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct LineState(Carry);
+pub struct LineState(pub(crate) Carry);
 
 impl LineState {
     /// The state a buffer starts in, and the state a line ends in when every

@@ -34,7 +34,7 @@ use gpui::{
     SharedString, Subscription, Window, actions, div, prelude::*, px,
 };
 use rudbman_core::{AppSettings, TitlebarStyle};
-use rudbman_ui::{
+use ruui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorTheme, EditorThemeRegistry, SchemePreview,
     SchemeSelect, SchemeSwatch, Scrollbar, ScrollbarAxis, ScrollbarState, Segmented, Select,
     TextInput, Theme, ThemeRegistry, form_row, hide_later, hide_now, modal, scroll_to, scrolled,
@@ -292,7 +292,7 @@ fn ui_theme_swatches(cx: &App) -> Vec<SchemeSwatch> {
 ///
 /// The four token colors a reader tells apart first — keyword, string, number
 /// and comment — on the editor's own page. A syntax palette really wants to be
-/// judged in arrangement, which is what [`rudbman_ui::EditorThemePicker`] is
+/// judged in arrangement, which is what [`ruui::EditorThemePicker`] is
 /// for and what the theme editor still shows; a settings row that has to fit
 /// beside a dozen other settings gets the hues and the contrast, which is
 /// enough to choose between themes by name.
@@ -784,7 +784,7 @@ impl SettingsDialog {
             return;
         }
 
-        theme_store::reload(cx);
+        crate::reload_themes(cx);
         self.select(catalog, id.clone(), cx);
         self.open_editor(id, file, cx);
     }
@@ -858,7 +858,7 @@ impl SettingsDialog {
             return;
         }
 
-        theme_store::reload(cx);
+        crate::reload_themes(cx);
         self.select(catalog, catalog.default_id(), cx);
         cx.notify();
     }
@@ -961,7 +961,7 @@ impl SettingsDialog {
             return;
         };
 
-        theme_store::reload(cx);
+        crate::reload_themes(cx);
         if skipped > 0 {
             self.actions_mut(catalog).status =
                 Some(ts!("settings.manage.import_skipped", count = skipped));

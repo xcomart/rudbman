@@ -312,7 +312,7 @@ pub fn save(cx: &App) {
 /// What sits *over* the work area's fill would each be a second fill on the same
 /// pixels, so while the window is translucent the result grid and the ERD and
 /// query-builder canvases paint no background at all: they ask
-/// [`rudbman_ui::window_translucent`] and skip it, leaving the fill below as the
+/// [`ruui::window_translucent`] and skip it, leaving the fill below as the
 /// only tinted one. Tinting them instead of skipping is the trap this whole
 /// comment is about.
 ///
@@ -325,7 +325,7 @@ pub fn save(cx: &App) {
 ///
 /// The opacity itself lives in a widget-layer global, so that the leaves which
 /// have to agree with this can reach it; the shell pushes it there with
-/// [`rudbman_ui::set_window_tint`] at start-up and on a settings *save*. Which
+/// [`ruui::set_window_tint`] at start-up and on a settings *save*. Which
 /// means this follows neither [`current`] nor [`effective`] directly, and in
 /// particular does not follow a preview — deliberately. The fill is only half of
 /// what makes a window translucent: the other half is the platform surface being
@@ -337,7 +337,7 @@ pub fn window_tint(color: Hsla, cx: &App) -> Hsla {
     // Deferred to the widget layer, which is where the leaves that have to agree
     // with this can reach it; `current` and the global are set from the same
     // value at the same moment.
-    rudbman_ui::window_tint(color, cx)
+    ruui::window_tint(color, cx)
 }
 
 #[cfg(test)]

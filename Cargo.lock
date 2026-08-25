@@ -2696,6 +2696,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2790,6 +2791,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2835,6 +2837,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2974,6 +2977,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -5783,14 +5787,14 @@ dependencies = [
  "raw-window-handle",
  "ring",
  "rudbman-core",
- "rudbman-editor",
  "rudbman-erd",
- "rudbman-grid",
  "rudbman-jdbc",
  "rudbman-sql",
  "rudbman-ssh",
- "rudbman-ui",
  "rust-i18n",
+ "ruui",
+ "ruui-editor",
+ "ruui-grid",
  "serde",
  "serde_json",
  "sys-locale",
@@ -5817,32 +5821,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "rudbman-editor"
-version = "0.1.9"
-dependencies = [
- "gpui",
- "log",
- "ropey",
- "rudbman-sql",
- "rudbman-ui",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "rudbman-erd"
 version = "0.1.9"
 dependencies = [
  "gpui",
- "rudbman-ui",
- "unicode-width",
-]
-
-[[package]]
-name = "rudbman-grid"
-version = "0.1.9"
-dependencies = [
- "gpui",
- "rudbman-ui",
+ "ruui",
  "unicode-width",
 ]
 
@@ -5876,20 +5859,6 @@ dependencies = [
  "rudbman-core",
  "russh",
  "tokio",
-]
-
-[[package]]
-name = "rudbman-ui"
-version = "0.1.9"
-dependencies = [
- "anyhow",
- "gpui",
- "log",
- "rudbman-core",
- "serde",
- "serde_json",
- "tempfile",
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -6157,6 +6126,41 @@ dependencies = [
  "unicode-ccc",
  "unicode-properties",
  "unicode-script",
+]
+
+[[package]]
+name = "ruui"
+version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "ruui-editor"
+version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
+dependencies = [
+ "gpui",
+ "log",
+ "ropey",
+ "ruui",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "ruui-grid"
+version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
+dependencies = [
+ "gpui",
+ "ruui",
+ "unicode-width",
 ]
 
 [[package]]

@@ -36,10 +36,10 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
     Window, canvas, div, prelude::*,
 };
-use rudbman_ui::scrollbar::{
+use ruui::scrollbar::{
     DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, hide_later, hide_now,
 };
-use rudbman_ui::theme::{Theme, theme, window_translucent};
+use ruui::theme::{Theme, theme, window_translucent};
 
 use crate::canvas::{
     BARS, BoxLabels, CANVAS_KEY_CONTEXT, Drag, Edge, Painted, PanDrag, Scene, Viewport, labels_of,

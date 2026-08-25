@@ -51,7 +51,7 @@ pub const NEW_TAB: &str = "icons/new-tab.svg";
 ///
 /// They carry a heavier stroke than the rest of the set for the same reason —
 /// `2.2` against the usual `1.8`. The caption strip renders them at 12 px
-/// (`GLYPH_SIZE` in [`rudbman_ui::window_controls`]), which is half the
+/// (`GLYPH_SIZE` in [`ruui::window_controls`]), which is half the
 /// viewBox, so the stroke that reaches the screen is half what the file asks
 /// for: `1.8` arrived as 0.9 px, a hairline no row of pixels could hold at full
 /// coverage once it had been antialiased, and `2.2` arrives as 1.1 px instead.
@@ -146,7 +146,7 @@ pub const SIDEBAR: &str = "icons/sidebar.svg";
 ///
 /// Like the window controls, it carries a heavier stroke than the set's usual
 /// `1.8` — `2.4` here. The tree renders it at 14 px (`ARROW_ICON_SIZE` in
-/// [`rudbman_ui::tree`]) out of the 24 of the viewBox, so what reaches the
+/// [`ruui::tree`]) out of the 24 of the viewBox, so what reaches the
 /// screen is a little over half of what the file asks for: 1.4 px, which a row
 /// of pixels can hold, where `1.8` would have arrived as the same hairline the
 /// glyph was.

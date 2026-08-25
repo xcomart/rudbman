@@ -135,14 +135,17 @@ To use a JDK of your own instead of the bundled runtime, point
 
 ## Building
 
-Prerequisites: stable Rust, and a JDK (17+) with Gradle wrapper support for
-the bridge.
+Prerequisites: stable Rust, a JDK (17+) with Gradle wrapper support for the
+bridge. The widget kit, the grid, the editor and the patched gpui come from a
+pinned revision of [ruui](https://github.com/xcomart/ruui) fetched by Cargo
+itself, so no separate checkout of it is needed.
 
 ```sh
 # The Java half first: the Rust build refuses to proceed without the bridge JAR.
 cd bridge && ./gradlew build && cd ..
 
-# Then the workspace.
+# Then the workspace. Cargo fetches ruui (and, through its patch table, gpui)
+# from git on first build.
 cargo build --release
 ```
 
@@ -176,16 +179,27 @@ lifecycle, and the milestone plan — lives in
 [docs/architecture.md](docs/architecture.md). Current progress and
 open items are tracked in [docs/status.md](docs/status.md).
 
+The widget kit, the virtualised result grid and the code editor are not in this
+repository. They are [ruui](https://github.com/xcomart/ruui), extracted so that
+the three desktop applications built on them stop carrying byte-identical
+copies of the same code. Nothing there knows what a database is: rudbman hands
+the editor a `Highlighter` over `rudbman-sql`
+(`crates/rudbman-app/src/sql_highlight.rs`) and the grid a `GridSource` over a
+JDBC cursor.
+
 gpui comes from a pinned revision of Zed's monorepo rather than from crates.io,
 whose newest release (0.2.2) predates the split of the crate into a
 platform-independent core, a `gpui_platform` facade and per-OS backends. Four of
-those crates — `gpui`, `gpui_linux`, `gpui_macos`, `gpui_windows` — are vendored
-under `vendor/` and patched back over the git source, each change marked
-`RULOGMAN PATCH`: the live title-bar switch, and three X11 fixes upstream has no
-answer for. The trees are kept byte-identical with the same four in
-[rulogman](https://github.com/xcomart/rulogman), so a fix moves between the two
+those crates — `gpui`, `gpui_linux`, `gpui_macos`, `gpui_windows` — are patched
+back over the git source, each change marked `RULOGMAN PATCH`: the live
+title-bar switch, and three X11 fixes upstream has no answer for. ruui vendors
+them and rudbman's `[patch."https://github.com/zed-industries/zed"]` table
+points at that copy, which is what keeps one gpui in the binary — two would make
+the `Global`s the widgets install invisible to the application. The trees are
+kept byte-identical with the same four in
+[rulogman](https://github.com/xcomart/rulogman), so a fix moves between the
 projects as a plain diff.
 
 ## License
 
-[MIT](LICENSE). The vendored gpui crates keep their upstream licenses.
+[MIT](LICENSE). The gpui crates ruui vendors keep their upstream licenses.

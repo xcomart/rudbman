@@ -6,8 +6,8 @@ the work up. The design and the contracts all live in
 work has come, what is left, and how work is done in this repository**. It is
 updated whenever a milestone ends.
 
-Last updated: 2026-08-14 (after container verification against all five
-products).
+Last updated: 2026-08-25 (after the widget kit, the grid and the editor moved
+to ruui).
 
 ## Where things stand
 
@@ -36,14 +36,19 @@ products).
 | Table creation (§7.10, "Creating a table") | done | `plan_create` beside `plan_alter` — one statement, multi-line because it is read before it is run, and the only place a `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` is born, since `plan_alter` drops constraints and never adds one. A table-level constraint turned out byte-identical on all seven dialects, so `AlterStyle` gained no row. No auto-increment flag and no `IF NOT EXISTS` (Oracle has neither). The pane takes a second mode rather than a second surface — a table being created is a table whose current shape is empty, so the column list, the form, the live batch and the apply are the ones already there, diverging in eight named places. Two calls worth knowing: the "no name"/"no columns" refusals are held until the apply is asked for, because a pane just opened is in both states; and a refused create *keeps* what was typed, where a refused alter discards it — the discard rule is about what a committed statement invalidates, and a create that failed committed nothing. On success the pane becomes the editor for the table it made |
 | Structure editing (§7.10) | done | `rudbman-sql::ddl` — `plan_alter` over a diff that carries **both sides** of every changed column, because MySQL's `MODIFY`/`CHANGE` restates a whole definition and SQL Server's `ALTER COLUMN` resets nullability when the clause is omitted. Statements are plain strings (no server takes a `?` in DDL) and a type or a default is the user's own SQL, passed through unread. The per-product spellings are one flat record per dialect in the shape `Syntax` is one; what a product cannot express is refused by name and reason (SQLite's type/nullability/default and constraint drops, SQL Server's defaults) rather than generated and rejected. `struct_edit` — the staging model, pure and unit-tested: a draft equal to its snapshot is dropped rather than refused, and a dropped column discards any change staged against it. `PaneItem::TableStruct` plus `StructPane` — its own four `DESCRIBE`s (the panel keeps display strings, so nothing an editor needs survives in it), the PK's own backing index matched away by name *and* by covering the key's columns, one column edited at a time in a form rather than an input per cell, and the batch shown live and read-only before it can be run. The apply forces autocommit on and never calls rollback — MySQL and Oracle commit at every DDL statement — stops at the first refusal, and on **either** outcome discards and reloads, saying how far it got |
 | First release, v0.1.0 (PR #8) | done | `release.yml` (every build job runs Gradle, then jlink, then cargo — in that order, because rudbman-jdbc's build script refuses to compile without the bridge JAR — plus a smoke step over the staged tree before anything is published), `packaging/` (a Linux desktop entry and an `install.sh` that installs the whole tree and symlinks it, a macOS `Info.plist`), `<exe_dir>/runtime` added to the bundled-runtime search, `jdk.charsets` in the jlink module list (with `--compress=2`, the JDK 17 spelling), and a README brought fully up to date with three screenshots (captured through the temporary env-gated hook, reverted before the commit) |
+| The widget kit extracted as ruui | done | `rudbman-ui`, `rudbman-grid` and `rudbman-editor` are gone from this repository. They are [ruui](https://github.com/xcomart/ruui) — `ruui`, `ruui-grid`, `ruui-editor` — extracted because rudbman was the third application carrying byte-identical copies of them, and the four vendored gpui crates went with them; rudbman's patch table now points at ruui's `vendor/`, which is what keeps one gpui in the binary. The one seam that had to be cut is the editor's: it used to `use rudbman_sql` and hold a `Dialect`, and a widget three applications share cannot. So the call turned around. `crates/rudbman-app/src/sql_highlight.rs` is rudbman's `Highlighter` — `lex_line` in the session's dialect, `TokenKind` onto the palette's twelve slots, `--` for the comment toggle — and `rudbman-sql`'s new `state` module packs the lexer's sixteen-byte `LineState` into the four bytes the widget keeps per line (a dollar quote's tag is 96 bits, hence a codec with a side table rather than a pair of shifts). `statement_at` did not travel: the editor cuts statements out of the spans it is drawing, stepping over a `;` the highlighter called part of a string or a comment, and `sql_highlight`'s tests hold that against `rudbman_sql::statement_at` across H2, MySQL's `#`, PostgreSQL's `$$` and SQL Server's `[..]`. **One disagreement is known and pinned by a test**: a `;` inside a *quoted identifier* (`"a;b"`, `` `a;b` ``, `[a;b]`) splits a statement in the editor and not in the splitter, because the palette has no quoted-identifier slot for the editor to step over. The fix belongs in ruui. All seven dependencies (three crates, four patched gpui) are now `git`+`rev` dependencies on `https://github.com/xcomart/ruui`, at the same revision, so CI runs green on a fresh runner with no sibling checkout |
 
 - Repository: <https://github.com/xcomart/rudbman> (public, MIT).
 - The branch flow is logman's: **work on dev, main takes PR merge commits
   only**. CI is a three-platform matrix and runs the bridge (Java) suite
   before the Rust one.
-- Test count (2026-08-14): roughly 1080 Rust plus 141 Java. That includes the
-  integration tests, which boot a real JVM and a real H2, and the 38 opt-in
-  container tests (`crates/rudbman-jdbc/tests/containers.rs`, up from 15).
+- Test count (2026-08-25): roughly 890 Rust plus 141 Java. It fell by 256 and
+  rose by 17 when the widget kit left: `rudbman-ui`'s 121, `rudbman-editor`'s
+  82 and `rudbman-grid`'s 53 are now run by ruui's own suite, and what came
+  back is the dialect adapter's 10 and the line-state codec's 7. The Rust
+  figure still includes the integration tests, which boot a real JVM and a real
+  H2, and the 38 opt-in container tests
+  (`crates/rudbman-jdbc/tests/containers.rs`).
 
 ## What is next
 
@@ -130,9 +135,11 @@ out. What remains can be taken in any order:
   Co-authored-by.
 - **Merge with a merge commit once CI is green on all three platforms**
   (`gh pr merge --merge`).
-- `vendor/gpui`, `vendor/gpui_linux`, `vendor/gpui_macos` and
-  `vendor/gpui_windows` stay **byte-identical** with rulogman's vendor tree, so
-  patches can be exchanged as diffs. Do not edit them.
+- The four patched gpui crates are ruui's now, not this repository's, and they
+  stay **byte-identical** with rulogman's vendor tree so patches can be
+  exchanged as diffs. Do not edit them — and do not drop rudbman's
+  `[patch."https://github.com/zed-industries/zed"]` table, which is what points
+  at them: without it two gpui crates end up in one binary and nothing draws.
 - Verification commands: `cargo test --workspace`, `cargo clippy --workspace
   --all-targets -- -D warnings`, `cargo fmt --check`, `cd bridge &&
   ./gradlew build`. The bridge JAR is regenerated with `cd bridge &&

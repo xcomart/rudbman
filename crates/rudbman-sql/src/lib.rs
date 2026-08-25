@@ -1,10 +1,11 @@
 //! SQL lexing, dialects, and statement splitting: everything rudbman needs to
 //! understand the *shape* of a script without understanding the script.
 //!
-//! Two things are built on this crate. The editor (`rudbman-editor`) colors a
-//! buffer with it and finds the statement under the cursor with it; the query
-//! runner takes the statements it cuts. A future completion engine will take the
-//! same tokens. None of them is a UI concern here — this crate takes `&str` and
+//! Two things are built on this crate. The editor — `ruui-editor`, driven
+//! through the `Highlighter` that `rudbman-app`'s `sql_highlight` module wraps
+//! this lexer in — colors a buffer with it and finds the statement under the
+//! cursor with it; the query runner takes the statements it cuts. A future
+//! completion engine will take the same tokens. None of them is a UI concern here — this crate takes `&str` and
 //! returns spans, it has no dependencies at all, and it does not know that gpui
 //! exists.
 //!
@@ -125,6 +126,9 @@
 //!   [`DmlValue`]: the grid's staged edits turned into parameterized SQL.
 //! * [`mod@lexer`] — [`Token`], [`TokenKind`], [`LineState`], [`lex_line`],
 //!   [`lex`], [`Lexer`].
+//! * [`mod@state`] — [`LineStateCodec`], which packs a [`LineState`] into the
+//!   `u32` a general-purpose editor widget can carry per line, and unpacks it
+//!   again.
 //! * [`mod@statement`] — [`StatementSpan`], [`split_statements`],
 //!   [`statement_at`].
 //! * `keywords` — the reserved-word tables, private.
@@ -136,6 +140,7 @@ pub mod dialect;
 pub mod dml;
 pub mod ident;
 pub mod lexer;
+pub mod state;
 pub mod statement;
 
 mod keywords;
@@ -149,4 +154,5 @@ pub use dml::{
     DmlError, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
+pub use state::LineStateCodec;
 pub use statement::{StatementSpan, split_statements, statement_at};

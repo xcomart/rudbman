@@ -85,7 +85,7 @@ use gpui::{
 use rudbman_core::ConnectionProfile;
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::{ConstraintDrop, ConstraintKind, Dialect, TableAlter, plan_alter};
-use rudbman_ui::{
+use ruui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
     TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to, scrolled, theme,
 };
@@ -2558,7 +2558,7 @@ mod tests {
     ) -> WindowHandle<StructPane> {
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let session = connected.handle();
         let profile = crate::connection::h2::profile("struct-pane");
@@ -2853,7 +2853,7 @@ mod tests {
         let connected = crate::explorer::tests::h2_fixture("struct-read-only");
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let session = connected.handle();
         let mut profile = crate::connection::h2::profile("struct-read-only");
@@ -2894,7 +2894,7 @@ mod tests {
     ) -> WindowHandle<StructPane> {
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let session = connected.handle();
         let mut profile = crate::connection::h2::profile("struct-create");
@@ -3561,7 +3561,7 @@ mod tests {
         let connected = crate::explorer::tests::h2_fixture("struct-apply-read-only");
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let session = connected.handle();
         let mut profile = crate::connection::h2::profile("struct-apply-read-only");
@@ -3802,7 +3802,7 @@ mod tests {
         let connected = crate::explorer::tests::h2_fixture("struct-open");
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
+            ruui::init(cx);
         });
         let session = connected.handle();
         let profile = crate::connection::h2::profile("struct-open");

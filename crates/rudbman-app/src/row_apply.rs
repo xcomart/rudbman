@@ -41,7 +41,7 @@ use gpui::{
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::DmlError;
-use rudbman_ui::{Button, ButtonVariant, Theme, modal, theme};
+use ruui::{Button, ButtonVariant, Theme, modal, theme};
 
 use crate::data_edit::{EditCounts, PlanError, PlannedStatement};
 use crate::i18n::ts;

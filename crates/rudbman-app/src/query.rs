@@ -82,20 +82,20 @@ use gpui::{
     Styled, Subscription, Window, div, prelude::*, px, relative,
 };
 use rudbman_core::{AppSettings, ConnectionProfile};
-use rudbman_editor::editor::{
-    Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
-    ToggleComment, Undo,
-};
-use rudbman_editor::{EditorEvent, EditorView};
-use rudbman_grid::{
-    GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
-    SortDirection,
-};
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
 use rudbman_sql::{Dialect, TokenKind, lex, split_statements};
-use rudbman_ui::{Button, ButtonVariant, ContextMenu, Theme, theme};
+use ruui::{Button, ButtonVariant, ContextMenu, Theme, theme};
+use ruui_editor::editor::{
+    Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
+    ToggleComment, Undo,
+};
+use ruui_editor::{EditorEvent, EditorView};
+use ruui_grid::{
+    GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
+    SortDirection,
+};
 
 use crate::SHORTCUT_MODIFIER;
 use crate::builder_sql;
@@ -113,6 +113,7 @@ use crate::row_apply::{
     ApplyFailure, ApplyProblem, ApplyStop, apply_batch, plan_message, primary_key,
     render_apply_error, render_apply_preview, render_discard_confirm,
 };
+use crate::sql_highlight::DialectHighlighter;
 
 /// The statement keywords that read rather than write.
 ///
@@ -650,7 +651,7 @@ impl QueryPane {
     ) -> Self {
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
-            let mut editor = EditorView::new(cx).dialect(dialect);
+            let mut editor = EditorView::new(cx).highlighter(DialectHighlighter::shared(dialect));
             if !sql.is_empty() {
                 editor.set_text(sql, cx);
             }
@@ -689,7 +690,13 @@ impl QueryPane {
                         });
                         cx.notify();
                     }
-                    EditorEvent::Changed | EditorEvent::SelectionChanged => {}
+                    // `Changed` and `SelectionChanged` are drawn from the
+                    // editor's own state on the next frame; `Intercepted` is a
+                    // navigation key handed back by an editor that was asked to
+                    // hand them back, which this pane never asks for.
+                    EditorEvent::Changed
+                    | EditorEvent::SelectionChanged
+                    | EditorEvent::Intercepted(_) => {}
                 },
             );
 
@@ -1206,7 +1213,7 @@ impl QueryPane {
                 // read-only, so anything that arrives here is a value the user
                 // meant to change.
                 GridEvent::EditCommitted { row, column, value } => {
-                    let rudbman_grid::EditValue::Text(text) = value;
+                    let ruui_grid::EditValue::Text(text) = value;
                     pane.stage(id, *row, *column, StagedCell::Text(text.clone()), cx);
                 }
                 // The grid holds no strings, so its menu is drawn here
@@ -2171,7 +2178,7 @@ impl QueryPane {
 
     /// Opens the editor's menu, as a right click in it would.
     ///
-    /// Test-only: the widget's own gesture is covered in `rudbman-editor`, and
+    /// Test-only: the widget's own gesture is covered in `ruui-editor`, and
     /// what the shell's tests need is a pane with a menu open on it.
     #[cfg(test)]
     pub(crate) fn open_editor_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
@@ -2784,9 +2791,9 @@ mod tests {
     ) -> WindowHandle<QueryPane> {
         cx.update(|cx| {
             app_settings::init(cx);
-            rudbman_ui::init(cx);
-            rudbman_editor::init(cx);
-            rudbman_grid::init(cx);
+            ruui::init(cx);
+            ruui_editor::init(cx);
+            ruui_grid::init(cx);
         });
         let settings = AppSettings {
             fetch_batch_rows: batch_rows,
@@ -3869,7 +3876,7 @@ mod tests {
                         return false;
                     }
                     let input = grid.editor().cloned().expect("the field is open");
-                    input.update(cx, |input: &mut rudbman_ui::TextInput, cx| {
+                    input.update(cx, |input: &mut ruui::TextInput, cx| {
                         input.set_content(text.to_owned(), cx);
                     });
                     grid.commit_edit(cx);

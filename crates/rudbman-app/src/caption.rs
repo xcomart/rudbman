@@ -45,7 +45,7 @@
 //! [`TitlebarStyle::System`]: rudbman_core::TitlebarStyle
 
 use gpui::{App, Window};
-use rudbman_ui::Theme;
+use ruui::Theme;
 
 #[cfg(target_os = "windows")]
 mod platform {
@@ -53,7 +53,7 @@ mod platform {
 
     use gpui::{Hsla, Rgba, Window};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use rudbman_ui::Theme;
+    use ruui::Theme;
     use windows::Win32::Foundation::{COLORREF, HWND};
     use windows::Win32::Graphics::Dwm::{
         DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,

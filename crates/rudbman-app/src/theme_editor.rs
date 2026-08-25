@@ -38,7 +38,7 @@
 //! management row drives: [`Catalog::read`] turns a file the user picked
 //! anywhere on the disk into a [`CatalogFile`], and [`CatalogFile::write`] puts
 //! one back out anywhere. Reading is where this module is *stricter* than
-//! `rudbman-ui`'s loader: the loader is forgiving because a broken file in the
+//! `ruui`'s loader: the loader is forgiving because a broken file in the
 //! configuration directory must not take the others down with it, whereas an
 //! import is a single deliberate act with a person waiting on the answer, and
 //! silently installing a theme with half its slots quietly substituted would be
@@ -56,7 +56,7 @@ use gpui::{
     prelude::*, px,
 };
 use rudbman_core::AppSettings;
-use rudbman_ui::{
+use ruui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorThemeColors, EditorThemeFile,
     EditorThemePicker, EditorThemeRegistry, EditorThemeSwatch, Scrollbar, ScrollbarAxis,
     ScrollbarState, TextInput, ThemeColors, ThemeFile, ThemeRegistry, form_row, hide_later,
@@ -178,9 +178,10 @@ impl CatalogFile {
     /// id, one belonging to a built-in entry, or a write that does not go
     /// through.
     pub fn save(&self, id: &str) -> Result<PathBuf> {
+        let dirs = crate::theme_dirs()?;
         match self {
-            Self::UiTheme(file) => theme_store::save_ui_theme(id, file),
-            Self::EditorTheme(file) => theme_store::save_editor_theme(id, file),
+            Self::UiTheme(file) => theme_store::save_ui_theme(&dirs, id, file),
+            Self::EditorTheme(file) => theme_store::save_editor_theme(&dirs, id, file),
         }
     }
 
@@ -400,9 +401,10 @@ impl Catalog {
     ///
     /// Fails when `id` has no usable slug or the file cannot be removed.
     pub fn delete(self, id: &str) -> Result<()> {
+        let dirs = crate::theme_dirs()?;
         match self {
-            Self::UiTheme => theme_store::delete_ui_theme(id),
-            Self::EditorTheme => theme_store::delete_editor_theme(id),
+            Self::UiTheme => theme_store::delete_ui_theme(&dirs, id),
+            Self::EditorTheme => theme_store::delete_editor_theme(&dirs, id),
         }
     }
 
@@ -924,7 +926,7 @@ impl ThemeEditor {
             return;
         }
 
-        theme_store::reload(cx);
+        crate::reload_themes(cx);
         cx.emit(ThemeEditorEvent::Saved);
     }
 
@@ -1438,7 +1440,7 @@ impl Render for ThemeEditor {
 mod tests {
     use std::fs;
 
-    use rudbman_ui::{EditorTheme, Theme};
+    use ruui::{EditorTheme, Theme};
 
     use super::*;
 
@@ -1644,7 +1646,7 @@ mod tests {
     /// Asserted through the refusals alone, which is as far as this can go
     /// without writing into the *user's* configuration directory: the write and
     /// the delete themselves are round-tripped against a temporary directory by
-    /// `rudbman_ui::theme_store`'s own tests, once per format.
+    /// `ruui::theme_store`'s own tests, once per format.
     #[test]
     fn a_builtin_id_is_refused_by_the_catalogue_that_reserves_it() {
         let chrome = CatalogFile::UiTheme(Box::new(ThemeFile::from_theme("Mine", &Theme::dark())));

@@ -42,7 +42,7 @@ use gpui::{
 };
 use rudbman_erd::{ErdColumn, ErdEvent, ErdModel, ErdRelation, ErdTable, ErdView, NameMode};
 use rudbman_jdbc::{DescribeRequest, Session};
-use rudbman_ui::{Button, ButtonVariant, ContextMenu, Segmented, Theme, theme};
+use ruui::{Button, ButtonVariant, ContextMenu, Segmented, Theme, theme};
 
 use crate::SHORTCUT_MODIFIER;
 use crate::app_settings;
@@ -1261,7 +1261,7 @@ mod tests {
 
     #[gpui::test]
     fn opening_a_panel_leaves_it_loading_until_the_host_asks(cx: &mut gpui::TestAppContext) {
-        cx.update(rudbman_ui::init);
+        cx.update(ruui::init);
         let panel = cx.new(|cx| ErdPane::new(target("PUBLIC"), cx));
         cx.update(|cx| {
             assert!(panel.read(cx).is_loading());
@@ -1276,7 +1276,7 @@ mod tests {
     fn the_request_reaches_a_subscription_registered_after_construction(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(rudbman_ui::init);
+        cx.update(ruui::init);
         let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         let panel = cx.new(|cx| ErdPane::new(target("PUBLIC"), cx));
 
@@ -1298,7 +1298,7 @@ mod tests {
     /// the host writes the file once per gesture.
     #[gpui::test]
     fn a_rearrangement_is_passed_on_for_the_host_to_save(cx: &mut gpui::TestAppContext) {
-        cx.update(rudbman_ui::init);
+        cx.update(ruui::init);
         let seen = std::rc::Rc::new(std::cell::RefCell::new(0usize));
         let panel = cx.new(|cx| ErdPane::new(target("APP"), cx));
 
@@ -1345,7 +1345,7 @@ mod tests {
     fn a_failed_load_is_reported_and_not_mistaken_for_an_empty_schema(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(rudbman_ui::init);
+        cx.update(ruui::init);
         let panel = cx.new(|cx| ErdPane::new(target("PUBLIC"), cx));
         cx.update(|cx| {
             panel.update(cx, |panel, cx| {
@@ -1366,7 +1366,7 @@ mod tests {
     /// A two-table diagram already delivered, which is what a menu is raised
     /// over.
     fn loaded(cx: &mut gpui::TestAppContext) -> gpui::WindowHandle<ErdPane> {
-        cx.update(rudbman_ui::init);
+        cx.update(ruui::init);
         let window = cx.add_window(|_window, cx| ErdPane::new(target("APP"), cx));
         window
             .update(cx, |panel, _window, cx| {
@@ -1483,7 +1483,7 @@ mod tests {
     /// greyed rather than dropped, so the menu keeps its shape.
     #[gpui::test]
     fn a_menu_over_a_loading_diagram_greys_what_needs_one(cx: &mut gpui::TestAppContext) {
-        cx.update(rudbman_ui::init);
+        cx.update(ruui::init);
         let window = cx.add_window(|_window, cx| ErdPane::new(target("APP"), cx));
         window
             .update(cx, |panel, _window, cx| {
