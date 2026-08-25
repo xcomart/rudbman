@@ -176,6 +176,8 @@ settings:
       type: 型名
       operator: 演算子
       identifier: 識別子
+      key: キー
+      variable: 変数
       punctuation: 区切り記号
       bracket_match: 対応する括弧
       error: エラー
@@ -631,7 +633,7 @@ context:
 
 update:
   title: 更新があります
-  available: "rudbman %{version} が利用できます。"
+  available: "%{app} %{version} が利用できます。"
   installed: "現在実行中のバージョンは %{version} です。"
   update: 更新
   ignore: このバージョンを無視

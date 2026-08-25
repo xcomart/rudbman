@@ -176,6 +176,8 @@ settings:
       type: Nombres de tipo
       operator: Operadores
       identifier: Identificadores
+      key: Claves
+      variable: Variables
       punctuation: Puntuación
       bracket_match: Paréntesis emparejado
       error: Errores
@@ -631,7 +633,7 @@ context:
 
 update:
   title: Actualización disponible
-  available: "rudbman %{version} ya está disponible."
+  available: "%{app} %{version} ya está disponible."
   installed: "Ahora mismo estás usando la %{version}."
   update: Actualizar
   ignore: Ignorar esta versión

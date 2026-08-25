@@ -1,7 +1,8 @@
 ; Inno Setup script for the Windows installer.
 ;
 ; Why an installer at all, when the zip already works. The zip is what the
-; in-app updater downloads and unpacks (crates/rudbman-app/src/update.rs), so
+; in-app updater downloads and unpacks (ruui-shell, pointed at this product by
+; crates/rudbman-app/src/app_identity.rs), so
 ; it is not going anywhere. What it cannot do is register the program with
 ; Windows: unzipping leaves no entry under "Apps & features" (the ARP keys
 ; below HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall), and winget

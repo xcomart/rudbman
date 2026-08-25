@@ -176,6 +176,8 @@ settings:
       type: Typnamen
       operator: Operatoren
       identifier: Bezeichner
+      key: Schlüssel
+      variable: Variablen
       punctuation: Satzzeichen
       bracket_match: Passende Klammer
       error: Fehler
@@ -631,7 +633,7 @@ context:
 
 update:
   title: Update verfügbar
-  available: "rudbman %{version} ist verfügbar."
+  available: "%{app} %{version} ist verfügbar."
   installed: "Sie verwenden derzeit %{version}."
   update: Aktualisieren
   ignore: Diese Version ignorieren

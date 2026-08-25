@@ -31,12 +31,11 @@
 //! tree (M2). The menu already carries the row that will open the first of them;
 //! its handler is marked `TODO` and does nothing so far.
 
-mod about_dialog;
+mod app_identity;
 mod app_settings;
 mod backup_dialog;
 mod builder_pane;
 mod builder_sql;
-mod caption;
 mod connection;
 mod connection_dialog;
 mod context_menu;
@@ -64,10 +63,7 @@ mod sql_highlight;
 mod struct_edit;
 mod struct_pane;
 mod table_detail;
-mod theme_editor;
 mod transfer_dialog;
-mod update;
-mod update_dialog;
 
 // Compiles `locales/*.yml` into the binary and defines the machinery `t!`
 // expands to, which is why it has to sit in the crate root. `fallback = "en"`
@@ -79,11 +75,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, Hsla,
-    KeyBinding, Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, QuitMode, ScrollHandle,
-    SharedString, Stateful, Subscription, Task, TitlebarOptions, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowOptions, actions, div, img,
-    prelude::*, px, relative, size,
+    AnyElement, App, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, Hsla, KeyBinding,
+    Menu, MenuItem, MouseButton, MouseUpEvent, Pixels, Point, QuitMode, ScrollHandle, SharedString,
+    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowOptions,
+    actions, div, img, prelude::*, px, relative,
 };
 use rudbman_core::{
     AppSettings, ConnectionProfile, ConnectionStore, DriverStore, TitlebarStyle, WindowState,
@@ -91,16 +86,22 @@ use rudbman_core::{
 use ruui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
     MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, TabBar, TabItem, TabStatus, Theme,
-    ThemeRegistry, WindowControlIcons, WindowControls, hide_later, hide_now, modal, scroll_to,
-    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store, window_controls,
+    ThemeRegistry, hide_later, hide_now, modal, scroll_to, scrolled, set_editor_theme, set_theme,
+    set_window_tint, theme, theme_store,
 };
+use ruui_shell::chrome::{
+    SHADOW_BAND, client_tiling, draws_own_titlebar, render_resize_edges, titlebar_gestures,
+    window_appearance, window_control_strips,
+};
+pub(crate) use ruui_shell::menu_rows::SHORTCUT_MODIFIER;
+use ruui_shell::settings::{window_bounds, window_geometry};
+use ruui_shell::update;
+use ruui_shell::{AboutDialog, AboutDialogEvent, UpdateDialog, UpdateDialogEvent};
+use ruui_shell::{apply_caption_theme, window_control_icons};
 use uuid::Uuid;
 
-use about_dialog::{AboutDialog, AboutDialogEvent};
-use app_settings::WindowGeometry;
 use backup_dialog::{BackupDialog, BackupDialogEvent};
 use builder_pane::{BuilderPane, BuilderPaneEvent};
-use caption::apply_caption_theme;
 use connection::{ConnectError, Connected};
 use connection_dialog::{ConnectionDialog, ConnectionDialogEvent, profile_rows};
 use context_menu::MenuRow;
@@ -110,14 +111,12 @@ use erd_pane::{ErdDiagram, ErdPane, ErdPaneEvent, ErdTarget};
 use explorer::{ConnectionId, Explorer, ExplorerEvent, Folder, NodeId, ObjectTarget, RootInfo};
 use extract_dialog::{ExtractDialog, ExtractDialogEvent};
 use i18n::ts;
-use icons::Icons;
-use pane_tree::{Axis, Pane, PaneId, PaneItem, PaneNode, PaneTree, SplitId};
+use pane_tree::{Axis, Pane, PaneId, PaneItem, PaneLookup, PaneNode, PaneTree, SplitId};
 use query::{ConfirmRequest, QueryPane, QueryPaneEvent};
 use settings_dialog::{SettingsDialog, SettingsDialogEvent};
 use struct_pane::StructPane;
 use table_detail::{TableDetail, TableDetailEvent};
 use transfer_dialog::{TransferDialog, TransferDialogEvent, TransferTarget};
-use update_dialog::{UpdateDialog, UpdateDialogEvent};
 
 actions!(
     rudbman,
@@ -210,16 +209,6 @@ const APP_NAME: &str = "rudbman";
 /// same name to pick up the application icon, so `packaging/linux` has to ship
 /// `com.aihouse.rudbman.desktop` and nothing else.
 const APP_ID: &str = "com.aihouse.rudbman";
-
-/// Modifier key named in the shortcut hints of the dropdown menu.
-///
-/// Never translated: it is the name printed on the key. It follows
-/// [`bind_shortcuts`] on every platform so the two never drift.
-pub(crate) const SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
-    "Cmd"
-} else {
-    "Ctrl"
-};
 
 /// Modifier the pane commands are bound to.
 ///
@@ -730,6 +719,17 @@ impl Workspace {
     /// `titlebar` is the style the window was opened with; from then on the
     /// field tracks whatever the applied settings switched the window to.
     fn new(titlebar: TitlebarStyle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // What `main` does before it opens a window, for the tests that build a
+        // workspace without one: every dialog the shell draws reads the
+        // identity, and the start-up check has to be talked out of reaching
+        // github.com — gpui's test executor runs background tasks inline
+        // whenever a test parks, and this suite builds dozens of workspaces.
+        #[cfg(test)]
+        {
+            app_identity::install(cx);
+            update::set_startup_check_enabled(false);
+        }
+
         let about = cx.new(AboutDialog::new);
         let about_events =
             cx.subscribe_in(
@@ -872,9 +872,20 @@ impl Workspace {
             match event {
                 UpdateDialogEvent::Ignored { tag } => {
                     // The dialog has already closed itself; writing the file is
-                    // the shell's job because the shell is what owns settings.
+                    // this workspace's job, through the policy `app_identity`
+                    // installed, because the settings are rudbman's.
                     update::remember_ignored(tag, cx);
                     this.focus_shell(window, cx);
+                }
+                UpdateDialogEvent::Installed(_) => {
+                    // The new build is on disk and the dialog is still on
+                    // screen, deliberately: the restart is imminent and a
+                    // dialog that closed itself first would flash the window
+                    // back into view for a fraction of a second. Restarting is
+                    // the application's call and not the shell's — a staged
+                    // update merely spends its restart applying itself and
+                    // re-executing once more.
+                    cx.restart();
                 }
                 UpdateDialogEvent::Dismissed => {
                     dialog.update(cx, |dialog, cx| dialog.close(cx));
@@ -895,8 +906,6 @@ impl Workspace {
         // connection form above all. If anything is already up, the check simply
         // says nothing and tries again next launch.
         //
-        // `update::check` answers `None` outright in a test build; see the note
-        // on it for why the guard is there and not here.
         let ignored = app_settings::current(cx).ignored_update;
         cx.spawn(async move |this, cx| {
             let found = cx
@@ -2980,7 +2989,10 @@ impl Workspace {
         // the repaint, so the next frame already draws under the new answer.
         set_window_tint(settings.window.background_opacity, cx);
         cx.refresh_windows();
-        window.set_background_appearance(window_appearance(&settings.window));
+        window.set_background_appearance(window_appearance(
+            settings.window.background_blur,
+            settings.window.background_opacity,
+        ));
         // After the background appearance, never before: on Windows that call
         // re-arms the accent policy that would otherwise repaint the caption out
         // from under us.
@@ -3641,7 +3653,7 @@ impl Workspace {
     /// control and deliberately does not.
     fn render_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
-        let custom = draws_own_titlebar(self.titlebar, window);
+        let custom = draws_own_titlebar(chrome_titlebar(self.titlebar), window);
         let menu = (!cfg!(target_os = "macos")).then(|| self.render_app_menu(cx));
         // Built before the row is assembled: both of these borrow the context to
         // register listeners, and the builders below borrow it to read the theme.
@@ -3715,34 +3727,11 @@ impl Workspace {
                 .child(APP_NAME)
         });
 
-        // The caption buttons the other two platforms have to draw themselves.
-        //
-        // Two strips rather than one, because a Linux desktop decides where its
-        // caption buttons go and putting them on the left is a setting people
-        // actually use; [`ruui::window_controls::split`] turns what the
-        // platform reports into the two ends. Off Linux nothing is reported,
-        // which is the same answer as "the usual three on the right".
-        let (leading_buttons, trailing_buttons) = if custom && !cfg!(target_os = "macos") {
-            window_controls::split(cx.button_layout(), window.window_controls())
-        } else {
-            (Vec::new(), Vec::new())
-        };
-        let strip = |id: &'static str, buttons: Vec<gpui::WindowButton>| {
-            (!buttons.is_empty()).then(|| {
-                WindowControls::new(
-                    id,
-                    WindowControlIcons {
-                        minimize: icons::WINDOW_MINIMIZE.into(),
-                        maximize: icons::WINDOW_MAXIMIZE.into(),
-                        restore: icons::WINDOW_RESTORE.into(),
-                        close: icons::WINDOW_CLOSE.into(),
-                    },
-                    buttons,
-                )
-            })
-        };
-        let leading_controls = strip("window-controls-leading", leading_buttons);
-        let trailing_controls = strip("window-controls-trailing", trailing_buttons);
+        // The caption buttons the other two platforms have to draw themselves,
+        // as the two strips a Linux desktop may ask for; see
+        // [`ruui_shell::chrome::window_control_strips`].
+        let (leading_controls, trailing_controls) =
+            window_control_strips(&window_control_icons(), custom, window, cx);
 
         div()
             .id("toolbar")
@@ -5144,301 +5133,34 @@ fn editor_theme_for(
 
 /// Records the window's placement in the settings global.
 ///
-/// Fullscreen is knowingly stored as "not maximized". gpui hands out the
-/// restore bounds either way, so the size survives; coming back fullscreen with
-/// no title bar and no way to tell why would read as a broken window.
+/// Nothing is written to disk here; the file is saved once, when the last
+/// window closes. See [`app_settings::record_window_geometry`].
 fn record_window_geometry(window: &Window, cx: &mut App) {
-    let (bounds, maximized) = match window.window_bounds() {
-        WindowBounds::Windowed(bounds) => (bounds, false),
-        WindowBounds::Maximized(bounds) => (bounds, true),
-        WindowBounds::Fullscreen(bounds) => (bounds, false),
-    };
-    app_settings::record_window_geometry(WindowGeometry::of(bounds, maximized), cx);
+    app_settings::record_window_geometry(window_geometry(window), cx);
 }
 
 /// The placement to open the window at.
-///
-/// A saved position is used as it stands; without one the saved *size* is
-/// centred on the active display, which is what a first run does and what a
-/// window that has never been moved deserves.
-fn window_bounds(state: &WindowState, cx: &mut App) -> WindowBounds {
-    let bounds = match WindowGeometry::saved(state) {
-        Some(geometry) => geometry.bounds(),
-        None => Bounds::centered(
-            None,
-            size(px(state.width as f32), px(state.height as f32)),
-            cx,
-        ),
-    };
-    if state.maximized {
-        WindowBounds::Maximized(bounds)
-    } else {
-        WindowBounds::Windowed(bounds)
-    }
+fn opening_bounds(state: &WindowState, cx: &mut App) -> WindowBounds {
+    window_bounds(
+        app_settings::saved_geometry(state),
+        state.width,
+        state.height,
+        state.maximized,
+        cx,
+    )
 }
 
-/// Whether the toolbar has to stand in for the window's title bar.
+/// The title bar style as the shell's chrome spells it.
 ///
-/// On Windows and macOS the style applied to the window settles it: a
-/// transparent title bar leaves no platform caption, so the toolbar is all
-/// there is.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn draws_own_titlebar(style: TitlebarStyle, _window: &Window) -> bool {
-    style == TitlebarStyle::Custom
-}
-
-/// Whether the toolbar has to stand in for the window's title bar.
-///
-/// Linux is not the configured style alone. The custom style makes the window
-/// ask for client-side decorations, but the ask can be declined — gpui falls
-/// back to server decorations when no compositor is running — so what the window
-/// actually ended up with is what decides here. Deciding from the style alone
-/// would draw a second caption under the compositor's own.
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn draws_own_titlebar(style: TitlebarStyle, window: &Window) -> bool {
-    style == TitlebarStyle::Custom
-        && matches!(
-            window.window_decorations(),
-            gpui::Decorations::Client { .. }
-        )
-}
-
-/// Wires the gestures a system title bar answers to onto the custom one.
-///
-/// Windows needs none of them. The row reports itself as
-/// [`WindowControlArea::Drag`], the hit test turns that into `HTCAPTION`, and
-/// the window procedure then does the dragging, the aero-snap gestures and the
-/// double-click to maximise on its own — before the app is ever told a button
-/// went down.
-#[cfg(target_os = "windows")]
-fn titlebar_gestures(row: Stateful<Div>) -> Stateful<Div> {
-    row
-}
-
-/// Wires the gestures a system title bar answers to onto the custom one.
-///
-/// AppKit still drags the window for the strip its own title bar would have
-/// covered, so only the double-click is left to answer — and it has to go
-/// through [`Window::titlebar_double_click`], which follows whatever the user
-/// picked in System Settings (zoom, minimise, or nothing at all).
-#[cfg(target_os = "macos")]
-fn titlebar_gestures(row: Stateful<Div>) -> Stateful<Div> {
-    row.on_click(|event, window, _cx| {
-        if event.standard_click() && event.click_count() == 2 {
-            window.titlebar_double_click();
-        }
-    })
-}
-
-/// Wires the gestures a system title bar answers to onto the custom one.
-///
-/// Everything is the app's here: the compositor is told to take over the move,
-/// and the window menu and the zoom have to be asked for explicitly. Only
-/// meaningful once the window carries client-side decorations, which is why the
-/// caller gates them on [`Window::window_decorations`].
-///
-/// The move starts on the press rather than the click because the compositor
-/// takes the pointer with it, so a release would never arrive.
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn titlebar_gestures(row: Stateful<Div>) -> Stateful<Div> {
-    row.on_click(|event, window, _cx| {
-        if event.standard_click() && event.click_count() == 2 {
-            window.zoom_window();
-        }
-    })
-    .on_mouse_down(MouseButton::Left, |_, window, _cx| {
-        window.start_window_move();
-    })
-    .on_mouse_down(MouseButton::Right, |event, window, _cx| {
-        window.show_window_menu(event.position);
-    })
-}
-
-/// Width of the transparent band around a self-decorated window.
-///
-/// The band carries the drop shadow the compositor no longer draws once the
-/// window asks for client-side decorations, and doubles as the resize grip. It
-/// is part of the window's surface but not of the window as the user
-/// understands it: [`Window::set_client_inset`] publishes the visible bounds
-/// through `_GTK_FRAME_EXTENTS`, so the compositor snaps, maximises and stacks
-/// by the visible edge, exactly as it does for GTK's frames.
-const SHADOW_BAND: f32 = 12.;
-
-/// Edge length of the corner squares, where the resize goes diagonal.
-const RESIZE_CORNER: f32 = 24.;
-
-/// The tiling state of a window that draws its own frame, `None` under a
-/// server-side one.
-///
-/// Always `None` here: Windows keeps resizing and framing the window through the
-/// caption hit test even under a custom title bar, and AppKit never gives the
-/// frame up at all — neither window ever carries the shadow band.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn client_tiling(_window: &Window) -> Option<gpui::Tiling> {
-    None
-}
-
-/// The tiling state of a window that draws its own frame, `None` under a
-/// server-side one.
-///
-/// `Some` exactly when the compositor granted client-side decorations, with the
-/// edges that currently touch a screen or neighbour edge marked tiled — those
-/// edges get no band, no shadow and no resize grip. Fullscreen counts as tiled
-/// all round.
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn client_tiling(window: &Window) -> Option<gpui::Tiling> {
-    match window.window_decorations() {
-        gpui::Decorations::Client { tiling } => Some(tiling),
-        gpui::Decorations::Server => None,
-    }
-}
-
-/// The resize handles the compositor's frame would have provided.
-///
-/// Asking for client-side decorations takes the frame away, resize borders
-/// included, so the shadow band has to start the resize itself — the compositor
-/// takes over once told, exactly as it does for the title-bar drag. The strips
-/// cover the band, the corner squares reach past it into the window, and every
-/// tiled edge goes without: a maximised or snapped window has no border to drag
-/// there.
-fn render_resize_edges(tiling: gpui::Tiling) -> Vec<AnyElement> {
-    use gpui::{CursorStyle, ResizeEdge};
-
-    let strip = px(SHADOW_BAND);
-    let corner = px(RESIZE_CORNER);
-    // A strip stops short of a corner square only where that square exists;
-    // against a tiled perpendicular edge it runs to the end of the band.
-    let inset = |tiled: bool| if tiled { px(0.) } else { corner };
-    let handle = |id: &'static str, cursor: CursorStyle, edge: ResizeEdge| {
-        div()
-            .id(id)
-            .occlude()
-            .absolute()
-            .cursor(cursor)
-            .on_mouse_down(MouseButton::Left, move |_, window, _cx| {
-                window.start_window_resize(edge);
-            })
-    };
-
-    let mut handles: Vec<AnyElement> = Vec::new();
-    if !tiling.top {
-        handles.push(
-            handle("resize-top", CursorStyle::ResizeUpDown, ResizeEdge::Top)
-                .top_0()
-                .left(inset(tiling.left))
-                .right(inset(tiling.right))
-                .h(strip)
-                .into_any_element(),
-        );
-    }
-    if !tiling.bottom {
-        handles.push(
-            handle(
-                "resize-bottom",
-                CursorStyle::ResizeUpDown,
-                ResizeEdge::Bottom,
-            )
-            .bottom_0()
-            .left(inset(tiling.left))
-            .right(inset(tiling.right))
-            .h(strip)
-            .into_any_element(),
-        );
-    }
-    if !tiling.left {
-        handles.push(
-            handle(
-                "resize-left",
-                CursorStyle::ResizeLeftRight,
-                ResizeEdge::Left,
-            )
-            .left_0()
-            .top(inset(tiling.top))
-            .bottom(inset(tiling.bottom))
-            .w(strip)
-            .into_any_element(),
-        );
-    }
-    if !tiling.right {
-        handles.push(
-            handle(
-                "resize-right",
-                CursorStyle::ResizeLeftRight,
-                ResizeEdge::Right,
-            )
-            .right_0()
-            .top(inset(tiling.top))
-            .bottom(inset(tiling.bottom))
-            .w(strip)
-            .into_any_element(),
-        );
-    }
-    if !tiling.top && !tiling.left {
-        handles.push(
-            handle(
-                "resize-top-left",
-                CursorStyle::ResizeUpLeftDownRight,
-                ResizeEdge::TopLeft,
-            )
-            .top_0()
-            .left_0()
-            .size(corner)
-            .into_any_element(),
-        );
-    }
-    if !tiling.top && !tiling.right {
-        handles.push(
-            handle(
-                "resize-top-right",
-                CursorStyle::ResizeUpRightDownLeft,
-                ResizeEdge::TopRight,
-            )
-            .top_0()
-            .right_0()
-            .size(corner)
-            .into_any_element(),
-        );
-    }
-    if !tiling.bottom && !tiling.left {
-        handles.push(
-            handle(
-                "resize-bottom-left",
-                CursorStyle::ResizeUpRightDownLeft,
-                ResizeEdge::BottomLeft,
-            )
-            .bottom_0()
-            .left_0()
-            .size(corner)
-            .into_any_element(),
-        );
-    }
-    if !tiling.bottom && !tiling.right {
-        handles.push(
-            handle(
-                "resize-bottom-right",
-                CursorStyle::ResizeUpLeftDownRight,
-                ResizeEdge::BottomRight,
-            )
-            .bottom_0()
-            .right_0()
-            .size(corner)
-            .into_any_element(),
-        );
-    }
-    handles
-}
-
-/// Maps the window settings onto a gpui background appearance.
-///
-/// Blur wins when requested; failing that, any opacity below fully opaque asks
-/// for a plain transparent window; otherwise the window stays opaque.
-fn window_appearance(window: &WindowState) -> WindowBackgroundAppearance {
-    if window.background_blur {
-        WindowBackgroundAppearance::Blurred
-    } else if window.background_opacity < 1.0 {
-        WindowBackgroundAppearance::Transparent
-    } else {
-        WindowBackgroundAppearance::Opaque
+/// Two identical enums, deliberately: `rudbman-core` reads and writes
+/// `settings.json` and is free of gpui, which the shell's chrome is not, so
+/// neither can be the other's. Both serialise to the same two `snake_case`
+/// words — the test below is what says so — and this is the one line between
+/// them.
+fn chrome_titlebar(style: TitlebarStyle) -> ruui_shell::TitlebarStyle {
+    match style {
+        TitlebarStyle::Custom => ruui_shell::TitlebarStyle::Custom,
+        TitlebarStyle::System => ruui_shell::TitlebarStyle::System,
     }
 }
 
@@ -5558,16 +5280,6 @@ fn bind_shortcuts(cx: &mut App) {
 fn main() {
     env_logger::init();
 
-    // An update the previous run could only stage — because a JVM was loaded
-    // into it and Windows will not let its files be renamed — is applied here,
-    // synchronously, before the application exists and therefore before anything
-    // can load a JVM into *this* process. It answers `true` only when it has
-    // already spawned a fresh process on the new build, at which point the one
-    // useful thing left to do is get out of its way. See `update::apply_pending`.
-    if update::apply_pending() {
-        return;
-    }
-
     // The icon set has to be installed before the app runs: `svg()` resolves
     // every path through this source, and the default one answers `None`.
     // `LastWindowClosed` rather than the default, which is this only away from
@@ -5577,9 +5289,26 @@ fn main() {
     // in the background. One rule on every platform is what the app has always
     // done.
     let app = gpui_platform::application()
-        .with_assets(Icons)
+        .with_assets(icons::ICONS)
         .with_quit_mode(QuitMode::LastWindowClosed);
     app.run(|cx: &mut App| {
+        // First of all, and before anything else reaches the updater: every
+        // path in it reads the identity, including the two that run at
+        // start-up, and the only way to install one is with an `App` in hand.
+        app_identity::install(cx);
+
+        // An update the previous run could only stage — because a JVM was
+        // loaded into it and Windows will not let its files be renamed — is
+        // applied here, synchronously, before a window, a settings load or a
+        // connection exists, and therefore before anything can load a JVM into
+        // *this* process. It answers `true` only when it has already spawned a
+        // fresh process on the new build, at which point the one useful thing
+        // left to do is get out of its way. See `update::apply_pending`.
+        if update::apply_pending() {
+            cx.quit();
+            return;
+        }
+
         if let Err(error) = rudbman_core::init_secrets() {
             log::warn!("the OS keychain is unavailable: {error}");
         }
@@ -5637,7 +5366,7 @@ fn main() {
         })
         .detach();
 
-        let bounds = window_bounds(&settings.window, cx);
+        let bounds = opening_bounds(&settings.window, cx);
         // Read once, here: `appears_transparent` is what strips the platform
         // caption, and both Windows and macOS decide that when the window is
         // created. Changing the setting later cannot reach an open window,
@@ -5666,7 +5395,10 @@ fn main() {
                 app_id: Some(APP_ID.into()),
                 // A translucent or blurred window needs the platform surface to
                 // permit alpha; the body then tints its own background.
-                window_background: window_appearance(&settings.window),
+                window_background: window_appearance(
+                    settings.window.background_blur,
+                    settings.window.background_opacity,
+                ),
                 ..Default::default()
             },
             |window, cx| {
@@ -8243,38 +7975,33 @@ mod tests {
             maximized: true,
             ..WindowState::default()
         };
-        let geometry = WindowGeometry::saved(&state).expect("the position is set");
+        let geometry = app_settings::saved_geometry(&state).expect("the position is set");
         assert_eq!(geometry.bounds().size.width, px(1280.));
         assert_eq!(geometry.bounds().origin.x, px(10.));
         assert!(state.maximized);
     }
 
     #[test]
-    fn the_window_appearance_follows_the_settings() {
-        let opaque = WindowState::default();
+    fn the_two_titlebar_spellings_are_one_setting() {
+        // `rudbman-core` and `ruui-shell` each declare a `TitlebarStyle`,
+        // because one has to stay free of gpui and the other cannot. What makes
+        // `chrome_titlebar` a conversion rather than a translation is that both
+        // write the same two words into `settings.json`.
+        for (mine, theirs) in [
+            (TitlebarStyle::Custom, ruui_shell::TitlebarStyle::Custom),
+            (TitlebarStyle::System, ruui_shell::TitlebarStyle::System),
+        ] {
+            assert_eq!(chrome_titlebar(mine), theirs);
+            assert_eq!(
+                serde_json::to_string(&mine).expect("a style serialises"),
+                serde_json::to_string(&theirs).expect("a style serialises"),
+            );
+        }
+        // And the default is the same one on both sides, which is what a
+        // settings file with no `titlebar` key gets.
         assert_eq!(
-            window_appearance(&opaque),
-            WindowBackgroundAppearance::Opaque
-        );
-
-        let translucent = WindowState {
-            background_opacity: 0.8,
-            ..WindowState::default()
-        };
-        assert_eq!(
-            window_appearance(&translucent),
-            WindowBackgroundAppearance::Transparent
-        );
-
-        // Blur wins even at full opacity: it is the stronger request, and a
-        // blurred surface has to permit alpha whatever the fill does.
-        let blurred = WindowState {
-            background_blur: true,
-            ..WindowState::default()
-        };
-        assert_eq!(
-            window_appearance(&blurred),
-            WindowBackgroundAppearance::Blurred
+            chrome_titlebar(TitlebarStyle::default()),
+            ruui_shell::TitlebarStyle::default()
         );
     }
 }
@@ -8351,7 +8078,7 @@ mod centered_scroll_tests {
         });
 
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
-        cx.simulate_resize(size(px(WIDTH), px(height)));
+        cx.simulate_resize(gpui::size(px(WIDTH), px(height)));
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();

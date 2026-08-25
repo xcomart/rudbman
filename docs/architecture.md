@@ -25,6 +25,7 @@ without changing this document.
 | D8 | Result batches use a **custom columnar binary codec**; metadata is JSON | Arrow Java demands 40MB+ of dependencies and `--add-opens`. What the grid needs is far less than that |
 | D9 | The **UI theme and the editor theme are separate** token sets | The 11 colors of the window chrome and the twenty-odd colors of syntax highlighting are different axes |
 | D10 | **SSH local port forwarding is in scope for M1** | Production databases usually sit behind a bastion. Bolting it on later means fixing the connection profile schema and session lifetime management twice |
+| D11 | The **application shell** — window chrome, self-updater, about and update dialogs, split-pane tree, palette catalogue and editor, settings-form pieces — is **`ruui-shell`**, not code in this repository | D1's reasoning one layer up. None of it is about a database, and all of it had been written once here and copied twice; a fix to a resize grip or a staged-update swap should be one fix. Everything specific to rudbman is injected by `app_identity.rs` — the name, the version, the release endpoints, the words, the ignored-release tag (§3.2) |
 
 ---
 
@@ -53,11 +54,14 @@ What is not brought over: `logman-pty`, `logman-term`, `terminal_view.rs`,
 `file_panel.rs`, `connection.rs` (SSH shell only), `files.rs`, and
 `logman-ssh`'s `sftp.rs`.
 
-The table above is the record of the port as it was made. Three of its
-destinations have moved on since: `rudbman-ui`, and the editor and grid that
+The table above is the record of the port as it was made, and several of its
+destinations have moved on since. `rudbman-ui`, and the editor and grid that
 grew on top of it, are now [ruui](https://github.com/xcomart/ruui), and the four
-vendored gpui crates went with them. §3.2 has the shape that resulted; the rows
-are left as written because they are what was copied, from where, and when.
+vendored gpui crates went with them; `theme_editor.rs`, `caption.rs` and
+`pane_tree.rs`'s generic core followed into `ruui-shell` (D11), which is also
+where the self-updater and the about and update dialogs now live. §3.2 has the
+shape that resulted; the rows are left as written because they are what was
+copied, from where, and when.
 
 `ui/scheme_picker.rs` previews terminal color schemes, but its shape carries
 over almost unchanged as an editor-theme preview. Copy it, then rework it.
@@ -117,7 +121,10 @@ ruui/                           github.com/xcomart/ruui
 └── crates/
     ├── ruui/                   gpui widget kit + UI theme + editor theme
     ├── ruui-grid/              virtualized result grid widget
-    └── ruui-editor/            multi-line code editor widget
+    ├── ruui-editor/            multi-line code editor widget
+    └── ruui-shell/             the layer above the widgets: window chrome,
+                                self-updater, about/update dialogs, pane tree,
+                                palette catalogue + editor, form pieces
 ```
 
 ### 3.1 Crate dependency direction
@@ -125,8 +132,9 @@ ruui/                           github.com/xcomart/ruui
 ```
 rudbman-app
  ├─→ rudbman-erd ─┐
- ├─→ ruui-grid    ┼─→ ruui ─→ gpui
- ├─→ ruui-editor ─┘
+ ├─→ ruui-grid    │
+ ├─→ ruui-editor  ┼─→ ruui ─→ gpui
+ ├─→ ruui-shell ──┘
  ├─→ rudbman-sql
  ├─→ rudbman-jdbc ─→ rudbman-core
  ├─→ rudbman-ssh  ─→ rudbman-core
@@ -143,13 +151,13 @@ There are no reverse dependencies. `rudbman-jdbc` **knows nothing about gpui**
 `rudbman-app`'s job. That boundary is what lets the JNI layer be unit-tested
 without gpui.
 
-`ruui` knows nothing about databases. Same discipline that kept logman's `ui/`
-modules ignorant of SSH — and the reason the kit could be lifted out of this
-repository at all.
+`ruui` knows nothing about databases, and neither does `ruui-shell`. Same
+discipline that kept logman's `ui/` modules ignorant of SSH — and the reason the
+kit, and then the shell above it, could be lifted out of this repository at all.
 
 ### 3.2 The widget kit is a repository of its own
 
-`ruui`, `ruui-grid` and `ruui-editor` live in
+`ruui`, `ruui-grid`, `ruui-editor` and `ruui-shell` live in
 [ruui](https://github.com/xcomart/ruui), because rudbman was the third
 application carrying byte-identical copies of them. Nothing there knows what an
 application does: the grid is pointed at a `GridSource` the host implements, and
@@ -174,6 +182,44 @@ sixteen bytes and the editor stores four per line, so `LineStateCodec` packs one
 into the other. Three of the four carries fit in a `u32`; a PostgreSQL dollar
 quote's tag does not, so the codec keeps a side table and the code holds an
 index into it.
+
+`ruui-shell` came out the same way and one layer up. It is not a widget: it is
+the *application* pieces that turned out not to be about the application — a
+window that draws its own title bar (the drag, the resize grips, the caption
+buttons, the shadow band), an updater that downloads a GitHub release and
+renames it over the installed copy, the about and update dialogs, a tree of
+split panes, an editor for a palette, and the parts a settings form is built out
+of. Every one of them was written here and then copied into the log viewer and
+the generator.
+
+Its whole contract with rudbman is three calls, all in
+`crates/rudbman-app/src/app_identity.rs`:
+
+- `ruui_shell::init(IDENTITY, cx)` — the constants. The version is deliberately
+  the *application's* `env!("CARGO_PKG_VERSION")`; the shell has one of its own
+  and it is not this one. `IDENTITY` also carries the Windows uninstall key,
+  which is a published identifier of rudbman and one corner of a triangle with
+  `packaging/windows/rudbman.iss` and the winget manifests — the test beside it
+  is what keeps two of those corners together.
+- `ruui_shell::set_strings(…)` — one line over `rust-i18n`. The shell looks its
+  words up by the keys `locales/*.yml` already carried, so adopting it changed
+  no translation; interpolation is the shell's, which is what lets it fill a
+  `%{app}` into a line whose key never mentioned one.
+- `ruui_shell::set_update_policy(…)` — reading and writing `ignored_update` in
+  rudbman's own `settings.json`.
+
+What stayed here is what the shell cannot know: the `Workspace`, what a tab is
+(`PaneItem` and the `PaneLookup` extension over `Pane::position`), the body of
+the settings form, rudbman's own icon table, the `i18n!` invocation and its
+locale files, the grid's context-menu rows, and the packaging comparison. So is
+the restart after an update: the shell reports `UpdateDialogEvent::Installed`
+and the `Workspace` decides that means `cx.restart()`.
+
+Two spellings of one setting survive the split. `rudbman_core::TitlebarStyle`
+has to stay free of gpui because `rudbman-core` reads and writes
+`settings.json`; `ruui_shell::TitlebarStyle` cannot, because the chrome around
+it is gpui. `main.rs`'s `chrome_titlebar` is the one line between them, and the
+test beside it asserts that both serialise to the same two `snake_case` words.
 
 The four patched gpui crates went to ruui with the widgets, and rudbman's
 `[patch."https://github.com/zed-industries/zed"]` table points at that copy.
@@ -708,7 +754,12 @@ count.
 
 ### 7.1 Window structure
 
-logman's self-drawn title bar and `pane_tree` are inherited as they are.
+logman's self-drawn title bar and pane tree were inherited as they were, and
+both have since moved to `ruui-shell` (§3.2, D11): the chrome is
+`ruui_shell::chrome` and the split layout `ruui_shell::pane`, instantiated here
+as `PaneTree<Pane<PaneItem>>`. What a tab *is* stays in
+`crates/rudbman-app/src/pane_tree.rs`, along with the lookups that decide
+whether opening an object makes a tab or brings one forward.
 
 ```
 ┌ Title bar (tabs = connection sessions) ─────┬ Window buttons ┐
@@ -1494,8 +1545,9 @@ unsigned JAR. `Contents/lib/` is sealed as a plain resource instead — the
 first v0.1.0 release run failed exactly this way.
 
 **Why Windows ships twice.** The zip is not redundant and cannot be dropped:
-the in-app updater (`crates/rudbman-app/src/update.rs`) downloads that asset by
-name and unpacks it over the running install. What the zip cannot do is tell
+the in-app updater (`ruui-shell`, told what to fetch by
+`crates/rudbman-app/src/app_identity.rs`) downloads that asset by name and
+unpacks it over the running install. What the zip cannot do is tell
 Windows anything. Unzipping leaves no entry under *Apps & features*, and that
 entry — the uninstall key the installer writes under
 `HKCU\…\CurrentVersion\Uninstall` — is precisely what the Windows Package
@@ -1669,8 +1721,20 @@ Things logman and jdbgen already paid for.
   table** → this workspace resolves gpui from Zed's monorepo while `ruui`
   resolves it from the patched copy, two gpui crates end up in one binary, and
   the `Global`s the widgets install become invisible to the application:
-  nothing draws, and nothing says why. The table's revision and the `ruui`
-  dependencies' revision have to match, for the same reason
+  nothing draws, and nothing says why. The table's revision and the four `ruui`
+  dependencies' revision have to match — all eight entries move together, for
+  the same reason
+- **Calling anything in `ruui_shell::update` before `ruui_shell::init`** → the
+  updater reads the identity through a process-wide slot that `init` fills, and
+  it panics without one. `apply_pending`, which has to run before a JVM can be
+  loaded into the process, is therefore the *first* thing inside `app.run`
+  rather than the first thing in `main`
+- **Letting a test build a `Workspace` without turning the start-up check off**
+  → gpui's test executor runs background tasks inline whenever a test parks, so
+  every workspace a suite builds makes a live request to github.com.
+  `Workspace::new` calls `ruui_shell::update::set_startup_check_enabled(false)`
+  under `cfg(test)`; the shell's own `cfg!(test)` cannot help, because it is
+  about the shell's tests
 - **Using `DriverManager`** → when two drivers claim the same URL prefix there
   is no telling who wins. Call `Driver.connect` directly
 - **Ignoring a `null` return from `Driver.connect`** → per the spec that means

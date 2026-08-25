@@ -277,6 +277,8 @@ settings:
       type: Type names
       operator: Operators
       identifier: Identifiers
+      key: Keys
+      variable: Variables
       punctuation: Punctuation
       bracket_match: Matching bracket
       error: Errors
@@ -1050,7 +1052,7 @@ context:
 # are values, not words, and the name `rudbman` is not translated either.
 update:
   title: Update available
-  available: "rudbman %{version} is available."
+  available: "%{app} %{version} is available."
   # Second line, quieter than the first: which build the user is looking at
   # right now, so the offer means something without them going to the about box.
   installed: "You are currently running %{version}."

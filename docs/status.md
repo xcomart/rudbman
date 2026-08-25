@@ -6,8 +6,8 @@ the work up. The design and the contracts all live in
 work has come, what is left, and how work is done in this repository**. It is
 updated whenever a milestone ends.
 
-Last updated: 2026-08-25 (after the widget kit, the grid and the editor moved
-to ruui).
+Last updated: 2026-08-25 (after the widget kit, the grid, the editor and then
+the application shell moved to ruui).
 
 ## Where things stand
 
@@ -37,18 +37,21 @@ to ruui).
 | Structure editing (§7.10) | done | `rudbman-sql::ddl` — `plan_alter` over a diff that carries **both sides** of every changed column, because MySQL's `MODIFY`/`CHANGE` restates a whole definition and SQL Server's `ALTER COLUMN` resets nullability when the clause is omitted. Statements are plain strings (no server takes a `?` in DDL) and a type or a default is the user's own SQL, passed through unread. The per-product spellings are one flat record per dialect in the shape `Syntax` is one; what a product cannot express is refused by name and reason (SQLite's type/nullability/default and constraint drops, SQL Server's defaults) rather than generated and rejected. `struct_edit` — the staging model, pure and unit-tested: a draft equal to its snapshot is dropped rather than refused, and a dropped column discards any change staged against it. `PaneItem::TableStruct` plus `StructPane` — its own four `DESCRIBE`s (the panel keeps display strings, so nothing an editor needs survives in it), the PK's own backing index matched away by name *and* by covering the key's columns, one column edited at a time in a form rather than an input per cell, and the batch shown live and read-only before it can be run. The apply forces autocommit on and never calls rollback — MySQL and Oracle commit at every DDL statement — stops at the first refusal, and on **either** outcome discards and reloads, saying how far it got |
 | First release, v0.1.0 (PR #8) | done | `release.yml` (every build job runs Gradle, then jlink, then cargo — in that order, because rudbman-jdbc's build script refuses to compile without the bridge JAR — plus a smoke step over the staged tree before anything is published), `packaging/` (a Linux desktop entry and an `install.sh` that installs the whole tree and symlinks it, a macOS `Info.plist`), `<exe_dir>/runtime` added to the bundled-runtime search, `jdk.charsets` in the jlink module list (with `--compress=2`, the JDK 17 spelling), and a README brought fully up to date with three screenshots (captured through the temporary env-gated hook, reverted before the commit) |
 | The widget kit extracted as ruui | done | `rudbman-ui`, `rudbman-grid` and `rudbman-editor` are gone from this repository. They are [ruui](https://github.com/xcomart/ruui) — `ruui`, `ruui-grid`, `ruui-editor` — extracted because rudbman was the third application carrying byte-identical copies of them, and the four vendored gpui crates went with them; rudbman's patch table now points at ruui's `vendor/`, which is what keeps one gpui in the binary. The one seam that had to be cut is the editor's: it used to `use rudbman_sql` and hold a `Dialect`, and a widget three applications share cannot. So the call turned around. `crates/rudbman-app/src/sql_highlight.rs` is rudbman's `Highlighter` — `lex_line` in the session's dialect, `TokenKind` onto the palette's twelve slots, `--` for the comment toggle — and `rudbman-sql`'s new `state` module packs the lexer's sixteen-byte `LineState` into the four bytes the widget keeps per line (a dollar quote's tag is 96 bits, hence a codec with a side table rather than a pair of shifts). `statement_at` did not travel: the editor cuts statements out of the spans it is drawing, stepping over a `;` the highlighter called part of a string or a comment, and `sql_highlight`'s tests hold that against `rudbman_sql::statement_at` across H2, MySQL's `#`, PostgreSQL's `$$` and SQL Server's `[..]`. **One disagreement is known and pinned by a test**: a `;` inside a *quoted identifier* (`"a;b"`, `` `a;b` ``, `[a;b]`) splits a statement in the editor and not in the splitter, because the palette has no quoted-identifier slot for the editor to step over. The fix belongs in ruui. All seven dependencies (three crates, four patched gpui) are now `git`+`rev` dependencies on `https://github.com/xcomart/ruui`, at the same revision, so CI runs green on a fresh runner with no sibling checkout |
+| The application shell taken from ruui-shell | done | One layer above the widget kit, and for the same reason: `caption.rs`, `about_dialog.rs`, `update.rs`, `update_dialog.rs`, `theme_editor.rs`, `main.rs`'s window-chrome block, `pane_tree.rs`'s generic core, `context_menu.rs`'s `MenuRow`, `icons.rs`'s asset source and the four caption glyphs, `app_settings.rs`'s geometry/monospace/tint helpers, `i18n.rs`'s tag arithmetic and `settings_dialog.rs`'s catalogue management and form pieces are all gone from this repository. They are `ruui-shell`, at the same revision as the other three ruui crates — eight `git`+`rev` entries that move together. What rudbman hands it is three calls in the new `crates/rudbman-app/src/app_identity.rs`: `init` (name, version — the *application's* `CARGO_PKG_VERSION`, never the shell's — release endpoints, payload, the Windows uninstall GUID, and `must_defer`, which is `cfg!(windows) && Jvm::get().is_some()` because a loaded JVM holds the files a swap renames), `set_strings` (one line over `rust-i18n`; the shell looks its words up by the keys `locales/*.yml` already carried, so no translation changed — only `update.available` did, from a literal "rudbman" to `%{app}`, and two new editor-palette slots arrived with the shell's `Token::{Key,Variable}`), and `set_update_policy` (`ignored_update` in `settings.json`). What stayed: the `Workspace`, `PaneItem` and the `PaneLookup` extension over `Pane::position`, the settings form itself, rudbman's own icon table, the `i18n!` invocation, the grid's context-menu rows, and the `.iss` comparison test. Two seams are worth knowing. The restart after an update is the application's: the shell emits `UpdateDialogEvent::Installed` and the `Workspace` calls `cx.restart()`. And `apply_pending` now runs as the *first* statement inside `app.run` rather than before it, because every path in the updater reads the injected identity and the only way to install one is with an `App` in hand |
 
 - Repository: <https://github.com/xcomart/rudbman> (public, MIT).
 - The branch flow is logman's: **work on dev, main takes PR merge commits
   only**. CI is a three-platform matrix and runs the bridge (Java) suite
   before the Rust one.
-- Test count (2026-08-25): roughly 890 Rust plus 141 Java. It fell by 256 and
-  rose by 17 when the widget kit left: `rudbman-ui`'s 121, `rudbman-editor`'s
-  82 and `rudbman-grid`'s 53 are now run by ruui's own suite, and what came
-  back is the dialect adapter's 10 and the line-state codec's 7. The Rust
-  figure still includes the integration tests, which boot a real JVM and a real
-  H2, and the 38 opt-in container tests
-  (`crates/rudbman-jdbc/tests/containers.rs`).
+- Test count (2026-08-25): roughly 800 Rust plus 141 Java. It fell by 256 and
+  rose by 17 when the widget kit left — `rudbman-ui`'s 121, `rudbman-editor`'s
+  82 and `rudbman-grid`'s 53 are ruui's suite now, against the dialect
+  adapter's 10 and the line-state codec's 7 that came back — and fell by 89
+  more when the shell followed: the updater's 38, the theme editor's 20, the
+  pane tree's 24 mechanics tests, and the locale, geometry and management-row
+  tests that went with their code. The Rust figure still includes the
+  integration tests, which boot a real JVM and a real H2, and the 38 opt-in
+  container tests (`crates/rudbman-jdbc/tests/containers.rs`).
 
 ## What is next
 
