@@ -31,15 +31,21 @@ members = ["crates/*"]
 # sibling crates, because it is what resolves `gpui_linux` and friends.
 #
 # The four entries below, and the three `ruui` dependencies further down, are
-# `path` dependencies on a sibling checkout for as long as ruui has no remote of
-# its own. Once `https://github.com/xcomart/ruui` exists, both turn into
-# `git`+`rev` dependencies in the form ruui's own README spells out — all seven
-# at the *same* revision, for the reason in the paragraph above.
+# `git`+`rev` dependencies on `https://github.com/xcomart/ruui`, in the form
+# ruui's own README spells out — all seven at the *same* revision, for the
+# reason in the paragraph above. Bumping the revision means bumping all seven
+# together; letting them drift apart is exactly the two-copies-of-gpui bug
+# this table exists to avoid.
+#
+# Working on ruui locally: rather than editing seven revisions by hand, point
+# these at a sibling checkout by adding a `[patch."https://github.com/xcomart/ruui"]`
+# table with `path = "../ruui/crates/ruui"` (and its `ruui-grid`, `ruui-editor`
+# and `vendor/gpui*` siblings) to `.cargo/config.toml`, which is not committed.
 [patch."https://github.com/zed-industries/zed"]
-gpui = { path = "../ruui/vendor/gpui" }
-gpui_linux = { path = "../ruui/vendor/gpui_linux" }
-gpui_macos = { path = "../ruui/vendor/gpui_macos" }
-gpui_windows = { path = "../ruui/vendor/gpui_windows" }
+gpui = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
+gpui_linux = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
+gpui_macos = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
+gpui_windows = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
 
 [workspace.package]
 version = "0.1.9"
@@ -195,12 +201,11 @@ jni = { version = "0.22", features = ["invocation"] }
 # handed a `Highlighter` (`crates/rudbman-app/src/sql_highlight.rs` is
 # rudbman's, over `rudbman-sql`) and the grid a `GridSource`.
 #
-# A sibling checkout for now, and one `rev` of `https://github.com/xcomart/ruui`
-# once that exists — the same `rev` as the patch table at the top of this file,
-# which is what keeps one gpui in the binary.
-ruui = { path = "../ruui/crates/ruui" }
-ruui-grid = { path = "../ruui/crates/ruui-grid" }
-ruui-editor = { path = "../ruui/crates/ruui-editor" }
+# The same `rev` of `https://github.com/xcomart/ruui` as the patch table at
+# the top of this file, which is what keeps one gpui in the binary.
+ruui = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
+ruui-grid = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
+ruui-editor = { git = "https://github.com/xcomart/ruui", rev = "66ac064ca54cc2e66d02d6b4be620e9d1c663360" }
 
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }

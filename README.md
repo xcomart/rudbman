@@ -136,18 +136,16 @@ To use a JDK of your own instead of the bundled runtime, point
 ## Building
 
 Prerequisites: stable Rust, a JDK (17+) with Gradle wrapper support for the
-bridge, and — until [ruui](https://github.com/xcomart/ruui) has a remote of its
-own — a checkout of it beside this one, since the widget kit, the grid, the
-editor and the patched gpui are all taken from `../ruui`.
+bridge. The widget kit, the grid, the editor and the patched gpui come from a
+pinned revision of [ruui](https://github.com/xcomart/ruui) fetched by Cargo
+itself, so no separate checkout of it is needed.
 
 ```sh
-# The widget kit, as a sibling directory.
-git clone <ruui> ../ruui
-
-# The Java half next: the Rust build refuses to proceed without the bridge JAR.
+# The Java half first: the Rust build refuses to proceed without the bridge JAR.
 cd bridge && ./gradlew build && cd ..
 
-# Then the workspace.
+# Then the workspace. Cargo fetches ruui (and, through its patch table, gpui)
+# from git on first build.
 cargo build --release
 ```
 

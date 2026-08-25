@@ -7,11 +7,9 @@
 # not have: a JVM. Those four patched crates are no longer carried here: they
 # are vendored in [ruui](https://github.com/xcomart/ruui), the widget kit the
 # editor and the grid come from, and the root manifest's patch table points at
-# that copy. Until ruui has a remote, both the patch table and the three `ruui`
-# dependencies are `path` dependencies on a sibling checkout, so a build needs
-# one beside this repository and this workflow cannot run green on a fresh
-# runner; the `actions/checkout` step that fetches ruui goes in with the same
-# commit that turns those seven entries into `git`+`rev`. The bridge
+# that copy — a `git`+`rev` dependency, the same revision as the three `ruui`
+# crates themselves, so Cargo fetches it like any other dependency and this
+# workflow needs no extra checkout step for it. The bridge
 # JAR is built and tested first, because rudbman-jdbc's build script refuses
 # to build without the JAR, and its integration tests then boot a real JVM
 # against a real H2. That H2 driver is handed to the tests explicitly through

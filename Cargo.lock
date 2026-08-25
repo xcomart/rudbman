@@ -2696,6 +2696,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2790,6 +2791,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2835,6 +2837,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2974,6 +2977,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -6127,6 +6131,7 @@ dependencies = [
 [[package]]
 name = "ruui"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "anyhow",
  "gpui",
@@ -6139,6 +6144,7 @@ dependencies = [
 [[package]]
 name = "ruui-editor"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "gpui",
  "log",
@@ -6150,6 +6156,7 @@ dependencies = [
 [[package]]
 name = "ruui-grid"
 version = "0.1.0"
+source = "git+https://github.com/xcomart/ruui?rev=66ac064ca54cc2e66d02d6b4be620e9d1c663360#66ac064ca54cc2e66d02d6b4be620e9d1c663360"
 dependencies = [
  "gpui",
  "ruui",
