@@ -651,7 +651,13 @@ impl QueryPane {
     ) -> Self {
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
-            let mut editor = EditorView::new(cx).highlighter(DialectHighlighter::shared(dialect));
+            let mut editor = EditorView::new(cx)
+                .highlighter(DialectHighlighter::shared(dialect))
+                // Unlike the fonts, wrapping is state the editor carries rather
+                // than something it reads back from the settings each frame, so
+                // a pane opened while the switch is on has to be built with it
+                // and a pane already open is handed the change by the shell.
+                .word_wrap(settings.editor_word_wrap);
             if !sql.is_empty() {
                 editor.set_text(sql, cx);
             }
@@ -773,6 +779,16 @@ impl QueryPane {
             }
         }
         cx.notify();
+    }
+
+    /// Wraps — or stops wrapping — the lines in this pane's editor.
+    ///
+    /// The settings dialog's counterpart of the `word_wrap` the constructor
+    /// applies: [`crate::Workspace::apply_settings`] walks every open pane so a
+    /// change reaches the editors already on screen, not only the next one.
+    pub fn set_word_wrap(&mut self, wrap: bool, cx: &mut Context<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.set_word_wrap(wrap, cx));
     }
 
     /// Whether this pane still has a session behind it.

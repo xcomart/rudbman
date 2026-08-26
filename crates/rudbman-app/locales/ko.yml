@@ -93,6 +93,7 @@ settings:
   editor_font: 에디터 글꼴
   editor_font_size: 에디터 크기
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: 에디터에서 긴 줄 자동 줄바꿈
 
   opacity: 불투명도
   opacity_hint: "% — 100 미만이면 바탕 화면이 비칩니다"

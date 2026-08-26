@@ -224,6 +224,15 @@ pub struct AppSettings {
     /// Font size of the SQL editor and the result grid; clamped like
     /// [`AppSettings::ui_font_size`].
     pub editor_font_size: f32,
+    /// Whether a line too long for the SQL editor's width is wrapped instead
+    /// of running off the right edge.
+    ///
+    /// Off by default. An unwrapped editor keeps every statement on the line it
+    /// was written on, which is what makes a line number mean something and what
+    /// the error positions a driver reports are counted in; wrapping is worth
+    /// asking for when the SQL is machine written — a long `INSERT`, a `WHERE`
+    /// of forty predicates — and reading it matters more than counting it.
+    pub editor_word_wrap: bool,
     /// Maximum Java heap in megabytes, passed to the JVM as `-Xmx`.
     ///
     /// The JVM is started once per process and its heap cannot be resized
@@ -305,6 +314,7 @@ impl Default for AppSettings {
             ui_font_size: DEFAULT_UI_FONT_SIZE,
             editor_font_family: None,
             editor_font_size: DEFAULT_EDITOR_FONT_SIZE,
+            editor_word_wrap: false,
             jvm_heap_mb: DEFAULT_JVM_HEAP_MB,
             jvm_extra_args: Vec::new(),
             fetch_batch_rows: DEFAULT_FETCH_BATCH_ROWS,
@@ -435,6 +445,7 @@ mod tests {
         assert_eq!(settings.ui_font_size, 14.0);
         assert_eq!(settings.editor_font_family, None);
         assert_eq!(settings.editor_font_size, 14.0);
+        assert!(!settings.editor_word_wrap);
         assert_eq!(settings.jvm_heap_mb, 1024);
         assert!(settings.jvm_extra_args.is_empty());
         assert_eq!(settings.fetch_batch_rows, 500);
@@ -460,6 +471,7 @@ mod tests {
             ui_font_size: 15.0,
             editor_font_family: Some("Cascadia Mono".to_string()),
             editor_font_size: 16.5,
+            editor_word_wrap: true,
             jvm_heap_mb: 4096,
             jvm_extra_args: vec!["-Doracle.jdbc.timezoneAsRegion=false".to_string()],
             fetch_batch_rows: 1_000,
@@ -522,6 +534,30 @@ mod tests {
         assert_eq!(settings.window.width, DEFAULT_WINDOW_WIDTH);
         assert_eq!(settings.editor_font_size, 14.0);
         assert_eq!(settings.jvm_heap_mb, 1024);
+    }
+
+    #[test]
+    fn a_file_from_before_word_wrap_existed_loads_with_it_off() {
+        // The switch was added after the file format shipped, so every settings
+        // file already on disk is missing the key. Reading one has to leave the
+        // editor as it was rather than fail or silently start wrapping.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        fs::write(&path, br#"{"version":1,"editor_font_size":16.0}"#).expect("write");
+
+        let mut settings = AppSettings::load_from(&path).expect("load");
+        assert!(!settings.editor_word_wrap);
+        assert!(!settings.extra.contains_key("editor_word_wrap"));
+
+        // And once it is turned on it survives the round trip, rather than
+        // being written under a name the next load does not read back.
+        settings.editor_word_wrap = true;
+        settings.save_to(&path).expect("save");
+        assert!(
+            AppSettings::load_from(&path)
+                .expect("reload")
+                .editor_word_wrap
+        );
     }
 
     #[test]

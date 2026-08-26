@@ -93,6 +93,7 @@ settings:
   editor_font: Editor-Schriftart
   editor_font_size: Schriftgröße im Editor
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: Lange Zeilen im Editor umbrechen
 
   opacity: Deckkraft
   opacity_hint: "% — unter 100 scheint der Schreibtisch durch"

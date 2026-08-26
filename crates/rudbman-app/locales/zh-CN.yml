@@ -93,6 +93,7 @@ settings:
   editor_font: 编辑器字体
   editor_font_size: 编辑器字号
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: 在编辑器中自动换行
 
   opacity: 不透明度
   opacity_hint: "% — 低于 100 时可以透出桌面"

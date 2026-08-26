@@ -2948,6 +2948,20 @@ impl Workspace {
         // follows what was actually saved.
         self.explorer_visible = settings.explorer_visible;
         self.explorer_width = settings.explorer_width;
+        // The editor fonts reach the editors through the frame that draws them,
+        // but wrapping is state each `EditorView` holds, so it has to be handed
+        // over pane by pane — across every connection, not just the one on
+        // screen, or a tab behind another would keep the old answer.
+        let queries: Vec<_> = self
+            .connections
+            .iter()
+            .flat_map(|open| open.work.queries())
+            .collect();
+        for query in queries {
+            query.update(cx, |query, cx| {
+                query.set_word_wrap(settings.editor_word_wrap, cx);
+            });
+        }
         // Before the repaint below, so the next frame is already drawn in the
         // newly chosen language.
         i18n::apply(settings.language.as_deref());
