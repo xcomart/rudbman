@@ -201,10 +201,11 @@ whose newest release (0.2.2) predates the split of the crate into a
 platform-independent core, a `gpui_platform` facade and per-OS backends. Four of
 those crates — `gpui`, `gpui_linux`, `gpui_macos`, `gpui_windows` — are patched
 back over the git source, each change marked `RULOGMAN PATCH`: the live
-title-bar switch, and three X11 fixes upstream has no answer for. rugpui vendors
-them and rudbman's `[patch."https://github.com/zed-industries/zed"]` table
-points at that copy, which is what keeps one gpui in the binary — two would make
-the `Global`s the widgets install invisible to the application. The trees are
+title-bar switch, three X11 fixes and a macOS 26 blur fix upstream has no
+answer for. rugpui vendors them and rudbman's
+`[patch."https://github.com/zed-industries/zed"]` table points at that copy,
+which is what keeps one gpui in the binary — two would make the `Global`s the
+widgets install invisible to the application. The trees are
 kept byte-identical with the same four in
 [rulogman](https://github.com/xcomart/rulogman), so a fix moves between the
 projects as a plain diff.
