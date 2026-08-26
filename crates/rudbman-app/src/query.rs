@@ -1213,8 +1213,14 @@ impl QueryPane {
                 // read-only, so anything that arrives here is a value the user
                 // meant to change.
                 GridEvent::EditCommitted { row, column, value } => {
-                    let rugpui_grid::EditValue::Text(text) = value;
-                    pane.stage(id, *row, *column, StagedCell::Text(text.clone()), cx);
+                    // An emptied field is the empty string — that is how one is
+                    // typed — so only the clearing gesture asks for `NULL`, and
+                    // it stages what the grid menu's "set null" stages.
+                    let staged = match value {
+                        rugpui_grid::EditValue::Text(text) => StagedCell::Text(text.clone()),
+                        rugpui_grid::EditValue::Null => StagedCell::Null,
+                    };
+                    pane.stage(id, *row, *column, staged, cx);
                 }
                 // The grid holds no strings, so its menu is drawn here
                 // (architecture document, §7.8).

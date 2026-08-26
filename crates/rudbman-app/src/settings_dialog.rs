@@ -50,6 +50,7 @@ use rugpui_shell::{
 
 use crate::app_settings;
 use crate::i18n::{self, ts};
+use crate::icons;
 
 /// The dialog's five scrolling surfaces, and the element id of each one's
 /// overlay scroll indicator.
@@ -1097,6 +1098,7 @@ impl SettingsDialog {
             let palette = EditorThemeRegistry::resolve(&resolved, cx);
 
             return SchemeSelect::new("settings-editor-theme-followed")
+                .chevron_icon(icons::CHEVRON_DOWN)
                 .options([
                     SchemeSwatch::new(resolved.clone(), name).preview(editor_preview(&palette))
                 ])
@@ -1108,6 +1110,7 @@ impl SettingsDialog {
         let bar = self.hovering_scrollbar(SCROLLBARS[4].0, Surface::EditorTheme, cx);
 
         SchemeSelect::new("settings-editor-theme")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(editor_theme_swatches(cx))
             .selected(Some(self.editor_theme.clone()))
             .open(self.open_list == Some(OpenList::EditorTheme))
@@ -1143,6 +1146,7 @@ impl SettingsDialog {
         let editor_theme = self.render_editor_theme(cx);
 
         let theme_picker = SchemeSelect::new("settings-ui-theme")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(ui_theme_swatches(cx))
             .selected(Some(self.ui_theme.clone()))
             .open(self.open_list == Some(OpenList::UiTheme))
@@ -1180,6 +1184,7 @@ impl SettingsDialog {
             });
 
         let font = Select::new("settings-editor-font")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(self.font_options())
             .selected(self.font_family.clone())
             .placeholder(system_default())
@@ -1315,6 +1320,7 @@ impl SettingsDialog {
         let language_bar = self.hovering_scrollbar(SCROLLBARS[2].0, Surface::Language, cx);
 
         let language = Select::new("settings-language")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(Self::language_options())
             .selected(self.language.as_deref().and_then(i18n::display_name))
             .placeholder(system_default())
