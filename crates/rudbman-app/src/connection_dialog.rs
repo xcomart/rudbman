@@ -48,9 +48,9 @@ use rudbman_core::{
     TunnelAuth, TunnelConfig,
 };
 use rugpui::{
-    Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    Segmented, Select, TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to,
-    scrolled, theme,
+    Button, ButtonVariant, Checkbox, Collapsible, DraggedThumb, Scrollbar, ScrollbarAxis,
+    ScrollbarState, Segmented, Select, TextInput, Theme, form_row, hide_later, hide_now, modal,
+    scroll_to, scrolled, theme,
 };
 use uuid::Uuid;
 
@@ -60,6 +60,7 @@ use crate::connection::{
 };
 use crate::driver_manager::{DriverManager, DriverManagerEvent};
 use crate::i18n::ts;
+use crate::icons;
 
 /// Width of the dialog panel.
 ///
@@ -159,22 +160,28 @@ mod tab {
     pub const KEEP_ALIVE_QUERY: isize = 192;
     /// The tunnel section's disclosure.
     pub const TUNNEL: isize = 200;
+    /// The switch beside it, which is what arms the tunnel at all.
+    ///
+    /// A stop of its own, after the disclosure and before the questions it
+    /// folds away, because the two are separate targets: the header opens the
+    /// block and this decides whether the profile has a bastion.
+    pub const TUNNEL_ENABLED: isize = 201;
     /// Bastion host.
-    pub const TUNNEL_HOST: isize = 201;
+    pub const TUNNEL_HOST: isize = 202;
     /// Bastion port.
-    pub const TUNNEL_PORT: isize = 202;
+    pub const TUNNEL_PORT: isize = 203;
     /// Bastion user.
-    pub const TUNNEL_USER: isize = 203;
+    pub const TUNNEL_USER: isize = 204;
     /// Authentication method.
-    pub const TUNNEL_AUTH: isize = 204;
+    pub const TUNNEL_AUTH: isize = 205;
     /// Private key path.
-    pub const TUNNEL_KEY: isize = 205;
+    pub const TUNNEL_KEY: isize = 206;
     /// Tunnel password or passphrase.
-    pub const TUNNEL_SECRET: isize = 206;
+    pub const TUNNEL_SECRET: isize = 207;
     /// Target host, as named inside the remote network.
-    pub const TUNNEL_REMOTE_HOST: isize = 207;
+    pub const TUNNEL_REMOTE_HOST: isize = 208;
     /// Target port.
-    pub const TUNNEL_REMOTE_PORT: isize = 208;
+    pub const TUNNEL_REMOTE_PORT: isize = 209;
     /// New profile.
     pub const NEW: isize = 220;
     /// Duplicate profile.
@@ -1276,6 +1283,7 @@ impl ConnectionDialog {
             });
 
         let select = Select::new("connect-driver")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(options)
             .selected(selected)
             .placeholder(ts!("connect.pick_driver"))
@@ -1441,14 +1449,20 @@ impl ConnectionDialog {
         )
     }
 
-    /// The tunnel section: a switch, and the settings behind it.
+    /// The tunnel section: a switch in the header, and the settings behind it.
+    ///
+    /// A [`Collapsible`] rather than a heading over a hidden column, and the
+    /// switch that arms the tunnel is its `trailing` control rather than the
+    /// thing you click to unfold it. Those are two questions — is there a
+    /// bastion, and do I want to look at it — and a checkbox nested inside the
+    /// disclosure would answer both with one press.
     fn render_tunnel(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let enabled = self.tunnel_enabled;
 
         let toggle = Checkbox::new("connect-tunnel", ts!("connect.tunnel_enabled"))
             .checked(enabled)
-            .tab_index(tab::TUNNEL)
+            .tab_index(tab::TUNNEL_ENABLED)
             .on_toggle({
                 let this = this.clone();
                 move |checked, _window, cx| {
@@ -1462,7 +1476,8 @@ impl ConnectionDialog {
 
         // Folded away when off, per §9.2: a profile without a bastion should not
         // be asked eight questions about one.
-        let body = (enabled && self.tunnel_open).then(|| {
+        let open = enabled && self.tunnel_open;
+        let body = open.then(|| {
             let auth = Segmented::new("connect-tunnel-auth")
                 .options([
                     ("agent", ts!("connect.tunnel_auth_agent")),
@@ -1562,11 +1577,23 @@ impl ConnectionDialog {
                 )
         });
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(toggle)
+        Collapsible::new("connect-tunnel-section", ts!("connect.section.tunnel"))
+            .open(open)
+            .on_toggle(cx.processor(|dialog, open, _window, cx| {
+                dialog.tunnel_open = open;
+                cx.notify();
+            }))
+            // Nothing to disclose while the profile has no bastion, so the
+            // disclosure is inert rather than unfolding onto eight questions
+            // about one there is none of. The switch is the host's own element
+            // and stays live, which is what turns the section back on.
+            .disabled(!enabled)
+            .tab_index(tab::TUNNEL)
+            // The pair the explorer's tree discloses with: a form's sections
+            // and a tree's branches should not disagree about which way the
+            // chevron points.
+            .arrow_icons(icons::CHEVRON_RIGHT, icons::CHEVRON_DOWN)
+            .trailing(toggle)
             .children(body)
     }
 
@@ -1687,7 +1714,10 @@ impl ConnectionDialog {
                     ))
                     .child(form_row(ts!("connect.props"), props))
                     .child(section(ts!("connect.section.behaviour"), chrome, behaviour))
-                    .child(section(ts!("connect.section.tunnel"), chrome, tunnel)),
+                    // No `section` title over this one: the collapsible's own
+                    // header is the heading, and a second copy of the words
+                    // above it would only say them twice.
+                    .child(card(chrome, tunnel)),
             )
             .children(
                 self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Body, cx)
@@ -2158,12 +2188,11 @@ pub(crate) fn profile_rows(
     rows
 }
 
-/// Wraps `body` in a titled card.
-fn section<E: IntoElement>(
-    title: SharedString,
-    chrome: &Theme,
-    body: E,
-) -> impl IntoElement + use<E> {
+/// Wraps `body` in a card, for a block that carries a heading of its own.
+///
+/// The frame alone: the tunnel section's [`Collapsible`] draws its own title
+/// and would otherwise be sitting under a second copy of it.
+fn card<E: IntoElement>(chrome: &Theme, body: E) -> impl IntoElement + use<E> {
     div()
         .flex()
         .flex_col()
@@ -2173,13 +2202,29 @@ fn section<E: IntoElement>(
         .border_1()
         .border_color(chrome.border)
         .bg(chrome.surface)
-        .child(
-            div()
-                .text_size(px(11.))
-                .text_color(chrome.text_muted)
-                .child(title),
-        )
         .child(body)
+}
+
+/// Wraps `body` in a titled card.
+fn section<E: IntoElement>(
+    title: SharedString,
+    chrome: &Theme,
+    body: E,
+) -> impl IntoElement + use<E> {
+    card(
+        chrome,
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(chrome.text_muted)
+                    .child(title),
+            )
+            .child(body),
+    )
 }
 
 /// The label of one URL part field.

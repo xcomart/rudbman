@@ -61,6 +61,7 @@ use rugpui::{Button, ButtonVariant, Checkbox, Select, TextInput, form_row, modal
 use crate::connection::SessionHandle;
 use crate::explorer::ObjectTarget;
 use crate::i18n::ts;
+use crate::icons;
 
 /// Width of the dialog panel.
 ///
@@ -879,6 +880,7 @@ impl ExtractDialog {
 
         let data_body = self.data.then(|| {
             let mode = Select::new("extract-mode")
+                .chevron_icon(icons::CHEVRON_DOWN)
                 .options(MODES.iter().map(|mode| mode_label(*mode)))
                 .selected(Some(mode_label(self.mode)))
                 .open(self.mode_list_open)

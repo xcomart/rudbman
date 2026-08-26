@@ -48,6 +48,7 @@ use crate::connection::SessionHandle;
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::extract_dialog::{POLL_INTERVAL, non_empty};
 use crate::i18n::ts;
+use crate::icons;
 
 /// Width of the dialog panel, matching the extraction's.
 const DIALOG_WIDTH: f32 = 520.;
@@ -666,6 +667,7 @@ impl TransferDialog {
         let this = cx.entity();
 
         let connection = Select::new("transfer-connection")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(
                 self.targets
                     .iter()
@@ -699,6 +701,7 @@ impl TransferDialog {
             });
 
         let mode = Select::new("transfer-mode")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(MODES.iter().map(|mode| mode_label(*mode)))
             .selected(Some(mode_label(self.mode)))
             .open(self.mode_list_open)
@@ -726,6 +729,7 @@ impl TransferDialog {
             });
 
         let on_error = Select::new("transfer-on-error")
+            .chevron_icon(icons::CHEVRON_DOWN)
             .options(POLICIES.iter().map(|policy| policy_label(*policy)))
             .selected(Some(policy_label(self.on_error)))
             .open(self.on_error_list_open)

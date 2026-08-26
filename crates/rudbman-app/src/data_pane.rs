@@ -553,8 +553,18 @@ impl DataPane {
                             });
                         }
                         GridEvent::EditCommitted { row, column, value } => {
-                            let rugpui_grid::EditValue::Text(text) = value;
-                            pane.stage(*row, *column, StagedCell::Text(text.clone()), cx);
+                            // The two ways a field ends. An emptied field is
+                            // the empty string — that is how one is typed —
+                            // and only the clearing gesture asks for `NULL`,
+                            // which is the same thing the grid's own "set
+                            // null" row stages.
+                            let staged = match value {
+                                rugpui_grid::EditValue::Text(text) => {
+                                    StagedCell::Text(text.clone())
+                                }
+                                rugpui_grid::EditValue::Null => StagedCell::Null,
+                            };
+                            pane.stage(*row, *column, staged, cx);
                         }
                         // The grid holds no strings, so its menu is drawn here
                         // (architecture document, §7.8).

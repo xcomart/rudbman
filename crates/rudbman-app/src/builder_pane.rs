@@ -57,6 +57,7 @@ use crate::context_menu::{self, MenuRow};
 use crate::erd_pane::{canvas_zoom_rows, close_canvas_menu};
 use crate::explorer::{ConnectionId, DraggedObject, ObjectTarget};
 use crate::i18n::ts;
+use crate::icons;
 use crate::table_detail::{items, number, text, type_of};
 
 /// Height of the form under the canvas, in logical pixels.
@@ -608,6 +609,7 @@ impl BuilderPane {
             .enumerate()
             .map(|(index, join)| {
                 let kind = Select::new(("builder-join", index))
+                    .chevron_icon(icons::CHEVRON_DOWN)
                     .options(JoinKind::ALL.iter().map(|kind| join_label(*kind)))
                     .selected(Some(join_label(join.kind)))
                     .open(self.open_join == Some(index))
@@ -741,6 +743,7 @@ impl BuilderPane {
                 };
 
                 let order = Select::new(("builder-order", index))
+                    .chevron_icon(icons::CHEVRON_DOWN)
                     .options(SORTS.iter().map(|sort| sort_label(*sort)))
                     .selected(Some(sort_label(sorted)))
                     .open(self.open_order == Some(index))
