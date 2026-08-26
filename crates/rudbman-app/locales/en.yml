@@ -175,6 +175,7 @@ settings:
   editor_font_size: Editor size
   # Unit hint after a narrow field. A range, so it reads the same everywhere.
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: Wrap long lines in the editor
 
   opacity: Opacity
   opacity_hint: "% — below 100 lets the desktop show through"

@@ -93,6 +93,7 @@ settings:
   editor_font: Шрифт редактора
   editor_font_size: Размер шрифта редактора
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: Переносить длинные строки в редакторе
 
   opacity: Непрозрачность
   opacity_hint: "% — меньше 100 — и сквозь окно виден рабочий стол"

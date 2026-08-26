@@ -93,6 +93,7 @@ settings:
   editor_font: Police de l’éditeur
   editor_font_size: Taille de l’éditeur
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: Retour à la ligne automatique dans l’éditeur
 
   opacity: Opacité
   opacity_hint: "% — en dessous de 100, le bureau transparaît"

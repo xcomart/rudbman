@@ -93,6 +93,7 @@ settings:
   editor_font: エディターのフォント
   editor_font_size: エディターの文字サイズ
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: エディターで長い行を折り返す
 
   opacity: 不透明度
   opacity_hint: "% — 100 未満にするとデスクトップが透けます"

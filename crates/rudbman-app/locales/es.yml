@@ -93,6 +93,7 @@ settings:
   editor_font: Fuente del editor
   editor_font_size: Tamaño del editor
   font_size_hint: 6 – 32 pt
+  editor_word_wrap: Ajustar las líneas largas en el editor
 
   opacity: Opacidad
   opacity_hint: "% — por debajo de 100 se transparenta el escritorio"

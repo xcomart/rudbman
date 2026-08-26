@@ -145,6 +145,8 @@ mod tab {
     pub const EDITOR_FONT_FAMILY: isize = 50;
     /// Editor font size.
     pub const EDITOR_FONT_SIZE: isize = 60;
+    /// "Wrap long lines" toggle.
+    pub const EDITOR_WORD_WRAP: isize = 65;
     /// Background opacity, in percent.
     pub const OPACITY: isize = 70;
     /// Background blur toggle.
@@ -300,6 +302,8 @@ pub struct SettingsDialog {
     /// Holds the tag rather than the label, because the label is what the
     /// dropdown shows and the tag is what gets persisted.
     language: Option<String>,
+    /// Whether the editor wraps a line too long for its width.
+    editor_word_wrap: bool,
     /// Whether the window should be blurred behind.
     background_blur: bool,
     /// Title bar style currently selected in the form.
@@ -464,6 +468,7 @@ impl SettingsDialog {
             editor_theme: defaults.editor_theme.into(),
             editor_theme_follows_ui: defaults.editor_theme_follows_ui,
             language: defaults.language,
+            editor_word_wrap: defaults.editor_word_wrap,
             background_blur: defaults.window.background_blur,
             titlebar: defaults.window.titlebar,
             confirm_writes_default: defaults.confirm_writes_default,
@@ -776,6 +781,7 @@ impl SettingsDialog {
         self.editor_theme = settings.editor_theme.clone().into();
         self.editor_theme_follows_ui = settings.editor_theme_follows_ui;
         self.language = settings.language.clone();
+        self.editor_word_wrap = settings.editor_word_wrap;
         self.background_blur = settings.window.background_blur;
         self.titlebar = settings.window.titlebar;
         self.confirm_writes_default = settings.confirm_writes_default;
@@ -827,6 +833,7 @@ impl SettingsDialog {
         settings.editor_theme_follows_ui = self.editor_theme_follows_ui;
         settings.language = self.language.clone();
         settings.editor_font_family = self.font_family.as_ref().map(ToString::to_string);
+        settings.editor_word_wrap = self.editor_word_wrap;
         settings.confirm_writes_default = self.confirm_writes_default;
         settings.window.titlebar = self.titlebar;
         settings.window.background_blur = self.background_blur;
@@ -1183,6 +1190,25 @@ impl SettingsDialog {
                 }
             });
 
+        // No preview: wrapping is state the editors hold, and the shell only
+        // hands it over on save, so previewing it would show a change the
+        // Cancel button could not take back.
+        let word_wrap = Checkbox::new(
+            "settings-editor-word-wrap",
+            ts!("settings.editor_word_wrap"),
+        )
+        .checked(self.editor_word_wrap)
+        .tab_index(tab::EDITOR_WORD_WRAP)
+        .on_toggle({
+            let this = this.clone();
+            move |checked, _window, cx| {
+                this.update(cx, |dialog, cx| {
+                    dialog.editor_word_wrap = checked;
+                    cx.notify();
+                });
+            }
+        });
+
         let font = Select::new("settings-editor-font")
             .chevron_icon(icons::CHEVRON_DOWN)
             .options(self.font_options())
@@ -1256,7 +1282,8 @@ impl SettingsDialog {
                         ts!("settings.font_size_hint"),
                         cx,
                     ),
-                )),
+                ))
+                .child(form_row("", word_wrap)),
         )
     }
 
@@ -1632,7 +1659,7 @@ impl Render for SettingsDialog {
 /// against each other in a test.
 fn section_of(tab_index: isize) -> usize {
     match tab_index {
-        index if index <= tab::EDITOR_FONT_SIZE => 0,
+        index if index <= tab::EDITOR_WORD_WRAP => 0,
         index if index <= tab::TITLEBAR => 1,
         index if index <= tab::LANGUAGE => 2,
         index if index <= tab::CONFIRM_WRITES => 3,
@@ -1668,6 +1695,7 @@ mod tests {
             ui_font_size: 15.0,
             editor_font_family: Some("Cascadia Mono".to_string()),
             editor_font_size: 16.5,
+            editor_word_wrap: true,
             jvm_heap_mb: 4096,
             jvm_extra_args: vec!["-Xss4m".to_string(), "-Dfoo=bar".to_string()],
             fetch_batch_rows: 1_000,
@@ -1717,6 +1745,43 @@ mod tests {
         let path = dir.path().join("settings.json");
         collected.save_to(&path).expect("save");
         assert_eq!(AppSettings::load_from(&path).expect("load"), original);
+    }
+
+    /// The word-wrap switch is the one appearance control the dialog does not
+    /// preview — the editors are handed the change on save — so it has to reach
+    /// `collect` on its own, and cancelling has to leave the saved answer alone.
+    #[gpui::test]
+    fn the_word_wrap_switch_reaches_the_settings_without_a_preview(cx: &mut gpui::TestAppContext) {
+        let saved = AppSettings::default();
+        assert!(
+            !saved.editor_word_wrap,
+            "the default is what is flipped below"
+        );
+        let dialog = cx.update(|cx| {
+            app_settings::replace(saved.clone(), cx);
+            let dialog = cx.new(SettingsDialog::new);
+            dialog.update(cx, |dialog, cx| dialog.fill_form(&saved, cx));
+            dialog
+        });
+
+        // What the checkbox's `on_toggle` does.
+        cx.update(|cx| {
+            dialog.update(cx, |dialog, cx| {
+                dialog.editor_word_wrap = true;
+                cx.notify();
+            })
+        });
+
+        cx.update(|cx| {
+            assert!(dialog.read(cx).collect(cx).editor_word_wrap);
+            // Neither the saved settings nor the preview moved with it.
+            assert!(!app_settings::current(cx).editor_word_wrap);
+            assert!(!app_settings::effective(cx).editor_word_wrap);
+        });
+
+        // And filling the form again puts the saved answer back on the switch.
+        cx.update(|cx| dialog.update(cx, |dialog, cx| dialog.fill_form(&saved, cx)));
+        cx.update(|cx| assert!(!dialog.read(cx).editor_word_wrap));
     }
 
     /// Nothing typed into the form may reach the disk on its own, and closing
@@ -1830,6 +1895,7 @@ mod tests {
             ts!("settings.ui_font_size"),
             ts!("settings.editor_font"),
             ts!("settings.editor_font_size"),
+            ts!("settings.editor_word_wrap"),
             ts!("settings.font_size_hint"),
             ts!("settings.opacity"),
             ts!("settings.opacity_hint"),
@@ -1896,7 +1962,12 @@ mod tests {
         // The body scrolls by section index, so a control whose tab index falls
         // on the wrong side of a boundary would scroll the form away from the
         // ring it just moved into.
-        for index in [tab::UI_THEME, tab::FOLLOWS_UI, tab::EDITOR_FONT_SIZE] {
+        for index in [
+            tab::UI_THEME,
+            tab::FOLLOWS_UI,
+            tab::EDITOR_FONT_SIZE,
+            tab::EDITOR_WORD_WRAP,
+        ] {
             assert_eq!(section_of(index), 0, "{index}");
         }
         for index in [tab::OPACITY, tab::BLUR, tab::TITLEBAR] {
