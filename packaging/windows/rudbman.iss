@@ -23,10 +23,10 @@
 ;
 ; Compiled from CI with:
 ;
-;   ISCC.exe /DVersion=0.2.2 ^
+;   ISCC.exe /DVersion=0.2.3 ^
 ;            /DSourceDir=<staging tree> ^
 ;            /DOutputDir=<where the .exe lands> ^
-;            /DOutputBaseFilename=rudbman-v0.2.2-x86_64-pc-windows-msvc-setup
+;            /DOutputBaseFilename=rudbman-v0.2.3-x86_64-pc-windows-msvc-setup
 ;
 ; Version carries no "v" prefix — VersionInfoVersion is a numeric quad and
 ; rejects one.
