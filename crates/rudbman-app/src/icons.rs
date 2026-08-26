@@ -23,7 +23,10 @@
 //! caption glyphs of the custom title bar are not — they belong to every
 //! self-drawn title bar rather than to this application, so they come from
 //! [`rugpui_shell::icons`] and are concatenated into [`ICONS`] rather than copied
-//! into `assets/`.
+//! into `assets/`. Nor are the two disclosure carets: the widget layer draws
+//! them from [`rugpui::ICONS`], and they are concatenated in for the same
+//! reason — a tree, a fold-away section and a dropdown all wear the same mark,
+//! and it is rugpui's rather than any one application's.
 
 pub use rugpui_shell::icons::icon;
 use rugpui_shell::icons::{IconSet, WINDOW_CONTROL_ICONS};
@@ -160,10 +163,16 @@ const OWN: &[(&str, &[u8])] = &[
 /// without it gpui's default source answers every path with `None` and the
 /// icons paint as nothing at all.
 ///
-/// Two tables rather than one: rudbman's own above, and the shell's four
-/// caption glyphs after them, so that the window controls stay one copy across
-/// the applications that draw their own title bar.
-pub const ICONS: IconSet = IconSet::new(&[OWN, WINDOW_CONTROL_ICONS]);
+/// Three tables rather than one: rudbman's own above, then the shell's four
+/// caption glyphs, then the widget layer's two disclosure carets — so that the
+/// window controls stay one copy across the applications that draw their own
+/// title bar, and the carets stay one copy across the widgets that draw them.
+///
+/// Leaving [`rugpui::ICONS`] out is not a build error but a silent one: gpui
+/// answers the missing paths with `None` and paints nothing, so the explorer
+/// tree grows a column of blank arrows and every dropdown loses its chevron.
+/// The `rugpui/` segment in those paths keeps them clear of rudbman's own.
+pub const ICONS: IconSet = IconSet::new(&[OWN, WINDOW_CONTROL_ICONS, rugpui::ICONS]);
 
 #[cfg(test)]
 mod tests {
@@ -220,6 +229,21 @@ mod tests {
                 "{path} is in neither"
             );
         }
-        assert_eq!(ICONS.len(), OWN.len() + WINDOW_CONTROL_ICONS.len());
+        assert_eq!(
+            ICONS.len(),
+            OWN.len() + WINDOW_CONTROL_ICONS.len() + rugpui::ICONS.len()
+        );
+    }
+
+    #[test]
+    fn the_disclosure_carets_come_from_the_widget_layer() {
+        // rugpui's widgets draw these two by default, and they are drawn
+        // through *this* asset source: unchained, they would paint as nothing.
+        for path in [rugpui::CARET_RIGHT, rugpui::CARET_DOWN] {
+            assert!(
+                ICONS.load(path).expect("loading cannot fail").is_some(),
+                "{path} is not in the set rugpui's widgets draw through"
+            );
+        }
     }
 }
