@@ -1487,7 +1487,7 @@ jlink --add-modules \
     java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,\
     java.security.jgss,java.security.sasl,java.management,java.logging,\
     jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
-    --strip-debug --no-header-files --no-man-pages --compress=2 \
+    --strip-debug --strip-native-commands --no-header-files --no-man-pages --compress=2 \
     --output runtime/
 ```
 
@@ -1502,6 +1502,12 @@ arrived in JDK 21 and errors out on the JDK 17 the release pins.
 - `java.naming` is JNDI/LDAP authentication
 - `java.security.jgss`/`sasl` are Kerberos integrated authentication
 - `java.transaction.xa` is referenced at load time by XA-capable drivers
+- `--strip-native-commands` drops the launcher binaries (`java`, `keytool`,
+  …). rudbman never runs them — the JVM is loaded in-process through the
+  shared library (`bin/server/jvm.dll` / `lib/server/libjvm.*`, §4.1,
+  `jvm.rs`) — and shipping them is actively harmful on Windows: winget-pkgs
+  validation launches every installed executable with no arguments, and
+  `java.exe` exits 1, which is flagged as `Validation-Executable-Error`
 
 A missing module only shows up as a `NoClassDefFoundError` at connect time.
 The module list is verified by a smoke test per driver.
@@ -1584,9 +1590,11 @@ symlink. Because `current_exe()` resolves symlinks to their real path, the
 relative search for the runtime and the JAR keeps working.
 
 CI is a three-platform matrix. Each job runs JDK setup → Gradle → jlink →
-cargo, in that order. The release job packages and then smoke-checks that
-`runtime/bin/java --list-modules` contains `jdk.charsets` and
-`jdk.unsupported`, and that the JAR and the executable are in their places —
+cargo, in that order. The release job packages and then smoke-checks the
+runtime by reading the `MODULES` line of the `release` file jlink writes at
+the runtime root — there is no launcher to run any more (§10.2) — confirming
+it contains `jdk.charsets` and `jdk.unsupported`, and separately checks that
+the JVM shared library, the JAR and the executable are in their places —
 because a missing module does not surface until connect time (§10.2).
 
 The Windows installer gets the same treatment for the same reason, one step

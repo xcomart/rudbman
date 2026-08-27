@@ -93,13 +93,21 @@ jobs:
       #
       # `--compress=2` is JDK 17's spelling of maximum compression; the
       # `--compress=zip-N` form only exists from JDK 21 on.
+      #
+      # `--strip-native-commands` drops the launcher binaries (`java`,
+      # `keytool`, …). rudbman never runs them — the JVM is loaded in-process
+      # through the shared library (`bin/server/jvm.dll` / `lib/server/libjvm.*`,
+      # §4.1, `jvm.rs`) — and shipping them is actively harmful on Windows:
+      # winget-pkgs validation launches every installed .exe with no
+      # arguments, and `java.exe` prints usage and exits 1, which earns the
+      # package a `Validation-Executable-Error` label.
       - name: Build the bundled Java runtime
         shell: bash
         run: |
           jlink --module-path "$JAVA_HOME/jmods" \
             --add-modules \
               java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,java.security.jgss,java.security.sasl,java.management,java.logging,jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
-            --strip-debug --no-header-files --no-man-pages --compress=2 \
+            --strip-debug --strip-native-commands --no-header-files --no-man-pages --compress=2 \
             --output runtime
 
       - uses: dtolnay/rust-toolchain@stable
@@ -230,8 +238,12 @@ jobs:
       # surfaces as a NoClassDefFoundError when a user opens a connection. So
       # check the staged tree before it is published, not after (10.3).
       #
-      # Windows included: `runtime/bin/java` resolves to java.exe under Git
-      # Bash, so one script covers all three runners.
+      # jlink strips the launchers (§10.2), so there is no `runtime/bin/java`
+      # to run any more on any platform. Instead the module list is read
+      # straight out of the `release` file jlink writes at the runtime root
+      # (a `MODULES="..."` line), and the JVM shared library is checked
+      # because that is exactly what the loader in `jvm.rs`'s
+      # `is_java_home` looks for.
       - name: Smoke-test the staged tree
         shell: bash
         run: |
@@ -248,9 +260,18 @@ jobs:
           fi
           test -f "$exe" || { echo "no executable at $exe"; exit 1; }
           test -f "$jar" || { echo "no bridge JAR at $jar"; exit 1; }
-          modules=$("$runtime/bin/java" --list-modules)
+
+          jvm_lib=""
+          for candidate in "$runtime/lib/server/libjvm.so" "$runtime/lib/server/libjvm.dylib" "$runtime/lib/libjvm.dylib" "$runtime/bin/server/jvm.dll"; do
+            if [ -f "$candidate" ]; then jvm_lib="$candidate"; break; fi
+          done
+          test -n "$jvm_lib" || { echo "no JVM shared library under $runtime"; exit 1; }
+
+          release="$runtime/release"
+          test -f "$release" || { echo "no jlink release file at $release"; exit 1; }
+          modules=$(sed -n 's/^MODULES="\(.*\)"$/\1/p' "$release" | tr ' ' '\n')
           for module in jdk.charsets jdk.unsupported; do
-            if ! printf '%s\n' "$modules" | grep -q "^${module}@"; then
+            if ! printf '%s\n' "$modules" | grep -qx "$module"; then
               echo "the bundled runtime is missing $module"
               printf '%s\n' "$modules"
               exit 1
@@ -343,10 +364,12 @@ jobs:
       # install. So run it for real, unattended, into a throwaway directory,
       # and then look at what it left behind.
       #
-      # The three files checked are exactly the three the JVM loader needs
-      # (architecture.md 4.1): miss any of them and the app opens its window
-      # and dies on the first connection, which is the failure mode a
-      # single-file installer would have shipped silently.
+      # The three files checked are exactly what the JVM loader needs
+      # (architecture.md 4.1): the executable, the bridge JAR, and the JVM
+      # shared library (there is no launcher to check any more — §10.2 strips
+      # it). Miss any of them and the app opens its window and dies on the
+      # first connection, which is the failure mode a single-file installer
+      # would have shipped silently.
       #
       # The uninstall half is best-effort on purpose. Inno's uninstaller copies
       # itself to a temp directory and relaunches from there so it can delete
@@ -369,7 +392,7 @@ jobs:
             throw "the installer exited $($setup.ExitCode)"
           }
 
-          foreach ($rel in @("rudbman.exe", "lib\rudbman-bridge.jar", "runtime\bin\java.exe")) {
+          foreach ($rel in @("rudbman.exe", "lib\rudbman-bridge.jar", "runtime\bin\server\jvm.dll")) {
             if (-not (Test-Path (Join-Path $dir $rel))) {
               throw "the installed tree is missing $rel"
             }
