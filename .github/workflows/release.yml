@@ -63,6 +63,33 @@ jobs:
           if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
           "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      # The x86_64-pc-windows-msvc target links the CRT dynamically by
+      # default, so the resulting rudbman.exe needs VCRUNTIME140.dll and the
+      # api-ms-win-crt-* forwarders at load time. Neither the installer nor
+      # the zip carries the VC++ redistributable — a machine that has never
+      # installed it (the winget-pkgs validation VM, in practice) fails to
+      # even start rudbman.exe with STATUS_DLL_NOT_FOUND (0xC0000135). The
+      # bundled jlink runtime under runtime\bin does carry its own copy of
+      # these DLLs, but rudbman.exe does not search that subfolder for its
+      # own dependencies, so it is no help here. Statically linking the CRT
+      # folds those DLLs into the binary, so it runs standalone on a bare
+      # Windows install, whether launched from the zip or the installer.
+      # Only this OS's build needs it, hence a dedicated step rather than a
+      # matrix-wide `env:` (which would also apply the flag, harmlessly but
+      # pointlessly, to Linux and macOS). The winget manifest's
+      # Microsoft.VCRedist.2015+.x64 dependency
+      # (packaging/winget/*/Xcomart.Rudbman.installer.yaml) stays declared
+      # regardless: it is a no-op once the runtime is already on the machine,
+      # and a safety net if a future build ever drops this flag. Swatinem/
+      # rust-cache@v2 keys its cache on RUSTFLAGS, so toggling this between
+      # runs cannot serve a stale dynamically-linked object into a
+      # statically-linked build or vice versa.
+      - name: Statically link the CRT (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "RUSTFLAGS=-C target-feature=+crt-static" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # 17 is what the bridge compiles against (--release 17), so it is also
       # what the shipped runtime is jlinked from. Temurin because it exists for
       # all three runners and carries the jmods jlink needs.

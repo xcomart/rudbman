@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: Xcomart.Rudbman
-PackageVersion: 0.2.3
+PackageVersion: 0.2.4
 MinimumOSVersion: 10.0.0.0
 InstallerType: inno
 # packaging/windows/rudbman.iss sets PrivilegesRequired=lowest, so the installer never
@@ -23,12 +23,12 @@ UpgradeBehavior: install
 Dependencies:
   PackageDependencies:
   - PackageIdentifier: Microsoft.VCRedist.2015+.x64
-ReleaseDate: 2026-08-26
+ReleaseDate: 1970-01-01
 Installers:
 # The x64 build also runs under emulation on ARM64 Windows, but there is no native
 # arm64 artifact to declare here yet.
 - Architecture: x64
-  InstallerUrl: https://github.com/xcomart/rudbman/releases/download/v0.2.3/rudbman-v0.2.3-x86_64-pc-windows-msvc-setup.exe
+  InstallerUrl: https://github.com/xcomart/rudbman/releases/download/v0.2.4/rudbman-v0.2.4-x86_64-pc-windows-msvc-setup.exe
   # SHA256 of the published asset, computed from the download itself:
   #
   #   Invoke-WebRequest -Uri <InstallerUrl> -OutFile setup.exe
@@ -36,8 +36,10 @@ Installers:
   #
   # The winget-pkgs PR pipeline downloads the URL and compares, so a wrong hash
   # fails validation. `wingetcreate update` computes it by itself for every
-  # release after this first hand-made one.
-  InstallerSha256: AFBEF1B46E171A8B9034AA6AE931B4A5D7CB698C93B471664F4209876D02ECDF
+  # release after this first hand-made one. The quotes are load-bearing while
+  # the value is all zeros: unquoted, YAML reads a run of digits as a number
+  # rather than a hash.
+  InstallerSha256: '0000000000000000000000000000000000000000000000000000000000000000'
   # Inno Setup appends "_is1" to the AppId when it writes its Uninstall registry key,
   # so this is packaging/windows/rudbman.iss's AppId plus that suffix. It is how winget
   # recognises an already-installed copy; see packaging/winget/README.md.

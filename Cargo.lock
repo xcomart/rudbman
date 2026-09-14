@@ -2696,7 +2696,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2791,7 +2791,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2837,7 +2837,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2977,7 +2977,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -5773,7 +5773,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-app"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5805,7 +5805,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "directories",
@@ -5819,7 +5819,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-erd"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "gpui",
  "rugpui",
@@ -5828,7 +5828,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-jdbc"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "jni",
@@ -5844,11 +5844,11 @@ dependencies = [
 
 [[package]]
 name = "rudbman-sql"
-version = "0.2.3"
+version = "0.2.4"
 
 [[package]]
 name = "rudbman-ssh"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "async-trait",
  "futures",
@@ -5861,7 +5861,7 @@ dependencies = [
 [[package]]
 name = "rugpui"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "anyhow",
  "gpui",
@@ -5874,7 +5874,7 @@ dependencies = [
 [[package]]
 name = "rugpui-editor"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "gpui",
  "log",
@@ -5886,7 +5886,7 @@ dependencies = [
 [[package]]
 name = "rugpui-grid"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "gpui",
  "rugpui",
@@ -5896,7 +5896,7 @@ dependencies = [
 [[package]]
 name = "rugpui-shell"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=de4900f448703b43e12aaca82e0a9e8912028e86#de4900f448703b43e12aaca82e0a9e8912028e86"
+source = "git+https://github.com/xcomart/rugpui?rev=9bab46ae437224fba4cb7f54946db2e9030c54ef#9bab46ae437224fba4cb7f54946db2e9030c54ef"
 dependencies = [
  "anyhow",
  "futures",

@@ -85,9 +85,9 @@ use rudbman_core::{
 };
 use rugpui::{
     Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
-    MenuEntry, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter, TabBar, TabItem, TabStatus,
-    Theme, ThemeRegistry, hide_later, hide_now, modal, scroll_to, scrolled, set_editor_theme,
-    set_theme, set_window_tint, theme, theme_store,
+    MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter, TabBar, TabItem,
+    TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal, scroll_to, scrolled,
+    set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use rugpui_shell::chrome::{
     SHADOW_BAND, client_tiling, draws_own_titlebar, render_resize_edges, titlebar_gestures,
@@ -239,11 +239,13 @@ const PANE_SHORTCUT_LABEL: &str = if cfg!(target_os = "macos") {
 /// pixels.
 ///
 /// The seam itself is the sidebar's own border, a hairline — far too thin to
-/// hit with a pointer. The handle is pulled back over it with a negative
-/// margin so that widening the grab area moves nothing: it straddles the
-/// border instead of pushing the work area across. The same six pixels
-/// [`rugpui::Splitter`] gives the dividers inside the pane tree, so the two
-/// resize gestures of one window are equally easy to find.
+/// hit with a pointer. The handle is laid over it rather than beside it, inside
+/// the sidebar's own trailing edge, so that widening the grab area moves
+/// nothing: it covers the border instead of pushing the work area across. The
+/// same six pixels [`rugpui::Splitter`] gives the dividers inside the pane tree
+/// — and, since both are the same [`rugpui::ResizeHandle`], the same accent bar
+/// under the pointer too, so the two resize gestures of one window are equally
+/// easy to find and equally easy to recognise.
 const SPLIT_HANDLE: f32 = 6.;
 
 /// A surface of the workspace that scrolls, and so wears an overlay bar.
@@ -3963,28 +3965,34 @@ impl Workspace {
             (area.panes.root(), chrome)
         });
 
-        // The sidebar and the handle that resizes it, both left out entirely
-        // when the panel is hidden — a zero-width flex child would still take
-        // the divider's hit area with it.
+        // The sidebar and, inside its own trailing edge, the handle that resizes
+        // it — both left out entirely when the panel is hidden, because a
+        // zero-width flex child would still take the divider's hit area with it.
+        //
+        // The handle is a child of the sidebar rather than a sibling of it
+        // because [`rugpui::ResizeHandle`] is an absolutely positioned band and
+        // so has to be measured against a `relative` box. Inside the sidebar it
+        // covers the sidebar's own last six pixels, which is exactly where the
+        // negative-margin sibling this replaced sat: the grab area straddles the
+        // seam over the panel's own border rather than pushing the work area
+        // across. Last child, so it wins the hit test against whatever the
+        // explorer has drawn under it — and the widget brings the accent bar
+        // that fades in under the pointer, the same one the pane tree's
+        // [`rugpui::Splitter`] dividers show, so the two resize gestures of one
+        // window not only feel alike but look alike.
         let sidebar = self.explorer_showing().then(|| {
             div()
                 .flex()
+                .relative()
                 .flex_none()
                 .w(px(self.explorer_width))
                 .min_h_0()
                 .child(self.explorer.clone())
-        });
-        let handle = self.explorer_showing().then(|| {
-            div()
-                .id("explorer-divider")
-                .occlude()
-                .flex_none()
-                .w(px(SPLIT_HANDLE))
-                // Pulled back over the sidebar's own border so the grab area
-                // straddles the seam rather than pushing the work area across.
-                .ml(px(-SPLIT_HANDLE))
-                .cursor_ew_resize()
-                .on_drag(DraggedExplorer, |_, _, _, cx| cx.new(|_| gpui::Empty))
+                .child(
+                    ResizeHandle::new("explorer-divider", gpui::Axis::Horizontal, DraggedExplorer)
+                        .at_end()
+                        .thickness(px(SPLIT_HANDLE)),
+                )
         });
 
         // The row paints no fill of its own. Its children tile it, and each of
@@ -4007,7 +4015,6 @@ impl Workspace {
                 },
             ))
             .children(sidebar)
-            .children(handle)
             .child(
                 div()
                     .flex()

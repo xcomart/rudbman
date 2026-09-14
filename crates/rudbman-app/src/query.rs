@@ -77,7 +77,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Action, AnyElement, App, Context, Div, DragMoveEvent, Entity, EntityId, EventEmitter,
+    Action, AnyElement, App, Axis, Context, Div, DragMoveEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, Hsla, IntoElement, ParentElement, Pixels, Point, Render, SharedString,
     Styled, Subscription, Window, div, prelude::*, px, relative,
 };
@@ -86,7 +86,7 @@ use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
 use rudbman_sql::{Dialect, TokenKind, lex, split_statements};
-use rugpui::{Button, ButtonVariant, ContextMenu, Theme, theme};
+use rugpui::{Button, ButtonVariant, ContextMenu, ResizeHandle, Theme, theme};
 use rugpui_editor::editor::{
     Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
     ToggleComment, Undo,
@@ -138,6 +138,11 @@ const DEFAULT_EDITOR_SHARE: f32 = 0.45;
 const MIN_SHARE: f32 = 0.12;
 
 /// Thickness of the invisible grab strip over the divider, in pixels.
+///
+/// The strip is what answers the press; the accent bar
+/// [`rugpui::ResizeHandle`] fades in inside it is thinner, and is the only part
+/// of the divider the eye ever sees. Six pixels is what the workspace gives its
+/// own dividers, so every seam in the window is equally easy to hit.
 const DIVIDER_GRAB: f32 = 6.;
 
 /// How often the elapsed clock redraws while a statement runs.
@@ -2721,21 +2726,26 @@ impl Render for QueryPane {
                     .text_color(chrome.text_muted)
                     .child(notice)
             }))
-            // Last, so it wins the hit test against both halves it straddles.
+            // After both halves, so it wins the hit test against the two it
+            // straddles. The band is centred on the seam by `at`, which pulls it
+            // back half its own thickness for us, and it carries the accent bar
+            // that fades in under the pointer — the same widget, and so the same
+            // bar, that [`rugpui::Splitter`] gives the dividers in the pane tree
+            // around this panel.
+            //
+            // The entity id rides along in the element id as well as in the drag
+            // payload, and for a related reason: the payload keeps a nested
+            // pane's drag from writing its neighbour's ratio, while the element
+            // id is what the handle files its fade under, and two panels showing
+            // at once would otherwise share one bar between them.
             .child(
-                div()
-                    .id("query-divider")
-                    .absolute()
-                    .occlude()
-                    .left_0()
-                    .right_0()
-                    .top(relative(share))
-                    .mt(px(-DIVIDER_GRAB / 2.))
-                    .h(px(DIVIDER_GRAB))
-                    .cursor_ns_resize()
-                    .on_drag(DraggedQueryDivider(id), |_, _, _, cx| {
-                        cx.new(|_| gpui::Empty)
-                    }),
+                ResizeHandle::new(
+                    ("query-divider", id),
+                    Axis::Vertical,
+                    DraggedQueryDivider(id),
+                )
+                .at(relative(share))
+                .thickness(px(DIVIDER_GRAB)),
             )
             // All last, and the menu last of all: a context menu paints above
             // even a modal (architecture document, §7.8). The two modals never
