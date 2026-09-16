@@ -1008,6 +1008,7 @@ impl DataPane {
             Err(failure) => {
                 self.notice = None;
                 let half_applied = failure.half_applied;
+                let reconnect_required = failure.rollback.is_some();
                 if let Some(error) = failure.rollback {
                     // The user is told that the batch may be half in; the
                     // driver's account of *why the unwind failed* is a second
@@ -1026,6 +1027,7 @@ impl DataPane {
                     error,
                     message,
                     half_applied,
+                    reconnect_required,
                 }));
             }
         }

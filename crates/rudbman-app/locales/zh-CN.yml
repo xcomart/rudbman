@@ -430,6 +430,7 @@ data:
   applied: "已应用 %{count} 条语句。"
   apply_stale: 有人已修改或删除了某一行。未应用任何更改，请刷新后重试。
   apply_half_applied: 部分语句可能已经写入表中。请刷新确认后再重新应用。
+  apply_reconnect_required: 回滚失败，结果不确定。请重新连接并检查表；不要自动重试。
   apply_bad_value: "%{column} 无法设为“%{value}”。"
   apply_null_key: "该行的 %{column} 为 NULL，无法再次定位该行。"
   apply_unknown_key: "读取到的列中没有键列 %{column}。请刷新后重试。"

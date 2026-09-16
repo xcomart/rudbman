@@ -305,7 +305,7 @@ public final class Cursor {
         closed = true;
         session.removeCursor(this);
         Registry.remove(handle);
-        session.lock();
+        session.lockForCleanup();
         try {
             closeResultSet();
             try {

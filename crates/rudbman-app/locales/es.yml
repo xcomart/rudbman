@@ -430,6 +430,7 @@ data:
   applied: "%{count} sentencias aplicadas."
   apply_stale: "Otra persona ha modificado o eliminado una fila. No se ha aplicado nada: recargue e inténtelo de nuevo."
   apply_half_applied: Parte del lote puede estar ya en la tabla. Recargue y compruébelo antes de volver a aplicar.
+  apply_reconnect_required: El resultado es incierto porque falló la reversión. Vuelva a conectarse y verifique la tabla; no reintente automáticamente.
   apply_bad_value: "%{column} no puede tomar el valor «%{value}»."
   apply_null_key: "El %{column} de esta fila es NULL, así que ninguna sentencia puede volver a encontrarla."
   apply_unknown_key: "La columna clave %{column} no está entre las columnas leídas. Recargue e inténtelo de nuevo."

@@ -430,6 +430,7 @@ data:
   applied: "%{count}개 문장을 적용했습니다."
   apply_stale: 다른 곳에서 행이 변경되었거나 삭제되었습니다. 아무것도 적용하지 않았으니 새로 고친 뒤 다시 시도하세요.
   apply_half_applied: 일부가 이미 테이블에 반영되었을 수 있습니다. 새로 고쳐 확인한 뒤 다시 적용하세요.
+  apply_reconnect_required: 롤백 실패로 결과가 불확실합니다. 다시 연결한 뒤 테이블을 확인하고 자동으로 재시도하지 마세요.
   apply_bad_value: "%{column} 열에 “%{value}”은(는) 넣을 수 없습니다."
   apply_null_key: "이 행의 %{column} 값이 NULL이라 행을 다시 찾을 수 없습니다."
   apply_unknown_key: "읽어 온 열 중에 키 열 %{column}이(가) 없습니다. 새로 고친 뒤 다시 시도하세요."

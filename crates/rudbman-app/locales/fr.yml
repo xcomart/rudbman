@@ -430,6 +430,7 @@ data:
   applied: "%{count} instructions appliquées."
   apply_stale: Une ligne a été modifiée ou supprimée par quelqu'un d'autre. Rien n'a été appliqué — rechargez et réessayez.
   apply_half_applied: Une partie du lot est peut-être déjà dans la table. Rechargez et vérifiez avant de réappliquer.
+  apply_reconnect_required: Le résultat est incertain car l’annulation a échoué. Reconnectez-vous et vérifiez la table sans réessayer automatiquement.
   apply_bad_value: "%{column} ne peut pas prendre la valeur « %{value} »."
   apply_null_key: "Le %{column} de cette ligne est NULL ; aucune instruction ne peut la retrouver."
   apply_unknown_key: "La colonne clé %{column} ne figure pas parmi les colonnes lues. Rechargez et réessayez."

@@ -61,6 +61,8 @@ pub(crate) struct ApplyProblem {
     /// Whether the rollback failed too, so the table may hold part of the
     /// batch. The one case where the user has to go and look.
     pub(crate) half_applied: bool,
+    /// Whether rollback poisoned the connection and requires reconnection.
+    pub(crate) reconnect_required: bool,
 }
 
 impl ApplyProblem {
@@ -70,6 +72,7 @@ impl ApplyProblem {
             error: None,
             message: Some(message),
             half_applied: false,
+            reconnect_required: false,
         })
     }
 }
@@ -360,12 +363,20 @@ pub(crate) fn render_apply_error(
                 .as_ref()
                 .map(|error| error_lines(error, chrome)),
         )
-        .children(problem.half_applied.then(|| {
+        .children(problem.reconnect_required.then(|| {
             div()
                 .text_size(px(11.))
                 .text_color(chrome.danger)
-                .child(ts!("data.apply_half_applied"))
+                .child(ts!("data.apply_reconnect_required"))
         }))
+        .children(
+            (problem.half_applied && !problem.reconnect_required).then(|| {
+                div()
+                    .text_size(px(11.))
+                    .text_color(chrome.danger)
+                    .child(ts!("data.apply_half_applied"))
+            }),
+        )
 }
 
 /// Why an apply stopped.
@@ -505,10 +516,12 @@ fn unwind(
         });
     }
     let rollback = session.rollback().err();
-    // Attempted whatever the rollback did: a session left with autocommit off
-    // is a session every later statement on this connection silently joins an
-    // open transaction on.
-    if let Err(error) = session.set_auto_commit(restore) {
+    // Restoring auto-commit after a failed rollback can implicitly commit the
+    // uncertain transaction. The bridge poisons the session on that rollback
+    // failure, and every later operation asks the user to reconnect.
+    if rollback.is_none()
+        && let Err(error) = session.set_auto_commit(restore)
+    {
         log::warn!("restoring auto-commit after a failed apply failed: {error}");
     }
     Box::new(ApplyFailure {

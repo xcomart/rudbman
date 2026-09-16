@@ -85,7 +85,7 @@ use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
-use rudbman_sql::{Dialect, TokenKind, lex, split_statements};
+use rudbman_sql::{Dialect, StatementAccess, split_statements, statement_access};
 use rugpui::{Button, ButtonVariant, ContextMenu, ResizeHandle, Theme, theme};
 use rugpui_editor::editor::{
     Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
@@ -114,16 +114,6 @@ use crate::row_apply::{
     render_apply_error, render_apply_preview, render_discard_confirm,
 };
 use crate::sql_highlight::DialectHighlighter;
-
-/// The statement keywords that read rather than write.
-///
-/// The judgement `confirm_writes` turns on, and deliberately a short list: a
-/// first word that is not one of these is treated as a write, because being
-/// asked about a harmless statement costs a keystroke and the other mistake
-/// costs a table. Read off the lexer rather than off `trim().starts_with`, so
-/// that a leading comment — which is where a script's explanation lives — is
-/// skipped for free.
-const READING_KEYWORDS: [&str; 5] = ["SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE"];
 
 /// Alias the sort round trip wraps the original statement under.
 ///
@@ -158,24 +148,17 @@ const PREVIEW_CHARS: usize = 400;
 /// pane's subtree would otherwise write its neighbour's ratio.
 pub struct DraggedQueryDivider(EntityId);
 
-/// The first token of `sql` that is neither whitespace nor a comment.
-fn first_word<'a>(sql: &'a str, dialect: &Dialect) -> Option<&'a str> {
-    lex(sql, dialect)
-        .into_iter()
-        .find(|token| !matches!(token.kind, TokenKind::Whitespace | TokenKind::Comment))
-        .map(|token| &sql[token.start..token.end])
-}
-
 /// Whether `sql` is a statement `confirm_writes` should ask about.
 ///
 /// Blank input and a buffer holding nothing but comments are neither reads nor
 /// writes: there is no statement, and nothing will be sent.
 pub fn is_write_statement(sql: &str, dialect: &Dialect) -> bool {
-    first_word(sql, dialect).is_some_and(|word| {
-        !READING_KEYWORDS
-            .iter()
-            .any(|keyword| word.eq_ignore_ascii_case(keyword))
-    })
+    let access = statement_access(sql, dialect);
+    matches!(access, StatementAccess::Write)
+        || matches!(access, StatementAccess::Unknown)
+            && (!split_statements(sql, dialect).is_empty()
+                || sql.contains("/*!")
+                || sql.contains("/*M!"))
 }
 
 /// Quotes an identifier the way `dialect` spells a quoted identifier.
@@ -881,7 +864,11 @@ impl QueryPane {
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         let statements: Vec<String> = statements
             .into_iter()
-            .filter(|sql| first_word(sql, &self.dialect).is_some())
+            .filter(|sql| {
+                !split_statements(sql, &self.dialect).is_empty()
+                    || sql.contains("/*!")
+                    || sql.contains("/*M!")
+            })
             .collect();
         self.notice = None;
 
@@ -2169,6 +2156,7 @@ impl QueryPane {
             Err(failure) => {
                 self.notice = None;
                 let half_applied = failure.half_applied;
+                let reconnect_required = failure.rollback.is_some();
                 if let Some(error) = failure.rollback {
                     // The user is told that the batch may be half in; the
                     // driver's account of *why the unwind failed* is a second
@@ -2186,6 +2174,7 @@ impl QueryPane {
                     error,
                     message,
                     half_applied,
+                    reconnect_required,
                 }));
             }
         }
@@ -2919,6 +2908,14 @@ mod tests {
         assert!(!is_write_statement("select 1", &h2));
         assert!(!is_write_statement("EXPLAIN select 1", &h2));
         assert!(!is_write_statement("show tables", &h2));
+
+        assert!(is_write_statement(
+            "WITH removed AS (DELETE FROM t RETURNING id) SELECT * FROM removed",
+            &h2
+        ));
+        assert!(is_write_statement("EXPLAIN ANALYZE UPDATE t SET v=1", &h2));
+        assert!(is_write_statement("SELECT * INTO backup FROM t", &h2));
+        assert!(is_write_statement("/*! DELETE FROM t */", &Dialect::MYSQL));
 
         // Nothing to send is neither: no statement, so no question.
         assert!(!is_write_statement("", &h2));

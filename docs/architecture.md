@@ -875,6 +875,12 @@ for.
 - Completion: suggests tables, columns and aliases from the connected session's
   schema index. The index is filled in the background right after connecting
   and kept in memory
+- Write confirmation and sortable-result eligibility use a conservative token
+  classifier. It follows `WITH` bodies, `EXPLAIN` targets and `SELECT INTO`;
+  malformed or vendor-specific input is not treated as a read. This is an
+  accident guard, not an authorization boundary: lexer-changing server modes
+  and side-effecting functions inside `SELECT` cannot be proved safe locally.
+  Database permissions and JDBC read-only mode remain the final guard.
 
 ### 7.5 The result grid (`rugpui-grid`)
 
@@ -1159,6 +1165,11 @@ gate with three clauses, and the machinery underneath is the data pane's own,
   *before* autocommit is restored, which is what stops several products
   committing the half-applied batch — is the last thing this codebase should
   hold two copies of.
+- **A failed rollback poisons the session.** Autocommit is not restored after
+  rollback fails because many drivers would commit the uncertain transaction
+  while doing so. The bridge rejects later commands and keep-alives on that
+  session; the UI says the result is uncertain and requires reconnection before
+  inspection or any manual retry. Closing the poisoned session remains allowed.
 - **A sort or a re-run replaces the source**, exactly as above, and the query
   pane's sort wraps the statement in a derived table rather than appending an
   `ORDER BY`, so it re-runs. The rule is unchanged: ask first while anything is

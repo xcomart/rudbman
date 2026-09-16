@@ -62,6 +62,7 @@ public final class Session implements AutoCloseable {
     private final ConcurrentHashMap<Long, Cursor> cursors = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
+    private volatile String unusableReason;
     private volatile long handle;
 
     private Session(Connection conn, Loaders.Lease lease, String url, String driverClass,
@@ -240,7 +241,7 @@ public final class Session implements AutoCloseable {
     }
 
     private void keepAlive() {
-        if (closed || keepAliveQuery == null) {
+        if (isClosed() || keepAliveQuery == null) {
             return;
         }
         // A statement already in flight keeps the connection busy, which is all
@@ -249,7 +250,7 @@ public final class Session implements AutoCloseable {
             return;
         }
         try {
-            if (closed || conn.isClosed()) {
+            if (isClosed() || conn.isClosed()) {
                 return;
             }
             try (Statement stmt = conn.createStatement()) {
@@ -302,7 +303,31 @@ public final class Session implements AutoCloseable {
 
     /** Acquires the connection lock. */
     public void lock() {
+        ensureUsable();
         connLock.lock();
+        try {
+            ensureUsable();
+        } catch (RuntimeException e) {
+            connLock.unlock();
+            throw e;
+        }
+    }
+
+    /** Acquires the lock for resource cleanup, including on a poisoned session. */
+    void lockForCleanup() {
+        connLock.lock();
+    }
+
+    /** Marks a connection whose transaction outcome is uncertain as unusable. */
+    public void markUnusable(String reason) {
+        unusableReason = reason;
+    }
+
+    private void ensureUsable() {
+        String reason = unusableReason;
+        if (reason != null) {
+            throw new BridgeException("driver", reason + "; reconnect before running another command");
+        }
     }
 
     /** Releases the connection lock. */
@@ -395,6 +420,6 @@ public final class Session implements AutoCloseable {
 
     /** @return whether {@link #close()} has been called. */
     public boolean isClosed() {
-        return closed;
+        return closed || unusableReason != null;
     }
 }
