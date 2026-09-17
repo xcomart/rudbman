@@ -23,23 +23,13 @@ UpgradeBehavior: install
 Dependencies:
   PackageDependencies:
   - PackageIdentifier: Microsoft.VCRedist.2015+.x64
-ReleaseDate: 1970-01-01
+ReleaseDate: 2026-09-17
 Installers:
 # The x64 build also runs under emulation on ARM64 Windows, but there is no native
 # arm64 artifact to declare here yet.
 - Architecture: x64
   InstallerUrl: https://github.com/xcomart/rudbman/releases/download/v0.2.5/rudbman-v0.2.5-x86_64-pc-windows-msvc-setup.exe
-  # SHA256 of the published asset, computed from the download itself:
-  #
-  #   Invoke-WebRequest -Uri <InstallerUrl> -OutFile setup.exe
-  #   (Get-FileHash -Algorithm SHA256 .\setup.exe).Hash
-  #
-  # The winget-pkgs PR pipeline downloads the URL and compares, so a wrong hash
-  # fails validation. `wingetcreate update` computes it by itself for every
-  # release after this first hand-made one. The quotes are load-bearing while
-  # the value is all zeros: unquoted, YAML reads a run of digits as a number
-  # rather than a hash.
-  InstallerSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+  InstallerSha256: a9c0427da6d6e77d1c0c482ada55264746711bd998a678b90ba0e5c3648f49b0
   # Inno Setup appends "_is1" to the AppId when it writes its Uninstall registry key,
   # so this is packaging/windows/rudbman.iss's AppId plus that suffix. It is how winget
   # recognises an already-installed copy; see packaging/winget/README.md.
