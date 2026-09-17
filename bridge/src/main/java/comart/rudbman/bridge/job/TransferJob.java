@@ -300,11 +300,22 @@ public final class TransferJob extends Jobs.Job {
             // Order matters: setAutoCommit(true) commits the open transaction on
             // most drivers, so the tail has to be rolled back before it.
             if (pending) {
-                quietly(conn::rollback, "cannot roll back the transfer's tail");
-            }
-            if (autoCommit) {
+                rollbackTail(conn, target, autoCommit);
+            } else if (autoCommit) {
                 quietly(() -> conn.setAutoCommit(true), "cannot restore auto-commit");
             }
+        }
+    }
+
+    public static void rollbackTail(Connection conn, Session target, boolean restoreAutoCommit) throws SQLException {
+        try {
+            conn.rollback();
+        } catch (SQLException e) {
+            target.markUnusable("transfer rollback failed and the transaction outcome is uncertain");
+            throw new SQLException("transfer rollback failed; the result is uncertain and the target session must be reconnected", e);
+        }
+        if (restoreAutoCommit) {
+            quietly(() -> conn.setAutoCommit(true), "cannot restore auto-commit");
         }
     }
 

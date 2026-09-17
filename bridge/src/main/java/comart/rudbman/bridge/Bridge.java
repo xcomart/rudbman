@@ -243,7 +243,12 @@ public final class Bridge {
         Session s = Registry.session(handle);
         s.lock();
         try {
-            s.connection().rollback();
+            try {
+                s.connection().rollback();
+            } catch (SQLException e) {
+                s.markUnusable("rollback failed and the transaction outcome is uncertain");
+                throw e;
+            }
         } finally {
             s.unlock();
         }

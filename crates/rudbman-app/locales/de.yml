@@ -430,6 +430,7 @@ data:
   applied: "%{count} Anweisungen angewendet."
   apply_stale: Eine Zeile wurde von jemand anderem geändert oder gelöscht. Es wurde nichts angewendet – laden Sie neu und versuchen Sie es erneut.
   apply_half_applied: Ein Teil des Stapels steht möglicherweise schon in der Tabelle. Laden Sie neu und prüfen Sie ihn, bevor Sie erneut anwenden.
+  apply_reconnect_required: Das Ergebnis ist wegen eines Rollback-Fehlers ungewiss. Stellen Sie die Verbindung neu her und prüfen Sie die Tabelle; nicht automatisch wiederholen.
   apply_bad_value: "%{column} kann nicht auf „%{value}“ gesetzt werden."
   apply_null_key: "Das %{column} dieser Zeile ist NULL, daher kann keine Anweisung sie wiederfinden."
   apply_unknown_key: "Die Schlüsselspalte %{column} ist nicht unter den gelesenen Spalten. Laden Sie neu und versuchen Sie es erneut."

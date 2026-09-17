@@ -664,6 +664,7 @@ data:
   apply_stale: A row was changed or deleted by somebody else. Nothing has been applied — refresh and try again.
   # The rollback failed too, or there was no transaction to roll back.
   apply_half_applied: Part of the batch may already be in the table. Refresh and check it before applying again.
+  apply_reconnect_required: The result is uncertain because rollback failed. Reconnect and verify the table; do not retry automatically.
   # Refusals made before anything is sent, each naming what could not be
   # written.
   apply_bad_value: "%{column} cannot be set to “%{value}”."

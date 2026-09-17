@@ -5,13 +5,20 @@ import com.google.gson.JsonObject;
 import comart.rudbman.bridge.support.Batch;
 import comart.rudbman.bridge.support.H2;
 import comart.rudbman.bridge.support.Resp;
+import comart.rudbman.bridge.job.TransferJob;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Proxy;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * {@code JOB_START kind: "transfer"} end to end (architecture.md 6).
@@ -24,6 +31,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * instead of blocking on a lock.
  */
 class TransferJobTest {
+
+    @Test
+    void rollbackFailureDoesNotRestoreAutoCommitAndPoisonsTarget() throws Exception {
+        Resp openCursor = H2.query(target, "select 1");
+        openCursor.assertOk();
+        long cursor = openCursor.num("cursor");
+        AtomicBoolean restored = new AtomicBoolean();
+        Connection failing = (Connection) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{Connection.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("rollback")) {
+                        throw new SQLException("injected rollback failure");
+                    }
+                    if (method.getName().equals("setAutoCommit")) {
+                        restored.set(true);
+                    }
+                    return null;
+                });
+
+        SQLException failure = assertThrows(SQLException.class,
+                () -> TransferJob.rollbackTail(failing, Registry.session(target), true));
+        assertTrue(failure.getMessage().contains("must be reconnected"));
+        assertFalse(restored.get(), "auto-commit must stay untouched after rollback failure");
+
+        JsonObject execute = new JsonObject();
+        execute.addProperty("sql", "select 1");
+        JsonObject error = H2.call(Ops.EXECUTE, target, 0, execute).error();
+        assertTrue(error.get("message").getAsString().contains("reconnect"), error.toString());
+        Resp.of(Bridge.call(Ops.CLOSE_CURSOR, cursor, 0, null)).assertOk();
+    }
 
     private long source;
     private long target;

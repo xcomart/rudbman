@@ -108,6 +108,9 @@
 //!   MySQL's `ANSI_QUOTES` and `NO_BACKSLASH_ESCAPES`, SQL Server's
 //!   `QUOTED_IDENTIFIER OFF`. Only a live connection could know better, and only
 //!   a color would change.
+//! * **Read classification is conservative, not an authorization boundary.**
+//!   Vendor-specific executable comments are unknown, and a `SELECT` that calls
+//!   a side-effecting user function cannot be recognised without server help.
 //! * **A word is a function when `(` follows it** on the same line, which calls
 //!   `t (x)` in a join a function. Context enough to do better is a parser.
 //!
@@ -135,6 +138,7 @@
 
 #![warn(missing_docs)]
 
+pub mod access;
 pub mod ddl;
 pub mod dialect;
 pub mod dml;
@@ -145,6 +149,7 @@ pub mod statement;
 
 mod keywords;
 
+pub use access::{StatementAccess, statement_access};
 pub use ddl::{
     ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, DdlError, TableAlter, TableConstraint,
     TableCreate, Unsupported, plan_alter, plan_create,
