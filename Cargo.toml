@@ -44,13 +44,13 @@ members = ["crates/*"]
 # `rugpui-shell` and `vendor/gpui*` siblings) to `.cargo/config.toml`, which is
 # not committed.
 [patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
-gpui_linux = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
-gpui_macos = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
-gpui_windows = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
+gpui = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
+gpui_linux = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
+gpui_macos = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
+gpui_windows = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
 
 [workspace.package]
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 license = "MIT"
 authors = ["rudbman contributors"]
@@ -211,10 +211,10 @@ jni = { version = "0.22", features = ["invocation"] }
 #
 # The same `rev` of `https://github.com/xcomart/rugpui` as the patch table at
 # the top of this file, which is what keeps one gpui in the binary.
-rugpui = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
-rugpui-grid = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
-rugpui-editor = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
-rugpui-shell = { git = "https://github.com/xcomart/rugpui", rev = "943d43ffbb3cb7259a69cde33520139b8975f8d7" }
+rugpui = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
+rugpui-grid = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
+rugpui-editor = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
+rugpui-shell = { git = "https://github.com/xcomart/rugpui", rev = "60fc28368b5ea9feab745f3ba628f0e2ee06b1a0" }
 
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }
