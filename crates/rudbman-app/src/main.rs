@@ -3665,6 +3665,12 @@ impl Workspace {
     fn render_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
         let custom = draws_own_titlebar(chrome_titlebar(self.titlebar), window);
+        let titlebar_active = cfg!(target_os = "linux") && custom && window.is_window_active();
+        let titlebar_text = if titlebar_active {
+            theme.text
+        } else {
+            theme.text_muted
+        };
         let menu = (!cfg!(target_os = "macos")).then(|| self.render_app_menu(cx));
         // Built before the row is assembled: both of these borrow the context to
         // register listeners, and the builders below borrow it to read the theme.
@@ -3717,8 +3723,25 @@ impl Workspace {
             // The shipped icon in its own colours: img() keeps them, where the
             // svg element would flatten the mark into a theme-tinted glyph;
             // see [`icons::APP_ICON`].
-            let icon = (!cfg!(target_os = "macos"))
-                .then(|| img(icons::APP_ICON).size(px(16.)).flex_none());
+            let icon = (!cfg!(target_os = "macos")).then(|| {
+                if cfg!(target_os = "linux") {
+                    icons::icon(
+                        icons::APP_ICON,
+                        px(16.),
+                        if titlebar_active {
+                            theme.text
+                        } else {
+                            theme.text_muted
+                        },
+                    )
+                    .into_any_element()
+                } else {
+                    img(icons::APP_ICON)
+                        .size(px(16.))
+                        .flex_none()
+                        .into_any_element()
+                }
+            });
             div()
                 .flex()
                 .flex_row()
@@ -3733,7 +3756,7 @@ impl Workspace {
                 // A shade quieter than a tab title, which is the one label in
                 // this row that has to be read.
                 .text_size(px(12.))
-                .text_color(theme.text_muted)
+                .text_color(titlebar_text)
                 .children(icon)
                 .child(APP_NAME)
         });
@@ -4937,6 +4960,7 @@ impl Render for Workspace {
             // and the content is the whole surface.
             return content.into_any_element();
         };
+        let frame_active = !cfg!(target_os = "linux") || window.is_window_active();
 
         div()
             .size_full()
@@ -4958,8 +4982,12 @@ impl Render for Workspace {
                     .when(!tiling.right, |content| content.border_r_1())
                     .when(!tiling.is_tiled(), |content| {
                         content.shadow(vec![gpui::BoxShadow {
-                            color: gpui::hsla(0., 0., 0., 0.35),
-                            blur_radius: px(SHADOW_BAND / 2.),
+                            color: gpui::hsla(0., 0., 0., if frame_active { 0.35 } else { 0.14 }),
+                            blur_radius: px(if frame_active {
+                                SHADOW_BAND / 2.
+                            } else {
+                                SHADOW_BAND / 3.
+                            }),
                             spread_radius: px(0.),
                             offset: gpui::point(px(0.), px(2.)),
                             // The band is drawn outside the window, not inside
