@@ -3665,7 +3665,7 @@ impl Workspace {
     fn render_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme(cx);
         let custom = draws_own_titlebar(chrome_titlebar(self.titlebar), window);
-        let titlebar_active = cfg!(target_os = "linux") && custom && window.is_window_active();
+        let titlebar_active = custom && window.is_window_active();
         let titlebar_text = if titlebar_active {
             theme.text
         } else {
@@ -3736,10 +3736,17 @@ impl Workspace {
                     )
                     .into_any_element()
                 } else {
-                    img(icons::APP_ICON)
-                        .size(px(16.))
-                        .flex_none()
-                        .into_any_element()
+                    let icon = img(icons::APP_ICON).w(px(16.)).h(px(16.)).flex_none();
+                    if custom && !titlebar_active {
+                        div()
+                            .size(px(16.))
+                            .flex_none()
+                            .opacity(0.55)
+                            .child(icon)
+                            .into_any_element()
+                    } else {
+                        icon.into_any_element()
+                    }
                 }
             });
             div()
