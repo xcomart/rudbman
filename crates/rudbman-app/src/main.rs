@@ -3720,33 +3720,19 @@ impl Workspace {
         // *empty* title bar as far as the window is concerned, so a press on
         // them has to reach the drag area underneath and move the window.
         let title = custom.then(|| {
-            // The shipped icon in its own colours: img() keeps them, where the
-            // svg element would flatten the mark into a theme-tinted glyph;
-            // see [`icons::APP_ICON`].
+            // Use the shipped PNG so the title bar preserves the icon's
+            // colours on every platform instead of tinting its alpha mask.
             let icon = (!cfg!(target_os = "macos")).then(|| {
-                if cfg!(target_os = "linux") {
-                    icons::icon(
-                        icons::APP_ICON,
-                        px(16.),
-                        if titlebar_active {
-                            theme.text
-                        } else {
-                            theme.text_muted
-                        },
-                    )
-                    .into_any_element()
+                let icon = img(icons::APP_ICON).size(px(16.)).flex_none();
+                if !titlebar_active {
+                    div()
+                        .size(px(16.))
+                        .flex_none()
+                        .opacity(0.55)
+                        .child(icon)
+                        .into_any_element()
                 } else {
-                    let icon = img(icons::APP_ICON).w(px(16.)).h(px(16.)).flex_none();
-                    if custom && !titlebar_active {
-                        div()
-                            .size(px(16.))
-                            .flex_none()
-                            .opacity(0.55)
-                            .child(icon)
-                            .into_any_element()
-                    } else {
-                        icon.into_any_element()
-                    }
+                    icon.into_any_element()
                 }
             });
             div()
