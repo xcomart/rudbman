@@ -30,19 +30,21 @@ through GdkPixbuf's SVG loader; its module docstring says why that one.
 | File | Used by |
 |---|---|
 | `icon.svg` | The master. Edit this one |
-| `icon-128.png`, `icon-256.png` | Linux `.desktop` icon sizes (see `packaging/`) |
+| `icon-128.png`, `icon-256.png` | Linux `.desktop` icon sizes (see `packaging/`); the title bar also embeds `icon-128.png` |
 | `icon.ico` | Embedded into the Windows executable by `crates/rudbman-app/build.rs` under resource ID 1. Seven sizes, 16–256: Explorer, the taskbar, the caption and Alt-Tab each pick a different one |
 | `icon.icns` | The macOS `.app` bundle. Six sizes, 32–1024; the container has no 16 px entry, its smallest slot being 16 pt at 2× |
 | `render.py` | The generator |
 
-## The title bar draws this same file
+## The title bar uses the generated PNG
 
 The self-drawn title bar shows this mark too: `crates/rudbman-app/src/icons.rs`
-embeds `icon.svg` under the asset path `icons/app-icon.svg`, and the bar draws
-it with gpui's `img` element, which keeps the SVG's own colours where the `svg`
-element would flatten it into a theme-tinted mask. There is no second drawing
-to keep in step — edit the master here and the title bar follows at the next
-build.
+embeds `icon-128.png` under the asset path `icons/app-icon.png`, and the bar
+uses gpui's `img` element on every platform to preserve its colours. A tintable
+`svg` element would turn the filled tile into a solid silhouette. Inactive
+windows dim the complete image without losing its internal detail.
+
+There is no second drawing to maintain: edit `icon.svg`, run `render.py` to
+refresh the shipped images, and rebuild the application.
 
 An earlier bar drew a monochrome outline stand-in
 (`crates/rudbman-app/assets/icons/logo.svg`, since removed): the tile was then

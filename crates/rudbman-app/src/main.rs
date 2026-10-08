@@ -90,7 +90,7 @@ use rugpui::{
     set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use rugpui_shell::chrome::{
-    SHADOW_BAND, client_tiling, draws_own_titlebar, render_resize_edges, titlebar_gestures,
+    SHADOW_BAND, client_tiling, draws_own_titlebar, render_client_frame, titlebar_gestures,
     window_appearance, window_control_strips,
 };
 pub(crate) use rugpui_shell::menu_rows::SHORTCUT_MODIFIER;
@@ -3720,33 +3720,19 @@ impl Workspace {
         // *empty* title bar as far as the window is concerned, so a press on
         // them has to reach the drag area underneath and move the window.
         let title = custom.then(|| {
-            // The shipped icon in its own colours: img() keeps them, where the
-            // svg element would flatten the mark into a theme-tinted glyph;
-            // see [`icons::APP_ICON`].
+            // Use the shipped PNG so the title bar preserves the icon's
+            // colours on every platform instead of tinting its alpha mask.
             let icon = (!cfg!(target_os = "macos")).then(|| {
-                if cfg!(target_os = "linux") {
-                    icons::icon(
-                        icons::APP_ICON,
-                        px(16.),
-                        if titlebar_active {
-                            theme.text
-                        } else {
-                            theme.text_muted
-                        },
-                    )
-                    .into_any_element()
+                let icon = img(icons::APP_ICON).size(px(16.)).flex_none();
+                if !titlebar_active {
+                    div()
+                        .size(px(16.))
+                        .flex_none()
+                        .opacity(0.55)
+                        .child(icon)
+                        .into_any_element()
                 } else {
-                    let icon = img(icons::APP_ICON).w(px(16.)).h(px(16.)).flex_none();
-                    if custom && !titlebar_active {
-                        div()
-                            .size(px(16.))
-                            .flex_none()
-                            .opacity(0.55)
-                            .child(icon)
-                            .into_any_element()
-                    } else {
-                        icon.into_any_element()
-                    }
+                    icon.into_any_element()
                 }
             });
             div()
@@ -4967,45 +4953,7 @@ impl Render for Workspace {
             // and the content is the whole surface.
             return content.into_any_element();
         };
-        let frame_active = !cfg!(target_os = "linux") || window.is_window_active();
-
-        div()
-            .size_full()
-            .relative()
-            .bg(gpui::transparent_black())
-            .when(!tiling.top, |outer| outer.pt(px(SHADOW_BAND)))
-            .when(!tiling.bottom, |outer| outer.pb(px(SHADOW_BAND)))
-            .when(!tiling.left, |outer| outer.pl(px(SHADOW_BAND)))
-            .when(!tiling.right, |outer| outer.pr(px(SHADOW_BAND)))
-            .child(
-                content
-                    // A hairline where the frame's own outline used to be, per
-                    // untiled edge; a tiled edge meets the neighbour flush, the
-                    // way the compositor would have drawn it.
-                    .border_color(theme.border)
-                    .when(!tiling.top, |content| content.border_t_1())
-                    .when(!tiling.bottom, |content| content.border_b_1())
-                    .when(!tiling.left, |content| content.border_l_1())
-                    .when(!tiling.right, |content| content.border_r_1())
-                    .when(!tiling.is_tiled(), |content| {
-                        content.shadow(vec![gpui::BoxShadow {
-                            color: gpui::hsla(0., 0., 0., if frame_active { 0.35 } else { 0.14 }),
-                            blur_radius: px(if frame_active {
-                                SHADOW_BAND / 2.
-                            } else {
-                                SHADOW_BAND / 3.
-                            }),
-                            spread_radius: px(0.),
-                            offset: gpui::point(px(0.), px(2.)),
-                            // The band is drawn outside the window, not inside
-                            // its content, which is what this frame casts.
-                            inset: false,
-                        }])
-                    }),
-            )
-            // Last on purpose: the window border outranks whatever it crosses,
-            // dialogs included, the way a compositor frame would.
-            .children(render_resize_edges(tiling))
+        render_client_frame(content, tiling, theme.border, window.is_window_active())
             .into_any_element()
     }
 }

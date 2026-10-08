@@ -48,20 +48,11 @@ pub const NEW_TAB: &str = "icons/new-tab.svg";
 
 /// The application mark, drawn at the left end of the custom title bar.
 ///
-/// This is the shipped `assets/icon.svg` itself, embedded under an asset path
-/// so the title bar can draw it with [`img`](gpui::img) — which, unlike the
-/// [`svg`](gpui::svg) element, keeps an SVG's own colours instead of reducing
-/// it to a tintable alpha mask. The bar shows the very mark the taskbar and
-/// Alt-Tab show — gold cap, blue barrel, embossed plate — and there is no
-/// second drawing to keep in step with the master.
-///
-/// It was not always so: an earlier bar drew a monochrome outline stand-in
-/// (`icons/logo.svg`), because the shipped icon's tile was then a near-flat
-/// dark swatch that melted into dark chrome, leaving only the outline showing.
-/// The plate now carries its own gradient, a legible ring and an embossed
-/// edge, so it separates from the bar the way it separates from a taskbar,
-/// and the stand-in went away with its reason.
-pub const APP_ICON: &str = "icons/app-icon.svg";
+/// Reuse the shipped PNG generated from `assets/icon.svg` by `assets/render.py`.
+/// [`img`](gpui::img) preserves its colours on every platform; the tintable
+/// [`svg`](gpui::svg) element would reduce the filled tile to a solid silhouette.
+/// The 128 px asset also covers scaled displays without a second icon to maintain.
+pub const APP_ICON: &str = "icons/app-icon.png";
 
 // --- the explorer's object marks ------------------------------------------
 //
@@ -134,7 +125,7 @@ pub const CHEVRON_DOWN: &str = "icons/chevron-down.svg";
 
 /// rudbman's own icons, paired with the bytes [`ICONS`] hands back for them.
 const OWN: &[(&str, &[u8])] = &[
-    (APP_ICON, include_bytes!("../../../assets/icon.svg")),
+    (APP_ICON, include_bytes!("../../../assets/icon-128.png")),
     (TAB_LIST, include_bytes!("../assets/icons/tab-list.svg")),
     (NEW_TAB, include_bytes!("../assets/icons/new-tab.svg")),
     (TABLE, include_bytes!("../assets/icons/table.svg")),
@@ -157,7 +148,7 @@ const OWN: &[(&str, &[u8])] = &[
     ),
 ];
 
-/// The asset source backing every [`svg`](gpui::svg) element in the app.
+/// The asset source backing the app's embedded images and SVG glyphs.
 ///
 /// Install it with [`Application::with_assets`](gpui::Application::with_assets);
 /// without it gpui's default source answers every path with `None` and the
@@ -181,22 +172,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_icon_loads_and_is_an_svg() {
+    fn every_icon_loads_and_matches_its_extension() {
         for (name, _) in OWN {
             let bytes = ICONS
                 .load(name)
                 .expect("loading an embedded icon cannot fail")
                 .unwrap_or_else(|| panic!("{name} is missing from the asset source"));
+            // The application mark is a colour image; the other icons are
+            // 24×24 SVG glyphs that can be tinted to match the theme.
+            if name.ends_with(".png") {
+                assert!(
+                    bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+                    "{name} is not a PNG"
+                );
+                continue;
+            }
             let text = std::str::from_utf8(&bytes).expect("an icon must be UTF-8");
             assert!(text.contains("<svg"), "{name} is not an SVG");
-            // The glyph set shares one 24x24 box; the application icon is the
-            // shipped 256 px mark, embedded whole rather than redrawn.
-            let viewbox = if *name == APP_ICON {
-                "viewBox=\"0 0 256 256\""
-            } else {
-                "viewBox=\"0 0 24 24\""
-            };
-            assert!(text.contains(viewbox), "{name} has the wrong viewBox");
+            assert!(
+                text.contains("viewBox=\"0 0 24 24\""),
+                "{name} has the wrong viewBox"
+            );
         }
     }
 
