@@ -198,7 +198,7 @@ pub fn build_spec(
 /// spells it.
 ///
 /// `SELECT *` qualified by the schema, which is exactly what
-/// [`Workspace::open_query_for`](crate::Workspace) puts in a query pane opened
+/// [`Workspace::open_query_for`](crate::workspace::Workspace) puts in a query pane opened
 /// over the same row: two commands over one explorer object have to read the
 /// same rows, or "transfer this" would quietly mean a different table from
 /// "query this".
