@@ -669,3 +669,11 @@ update:
 tab_name:
   title: タブ名を変更
   hint: 空欄にすると既定の名前に戻ります。
+
+completion:
+  trigger: "SQL 補完"
+  column: "列"
+  table: "テーブル"
+  schema: "スキーマ"
+  keyword: "キーワード"
+  hint: "↑↓ 選択 · Enter/Tab 挿入 · Esc 閉じる"

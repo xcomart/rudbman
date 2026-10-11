@@ -35,7 +35,7 @@ impl QueryPane {
 ///
 /// `DB_CLOSE_DELAY=-1` keeps it alive between connections, exactly as the
 /// explorer's own fixture does.
-fn h2(name: &str, setup: &[&str]) -> (Connected, ConnectionProfile) {
+pub(super) fn h2(name: &str, setup: &[&str]) -> (Connected, ConnectionProfile) {
     let mut profile = connection::h2::profile(name);
     profile.url = format!("{};DB_CLOSE_DELAY=-1", profile.url);
     // The guards are switched on by the one test that is about them; the
@@ -60,7 +60,7 @@ fn h2(name: &str, setup: &[&str]) -> (Connected, ConnectionProfile) {
 }
 
 /// A window whose whole content is one query pane over `connected`.
-fn pane(
+pub(super) fn pane(
     connected: &Connected,
     profile: &ConnectionProfile,
     batch_rows: u32,

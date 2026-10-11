@@ -112,6 +112,12 @@ impl QueryPane {
                 writable,
                 Box::new(ToggleComment),
             ),
+            row(
+                ts!("completion.trigger"),
+                "Ctrl+Space".to_string(),
+                writable,
+                Box::new(super::completion::CompleteSql),
+            ),
             MenuRow::separator(),
             row(
                 ts!("context.run_statement"),

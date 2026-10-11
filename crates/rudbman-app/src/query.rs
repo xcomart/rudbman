@@ -73,6 +73,7 @@
 //!   source a staged edit is keyed to, so both ask first while anything is
 //!   staged.
 
+mod completion;
 mod editing;
 mod execution;
 mod menus;
@@ -512,6 +513,8 @@ pub struct QueryPane {
     /// faded in with the other passing remarks would be the wrong weight for
     /// "nothing you asked for has happened".
     apply_error: Option<Box<ApplyProblem>>,
+    completion: completion::CompletionState,
+    _completion_blur: Subscription,
     _editor_events: Subscription,
 }
 
@@ -564,6 +567,7 @@ impl QueryPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        completion::init(cx);
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
             let mut editor = EditorView::new(cx)
@@ -606,6 +610,7 @@ impl QueryPane {
                     // The editor holds no strings, so its menu is drawn here
                     // (architecture document, §7.8).
                     EditorEvent::ContextMenu { position } => {
+                        pane.close_completion(cx);
                         pane.context_menu = Some(PaneMenu::Editor {
                             position: *position,
                         });
@@ -613,11 +618,27 @@ impl QueryPane {
                     }
                     // The toolbar belongs to the pane, so editor changes must
                     // also redraw its selection and undo/redo availability.
-                    EditorEvent::Changed | EditorEvent::SelectionChanged => cx.notify(),
-                    EditorEvent::Intercepted(_) => {}
+                    EditorEvent::Changed => {
+                        pane.refresh_completion(false, window, cx);
+                        cx.notify();
+                    }
+                    EditorEvent::SelectionChanged => {
+                        if pane.completion.wanted {
+                            pane.refresh_completion(pane.completion.explicit, window, cx);
+                        }
+                        cx.notify();
+                    }
+                    EditorEvent::Intercepted(key) => pane.completion_key(*key, cx),
                 },
             );
 
+        let completion_blur = cx.on_blur(
+            &editor.read(cx).focus_handle(cx),
+            window,
+            |pane, _window, cx| {
+                pane.close_completion(cx);
+            },
+        );
         Self {
             editor,
             session: Some(session),
@@ -647,6 +668,8 @@ impl QueryPane {
             preview: None,
             applying: false,
             apply_error: None,
+            completion: completion::CompletionState::default(),
+            _completion_blur: completion_blur,
             _editor_events: editor_events,
         }
     }
@@ -681,6 +704,8 @@ impl QueryPane {
     /// refuses from here on, and the status bar says the pane is disconnected
     /// rather than idle.
     pub fn detach(&mut self, cx: &mut Context<Self>) {
+        self.close_completion(cx);
+        self.completion.tables.clear();
         self.session = None;
         // A confirmation still on screen would run nothing if it were answered.
         self.pending = None;
@@ -806,6 +831,7 @@ impl QueryPane {
 
     /// Runs `statements`, once the profile's guards allow it.
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_completion(cx);
         if self.transaction.is_some() {
             return;
         }

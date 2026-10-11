@@ -669,3 +669,11 @@ update:
 tab_name:
   title: 탭 이름 변경
   hint: 비워 두면 기본 이름으로 돌아갑니다.
+
+completion:
+  trigger: "SQL 자동완성"
+  column: "컬럼"
+  table: "테이블"
+  schema: "스키마"
+  keyword: "키워드"
+  hint: "↑↓ 선택 · Enter/Tab 삽입 · Esc 닫기"

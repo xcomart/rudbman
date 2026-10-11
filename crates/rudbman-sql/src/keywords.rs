@@ -638,6 +638,15 @@ pub(crate) struct WordTables {
 
 /// The dialect-specific tables, in the order of [`crate::DialectId`].
 impl WordTables {
+    pub(crate) fn completions(self) -> impl Iterator<Item = &'static str> {
+        COMMON_KEYWORDS
+            .iter()
+            .chain(self.keywords)
+            .chain(COMMON_TYPES)
+            .chain(self.types)
+            .copied()
+    }
+
     /// Nothing beyond the common tables.
     pub(crate) const NONE: Self = Self {
         keywords: &[],

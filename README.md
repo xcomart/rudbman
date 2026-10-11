@@ -46,9 +46,14 @@ JVM bridge.
   directions, and DDL (the server's own text where the dialect offers it,
   reconstructed from metadata where it does not).
 - **A SQL workbench**: an editor with incremental dialect-aware highlighting
-  and IME support, statement splitting, run-one/run-selection/run-all,
+  and IME support, SQL keyword/table/column completion (including table aliases),
+  statement splitting, run-one/run-selection/run-all,
   cancellation, multiple result sets, and a virtualized grid that scrolls a
   million rows without loading a million rows.
+  Completion opens while typing or with <kbd>Ctrl</kbd>+<kbd>Space</kbd>:
+  use ↑/↓ to choose, Enter/Tab to insert, and Esc to dismiss. Names come from
+  the current connection, with columns loaded on demand; comments and string
+  literals do not trigger suggestions.
 - **ERD diagrams** of a whole schema or catalog, from the explorer with
   <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>E</kbd>. Tables are placed by a
   hierarchical (Sugiyama) layout of rudbman's own and joined by orthogonal

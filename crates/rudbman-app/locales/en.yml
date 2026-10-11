@@ -1106,3 +1106,11 @@ update:
 tab_name:
   title: Rename tab
   hint: Leave blank to restore the default name.
+
+completion:
+  trigger: "SQL completion"
+  column: "Column"
+  table: "Table"
+  schema: "Schema"
+  keyword: "Keyword"
+  hint: "↑↓ choose · Enter/Tab insert · Esc close"

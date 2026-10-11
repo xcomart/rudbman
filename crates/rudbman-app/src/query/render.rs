@@ -92,7 +92,7 @@ pub fn error_lines(error: &QueryError, chrome: &Theme) -> Div {
 }
 
 impl Render for QueryPane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
         let fonts = crate::app_settings::effective(cx);
         let share = self.editor_share.clamp(MIN_SHARE, 1. - MIN_SHARE);
@@ -173,6 +173,12 @@ impl Render for QueryPane {
                 // monospace default rather than the UI font: SQL is columnar
                 // text, and the DDL tab already reads the same way.
                 div()
+                    .key_context("QueryEditor")
+                    .on_action(cx.listener(
+                        |pane, _: &super::completion::CompleteSql, window, cx| {
+                            pane.trigger_completion(window, cx);
+                        },
+                    ))
                     .flex()
                     .flex_col()
                     .flex_basis(relative(share))
@@ -250,6 +256,7 @@ impl Render for QueryPane {
             // order between themselves decides nothing.
             .children(confirm)
             .children(preview)
+            .children(self.render_completion(window, cx))
             // Takes no room in the column — the element is an empty absolute
             // box whose two halves are anchored to the window — so it can
             // simply be the last child, above the divider it may cover.

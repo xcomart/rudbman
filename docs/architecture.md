@@ -901,9 +901,15 @@ for.
 - Features: line numbers, current-line highlight, bracket matching, multiple
   cursors, statement-at-cursor execution (detecting the statement under the
   caret), folding, find and replace, auto-indent, comment toggling
-- Completion: suggests tables, columns and aliases from the connected session's
-  schema index. The index is filled in the background right after connecting
-  and kept in memory
+- Completion: dialect keywords and types, schemas, tables/views, and columns
+  resolved through names and table aliases in the current query block. Typing
+  a name or a dot opens suggestions; `Ctrl+Space` and the editor context menu
+  open them explicitly. Up/Down selects, Enter/Tab inserts, and Escape closes.
+  Comments, strings and selections do not trigger completion. The query pane
+  loads table metadata in the background after a 150 ms typing pause, caches
+  it for 30 seconds, and fetches columns only for referenced tables. Metadata
+  failure leaves keyword completion available; late responses never reopen a
+  dismissed popup or modify editor text.
 - Write confirmation and sortable-result eligibility use a conservative token
   classifier. It follows `WITH` bodies, `EXPLAIN` targets and `SELECT INTO`;
   malformed or vendor-specific input is not treated as a read. This is an

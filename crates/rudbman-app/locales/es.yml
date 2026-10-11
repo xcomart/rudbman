@@ -669,3 +669,11 @@ update:
 tab_name:
   title: Cambiar nombre de pestaña
   hint: Deja el campo vacío para restaurar el nombre predeterminado.
+
+completion:
+  trigger: "Autocompletar SQL"
+  column: "Columna"
+  table: "Tabla"
+  schema: "Esquema"
+  keyword: "Palabra clave"
+  hint: "↑↓ elegir · Enter/Tab insertar · Esc cerrar"

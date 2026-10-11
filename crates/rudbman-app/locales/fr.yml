@@ -669,3 +669,11 @@ update:
 tab_name:
   title: Renommer l’onglet
   hint: Laissez vide pour rétablir le nom par défaut.
+
+completion:
+  trigger: "Complétion SQL"
+  column: "Colonne"
+  table: "Table"
+  schema: "Schéma"
+  keyword: "Mot-clé"
+  hint: "↑↓ choisir · Enter/Tab insérer · Esc fermer"

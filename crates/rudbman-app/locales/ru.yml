@@ -669,3 +669,11 @@ update:
 tab_name:
   title: Переименовать вкладку
   hint: Оставьте поле пустым, чтобы вернуть имя по умолчанию.
+
+completion:
+  trigger: "Автодополнение SQL"
+  column: "Столбец"
+  table: "Таблица"
+  schema: "Схема"
+  keyword: "Ключевое слово"
+  hint: "↑↓ выбор · Enter/Tab вставить · Esc закрыть"

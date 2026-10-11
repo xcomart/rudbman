@@ -669,3 +669,11 @@ update:
 tab_name:
   title: Tab umbenennen
   hint: Leer lassen, um den Standardnamen wiederherzustellen.
+
+completion:
+  trigger: "SQL-Vervollständigung"
+  column: "Spalte"
+  table: "Tabelle"
+  schema: "Schema"
+  keyword: "Schlüsselwort"
+  hint: "↑↓ wählen · Enter/Tab einfügen · Esc schließen"

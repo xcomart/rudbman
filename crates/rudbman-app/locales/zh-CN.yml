@@ -669,3 +669,11 @@ update:
 tab_name:
   title: 重命名标签页
   hint: 留空以恢复默认名称。
+
+completion:
+  trigger: "SQL 自动补全"
+  column: "列"
+  table: "表"
+  schema: "模式"
+  keyword: "关键字"
+  hint: "↑↓ 选择 · Enter/Tab 插入 · Esc 关闭"
