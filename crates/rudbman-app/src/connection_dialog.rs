@@ -1232,6 +1232,7 @@ impl ConnectionDialog {
                     chrome.border
                 })
                 .tab_index(tab::COLOR + index as isize)
+                .focus(|style| style.border_color(chrome.text))
                 .on_click(move |_, _window, cx| {
                     this.update(cx, |dialog, cx| {
                         dialog.color = value.map(SharedString::from);
@@ -2153,6 +2154,9 @@ pub(crate) fn profile_rows(
                     // The same range in both lists, because neither puts
                     // anything else between the tab ring's start and the rows.
                     .tab_index((tab::LIST + index as isize).min(tab::LIST_LIMIT))
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .focus(|style| style.border_color(chrome.accent))
                     .when(selected, |row| row.bg(chrome.surface_active))
                     .when(!selected, |row| {
                         row.hover(|row| row.bg(chrome.surface_hover))
