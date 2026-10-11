@@ -378,6 +378,11 @@ detail:
   cache: 缓存
 
 query:
+  commit: "提交"
+  committing: "正在提交…"
+  committed: "事务已提交。"
+  commit_failed: "提交失败：%{message}"
+  commit_auto: "提交（自动提交已启用）"
   run: 执行
   cancel: 取消
   cancelling: 正在取消…

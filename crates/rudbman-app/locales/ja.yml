@@ -378,6 +378,11 @@ detail:
   cache: キャッシュ
 
 query:
+  commit: "コミット"
+  committing: "コミット中…"
+  committed: "トランザクションをコミットしました。"
+  commit_failed: "コミットに失敗しました: %{message}"
+  commit_auto: "コミット（自動コミットが有効です）"
   run: 実行
   cancel: キャンセル
   cancelling: キャンセル中…

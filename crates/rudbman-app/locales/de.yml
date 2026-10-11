@@ -378,6 +378,11 @@ detail:
   cache: Cache
 
 query:
+  commit: "Commit"
+  committing: "Commit läuft…"
+  committed: "Transaktion bestätigt."
+  commit_failed: "Commit fehlgeschlagen: %{message}"
+  commit_auto: "Commit (automatisches Commit ist aktiviert)"
   run: Ausführen
   cancel: Abbrechen
   cancelling: Wird abgebrochen…

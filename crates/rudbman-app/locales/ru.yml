@@ -378,6 +378,11 @@ detail:
   cache: Кэш
 
 query:
+  commit: "Зафиксировать"
+  committing: "Фиксация…"
+  committed: "Транзакция зафиксирована."
+  commit_failed: "Ошибка фиксации: %{message}"
+  commit_auto: "Зафиксировать (автофиксация включена)"
   run: Выполнить
   cancel: Отмена
   cancelling: Отменяется…

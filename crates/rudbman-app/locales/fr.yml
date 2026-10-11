@@ -378,6 +378,11 @@ detail:
   cache: Cache
 
 query:
+  commit: "Valider la transaction"
+  committing: "Validation en cours…"
+  committed: "Transaction validée."
+  commit_failed: "Échec de la validation : %{message}"
+  commit_auto: "Valider (la validation automatique est activée)"
   run: Exécuter
   cancel: Annuler
   cancelling: Annulation…

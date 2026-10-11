@@ -378,6 +378,11 @@ detail:
   cache: Caché
 
 query:
+  commit: "Confirmar transacción"
+  committing: "Confirmando…"
+  committed: "Transacción confirmada."
+  commit_failed: "Error al confirmar: %{message}"
+  commit_auto: "Confirmar (la confirmación automática está activada)"
   run: Ejecutar
   cancel: Cancelar
   cancelling: Cancelando…

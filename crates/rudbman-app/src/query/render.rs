@@ -97,6 +97,7 @@ impl Render for QueryPane {
         let fonts = crate::app_settings::effective(cx);
         let share = self.editor_share.clamp(MIN_SHARE, 1. - MIN_SHARE);
         let id = cx.entity_id();
+        let editor_toolbar = self.render_editor_toolbar(&chrome, cx);
         let toolbar = self.render_toolbar(&chrome, cx);
         let banner = self.render_banner(&chrome);
         let failure = self
@@ -173,15 +174,24 @@ impl Render for QueryPane {
                 // text, and the DDL tab already reads the same way.
                 div()
                     .flex()
+                    .flex_col()
                     .flex_basis(relative(share))
                     .min_w_0()
                     .min_h_0()
-                    .font_family(fonts.editor_font_family.clone().map_or_else(
-                        || crate::app_settings::monospace_family(cx),
-                        SharedString::from,
-                    ))
-                    .text_size(px(fonts.editor_font_size))
-                    .child(self.editor.clone()),
+                    .child(editor_toolbar)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .font_family(fonts.editor_font_family.clone().map_or_else(
+                                || crate::app_settings::monospace_family(cx),
+                                SharedString::from,
+                            ))
+                            .text_size(px(fonts.editor_font_size))
+                            .child(self.editor.clone()),
+                    ),
             )
             .child(
                 div()
@@ -270,7 +280,6 @@ impl QueryPane {
     pub(super) fn render_toolbar(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity();
         let running = self.is_running();
-        let cancelling = matches!(&self.run, RunState::Running(running) if running.cancelling);
 
         let tabs: Vec<_> = self
             .results
@@ -308,39 +317,6 @@ impl QueryPane {
             })
             .collect();
 
-        let run = {
-            let this = this.clone();
-            Button::new("query-run", ts!("query.run"))
-                .variant(ButtonVariant::Primary)
-                .disabled(running)
-                .on_click(move |_, window, cx| {
-                    this.update(cx, |pane, cx| {
-                        let text = pane.editor.read(cx).text();
-                        let statements = match pane.editor.read(cx).statement_at_caret() {
-                            Some(span) => vec![span.sql(&text).to_string()],
-                            None => Vec::new(),
-                        };
-                        pane.request(statements, window, cx);
-                    });
-                })
-        };
-        let cancel = running.then(|| {
-            let this = this.clone();
-            Button::new(
-                "query-cancel",
-                if cancelling {
-                    ts!("query.cancelling")
-                } else {
-                    ts!("query.cancel")
-                },
-            )
-            .variant(ButtonVariant::Danger)
-            .disabled(cancelling)
-            .on_click(move |_, _window, cx| {
-                this.update(cx, |pane, cx| pane.cancel(cx));
-            })
-        });
-
         // Drawn only over a result that passed §7.9's gate. On one that did
         // not, nothing can be staged, so an Apply that could never light up
         // would be furniture — and the line under the toolbar has already said
@@ -362,7 +338,7 @@ impl QueryPane {
             let this = this.clone();
             Button::new("query-apply", ts!("data.apply"))
                 .variant(ButtonVariant::Primary)
-                .disabled(!staged || running || self.applying)
+                .disabled(!staged || running || self.applying || self.committing)
                 .on_click(move |_, window, cx| {
                     this.update(cx, |pane, cx| pane.apply(window, cx));
                 })
@@ -414,8 +390,6 @@ impl QueryPane {
             })
             .children(apply)
             .children(discard)
-            .children(cancel)
-            .child(run)
             .into_any_element()
     }
 

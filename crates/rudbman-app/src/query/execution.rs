@@ -3,6 +3,45 @@
 use super::*;
 
 impl QueryPane {
+    pub(super) fn can_commit(&self) -> bool {
+        self.session.is_some()
+            && self.transactional
+            && !self.restore_auto_commit
+            && !self.is_running()
+            && !self.applying
+            && !self.committing
+    }
+
+    /// Commit through JDBC without replacing the editor or its result tabs.
+    pub(super) fn commit(&mut self, cx: &mut Context<Self>) {
+        if !self.can_commit() {
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        self.committing = true;
+        self.notice = Some(ts!("query.committing"));
+        cx.spawn(async move |pane, cx| {
+            let outcome = cx
+                .background_spawn(async move { session.session().commit() })
+                .await;
+            pane.update(cx, |pane, cx| {
+                pane.committing = false;
+                if pane.session.is_some() {
+                    pane.notice = Some(match outcome {
+                        Ok(()) => ts!("query.committed"),
+                        Err(error) => ts!("query.commit_failed", message = error.to_string()),
+                    });
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// The write confirmation was accepted.
     pub fn confirmed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(statements) = self.pending.take() else {
@@ -28,6 +67,9 @@ impl QueryPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.committing {
+            return;
+        }
         // The one gate every run goes through, whichever way it was asked for:
         // a sort round trip and an accepted write confirmation arrive here
         // without passing `request` again.

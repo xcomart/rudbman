@@ -556,6 +556,11 @@ detail:
 # menu row or its shortcut, and over the object selected in the explorer with
 # the second row.
 query:
+  commit: "Commit"
+  committing: "Committing…"
+  committed: "Transaction committed."
+  commit_failed: "Commit failed: %{message}"
+  commit_auto: "Commit (automatic commit is enabled)"
   # The two buttons of the run toolbar.
   run: Run
   cancel: Cancel

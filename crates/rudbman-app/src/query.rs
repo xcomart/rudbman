@@ -81,6 +81,7 @@ use render::{elapsed_label, preview};
 pub use render::{error_lines, note, render_error};
 mod results;
 mod statements;
+mod toolbar;
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
 use std::sync::Arc;
@@ -428,6 +429,8 @@ pub struct QueryPane {
     /// What an apply puts *back* rather than a flat `true`: a profile opened
     /// with autocommit off is a session the user asked to be in a transaction.
     restore_auto_commit: bool,
+    /// A manual commit is in flight on the session's worker.
+    committing: bool,
     /// Rows per `FETCH`, from the settings.
     fetch_rows: u32,
     /// The editor's share of the pane's height.
@@ -585,13 +588,10 @@ impl QueryPane {
                         });
                         cx.notify();
                     }
-                    // `Changed` and `SelectionChanged` are drawn from the
-                    // editor's own state on the next frame; `Intercepted` is a
-                    // navigation key handed back by an editor that was asked to
-                    // hand them back, which this pane never asks for.
-                    EditorEvent::Changed
-                    | EditorEvent::SelectionChanged
-                    | EditorEvent::Intercepted(_) => {}
+                    // The toolbar belongs to the pane, so editor changes must
+                    // also redraw its selection and undo/redo availability.
+                    EditorEvent::Changed | EditorEvent::SelectionChanged => cx.notify(),
+                    EditorEvent::Intercepted(_) => {}
                 },
             );
 
@@ -604,6 +604,7 @@ impl QueryPane {
             confirm_writes: profile.confirm_writes,
             transactional: true,
             restore_auto_commit: profile.auto_commit,
+            committing: false,
             fetch_rows: settings.fetch_batch_rows,
             editor_share: DEFAULT_EDITOR_SHARE,
             results: Vec::new(),
@@ -763,6 +764,9 @@ impl QueryPane {
 
     /// Runs `statements`, once the profile's guards allow it.
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.committing {
+            return;
+        }
         let statements: Vec<String> = statements
             .into_iter()
             .filter(|sql| {

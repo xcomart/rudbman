@@ -338,3 +338,4 @@ mod editing;
 mod execution;
 mod menus;
 mod statements;
+mod toolbar;

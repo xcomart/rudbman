@@ -378,6 +378,11 @@ detail:
   cache: 캐시
 
 query:
+  commit: "커밋"
+  committing: "커밋 중…"
+  committed: "트랜잭션을 커밋했습니다."
+  commit_failed: "커밋 실패: %{message}"
+  commit_auto: "커밋 (자동 커밋이 켜져 있습니다)"
   run: 실행
   cancel: 취소
   cancelling: 취소하는 중…
