@@ -607,9 +607,6 @@ query:
   confirm_title: Run this statement?
   confirm_body: "Statements that change data: %{count}"
   confirm_run: Run it
-  # A LOB cell that was opened. Only its size travelled with the row, and
-  # reading the body needs a bridge operation that is not implemented yet.
-  lob_unsupported: The LOB viewer is not built yet.
   # A result grid whose rows cannot be written back through, said above the
   # grid rather than by refusing a keystroke: it is a standing fact about what
   # is being shown, not a failure. One line for all three ways a result misses
@@ -1115,3 +1112,22 @@ completion:
   keyword: "Keyword"
   hint: "↑↓ choose · Enter/Tab insert · Esc close"
   function: "Function"
+
+lob:
+  open: "Open LOB…"
+  export: "Save to file…"
+  import: "Replace from file…"
+  empty: "Empty value"
+  loading: "Loading…"
+  modified: "Modified"
+  size: "%{bytes} bytes"
+  truncated: "Only the first 1 MiB is shown. Save exports the complete value; use a file to replace larger values."
+  read_only: "Read-only. You can view and save this value."
+  hex_hint: "Edit hexadecimal byte pairs. Add to changes, then use Apply in the data grid to write to the database."
+  text_hint: "CLOB files use UTF-8. Add to changes, then use Apply in the data grid to write to the database."
+  import_error: "Could not import the file (CLOB text must be UTF-8): %{error}"
+  saved: "File saved."
+  stage: "Add to changes"
+  discard_question: "Discard the changes in this LOB editor?"
+  keep_editing: "Keep editing"
+  invalid_hex: "Enter pairs of hexadecimal digits (00–FF), separated by spaces or newlines."

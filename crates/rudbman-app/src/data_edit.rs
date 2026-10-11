@@ -63,7 +63,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
-use rudbman_jdbc::{ColumnInfo, Param};
+use rudbman_jdbc::{ColumnInfo, LobFile, Param};
 use rudbman_sql::{
     Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
@@ -95,6 +95,8 @@ pub enum StagedCell {
     /// will make of it, and a layer that silently trimmed a `CHAR(10)` would be
     /// wrong in a way nobody could see.
     Text(String),
+    /// An immutable, file-backed LOB replacement. Its lifetime includes apply.
+    Lob(LobFile),
 }
 
 impl StagedCell {
@@ -107,6 +109,7 @@ impl StagedCell {
             StagedCell::Unset => false,
             StagedCell::Null => original.is_none(),
             StagedCell::Text(text) => original == Some(text.as_str()),
+            StagedCell::Lob(_) => false,
         }
     }
 }
@@ -408,6 +411,8 @@ struct ColumnRules {
     /// other two are: it cannot change while the result stands, and the apply
     /// asks it once per staged cell rather than once per frame.
     kind: DmlKind,
+    /// BLOB is true, CLOB/NCLOB false; none for an ordinary scalar column.
+    lob: Option<bool>,
 }
 
 /// `ResultSetMetaData.columnNoNulls`, the one answer that forbids NULL.
@@ -424,6 +429,14 @@ impl ColumnRules {
             writable: !column.read_only && !column.auto_increment && named,
             nullable: column.nullable != COLUMN_NO_NULLS,
             kind: dml_kind(column),
+            lob: match column.sql_type {
+                sql_types::BLOB | sql_types::LONGVARBINARY => Some(true),
+                sql_types::CLOB
+                | sql_types::NCLOB
+                | sql_types::LONGVARCHAR
+                | sql_types::LONGNVARCHAR => Some(false),
+                _ => None,
+            },
         }
     }
 }
@@ -567,8 +580,7 @@ impl EditableSource {
     pub fn original_text(&self, row: usize, column: usize) -> Option<&str> {
         match self.original(row, column)? {
             GridCell::Text(text) => Some(text),
-            // A LOB has no text here and is not editable anyway; treating it as
-            // NULL only decides whether an edit that cannot happen would count.
+            // LOB bodies are separate; stage handles their identity explicitly.
             GridCell::Null | GridCell::Default | GridCell::Lob { .. } => None,
         }
     }
@@ -581,6 +593,16 @@ impl EditableSource {
     pub fn stage(&mut self, row: usize, column: usize, value: StagedCell) {
         match self.edits.locate(row, self.base.row_count()) {
             Some(RowRef::Base(row)) => {
+                if matches!(self.base.cell(row, column), GridCell::Lob { .. }) {
+                    let unchanged = matches!(&value, StagedCell::Lob(file) if self.base.lob(row, column) == Some(file));
+                    if matches!(value, StagedCell::Unset) || unchanged {
+                        self.edits.changed.remove(&(row, column));
+                    } else {
+                        // A LOB is not NULL just because it has no inline text.
+                        self.edits.changed.insert((row, column), value);
+                    }
+                    return;
+                }
                 let original = self.original_text(row, column).map(str::to_owned);
                 self.edits.stage(row, column, value, original.as_deref());
             }
@@ -593,6 +615,24 @@ impl EditableSource {
     /// described it.
     pub fn nullable(&self, column: usize) -> bool {
         self.columns.get(column).is_some_and(|rules| rules.nullable)
+    }
+
+    /// Whether the column needs the LOB viewer, including currently NULL cells.
+    pub fn lob_kind(&self, column: usize) -> Option<bool> {
+        self.columns.get(column)?.lob
+    }
+
+    /// Current body, including a staged replacement; NULL/default have no file.
+    pub fn lob(&self, row: usize, column: usize) -> Option<&LobFile> {
+        let staged = match self.edits.locate(row, self.base.row_count())? {
+            RowRef::Base(row) => self.edits.staged(row, column),
+            RowRef::Inserted(index) => self.edits.inserted_cell(index, column),
+        };
+        match staged {
+            Some(StagedCell::Lob(file)) => Some(file),
+            Some(StagedCell::Null | StagedCell::Unset | StagedCell::Text(_)) => None,
+            None => self.base.lob(row, column),
+        }
     }
 
     /// The form values of `column` are bound in.
@@ -649,6 +689,9 @@ impl GridSource for EditableSource {
         match self.edits.locate(row, self.base.row_count()) {
             Some(RowRef::Base(row)) => match self.edits.staged(row, column) {
                 Some(StagedCell::Text(text)) => GridCell::Text(text),
+                Some(StagedCell::Lob(file)) => GridCell::Lob {
+                    size: Some(file.len()),
+                },
                 Some(StagedCell::Null) => GridCell::Null,
                 // Never recorded against a base row; falling through to the
                 // server's value is what it would mean if it were.
@@ -656,6 +699,9 @@ impl GridSource for EditableSource {
             },
             Some(RowRef::Inserted(index)) => match self.edits.inserted_cell(index, column) {
                 Some(StagedCell::Text(text)) => GridCell::Text(text),
+                Some(StagedCell::Lob(file)) => GridCell::Lob {
+                    size: Some(file.len()),
+                },
                 Some(StagedCell::Null) => GridCell::Null,
                 Some(StagedCell::Unset) => GridCell::Default,
                 // A column the row was not built with, which only a source that
@@ -689,10 +735,7 @@ impl GridSource for EditableSource {
             // A row on its way out takes no more typing: the value would be
             // staged into an `UPDATE` that is never written, and the cell is
             // struck through while the user types it.
-            Some(RowRef::Base(row)) => {
-                !self.edits.is_deleted(row)
-                    && !matches!(self.base.cell(row, column), GridCell::Lob { .. })
-            }
+            Some(RowRef::Base(row)) => !self.edits.is_deleted(row),
             Some(RowRef::Inserted(_)) => true,
             None => false,
         }
@@ -824,6 +867,11 @@ pub fn plan_apply(
         planned.deletes.push(row_key(source, &names, &key, *row)?);
     }
 
+    // plan_edits preserves statement order and SET/INSERT parameter order.
+    // Keep file-backed bindings beside the scalar planner input; the planner
+    // only needs a placeholder and must never load a LOB into a SQL string.
+    let mut lob_bindings: HashMap<(usize, usize), LobFile> = HashMap::new();
+
     // `changed` is a `HashMap`, so the rows it names have to be put back in
     // order before anything is generated: a batch whose statements came out in
     // a different order every time would be a preview nobody could check
@@ -860,6 +908,13 @@ pub fn plan_apply(
                 StagedCell::Text(text) => {
                     set.push((column, checked_value(kind, text, name)?));
                 }
+                StagedCell::Lob(file) => {
+                    lob_bindings.insert(
+                        (planned.deletes.len() + planned.updates.len(), set.len()),
+                        file.clone(),
+                    );
+                    set.push((column, DmlValue::null(kind)));
+                }
             }
         }
         if set.is_empty() {
@@ -873,6 +928,7 @@ pub fn plan_apply(
 
     for row in &edits.inserted {
         let mut cells = Vec::with_capacity(row.len());
+        let mut parameter = 0;
         for (column, staged) in row.iter().enumerate() {
             let name = names.get(column).map_or("", String::as_str);
             let kind = source.kind(column);
@@ -880,7 +936,20 @@ pub fn plan_apply(
                 StagedCell::Unset => InsertCell::Unset,
                 StagedCell::Null => InsertCell::Set(DmlValue::null(kind)),
                 StagedCell::Text(text) => InsertCell::Set(checked_value(kind, text, name)?),
+                StagedCell::Lob(file) => {
+                    lob_bindings.insert(
+                        (
+                            planned.deletes.len() + planned.updates.len() + planned.inserts.len(),
+                            parameter,
+                        ),
+                        file.clone(),
+                    );
+                    InsertCell::Set(DmlValue::null(kind))
+                }
             });
+            if !matches!(staged, StagedCell::Unset) {
+                parameter += 1;
+            }
         }
         planned.inserts.push(cells);
     }
@@ -897,11 +966,36 @@ pub fn plan_apply(
         .enumerate()
         .map(|(index, statement)| PlannedStatement {
             sql: statement.sql,
-            params: statement.values.iter().map(param).collect(),
+            params: statement
+                .values
+                .iter()
+                .enumerate()
+                .map(|(position, value)| {
+                    lob_bindings
+                        .get(&(index, position))
+                        .map_or_else(|| param(value), |file| Param::Lob(file.clone()))
+                })
+                .collect(),
             values: statement
                 .values
                 .iter()
-                .map(|value| value.text().map(str::to_owned))
+                .enumerate()
+                .map(|(position, value)| {
+                    lob_bindings.get(&(index, position)).map_or_else(
+                        || value.text().map(str::to_owned),
+                        |file| {
+                            Some(format!(
+                                "[{}: {} B]",
+                                if file.is_binary() {
+                                    "BLOB"
+                                } else {
+                                    "CLOB UTF-8"
+                                },
+                                file.byte_len()
+                            ))
+                        },
+                    )
+                })
                 .collect(),
             checked: index < checked,
         })
@@ -1731,5 +1825,63 @@ mod tests {
         source.stage(9, 0, StagedCell::Text("x".into()));
         assert!(source.edits().is_empty());
         assert!(!source.edits_mut().discard_row(9, 2));
+    }
+    #[test]
+    fn lob_bindings_keep_their_slots_beside_deletes_scalars_keys_and_defaults() {
+        let columns = vec![
+            info(1, "ID", 4, 0),
+            info(2, "B", 2004, 0),
+            info(3, "NAME", 12, 0),
+            info(4, "C", 2005, 0),
+            info(5, "N", 4, 0),
+        ];
+        let mut base = ResultSource::new(&columns);
+        base.push(render_batch(
+            &batch(&[
+                &[Some("1"), Some("2")],
+                &[None, None],
+                &[Some("old"), Some("other")],
+                &[None, None],
+                &[Some("5"), Some("6")],
+            ]),
+            &columns,
+        ));
+        let mut source = EditableSource::new(base, &columns, true, TableSource::Known);
+        let binary = LobFile::from_bytes(&[0, 255], true).unwrap();
+        let character = LobFile::from_bytes("문자🙂".as_bytes(), false).unwrap();
+        source.stage(0, 1, StagedCell::Lob(binary.clone()));
+        source.stage(0, 2, StagedCell::Text("new".into()));
+        source.stage(0, 3, StagedCell::Lob(character.clone()));
+        source.edits_mut().toggle_deleted(1);
+        source.edits_mut().add_insert(columns.len());
+        source.stage(2, 1, StagedCell::Lob(binary.clone()));
+        source.stage(2, 3, StagedCell::Null);
+        source.stage(2, 4, StagedCell::Text("9".into()));
+        let plan = plan_apply(
+            &source,
+            &columns,
+            vec!["FILES".into()],
+            &["ID".into()],
+            &Dialect::from_id("h2"),
+        )
+        .unwrap();
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[0].params, [Param::I64(2)]);
+        assert_eq!(
+            plan[1].params,
+            [
+                Param::Lob(binary.clone()),
+                Param::Str("new".into()),
+                Param::Lob(character),
+                Param::I64(1)
+            ]
+        );
+        assert_eq!(
+            plan[2].params,
+            [Param::Lob(binary), Param::Null, Param::I64(9)]
+        );
+        assert!(plan[1].values[0].as_ref().unwrap().contains("BLOB"));
+        assert!(plan[1].values[2].as_ref().unwrap().contains("CLOB"));
+        assert!(plan[0].checked && plan[1].checked && !plan[2].checked);
     }
 }

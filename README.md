@@ -57,6 +57,17 @@ JVM bridge.
   Built-in function suggestions include `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
   and common scalar functions for the connection's dialect. Completing a
   function replaces its name while preserving any existing arguments.
+- **BLOB/CLOB viewing and editing.** Double-click a LOB cell (including NULL)
+  or choose **Open LOB** from its context menu. CLOBs use a text editor and
+  UTF-8 files; BLOBs use editable hexadecimal byte pairs and binary files.
+  **Save to file** exports the complete value. **Replace from file** snapshots
+  a replacement without changing the database. **Add to changes** (Ctrl/Cmd+Enter)
+  stages the value; the grid's existing **Apply** preview and transaction perform
+  the database update. Empty values and NULL remain distinct. Read-only results
+  can still be viewed and saved. The first 1 MiB is shown for larger values;
+  these stay fully exportable and can be replaced from a file without loading
+  the whole value into the editor. Result snapshots use temporary disk space
+  and are removed when the result and its edits are released.
 - **ERD diagrams** of a whole schema or catalog, from the explorer with
   <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>E</kbd>. Tables are placed by a
   hierarchical (Sugiyama) layout of rudbman's own and joined by orthogonal

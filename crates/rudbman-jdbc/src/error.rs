@@ -26,6 +26,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// A local LOB snapshot could not be read or written.
+    #[error("LOB file error: {0}")]
+    LobIo(#[from] std::io::Error),
     /// The JVM could not be created, or the bridge class could not be found in
     /// it.
     #[error("cannot start the JVM: {0}")]

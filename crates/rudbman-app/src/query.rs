@@ -105,8 +105,7 @@ use rugpui_editor::editor::{
 };
 use rugpui_editor::{EditorEvent, EditorView};
 use rugpui_grid::{
-    GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
-    SortDirection,
+    GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
 };
 
 use crate::SHORTCUT_MODIFIER;
@@ -462,8 +461,7 @@ pub struct QueryPane {
     results: Vec<ResultTab>,
     active_result: usize,
     error: Option<QueryError>,
-    /// A line the pane wants to say without it being a failure — "already
-    /// running", "the LOB viewer is not built yet".
+    /// A line the pane wants to say without it being a failure — "already running".
     notice: Option<SharedString>,
     run: RunState,
     /// The generation of the newest run. Every delivery carries one, and one
@@ -514,6 +512,8 @@ pub struct QueryPane {
     /// "nothing you asked for has happened".
     apply_error: Option<Box<ApplyProblem>>,
     completion: completion::CompletionState,
+    lob_dialog: Option<Entity<crate::lob_dialog::LobDialog>>,
+    lob_events: Option<Subscription>,
     _completion_blur: Subscription,
     _editor_events: Subscription,
 }
@@ -669,6 +669,8 @@ impl QueryPane {
             applying: false,
             apply_error: None,
             completion: completion::CompletionState::default(),
+            lob_dialog: None,
+            lob_events: None,
             _completion_blur: completion_blur,
             _editor_events: editor_events,
         }
@@ -704,6 +706,9 @@ impl QueryPane {
     /// refuses from here on, and the status bar says the pane is disconnected
     /// rather than idle.
     pub fn detach(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.lob_dialog {
+            dialog.update(cx, |dialog, cx| dialog.detach(cx));
+        }
         self.close_completion(cx);
         self.completion.tables.clear();
         self.session = None;
@@ -781,6 +786,14 @@ impl QueryPane {
     /// both, or a focus left on a grid strands exactly the way the workspace's
     /// `reclaim_focus` exists to prevent.
     pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        if self.lob_dialog.as_ref().is_some_and(|dialog| {
+            dialog
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        }) {
+            return true;
+        }
         if self
             .editor
             .read(cx)
@@ -832,7 +845,7 @@ impl QueryPane {
     /// Runs `statements`, once the profile's guards allow it.
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.close_completion(cx);
-        if self.transaction.is_some() {
+        if self.lob_dialog.is_some() || self.transaction.is_some() {
             return;
         }
         let statements: Vec<String> = statements
@@ -945,10 +958,13 @@ impl QueryPane {
     /// Public because the last of those three paths is the shell's: the tab
     /// strip is what closes a tab, so the tab strip is what has to ask.
     pub fn has_pending_edits(&self, cx: &App) -> bool {
-        self.results.iter().any(|tab| match &tab.body {
-            ResultBody::Rows(rows) => !rows.grid.read(cx).source().edits().is_empty(),
-            ResultBody::Log(_) => false,
-        })
+        self.lob_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.read(cx).has_changes())
+            || self.results.iter().any(|tab| match &tab.body {
+                ResultBody::Rows(rows) => !rows.grid.read(cx).source().edits().is_empty(),
+                ResultBody::Log(_) => false,
+            })
     }
 }
 
@@ -956,7 +972,10 @@ impl Focusable for QueryPane {
     /// The editor's handle: focusing the pane means putting the caret in the
     /// SQL, which is the only thing in here anyone types into.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.editor.read(cx).focus_handle(cx)
+        self.lob_dialog.as_ref().map_or_else(
+            || self.editor.read(cx).focus_handle(cx),
+            |dialog| dialog.read(cx).focus_handle(cx),
+        )
     }
 }
 

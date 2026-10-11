@@ -261,6 +261,7 @@ impl Render for QueryPane {
             // box whose two halves are anchored to the window — so it can
             // simply be the last child, above the divider it may cover.
             .children(context_menu)
+            .children(self.lob_dialog.clone())
     }
 }
 

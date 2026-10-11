@@ -409,7 +409,6 @@ query:
   confirm_title: Exécuter cette instruction ?
   confirm_body: "Instructions qui modifient des données : %{count}"
   confirm_run: Exécuter
-  lob_unsupported: La visionneuse de LOB n'existe pas encore.
   not_editable: Ces lignes ne proviennent pas d'une seule table dont la clé primaire est sélectionnée ; elles peuvent être lues mais pas modifiées.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Vérifiez la syntaxe de l'instruction et vos droits de lecture.
@@ -678,3 +677,22 @@ completion:
   keyword: "Mot-clé"
   hint: "↑↓ choisir · Enter/Tab insérer · Esc fermer"
   function: "Fonction"
+
+lob:
+  open: "Ouvrir le LOB…"
+  export: "Enregistrer dans un fichier…"
+  import: "Remplacer depuis un fichier…"
+  empty: "Valeur vide"
+  loading: "Chargement…"
+  modified: "Modifié"
+  size: "%{bytes} octets"
+  truncated: "Seul le premier Mio est affiché. L’enregistrement exporte toute la valeur ; remplacez les grandes valeurs depuis un fichier."
+  read_only: "Lecture seule. Vous pouvez consulter et enregistrer cette valeur."
+  hex_hint: "Modifiez les paires hexadécimales. Ajoutez aux modifications, puis utilisez Appliquer dans la grille pour écrire dans la base."
+  text_hint: "Les fichiers CLOB utilisent UTF-8. Ajoutez aux modifications, puis utilisez Appliquer dans la grille pour écrire dans la base."
+  import_error: "Importation impossible (le texte CLOB doit être en UTF-8) : %{error}"
+  saved: "Fichier enregistré."
+  stage: "Ajouter aux modifications"
+  discard_question: "Abandonner les modifications de cet éditeur LOB ?"
+  keep_editing: "Continuer la modification"
+  invalid_hex: "Saisissez des paires hexadécimales (00–FF), séparées par des espaces ou des sauts de ligne."

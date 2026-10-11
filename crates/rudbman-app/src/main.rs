@@ -21,6 +21,7 @@ mod explorer;
 mod extract_dialog;
 mod i18n;
 mod icons;
+mod lob_dialog;
 mod maven;
 // The pane tree is written as a self-contained data structure with its own
 // tests rather than for the call sites the shell currently has, so it offers

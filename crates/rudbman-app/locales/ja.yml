@@ -409,7 +409,6 @@ query:
   confirm_title: この文を実行しますか?
   confirm_body: "データを変更する文: %{count} 件"
   confirm_run: 実行する
-  lob_unsupported: LOB ビューアーはまだありません。
   not_editable: この行は主キーを選択した単一のテーブルから来ていないため、読み取りはできますが変更はできません。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 文の構文と、対象を読む権限があるかを確認してください。
@@ -678,3 +677,22 @@ completion:
   keyword: "キーワード"
   hint: "↑↓ 選択 · Enter/Tab 挿入 · Esc 閉じる"
   function: "関数"
+
+lob:
+  open: "LOBを開く…"
+  export: "ファイルに保存…"
+  import: "ファイルで置換…"
+  empty: "空の値"
+  loading: "読み込み中…"
+  modified: "変更あり"
+  size: "%{bytes} バイト"
+  truncated: "先頭の1 MiBのみ表示します。保存は全内容を出力します。大きな値はファイルで置換できます。"
+  read_only: "読み取り専用です。表示とファイル保存ができます。"
+  hex_hint: "16進数のバイトを編集します。変更に追加した後、データグリッドの適用でDBに反映します。"
+  text_hint: "CLOBファイルはUTF-8です。変更に追加した後、データグリッドの適用でDBに反映します。"
+  import_error: "ファイルを読み込めません（CLOBはUTF-8が必要です）: %{error}"
+  saved: "ファイルを保存しました。"
+  stage: "変更に追加"
+  discard_question: "このLOBエディターの変更を破棄しますか？"
+  keep_editing: "編集を続ける"
+  invalid_hex: "2桁の16進数（00–FF）を空白または改行で区切って入力してください。"

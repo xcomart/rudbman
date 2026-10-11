@@ -3,6 +3,7 @@ use gpui::{TestAppContext, WindowHandle};
 use super::*;
 use crate::app_settings;
 use crate::connection::{self, Connected};
+use rugpui_grid::GridCell;
 
 impl QueryPane {
     /// The result-set tab at `index`, excluding the shared log.
@@ -347,6 +348,7 @@ fn server_rows(connected: &Connected, sql: &str) -> Vec<String> {
 
 mod editing;
 mod execution;
+mod lob;
 mod menus;
 mod statements;
 mod toolbar;

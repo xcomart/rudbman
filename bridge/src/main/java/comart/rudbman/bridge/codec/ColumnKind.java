@@ -66,8 +66,10 @@ public final class ColumnKind {
                 return precision <= 1 ? BOOL : BIN;
             case Types.BINARY:
             case Types.VARBINARY:
-            case Types.LONGVARBINARY:
                 return BIN;
+            case Types.LONGVARBINARY:
+            case Types.LONGVARCHAR:
+            case Types.LONGNVARCHAR:
             case Types.BLOB:
             case Types.CLOB:
             case Types.NCLOB:

@@ -328,7 +328,7 @@ forever.
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
 | `0x24` | `CANCEL` | session | — | — | JSON `{cancelled}` |
-| `0x25` | `LOB_READ` | cursor | — | JSON `{lob_id, offset, len}` | binary |
+| `0x25` | `LOB_READ` | cursor | — | JSON `{id, offset, length}` | binary |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
@@ -393,6 +393,16 @@ Bare JSON scalars are used only for integers, strings, booleans and null.
 form.** The reason is the same one §4.6 gives for forbidding it in the other
 direction — send a `DECIMAL(20,8)` as a JSON number and it arrives rounded, and
 that cannot be undone.
+
+LOB bind parameters use `{"type":"blob_file"|"clob_file","value":"<snapshot path>","length":N}`.
+The length is bytes for binary data or UTF-16 code units for character data;
+the bridge uses length-bearing JDBC stream overloads for driver compatibility.
+`Param::Lob` owns the immutable `LobFile` for the entire execution. The in-process
+bridge opens binary or UTF-8 character streams, binds them to the prepared
+statement, and closes them on success or failure. File replacements are copied
+to private snapshots before staging, so later changes to the selected file
+cannot alter the value approved in Apply. Apply previews show type and byte
+length without embedding a large body or an internal path in SQL.
 
 ### 4.5 Response envelope
 
@@ -464,11 +474,19 @@ JSON. The codec's `kind` is **physical encoding only**; presentation decisions
 such as right alignment, NULL rendering and copy format come from the logical
 type.
 
-LOBs are never inlined into a batch. Scrolling past a row holding a 100MB BLOB
-cannot mean pushing 100MB across JNI. When the cell is opened, `LOB_READ`
-pulls it in chunks. **The address is `lob_id` and nothing else** — it has to be
-an opaque identifier independent of cursor position. Addressing by `{row, col}`
-would point at a row the result set has already passed.
+LOB bodies are never inlined into a batch. The bridge snapshots each fetched
+BLOB/CLOB into a private temporary file before advancing the JDBC row, because
+LOB locators can expire on the next row. `LOB_READ` uses an opaque `id` within
+the current cursor result, with byte offsets and a length from 1 to 1,048,576.
+It returns raw bytes, or an empty payload at EOF; character bodies are UTF-8,
+and a chunk may end inside a character. Invalid ids and ranges are rejected.
+The Rust fetch path copies these chunks into reference-counted `LobFile`
+snapshots before `MORE_RESULTS` or cursor closure. This uses bounded memory
+and requires temporary disk space for fetched LOBs, including values the user
+never opens. It deliberately preserves the fetched value instead of re-running
+SQL against data that may have changed. Bridge files are released at result
+advance/closure; Rust files live until the last result, edit, dialog or apply
+parameter releases them, including after disconnection.
 
 #### Codec norms — what the encoder and the decoder must agree on
 
@@ -500,8 +518,9 @@ silently draws the wrong data.
 
 - **`BIT` splits on precision.** `≤1` becomes `BOOL`, anything larger becomes
   `BIN` — MySQL's `BIT(n)` returns a byte string.
-- **`LONGVARCHAR`/`LONGVARBINARY` are inlined as `STR`/`BIN`, not `LOB`.**
-  MySQL's `LONGTEXT` landing here is a known sharp edge.
+- **`LONGVARCHAR`, `LONGNVARCHAR` and `LONGVARBINARY` use `LOB` references.**
+  These include drivers that report large text/binary columns without JDBC
+  Blob/Clob wrappers. Stream getters preserve bounded fetch memory.
 - **`REAL` travels as `F64`.** A 32-bit float is widened to 64 bits, so unless
   Rust displays it at f32 precision, `0.1` shows up as `0.10000000149011612`.
 
@@ -931,7 +950,12 @@ for.
   single table and its primary key are known. The query result grid stays
   read-only: it carries no key metadata and no table to attribute a column to,
   and editing one is deferred
-- A LOB cell shows only its size and loads in chunks in a viewer when clicked
+- A LOB cell shows its size and opens a shared viewer on activation, also for
+  NULL BLOB/CLOB columns. CLOB is UTF-8 text; BLOB is hexadecimal byte pairs.
+  The viewer displays at most 1 MiB and disables direct edits to a partial
+  preview. Complete exports and file replacements stream from disk at any size.
+  Replacements are staged using the same per-cell writability/primary-key gates
+  and Apply confirmation as ordinary edits. NULL and zero-length LOBs differ.
 - Infinite scroll: hitting the bottom fetches another `FETCH` batch. Default
   batch size 500 rows
 
@@ -1747,18 +1771,10 @@ for "a usable tool".
 6. **SSH agent forwarding and multi-hop jump hosts** — environments exist where
    two or more bastions stack. M1 supports a single hop, and this expands once
    the need is confirmed.
-7. **The LOB re-read strategy** — the address is settled as `lob_id` (§4.6),
-   but **most drivers invalidate a `Blob`/`Clob` handle the moment the row
-   changes.** After the grid has fetched 500 rows and the user opens the BLOB
-   in the third row, that handle is already dead. The candidates:
-   (a) spill to a temp file at fetch time — accurate, but writes disk for LOBs
-   nobody will open, (b) read immediately up to an inline cap (around 4KB) and
-   re-query the single row by primary key beyond that — which has to be refused
-   on result sets with no key, (c) allow it only within the current batch.
-   No viewer exists through M3 and M4, so this is still undecided — it gets
-   decided in the milestone that adds a LOB viewer. The bridge already records
-   `lob_id → (row, column, size, is-binary)`, so either option can be bolted on
-   afterwards.
+7. **LOB re-read strategy (resolved)** — fetch-time disk snapshots, as described
+   in §4.6. The cursor may advance or close without invalidating displayed
+   results. No key is needed for viewing/export, while writes retain §7.9's
+   existing key, read-only and transaction rules.
 
 ---
 

@@ -211,6 +211,18 @@ impl QueryPane {
         let staged = cell.is_some_and(|(row, _)| source.row_status(row) != RowStatus::Unchanged);
         let anything = !source.edits().is_empty();
 
+        if cell.is_some_and(|(_, column)| source.lob_kind(column).is_some()) {
+            let this = this.clone();
+            rows.push(MenuRow::separator());
+            rows.push(
+                MenuRow::new(ts!("lob.open")).on_activate(move |window, cx| {
+                    if let Some((row, column)) = cell {
+                        this.update(cx, |pane, cx| pane.open_cell(id, row, column, window, cx));
+                    }
+                }),
+            );
+        }
+
         rows.push(MenuRow::separator());
         rows.push({
             let this = this.clone();

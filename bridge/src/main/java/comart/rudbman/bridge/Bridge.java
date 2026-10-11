@@ -97,9 +97,7 @@ public final class Bridge {
             case Ops.JOB_CANCEL:
                 return Envelope.ok(Jobs.cancel(handle));
             case Ops.LOB_READ:
-                throw new BridgeException("protocol",
-                        "operation 0x" + Integer.toHexString(op)
-                                + " is not implemented in this build");
+                return Envelope.ok(Registry.cursor(handle).readLob(Json.request(req)));
             default:
                 throw new BridgeException("protocol",
                         "unknown operation 0x" + Integer.toHexString(op));
@@ -161,16 +159,19 @@ public final class Bridge {
 
         s.lock();
         Cursor cursor = null;
+        Params bindings = new Params();
         try {
             Statement stmt;
             boolean prepared = params != null && params.size() > 0;
             if (prepared) {
                 PreparedStatement ps = s.connection().prepareStatement(sql);
-                Params.bind(ps, params);
                 stmt = ps;
             } else {
                 stmt = s.connection().createStatement();
             }
+            // Own the statement before binding, so an invalid parameter also closes it.
+            cursor = new Cursor(s, stmt);
+            if (prepared) bindings.bind((PreparedStatement) stmt, params);
             if (fetchSize > 0) {
                 stmt.setFetchSize(fetchSize);
             }
@@ -184,7 +185,6 @@ public final class Bridge {
             // Registered before execute so that a CANCEL arriving mid-statement
             // finds the statement. This is the whole reason the cursor table is
             // concurrent.
-            cursor = new Cursor(s, stmt);
             boolean isRs = prepared ? ((PreparedStatement) stmt).execute() : stmt.execute(sql);
             cursor.afterExecute(isRs);
             return Envelope.ok(cursor.describe());
@@ -194,6 +194,7 @@ public final class Bridge {
             }
             throw t;
         } finally {
+            bindings.close();
             s.unlock();
         }
     }

@@ -65,7 +65,7 @@ the Rust side drop `ExceptionCheck` from the normal path.
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
 | `0x24` | `CANCEL` | session | — | — | JSON `{cancelled}` |
-| `0x25` | `LOB_READ` | cursor | — | JSON | binary — **not implemented yet** |
+| `0x25` | `LOB_READ` | cursor | — | JSON `{id, offset, length}` | binary |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
@@ -471,8 +471,8 @@ Points a decoder has to get right:
 | `TINYINT` `SMALLINT` `INTEGER` `BIGINT` | `I64` |
 | `REAL` `FLOAT` `DOUBLE` | `F64` |
 | `BOOLEAN`, `BIT` with precision ≤ 1 | `BOOL` |
-| `BINARY` `VARBINARY` `LONGVARBINARY`, `BIT` with precision > 1 | `BIN` |
-| `BLOB` `CLOB` `NCLOB` | `LOB` |
+| `BINARY` `VARBINARY`, `BIT` with precision > 1 | `BIN` |
+| `BLOB` `CLOB` `NCLOB` `LONGVARBINARY` `LONGVARCHAR` `LONGNVARCHAR` | `LOB` |
 | everything else | `STR` |
 
 `DECIMAL`, `NUMERIC`, `DATE`, `TIME`, `TIMESTAMP`, `UUID`, `INTERVAL`, arrays,
@@ -496,21 +496,27 @@ in `columns[]` also carries a `kind` hint: the encoding a full batch would use.
 
 ### LOBs
 
-`BLOB`, `CLOB` and `NCLOB` never inline. A 100MB BLOB must not cross JNI because
-a user scrolled past its row. Each cell contributes 16 bytes: an id and a size.
+`BLOB`, `CLOB`, `NCLOB`, `LONGVARBINARY`, `LONGVARCHAR` and `LONGNVARCHAR`
+are carried as 16-byte references in a batch: an id and a size hint. The bridge
+streams each value to a private temporary file before advancing the JDBC row,
+so a driver's expiring locator cannot invalidate a fetched value. LONG types use
+stream getters directly; drivers without Blob/Clob wrappers fall back to streams.
 
-- `size` is **octets** for binary LOBs and **characters** for character LOBs —
-  that is what `Clob.length()` means, and what a `LOB_READ` offset would be
-  counted in.
-- `size` of `0xFFFFFFFFFFFFFFFF` (`-1` as i64) means the driver would not report
-  a length.
-- Ids are unique within a cursor and are reset whenever the cursor advances to a
-  new result.
-- `LOB_READ` (`0x25`) is a later milestone. See "Known gaps" below.
+- The size hint is bytes for binary values and UTF-16 code units for character
+  values. `-1` means the driver could not report it.
+- `LOB_READ` (`0x25`) accepts `{id, offset, length}`. Both offset and length are
+  **bytes**, including for CLOBs, whose bodies are UTF-8. Length must be from
+  1 to 1,048,576. EOF returns an empty body; invalid ids and ranges are errors.
+- Ids are unique within a cursor. Their files are deleted when the cursor
+  advances to another result or closes. The Rust fetch path saves its own
+  snapshots before either event, allowing results to be viewed and exported
+  after execution or disconnection.
+- `blob_file` and `clob_file` parameters bind immutable local snapshots through
+  JDBC streams. Readers stay open until statement execution finishes. CLOB
+  files use UTF-8; the parameter's `length` is its UTF-16 code-unit count.
 
-`LONGVARCHAR` and `LONGVARBINARY` are **not** treated as LOBs; they inline as
-`STR` / `BIN`. On MySQL a `LONGTEXT` reaches 4GB under `Types.LONGVARCHAR`, so
-this is a known sharp edge, deferred with `LOB_READ`.
+Fetched LOBs require temporary disk space even if their viewer is never opened.
+The viewer displays up to 1 MiB; export and file replacement use the entire body.
 
 ## Concurrency
 
@@ -630,21 +636,12 @@ tripping rather than by asserting on strings:
 
 ## Known gaps
 
-- `LOB_READ` (`0x25`) is not implemented.
 - The `upsert` statements for Oracle, SQL Server and Db2 are written from the
   products' documentation and are not covered by a test; only the H2 form is
   executed here.
 - A transfer binds with `getObject` / `setObject`. Arrays and vendor structured
   types often do not survive that between two different products; those rows take
   the `on_error` path.
-- The batch carries a `lob_id`, but §4.5 of the architecture document specifies
-  `LOB_READ` as taking `{row, col, offset, len}`. These are two different
-  addressing schemes; one of them has to go. The cursor currently records
-  `lob_id → (row, column, size, binary)` so either can be served, but the
-  request shape is not settled. Whichever wins, re-reading a LOB after the
-  result set has advanced needs a forward-only-safe strategy — most drivers
-  invalidate a `Blob` as soon as the row changes.
-- `LONGVARCHAR` / `LONGVARBINARY` inline rather than becoming LOB references.
 - Only MySQL, MariaDB and H2 have a native `ddl` path; every other product gets
   the reverse-generated form with the limits listed above.
 - `sequences` covers H2, PostgreSQL, Oracle and MariaDB. SQL Server

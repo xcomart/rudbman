@@ -424,16 +424,8 @@ impl QueryPane {
 
     /// A cell was opened: a field over it, or a word about why not.
     ///
-    /// A LOB has no body in the grid — only its size travelled — and reading
-    /// one needs `LOB_READ` (0x25), which the bridge answers "not implemented"
-    /// (architecture document, §12, open question 7). Saying so is better than
-    /// a viewer that shows nothing.
-    ///
-    /// Anything else goes to [`GridView::begin_edit`], which refuses on its own
-    /// for a cell that cannot take a field — a result that failed §7.9's gate,
-    /// a computed column, a row on its way out — so there is nothing to check
-    /// here that is not already checked where it is known.
-    // TODO(M4): open a chunked LOB viewer once `LOB_READ` lands in the bridge.
+    /// Opens the shared LOB viewer for BLOB/CLOB columns, including NULL values.
+    /// Other cells use the grid's inline editor and its usual writability checks.
     pub(super) fn open_cell(
         &mut self,
         id: u64,
@@ -445,11 +437,31 @@ impl QueryPane {
         let Some(grid) = self.grid_of(id).cloned() else {
             return;
         };
-        if matches!(
-            grid.read(cx).source().cell(row, column),
-            GridCell::Lob { .. }
-        ) {
-            self.notice = Some(ts!("query.lob_unsupported"));
+        if grid.read(cx).source().lob_kind(column).is_some() {
+            if self.lob_dialog.is_some()
+                || self.applying
+                || self.preview.is_some()
+                || self.transaction.is_some()
+            {
+                return;
+            }
+            self.close_completion(cx);
+            self.context_menu = None;
+            let attached = self.session.is_some();
+            let dialog = cx.new(|cx| {
+                crate::lob_dialog::LobDialog::new(grid.clone(), row, column, attached, window, cx)
+            });
+            self.lob_events = Some(cx.subscribe_in(
+                &dialog,
+                window,
+                move |pane, _, _: &crate::lob_dialog::Closed, window, cx| {
+                    pane.lob_dialog = None;
+                    pane.lob_events = None;
+                    window.focus(&grid.read(cx).focus_handle(cx), cx);
+                    cx.notify();
+                },
+            ));
+            self.lob_dialog = Some(dialog);
             cx.notify();
             return;
         }

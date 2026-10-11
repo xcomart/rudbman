@@ -409,7 +409,6 @@ query:
   confirm_title: "¿Ejecutar esta sentencia?"
   confirm_body: "Sentencias que modifican datos: %{count}"
   confirm_run: Ejecutar
-  lob_unsupported: El visor de LOB todavía no existe.
   not_editable: Estas filas no provienen de una sola tabla con su clave primaria seleccionada, así que pueden leerse pero no modificarse.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Revise la sintaxis de la sentencia y sus permisos de lectura.
@@ -678,3 +677,22 @@ completion:
   keyword: "Palabra clave"
   hint: "↑↓ elegir · Enter/Tab insertar · Esc cerrar"
   function: "Función"
+
+lob:
+  open: "Abrir LOB…"
+  export: "Guardar en archivo…"
+  import: "Reemplazar desde archivo…"
+  empty: "Valor vacío"
+  loading: "Cargando…"
+  modified: "Modificado"
+  size: "%{bytes} bytes"
+  truncated: "Solo se muestra el primer MiB. Guardar exporta el valor completo; reemplace los valores grandes desde un archivo."
+  read_only: "Solo lectura. Puede ver y guardar este valor."
+  hex_hint: "Edite pares de bytes hexadecimales. Añada a los cambios y después use Aplicar en la cuadrícula para escribir en la base de datos."
+  text_hint: "Los archivos CLOB usan UTF-8. Añada a los cambios y después use Aplicar en la cuadrícula para escribir en la base de datos."
+  import_error: "No se pudo importar el archivo (el texto CLOB debe ser UTF-8): %{error}"
+  saved: "Archivo guardado."
+  stage: "Añadir a los cambios"
+  discard_question: "¿Descartar los cambios de este editor LOB?"
+  keep_editing: "Seguir editando"
+  invalid_hex: "Introduzca pares de dígitos hexadecimales (00–FF) separados por espacios o saltos de línea."

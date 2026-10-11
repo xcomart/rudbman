@@ -409,7 +409,6 @@ query:
   confirm_title: 이 문장을 실행할까요?
   confirm_body: "데이터를 변경하는 문장: %{count}개"
   confirm_run: 실행
-  lob_unsupported: LOB 뷰어는 아직 없습니다.
   not_editable: 이 행들은 기본 키까지 선택된 단일 테이블에서 온 것이 아니라, 읽을 수는 있어도 바꿀 수는 없습니다.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 문장의 구문과 대상 객체를 읽을 권한이 있는지 확인하세요.
@@ -678,3 +677,22 @@ completion:
   keyword: "키워드"
   hint: "↑↓ 선택 · Enter/Tab 삽입 · Esc 닫기"
   function: "함수"
+
+lob:
+  open: "LOB 열기…"
+  export: "파일로 저장…"
+  import: "파일로 교체…"
+  empty: "빈 값"
+  loading: "불러오는 중…"
+  modified: "수정됨"
+  size: "%{bytes}바이트"
+  truncated: "처음 1 MiB만 표시합니다. 파일 저장은 전체 내용을 저장하며, 큰 값은 파일로 교체할 수 있습니다."
+  read_only: "읽기 전용입니다. 내용을 조회하고 파일로 저장할 수 있습니다."
+  hex_hint: "16진수 바이트 쌍을 편집하세요. 변경사항에 추가한 뒤 데이터 그리드의 적용 버튼으로 DB에 반영합니다."
+  text_hint: "CLOB 파일은 UTF-8을 사용합니다. 변경사항에 추가한 뒤 데이터 그리드의 적용 버튼으로 DB에 반영합니다."
+  import_error: "파일을 불러오지 못했습니다(CLOB은 UTF-8이어야 합니다): %{error}"
+  saved: "파일을 저장했습니다."
+  stage: "변경사항에 추가"
+  discard_question: "이 LOB 편집 창의 변경사항을 버릴까요?"
+  keep_editing: "계속 편집"
+  invalid_hex: "16진수 두 자리(00–FF)를 공백이나 줄바꿈으로 구분하여 입력하세요."

@@ -124,6 +124,9 @@ impl QueryPane {
     /// to have the refusal stated where the write is rather than only where the
     /// button is.
     pub(super) fn apply(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.lob_dialog.is_some() {
+            return;
+        }
         if self.read_only || self.applying || self.transaction.is_some() || self.preview.is_some() {
             return;
         }

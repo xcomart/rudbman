@@ -117,13 +117,9 @@ class SessionLifecycleTest {
     }
 
     @Test
-    void deferredOpsReportThemselvesAsUnimplemented() {
-        // The job operations arrived in M4; LOB_READ is what is left.
-        for (int op : new int[]{Ops.LOB_READ}) {
-            JsonObject err = Resp.of(Bridge.call(op, 0, 0, null)).error();
-            assertEquals("protocol", err.get("kind").getAsString());
-            assertTrue(err.get("message").getAsString().contains("not implemented"),
-                    "op 0x" + Integer.toHexString(op) + ": " + err);
-        }
+    void lobReadRequiresALiveCursor() {
+        JsonObject err = Resp.of(Bridge.call(Ops.LOB_READ, 0, 0, null)).error();
+        assertEquals("protocol", err.get("kind").getAsString());
+        assertFalse(err.get("message").getAsString().contains("not implemented"));
     }
 }

@@ -77,8 +77,18 @@ out. What remains can be taken in any order:
    container in the suite and no built-in driver definition at all — how it,
    Oracle and SQL Server spell the upsert `MERGE` remains a known gap, named
    in the bridge README.
-2. **Open features**: the list below (the LOB viewer is the largest — §12.7
-   needs a re-read strategy decided).
+2. **Open features**: the list below.
+
+BLOB/CLOB viewing, full file export, text/hex editing and file replacement now
+work in both table data and query results. Edits use the existing Apply preview,
+primary-key guard and transaction. Fetch-time disk snapshots keep values usable
+after cursor closure; 1 MiB display previews prevent loading large values into
+the editor. Large values can be replaced from a file. Chunk reads, UTF-8,
+NULL/empty values, streaming writes and the two UI paths are covered by H2 and
+GPUI tests. SQLite's stream-only BLOB reads and length-bearing file parameters
+also pass real-driver round trips. LONG binary/text types use the same viewer;
+other vendor-specific LOB behaviour has not yet been verified against the
+container databases.
 
 ### Open items not tied to a milestone
 
@@ -110,8 +120,6 @@ out. What remains can be taken in any order:
   does not give, and SQLite needs a table rebuild (new table, copy, drop,
   rename) for anything but add/drop/rename, which is a data-moving job wearing
   a schema job's clothes and belongs with the §6 data plane if it is ever done.
-- LOB_READ(0x25) is not implemented in the bridge, so there is no LOB viewer.
-  Candidate re-read strategies are in §12.7.
 - PL/SQL blocks and MySQL DELIMITER are not handled by statement splitting
   (the limit is pinned by rudbman-sql tests).
 - A failed file read only reaches the log — the shell has no transient

@@ -1,11 +1,14 @@
 package comart.rudbman.bridge.codec;
 
 import java.math.BigDecimal;
+import java.io.Closeable;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Types;
 import java.util.Arrays;
 
@@ -41,7 +44,10 @@ public final class ColumnWriters {
             case ColumnKind.BIN:
                 return new BinWriter(capacity);
             case ColumnKind.LOB:
-                return new LobWriter(capacity, lobs, sqlType == Types.BLOB);
+                return new LobWriter(capacity, lobs,
+                        sqlType == Types.BLOB || sqlType == Types.LONGVARBINARY,
+                        sqlType == Types.LONGVARBINARY || sqlType == Types.LONGVARCHAR
+                                || sqlType == Types.LONGNVARCHAR);
             case ColumnKind.STR:
             default:
                 boolean decimal = sqlType == Types.DECIMAL || sqlType == Types.NUMERIC;
@@ -269,20 +275,22 @@ public final class ColumnWriters {
      *
      * <p>Only the identifier and the length cross the boundary. The size of a
      * binary LOB is in octets, the size of a character LOB is in characters
-     * (that is what {@link Clob#length()} means and what a later {@code LOB_READ}
-     * offset would have to be counted in).
+     * (UTF-16 units, as returned by {@link Clob#length()}). LOB_READ transports
+     * UTF-8 snapshots with byte offsets independently of this display size.
      */
     static final class LobWriter extends ColumnWriter {
         private long[] ids;
         private long[] sizes;
         private final LobSink sink;
         private final boolean binary;
+        private final boolean streamOnly;
 
-        LobWriter(int capacity, LobSink sink, boolean binary) {
+        LobWriter(int capacity, LobSink sink, boolean binary, boolean streamOnly) {
             this.ids = new long[Math.max(8, capacity)];
             this.sizes = new long[Math.max(8, capacity)];
             this.sink = sink;
             this.binary = binary;
+            this.streamOnly = streamOnly;
         }
 
         @Override
@@ -297,35 +305,45 @@ public final class ColumnWriters {
 
             long size = LobSink.UNKNOWN_SIZE;
             Object lob;
-            if (binary) {
-                Blob b = rs.getBlob(column);
-                lob = b;
-                if (b != null) {
-                    try {
-                        size = b.length();
-                    } catch (SQLException | RuntimeException e) {
-                        // Streaming drivers do not always know the length up
-                        // front; the sentinel tells the UI to say "unknown".
-                        size = LobSink.UNKNOWN_SIZE;
+            try {
+                if (streamOnly) {
+                    lob = binary ? rs.getBinaryStream(column) : rs.getCharacterStream(column);
+                } else if (binary) {
+                    Blob b = rs.getBlob(column);
+                    lob = b;
+                    if (b != null) {
+                        try {
+                            size = b.length();
+                        } catch (SQLException | RuntimeException e) {
+                            // Streaming drivers do not always know the length up
+                            // front; the sentinel tells the UI to say "unknown".
+                            size = LobSink.UNKNOWN_SIZE;
+                        }
+                    }
+                } else {
+                    Clob c = rs.getClob(column);
+                    lob = c;
+                    if (c != null) {
+                        try {
+                            size = c.length();
+                        } catch (SQLException | RuntimeException e) {
+                            size = LobSink.UNKNOWN_SIZE;
+                        }
                     }
                 }
-            } else {
-                Clob c = rs.getClob(column);
-                lob = c;
-                if (c != null) {
-                    try {
-                        size = c.length();
-                    } catch (SQLException | RuntimeException e) {
-                        size = LobSink.UNKNOWN_SIZE;
-                    }
-                }
+            } catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+                // SQLite and other stream-only drivers need no Blob/Clob wrapper.
+                lob = binary ? rs.getBinaryStream(column) : rs.getCharacterStream(column);
             }
-            if (lob == null || rs.wasNull()) {
+            if (lob == null) {
                 return false;
             }
-            ids[idx] = sink.registerLob(rowInCursor, column, size, binary);
-            sizes[idx] = size;
-            free(lob);
+            try {
+                ids[idx] = sink.registerLob(rowInCursor, column, size, binary, lob);
+                sizes[idx] = size;
+            } finally {
+                free(lob);
+            }
             return true;
         }
 
@@ -338,8 +356,10 @@ public final class ColumnWriters {
                     ((Blob) lob).free();
                 } else if (lob instanceof Clob) {
                     ((Clob) lob).free();
+                } else if (lob instanceof Closeable) {
+                    ((Closeable) lob).close();
                 }
-            } catch (SQLException | RuntimeException | AbstractMethodError ignored) {
+            } catch (SQLException | IOException | RuntimeException | AbstractMethodError ignored) {
                 // free() is optional in practice; a driver that cannot do it is
                 // not a reason to fail the fetch.
             }

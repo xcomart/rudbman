@@ -409,7 +409,6 @@ query:
   confirm_title: Diese Anweisung ausführen?
   confirm_body: "Anweisungen, die Daten ändern: %{count}"
   confirm_run: Ausführen
-  lob_unsupported: Der LOB-Betrachter existiert noch nicht.
   not_editable: Diese Zeilen stammen nicht aus einer Tabelle samt ausgewähltem Primärschlüssel; sie lassen sich lesen, aber nicht ändern.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Prüfen Sie die Syntax der Anweisung und Ihre Leserechte auf das Genannte.
@@ -678,3 +677,22 @@ completion:
   keyword: "Schlüsselwort"
   hint: "↑↓ wählen · Enter/Tab einfügen · Esc schließen"
   function: "Funktion"
+
+lob:
+  open: "LOB öffnen…"
+  export: "In Datei speichern…"
+  import: "Aus Datei ersetzen…"
+  empty: "Leerer Wert"
+  loading: "Wird geladen…"
+  modified: "Geändert"
+  size: "%{bytes} Bytes"
+  truncated: "Nur die ersten 1 MiB werden angezeigt. Speichern exportiert den gesamten Wert; größere Werte können durch eine Datei ersetzt werden."
+  read_only: "Schreibgeschützt. Sie können den Wert ansehen und speichern."
+  hex_hint: "Hexadezimale Bytepaare bearbeiten. Zu Änderungen hinzufügen und danach im Datenraster Anwenden wählen, um die Datenbank zu ändern."
+  text_hint: "CLOB-Dateien verwenden UTF-8. Zu Änderungen hinzufügen und danach im Datenraster Anwenden wählen, um die Datenbank zu ändern."
+  import_error: "Datei konnte nicht importiert werden (CLOB-Text muss UTF-8 sein): %{error}"
+  saved: "Datei gespeichert."
+  stage: "Zu Änderungen hinzufügen"
+  discard_question: "Änderungen in diesem LOB-Editor verwerfen?"
+  keep_editing: "Weiter bearbeiten"
+  invalid_hex: "Hexadezimale Ziffernpaare (00–FF), getrennt durch Leerzeichen oder Zeilenumbrüche, eingeben."

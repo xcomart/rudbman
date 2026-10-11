@@ -240,6 +240,46 @@ fn sqlite_reports_no_remarks_because_it_has_none() {
     }
 }
 
+#[test]
+fn sqlite_blob_file_parameters_and_stream_only_reads_round_trip() {
+    use rudbman_jdbc::{LobFile, Param, Value};
+    let Some(mut db) = Db::open() else { return };
+    db.table.push_str("_lob");
+    db.exec(&format!(
+        "create table {} (id integer primary key, b blob, c text)",
+        db.table
+    ));
+    let bytes: Vec<u8> = (0..(1024 * 1024 + 7)).map(|i| (i % 256) as u8).collect();
+    let text = "한🙂\0끝".repeat(1000);
+    let insert = format!("insert into {} values (?, ?, ?)", db.table);
+    for (id, binary, character) in [(1, bytes.as_slice(), text.as_bytes()), (2, &[], &[])] {
+        db.session
+            .execute(&StatementSpec::new(&insert).with_params([
+                Param::I64(id),
+                Param::Lob(LobFile::from_bytes(binary, true).unwrap()),
+                Param::Lob(LobFile::from_bytes(character, false).unwrap()),
+            ]))
+            .unwrap();
+    }
+    let cursor = db
+        .session
+        .execute(&StatementSpec::new(format!(
+            "select b, c from {} order by id",
+            db.table
+        )))
+        .unwrap();
+    let batch = cursor.fetch(10).unwrap();
+    for (row, expected) in [bytes.as_slice(), &[]].into_iter().enumerate() {
+        let Value::Lob { id, .. } = batch.value(row, 0).unwrap() else {
+            panic!("BLOB")
+        };
+        let file = cursor.cache_lob(id, true).unwrap();
+        assert_eq!(file.prefix(bytes.len()).unwrap(), expected);
+    }
+    assert_eq!(batch.value(0, 1).unwrap(), Value::Str(&text));
+    assert_eq!(batch.value(1, 1).unwrap(), Value::Str(""));
+}
+
 /// A describe item's `REMARKS`, with null and the empty string read alike —
 /// the same normalisation `tests/containers.rs` applies, for the same reason.
 fn remarks(item: &serde_json::Map<String, serde_json::Value>) -> Option<String> {

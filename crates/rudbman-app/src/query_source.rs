@@ -61,12 +61,14 @@ use rugpui_grid::{GridCell, GridColumn, GridColumnKind, GridSource, GridSourceSt
 /// [`GridColumnKind::Text`], which is the safe answer for a type this version
 /// does not know.
 pub(crate) mod sql_types {
+    pub const LONGNVARCHAR: i32 = -16;
     pub const BIT: i32 = -7;
     pub const TINYINT: i32 = -6;
     pub const BIGINT: i32 = -5;
     pub const LONGVARBINARY: i32 = -4;
     pub const VARBINARY: i32 = -3;
     pub const BINARY: i32 = -2;
+    pub const LONGVARCHAR: i32 = -1;
     pub const NUMERIC: i32 = 2;
     pub const DECIMAL: i32 = 3;
     pub const INTEGER: i32 = 4;
@@ -79,6 +81,8 @@ pub(crate) mod sql_types {
     pub const TIMESTAMP: i32 = 93;
     pub const BOOLEAN: i32 = 16;
     pub const BLOB: i32 = 2004;
+    pub const CLOB: i32 = 2005;
+    pub const NCLOB: i32 = 2011;
     pub const TIME_WITH_TIMEZONE: i32 = 2013;
     pub const TIMESTAMP_WITH_TIMEZONE: i32 = 2014;
 }
@@ -191,12 +195,13 @@ enum RenderedColumn {
         /// Set bit means the row holds a value.
         valid: Vec<u8>,
     },
-    /// Large objects, whose bodies were left on the Java side.
+    /// Large objects, cached before the JDBC cursor advances or closes.
     Lob {
         /// `u64::MAX` where the driver would not say how big.
         sizes: Vec<u64>,
         /// Set bit means the row holds a LOB rather than NULL.
         valid: Vec<u8>,
+        values: Vec<Option<rudbman_jdbc::LobFile>>,
     },
 }
 
@@ -240,7 +245,11 @@ pub fn render_batch(batch: &Batch, columns: &[ColumnInfo]) -> RenderedBatch {
                         _ => sizes.push(LOB_SIZE_UNKNOWN),
                     }
                 }
-                return RenderedColumn::Lob { sizes, valid };
+                return RenderedColumn::Lob {
+                    sizes,
+                    valid,
+                    values: vec![None; rows],
+                };
             }
 
             // The logical type decides the rendering. A column the response did
@@ -274,6 +283,32 @@ pub fn render_batch(batch: &Batch, columns: &[ColumnInfo]) -> RenderedBatch {
         rows,
         columns: rendered,
     }
+}
+
+/// Fetch-time rendering retains LOB bodies independently of JDBC locators.
+/// The copies use bounded buffers and live only as long as the result or edits.
+fn render_fetched_batch(
+    cursor: &Cursor,
+    batch: &Batch,
+    columns: &[ColumnInfo],
+) -> Result<RenderedBatch, JdbcError> {
+    let mut rendered = render_batch(batch, columns);
+    for (column, values) in rendered.columns.iter_mut().enumerate() {
+        let RenderedColumn::Lob { values, sizes, .. } = values else {
+            continue;
+        };
+        let binary = columns.get(column).is_some_and(|info| {
+            matches!(info.sql_type, sql_types::BLOB | sql_types::LONGVARBINARY)
+        });
+        for (row, value) in values.iter_mut().enumerate() {
+            if let Some(Value::Lob { id, .. }) = batch.value(row, column) {
+                let file = cursor.cache_lob(id, binary)?;
+                sizes[row] = file.len();
+                *value = Some(file);
+            }
+        }
+    }
+    Ok(rendered)
 }
 
 /// One thing a statement produced.
@@ -338,7 +373,7 @@ pub fn advance(
         if has_result_set {
             let raw = cursor.fetch(fetch_rows)?;
             let complete = raw.is_last();
-            let batch = render_batch(&raw, &columns);
+            let batch = render_fetched_batch(cursor, &raw, &columns)?;
             steps.push(Step::Rows {
                 columns,
                 batch,
@@ -367,7 +402,7 @@ pub fn page(
 ) -> Result<Paged, JdbcError> {
     let raw = cursor.fetch(fetch_rows)?;
     let complete = raw.is_last();
-    let batch = render_batch(&raw, columns);
+    let batch = render_fetched_batch(cursor, &raw, columns)?;
     let mut steps = Vec::new();
     let pageable = if complete {
         advance(cursor, false, fetch_rows, &mut steps)?
@@ -479,6 +514,15 @@ impl ResultSource {
         self.batches.push(batch);
     }
 
+    /// The immutable body of a fetched LOB, also available after disconnection.
+    pub fn lob(&self, row: usize, column: usize) -> Option<&rudbman_jdbc::LobFile> {
+        let (batch, row) = self.locate(row)?;
+        match batch.columns.get(column)? {
+            RenderedColumn::Lob { values, .. } => values.get(row)?.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Says whether more rows are coming, or one is on its way.
     pub fn set_state(&mut self, state: GridSourceState) {
         self.state = state;
@@ -568,7 +612,7 @@ impl GridSource for ResultSource {
                 let (start, end) = (offsets[local] as usize, offsets[local + 1] as usize);
                 GridCell::Text(&data[start..end])
             }
-            Some(RenderedColumn::Lob { sizes, valid }) => {
+            Some(RenderedColumn::Lob { sizes, valid, .. }) => {
                 if !is_valid(valid, local) {
                     return GridCell::Null;
                 }
