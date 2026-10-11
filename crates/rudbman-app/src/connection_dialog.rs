@@ -408,14 +408,13 @@ impl ConnectionDialog {
     /// What the welcome screen's "edit…" row opens: that list offers one
     /// profile at a time and the dialog it leads to has to be showing that
     /// one, not whichever happens to be first. An id no saved profile answers
-    /// to leaves [`ConnectionDialog::open`]'s own choice standing rather than
-    /// opening a form over nothing — a profile can be deleted between the
-    /// screen being drawn and the row being clicked.
+    /// to falls back to the first saved profile — a profile can be deleted
+    /// between the screen being drawn and the row being clicked.
     pub fn open_at(&mut self, id: Uuid, cx: &mut Context<Self>) {
         self.open_showing(Some(id), cx);
     }
 
-    /// Shows the dialog, re-reading both stores.
+    /// Shows a new connection form, re-reading both stores.
     pub fn open(&mut self, cx: &mut Context<Self>) {
         self.open_showing(None, cx);
     }
@@ -566,6 +565,10 @@ impl ConnectionDialog {
         );
 
         self.rebuild_props(&profile.props, cx);
+        // A different profile starts with its own URL values and driver defaults.
+        // Reusing the previous inputs would retain its host, port and database
+        // whenever the new profile has no URL to decompose.
+        self.url_parts.clear();
         self.rebuild_url_parts(cx);
         // A stored URL that the template cannot reproduce is an override, and
         // saying so up front is what stops the first keystroke in a port field
@@ -2043,18 +2046,17 @@ impl Render for ConnectionDialog {
 /// Which saved profile a dialog opening over `wanted` should show.
 ///
 /// `wanted` is the welcome list's "edit…" naming the row that was
-/// right-clicked; `None` is the plain "new connection" door, which has no
-/// opinion. Either way the answer falls back to the first saved profile, which
-/// is what the dialog has always opened over — a profile can be deleted between
-/// the welcome screen being drawn and its row being clicked, and a form opened
-/// over nothing would be worse than a form opened over the wrong thing.
+/// right-clicked; `None` starts a new profile. Only an edit request can fall
+/// back to the first saved profile if its row was deleted after being drawn.
 ///
 /// Separate from [`ConnectionDialog::open_showing`] because that one re-reads
 /// the file first, and the rule itself is worth pinning down without one.
 fn profile_to_show(store: &ConnectionStore, wanted: Option<Uuid>) -> Option<Uuid> {
-    wanted
-        .filter(|id| store.get(*id).is_some())
-        .or_else(|| store.connections().first().map(|profile| profile.id))
+    let wanted = wanted?;
+    store
+        .get(wanted)
+        .or_else(|| store.connections().first())
+        .map(|profile| profile.id)
 }
 
 /// The saved profiles as rows, grouped under the folder each is filed in.
@@ -2353,8 +2355,8 @@ mod tests {
         // The welcome list's "edit…" names a row, and that is the one the form
         // opens over — not whichever profile happens to be first.
         assert_eq!(profile_to_show(&store, Some(second.id)), Some(second.id));
-        // The plain door has no opinion and takes the first, as it always has.
-        assert_eq!(profile_to_show(&store, None), Some(first.id));
+        // New connection must not select any saved profile.
+        assert_eq!(profile_to_show(&store, None), None);
         // A profile deleted between the screen being drawn and the row being
         // clicked falls back rather than opening a form over nothing.
         assert_eq!(
@@ -2661,6 +2663,70 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         (dialog, cx)
+    }
+
+    #[gpui::test]
+    fn a_new_profile_clears_the_previous_connections_inputs(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        cx.update(|_, cx| {
+            dialog.update(cx, |dialog, cx| {
+                // Use the same driver as a fresh connection so every URL field
+                // could otherwise be reused, including a non-default port.
+                let driver = dialog.drivers.drivers()[0].id.clone();
+                dialog.set_driver(driver, cx);
+                for (name, input) in &dialog.url_parts {
+                    set_text(input, format!("previous-{name}"), cx);
+                }
+                set_text(&dialog.name_input, "previous connection", cx);
+                set_text(&dialog.folder_input, "previous folder", cx);
+                set_text(&dialog.username_input, "previous user", cx);
+                set_text(&dialog.password_input, "previous password", cx);
+                set_text(&dialog.url_input, "jdbc:previous:custom", cx);
+                set_text(&dialog.tunnel_host_input, "previous tunnel", cx);
+                set_text(&dialog.tunnel_secret_input, "previous secret", cx);
+                dialog.url_overridden = true;
+                dialog.read_only = true;
+                dialog.auto_commit = false;
+                dialog.keep_alive_enabled = true;
+                dialog.tunnel_enabled = true;
+                let previous = dialog.selected;
+
+                dialog.add_profile(cx);
+
+                assert_ne!(dialog.selected, previous);
+                assert_eq!(text(&dialog.name_input, cx), ts!("connect.new_name"));
+                for input in [
+                    &dialog.folder_input,
+                    &dialog.username_input,
+                    &dialog.password_input,
+                    &dialog.tunnel_host_input,
+                    &dialog.tunnel_secret_input,
+                ] {
+                    assert!(text(input, cx).is_empty());
+                }
+                assert!(!dialog.url_overridden);
+                assert!(!dialog.read_only);
+                assert!(dialog.auto_commit);
+                assert!(!dialog.keep_alive_enabled);
+                assert!(!dialog.tunnel_enabled);
+            });
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            let port = dialog.current_driver().unwrap().default_port;
+            for (name, input) in &dialog.url_parts {
+                let expected = if name == "port" {
+                    port.map(|port| port.to_string()).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                assert_eq!(text(input, cx), expected, "stale URL field: {name}");
+            }
+            assert_eq!(text(&dialog.url_input, cx), dialog.assembled_url(cx));
+            assert!(!text(&dialog.url_input, cx).contains("previous"));
+        });
     }
 
     /// The hint under the field says the URL can be typed over, so it has to
