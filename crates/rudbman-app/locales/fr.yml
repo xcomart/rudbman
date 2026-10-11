@@ -677,3 +677,4 @@ completion:
   schema: "Schéma"
   keyword: "Mot-clé"
   hint: "↑↓ choisir · Enter/Tab insérer · Esc fermer"
+  function: "Fonction"

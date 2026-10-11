@@ -677,3 +677,4 @@ completion:
   schema: "模式"
   keyword: "关键字"
   hint: "↑↓ 选择 · Enter/Tab 插入 · Esc 关闭"
+  function: "函数"

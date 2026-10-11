@@ -1114,3 +1114,4 @@ completion:
   schema: "Schema"
   keyword: "Keyword"
   hint: "↑↓ choose · Enter/Tab insert · Esc close"
+  function: "Function"

@@ -677,3 +677,4 @@ completion:
   schema: "스키마"
   keyword: "키워드"
   hint: "↑↓ 선택 · Enter/Tab 삽입 · Esc 닫기"
+  function: "함수"

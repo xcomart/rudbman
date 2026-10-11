@@ -4,6 +4,8 @@ use std::ops::Range;
 
 use crate::{Dialect, Token, TokenKind, lex};
 
+mod functions;
+
 /// A table or view in the connected database's metadata snapshot.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Relation {
@@ -26,6 +28,8 @@ pub enum Kind {
     Table,
     /// Schema or catalog qualifier.
     Schema,
+    /// Built-in aggregate or scalar function of the connection's dialect.
+    Function,
     /// Dialect keyword or type name.
     Keyword,
 }
@@ -393,7 +397,25 @@ impl Request {
             }
         }
         if self.qualifier.is_empty() && !self.quoted {
+            let functions: Vec<_> = if self.table_position {
+                Vec::new()
+            } else {
+                functions::for_dialect(dialect).collect()
+            };
+            for function in &functions {
+                add(
+                    (*function).to_owned(),
+                    (*function).to_owned(),
+                    String::new(),
+                    Kind::Function,
+                );
+            }
             for word in dialect.completion_words() {
+                // COALESCE and similar names also occur in the lexer tables.
+                // Offer a single function row rather than a duplicate keyword.
+                if functions.contains(&word) {
+                    continue;
+                }
                 add(
                     word.to_owned(),
                     word.to_owned(),
@@ -527,5 +549,84 @@ mod tests {
         let sql = "SELECT 고객";
         let request = request(sql, sql.len()..sql.len(), Dialect::POSTGRES, true).unwrap();
         assert_eq!(request.prefix, "고객");
+    }
+
+    #[test]
+    fn aggregate_functions_complete_on_every_dialect_without_replacing_arguments() {
+        for dialect in [
+            Dialect::GENERIC,
+            Dialect::H2,
+            Dialect::POSTGRES,
+            Dialect::MYSQL,
+            Dialect::MARIADB,
+            Dialect::SQLITE,
+            Dialect::ORACLE,
+            Dialect::MSSQL,
+        ] {
+            for name in ["COUNT", "SUM", "AVG", "MIN", "MAX"] {
+                let source = format!("SELECT {}(*)", name.to_lowercase());
+                let caret = 7 + name.len() - 1;
+                let request = request(&source, caret..caret, dialect, false).unwrap();
+                let candidates = request.candidates(dialect, &[]);
+                let candidate = candidates
+                    .iter()
+                    .find(|c| c.label == name && c.kind == Kind::Function)
+                    .unwrap_or_else(|| panic!("{} must suggest {name}", dialect.name()));
+                let mut completed = source.clone();
+                completed.replace_range(request.replace, &candidate.insert);
+                assert_eq!(completed, format!("SELECT {name}(*)"));
+            }
+        }
+    }
+
+    #[test]
+    fn vendor_functions_and_keyword_duplicates_have_the_right_category() {
+        for (dialect, supported, absent) in [
+            (Dialect::POSTGRES, "STRING_AGG", "NVL"),
+            (Dialect::MYSQL, "GROUP_CONCAT", "STRING_AGG"),
+            (Dialect::MARIADB, "GROUP_CONCAT", "STRING_AGG"),
+            (Dialect::SQLITE, "IFNULL", "NVL"),
+            (Dialect::ORACLE, "NVL", "IFNULL"),
+            (Dialect::MSSQL, "ISNULL", "IFNULL"),
+            (Dialect::H2, "FORMATDATETIME", "DATE_FORMAT"),
+        ] {
+            let request = request("SELECT ", 7..7, dialect, true).unwrap();
+            let candidates = request.candidates(dialect, &[]);
+            assert!(
+                candidates
+                    .iter()
+                    .any(|c| c.label == supported && c.kind == Kind::Function),
+                "{}: {supported}",
+                dialect.name()
+            );
+            assert!(
+                !candidates
+                    .iter()
+                    .any(|c| c.label == absent && c.kind == Kind::Function),
+                "{}: {absent}",
+                dialect.name()
+            );
+            let coalesce: Vec<_> = candidates
+                .iter()
+                .filter(|c| c.label == "COALESCE")
+                .collect();
+            assert_eq!(coalesce.len(), 1);
+            assert_eq!(coalesce[0].kind, Kind::Function);
+        }
+    }
+
+    #[test]
+    fn functions_do_not_intrude_on_relation_or_quoted_name_completion() {
+        for source in ["SELECT * FROM co", "SELECT users.co", "SELECT \"co"] {
+            let request =
+                request(source, source.len()..source.len(), Dialect::POSTGRES, true).unwrap();
+            assert!(
+                !request
+                    .candidates(Dialect::POSTGRES, &tables())
+                    .iter()
+                    .any(|c| c.kind == Kind::Function),
+                "{source}"
+            );
+        }
     }
 }

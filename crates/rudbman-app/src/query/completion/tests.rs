@@ -300,3 +300,44 @@ fn late_completion_metadata_does_not_reopen_a_dismissed_or_detached_pane(
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn function_completion_preserves_arguments_and_is_undoable(cx: &mut gpui::TestAppContext) {
+    let (connected, profile) = h2("completion_functions", &[]);
+    let handle = pane(&connected, &profile, 100, cx);
+    let mut cx = VisualTestContext::from_window(handle.into(), cx);
+    source(&handle, "SELECT cou|nt(*)", &mut cx);
+    cx.simulate_keystrokes("ctrl-space");
+    handle
+        .update(&mut cx, |pane, _, _| {
+            let open = pane.completion.popup.as_ref().expect("function popup");
+            assert_eq!(open.items[open.selected].kind, Kind::Function);
+            assert_eq!(open.items[open.selected].label, "COUNT");
+        })
+        .unwrap();
+    cx.simulate_keystrokes("tab");
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            assert_eq!(pane.editor_text(cx), "SELECT COUNT(*)");
+            assert!(!pane.ran);
+            assert!(pane.completion.popup.is_none());
+        })
+        .unwrap();
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-z"
+    } else {
+        "ctrl-z"
+    });
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            assert_eq!(pane.editor_text(cx), "SELECT count(*)")
+        })
+        .unwrap();
+    source(&handle, "SELECT sum|", &mut cx);
+    cx.simulate_keystrokes("ctrl-space enter");
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            assert_eq!(pane.editor_text(cx), "SELECT SUM")
+        })
+        .unwrap();
+}

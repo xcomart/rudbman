@@ -677,3 +677,4 @@ completion:
   schema: "スキーマ"
   keyword: "キーワード"
   hint: "↑↓ 選択 · Enter/Tab 挿入 · Esc 閉じる"
+  function: "関数"

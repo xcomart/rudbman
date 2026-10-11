@@ -677,3 +677,4 @@ completion:
   schema: "Схема"
   keyword: "Ключевое слово"
   hint: "↑↓ выбор · Enter/Tab вставить · Esc закрыть"
+  function: "Функция"

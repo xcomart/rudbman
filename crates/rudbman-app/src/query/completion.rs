@@ -307,6 +307,7 @@ impl QueryPane {
                     Kind::Column => ts!("completion.column"),
                     Kind::Table => ts!("completion.table"),
                     Kind::Schema => ts!("completion.schema"),
+                    Kind::Function => ts!("completion.function"),
                     Kind::Keyword => ts!("completion.keyword"),
                 };
                 div()

@@ -901,7 +901,8 @@ for.
 - Features: line numbers, current-line highlight, bracket matching, multiple
   cursors, statement-at-cursor execution (detecting the statement under the
   caret), folding, find and replace, auto-indent, comment toggling
-- Completion: dialect keywords and types, schemas, tables/views, and columns
+- Completion: dialect keywords and types, built-in aggregate/scalar functions,
+  schemas, tables/views, and columns
   resolved through names and table aliases in the current query block. Typing
   a name or a dot opens suggestions; `Ctrl+Space` and the editor context menu
   open them explicitly. Up/Down selects, Enter/Tab inserts, and Escape closes.
