@@ -153,11 +153,11 @@ fn ten_thousand_rows_arrive_one_batch_at_a_time(cx: &mut TestAppContext) {
     let id = window
         .update(cx, |pane, _window, cx| {
             assert!(pane.error.is_none(), "{:?}", pane.error);
-            assert_eq!(pane.results.len(), 1);
+            assert_eq!(pane.results.len(), 2);
             let source = pane.grid_at(0).read(cx).source();
             assert_eq!(source.row_count(), 1_000, "one batch, not the whole table");
             assert_eq!(source.state(), GridSourceState::HasMore);
-            pane.results[0].id
+            pane.row_result(0).id
         })
         .expect("the window is open");
 
@@ -182,6 +182,11 @@ fn ten_thousand_rows_arrive_one_batch_at_a_time(cx: &mut TestAppContext) {
             let (count, elapsed) = pane.status_cells();
             assert_eq!(count, ts!("query.row_count", count = 10_000));
             assert!(!elapsed.is_empty(), "the status bar reports a duration");
+            assert_eq!(
+                pane.log_at(0).len(),
+                1,
+                "paging must not log the statement again"
+            );
         })
         .expect("the window is open");
 }
@@ -189,7 +194,7 @@ fn ten_thousand_rows_arrive_one_batch_at_a_time(cx: &mut TestAppContext) {
 /// A script of three statements: two grids and a row count, in the order
 /// they were written.
 #[gpui::test]
-fn a_script_makes_one_result_per_statement(cx: &mut TestAppContext) {
+fn a_script_keeps_result_sets_separate_and_appends_messages_to_one_log(cx: &mut TestAppContext) {
     let (connected, profile) = h2(
         "script",
         &[
@@ -204,7 +209,9 @@ fn a_script_makes_one_result_per_statement(cx: &mut TestAppContext) {
                 editor.set_text(
                     "select ID from T order by ID;\n\
                          update T set N = 'x' where ID <= 2;\n\
-                         select N from T order by ID;",
+                         select N from T order by ID;\n\
+                         delete from T where ID = 99;\n\
+                         create table EXTRA (ID int);",
                     cx,
                 );
                 // Exactly what the editor raises for "run everything", so
@@ -218,17 +225,87 @@ fn a_script_makes_one_result_per_statement(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, _window, _cx| {
             assert!(pane.error.is_none(), "{:?}", pane.error);
-            assert_eq!(pane.results.len(), 3, "two grids and one row count");
+            assert_eq!(pane.results.len(), 3, "two grids and one shared log");
+            assert_eq!(pane.results[0].label, ts!("query.result_log"));
+            assert_eq!(pane.results[1].label, ts!("query.result", index = 1));
+            assert_eq!(pane.results[2].label, ts!("query.result", index = 2));
+            let log = pane.log_at(0);
+            assert_eq!(log.len(), 5);
             assert_eq!(
-                pane.message_at(1),
+                &log[1].message,
                 &ts!("query.rows_affected", count = 2),
                 "the update count is the driver's, not a guess"
             );
+            assert_eq!(log[0].message, ts!("query.executed"));
+            assert_eq!(log[2].message, ts!("query.executed"));
+            assert_eq!(log[3].message, ts!("query.executed"));
+            assert_eq!(log[4].message, ts!("query.executed"));
+            assert!(log[0].sql.starts_with("select ID"));
+            assert!(log[1].sql.starts_with("update T"));
+            assert!(log[2].sql.starts_with("select N"));
+            assert!(log[3].sql.starts_with("delete from T"));
+            assert!(log[4].sql.starts_with("create table EXTRA"));
         })
         .expect("the window is open");
 
     assert_eq!(column_zero(&window, 0, cx), ["1", "2", "3"]);
-    assert_eq!(column_zero(&window, 2, cx), ["x", "x", "c"]);
+    assert_eq!(column_zero(&window, 1, cx), ["x", "x", "c"]);
+}
+
+#[gpui::test]
+fn a_write_only_script_has_one_log_and_the_next_run_starts_fresh(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("script-log", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    window
+        .update(cx, |pane, window, cx| {
+            pane.request(
+                vec![
+                    "create table T (ID int)".into(),
+                    "insert into T values (1)".into(),
+                    "update T set ID = 2".into(),
+                ],
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let old_id = window
+        .update(cx, |pane, _, _| {
+            assert!(pane.error.is_none(), "{:?}", pane.error);
+            assert_eq!(pane.results.len(), 1);
+            assert_eq!(pane.results[0].label, ts!("query.result_log"));
+            let log = pane.log_at(0);
+            assert_eq!(log.len(), 3);
+            assert_eq!(log[0].message, ts!("query.executed"));
+            assert_eq!(log[1].message, ts!("query.rows_affected", count = 1));
+            assert_eq!(log[2].message, ts!("query.rows_affected", count = 1));
+            pane.results[0].id
+        })
+        .unwrap();
+
+    // An empty result set still has a grid as well as its execution log.
+    run(&window, "select ID from T where 1 = 0", cx);
+    assert!(column_zero(&window, 0, cx).is_empty());
+    window
+        .update(cx, |pane, _, _| {
+            assert_eq!(pane.results.len(), 2);
+            assert_eq!(pane.results[1].label, ts!("query.result", index = 1));
+            assert_eq!(pane.log_at(0).len(), 1);
+            assert!(pane.log_at(0)[0].sql.starts_with("select ID"));
+        })
+        .unwrap();
+
+    run(&window, "delete from T", cx);
+    window
+        .update(cx, |pane, _, _| {
+            assert_eq!(pane.results.len(), 1);
+            assert_ne!(pane.results[0].id, old_id);
+            assert_eq!(pane.log_at(0).len(), 1);
+            assert!(pane.log_at(0)[0].sql.starts_with("delete from T"));
+        })
+        .unwrap();
+    connected.close().expect("close");
 }
 
 /// A statement that would never finish, cancelled, and a session that is
@@ -322,7 +399,7 @@ fn sorting_comes_back_in_the_new_order(cx: &mut TestAppContext) {
         // A re-run replaces the tab, so the id has to be read afresh — the
         // same thing the grid's own subscription does when it fires again.
         let id = window
-            .update(cx, |pane, _window, _cx| pane.results[0].id)
+            .update(cx, |pane, _window, _cx| pane.row_result(0).id)
             .expect("the window is open");
         window
             .update(cx, |pane, sorted, cx| {
@@ -335,7 +412,7 @@ fn sorting_comes_back_in_the_new_order(cx: &mut TestAppContext) {
                 assert!(pane.error.is_none(), "{:?}", pane.error);
                 // Every sort wraps the statement the user wrote, never the
                 // wrapper the last one produced.
-                let ResultBody::Rows(rows) = &pane.results[0].body else {
+                let ResultBody::Rows(rows) = &pane.row_result(0).body else {
                     panic!("a grid");
                 };
                 assert_eq!(rows.sql, "select ID from S");
@@ -360,8 +437,8 @@ fn a_superseded_page_never_reaches_the_new_grid(cx: &mut TestAppContext) {
 
     let id = window
         .update(cx, |pane, _window, _cx| {
-            assert_eq!(pane.results.len(), 1);
-            pane.results[0].id
+            assert_eq!(pane.results.len(), 2);
+            pane.row_result(0).id
         })
         .expect("the window is open");
 
@@ -378,7 +455,7 @@ fn a_superseded_page_never_reaches_the_new_grid(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, _window, _cx| {
             assert!(pane.error.is_none(), "{:?}", pane.error);
-            assert_eq!(pane.results.len(), 1, "the old tab went with its run");
+            assert_eq!(pane.results.len(), 2, "the old tab went with its run");
         })
         .expect("the window is open");
     assert_eq!(
@@ -428,7 +505,10 @@ fn a_write_is_refused_outright_or_asked_about(cx: &mut TestAppContext) {
     asking
         .update(cx, |pane, _window, _cx| {
             assert!(pane.error.is_none(), "{:?}", pane.error);
-            assert_eq!(pane.message_at(0), &ts!("query.rows_affected", count = 1));
+            assert_eq!(
+                pane.log_at(0)[0].message,
+                ts!("query.rows_affected", count = 1)
+            );
         })
         .expect("the window is open");
 }
@@ -507,13 +587,13 @@ fn a_detached_pane_keeps_its_rows_and_refuses_to_run(cx: &mut TestAppContext) {
             assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
             assert_eq!(
                 pane.results.len(),
-                1,
+                2,
                 "the results of the last live run were replaced"
             );
 
             pane.notice = None;
             pane.reorder(
-                pane.results[0].id,
+                pane.row_result(0).id,
                 0,
                 Some(SortDirection::Descending),
                 dead,
@@ -522,7 +602,7 @@ fn a_detached_pane_keeps_its_rows_and_refuses_to_run(cx: &mut TestAppContext) {
             assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
 
             pane.notice = None;
-            pane.fetch_more(pane.results[0].id, dead, cx);
+            pane.fetch_more(pane.row_result(0).id, dead, cx);
             assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
         })
         .expect("the window is open");

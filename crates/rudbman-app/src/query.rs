@@ -251,7 +251,7 @@ struct Executed {
     pageable: bool,
 }
 
-/// One result of one statement, as a tab of the result area.
+/// A result set or the shared execution log, as a tab of the result area.
 struct ResultTab {
     /// Stable identity, so a grid's subscription finds its own tab however the
     /// list has been rebuilt since.
@@ -264,8 +264,20 @@ struct ResultTab {
 enum ResultBody {
     /// Rows, in a grid.
     Rows(Box<RowsTab>),
-    /// An update count, or a bare success.
-    Message(SharedString),
+    /// Execution messages for every result of the current run.
+    Log(ResultLog),
+}
+
+#[derive(Debug)]
+struct ResultLogEntry {
+    sql: SharedString,
+    message: SharedString,
+}
+
+#[derive(Default)]
+struct ResultLog {
+    entries: Vec<ResultLogEntry>,
+    scroll: gpui::UniformListScrollHandle,
 }
 
 /// The table one result's rows may be written back to.
@@ -734,7 +746,7 @@ impl QueryPane {
                 .read(cx)
                 .focus_handle(cx)
                 .contains_focused(window, cx),
-            ResultBody::Message(_) => false,
+            ResultBody::Log(_) => false,
         })
     }
 
@@ -852,7 +864,7 @@ impl QueryPane {
             .find(|tab| tab.id == id)
             .and_then(|tab| match &tab.body {
                 ResultBody::Rows(rows) => Some(&rows.grid),
-                ResultBody::Message(_) => None,
+                ResultBody::Log(_) => None,
             })
     }
 
@@ -885,7 +897,7 @@ impl QueryPane {
     pub fn has_pending_edits(&self, cx: &App) -> bool {
         self.results.iter().any(|tab| match &tab.body {
             ResultBody::Rows(rows) => !rows.grid.read(cx).source().edits().is_empty(),
-            ResultBody::Message(_) => false,
+            ResultBody::Log(_) => false,
         })
     }
 }

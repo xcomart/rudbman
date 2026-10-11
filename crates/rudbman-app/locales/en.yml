@@ -556,6 +556,7 @@ detail:
 # menu row or its shortcut, and over the object selected in the explorer with
 # the second row.
 query:
+  result_log: "Result log"
   rollback: "Rollback"
   rolling_back: "Rolling back…"
   rolled_back: "Transaction rolled back."
@@ -573,7 +574,7 @@ query:
   # answered yet. A word of its own rather than a disabled "Cancel", because
   # what is happening is not what the button offered.
   cancelling: Cancelling…
-  # One tab per result of the run. `index` counts from one.
+  # One tab per result set. The shared log does not consume an index.
   result: "Result %{index}"
   # The title of a query pane's tab in the pane it sits in. `index` counts
   # from one and is never reused, so two open tabs never share a title.
@@ -586,7 +587,7 @@ query:
   # is why it is a state rather than a sentence.
   running: running…
   # A statement that changed rows, and one that changed none — a CREATE TABLE,
-  # say. Each is a result tab of its own.
+  # say. These messages accumulate in one log tab.
   rows_affected: "%{count} rows affected"
   executed: Statement executed.
   # The status bar's row and elapsed cells. `seconds` arrives already rounded.

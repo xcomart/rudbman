@@ -254,6 +254,7 @@ impl QueryPane {
                     batch,
                     complete,
                 } => {
+                    self.append_log(sql, ts!("query.executed"));
                     let carried = (Some(index) == last_rows).then(|| cursor.take()).flatten();
                     let state = if complete && carried.is_none() {
                         GridSourceState::Complete
@@ -277,15 +278,37 @@ impl QueryPane {
                     } else {
                         ts!("query.executed")
                     };
-                    let id = self.mint_id();
-                    let label = ts!("query.result", index = self.results.len() + 1);
-                    self.results.push(ResultTab {
-                        id,
-                        label,
-                        body: ResultBody::Message(text),
-                    });
+                    self.append_log(sql, text);
                 }
             }
+        }
+    }
+
+    /// Records every result's execution in the same log, including result sets.
+    fn append_log(&mut self, sql: &str, message: SharedString) {
+        let index = self
+            .results
+            .iter()
+            .position(|tab| matches!(tab.body, ResultBody::Log(_)))
+            .unwrap_or_else(|| {
+                let id = self.mint_id();
+                self.results.push(ResultTab {
+                    id,
+                    label: ts!("query.result_log"),
+                    body: ResultBody::Log(ResultLog::default()),
+                });
+                self.results.len() - 1
+            });
+        let ResultBody::Log(log) = &mut self.results[index].body else {
+            unreachable!("the index belongs to the execution log");
+        };
+        let follow = log.scroll.is_scrolled_to_end().unwrap_or(true);
+        log.entries.push(ResultLogEntry {
+            sql: preview(sql).replace(['\r', '\n'], " ").into(),
+            message,
+        });
+        if follow {
+            log.scroll.scroll_to_bottom();
         }
     }
 
@@ -296,7 +319,7 @@ impl QueryPane {
             .iter()
             .filter_map(|tab| match &tab.body {
                 ResultBody::Rows(rows) => Some(rows.grid.read(cx).source().row_count()),
-                ResultBody::Message(_) => None,
+                ResultBody::Log(_) => None,
             })
             .sum();
         if let Some(finished) = &mut self.finished {

@@ -104,7 +104,7 @@ impl Render for QueryPane {
             .apply_error
             .as_ref()
             .map(|problem| render_apply_error(problem, &chrome));
-        let results = self.render_results(&chrome);
+        let results = self.render_results(&chrome, cx);
         let context_menu = self.render_context_menu(cx);
         // Both modals are `row_apply`'s; what each button does is this pane's,
         // and it is said here rather than threaded through as an entity.
@@ -452,8 +452,8 @@ impl QueryPane {
         )
     }
 
-    /// The result area's body: a grid, a message, a failure, or an empty state.
-    pub(super) fn render_results(&self, chrome: &Theme) -> AnyElement {
+    /// The result area's body: a grid, the execution log, a failure, or an empty state.
+    pub(super) fn render_results(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
         if let Some(error) = &self.error {
             return render_error(error, chrome);
         }
@@ -479,9 +479,75 @@ impl QueryPane {
                 .child(rows.grid.clone())
                 .into_any_element(),
             Some(ResultTab {
-                body: ResultBody::Message(text),
+                id,
+                body: ResultBody::Log(log),
                 ..
-            }) => note(text.clone(), chrome.text),
+            }) => {
+                let pane = cx.entity();
+                let id = *id;
+                let chrome = chrome.clone();
+                gpui::uniform_list(
+                    ("query-result-log", id),
+                    log.entries.len(),
+                    move |range, _, cx| {
+                        let pane = pane.read(cx);
+                        let Some(ResultTab {
+                            body: ResultBody::Log(log),
+                            ..
+                        }) = pane.results.iter().find(|tab| tab.id == id)
+                        else {
+                            return Vec::new();
+                        };
+                        range
+                            .filter_map(|index| {
+                                log.entries.get(index).map(|entry| {
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .h(px(52.))
+                                        .px(px(10.))
+                                        .gap(px(8.))
+                                        .border_b_1()
+                                        .border_color(chrome.border)
+                                        .text_size(px(12.))
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .w(px(36.))
+                                                .text_color(chrome.text_muted)
+                                                .child((index + 1).to_string()),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_color(chrome.text)
+                                                        .child(entry.message.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_color(chrome.text_muted)
+                                                        .child(entry.sql.clone()),
+                                                ),
+                                        )
+                                })
+                            })
+                            .collect()
+                    },
+                )
+                .track_scroll(&log.scroll)
+                .size_full()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .into_any_element()
+            }
             None => note(ts!("query.empty"), chrome.text_muted),
         }
     }

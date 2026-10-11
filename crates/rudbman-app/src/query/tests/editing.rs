@@ -61,7 +61,7 @@ fn a_select_of_one_keyed_table_is_edited_and_applied(cx: &mut TestAppContext) {
             assert!(pane.apply_error.is_none());
             assert!(pane.preview.is_none());
             assert_eq!(pane.notice, Some(ts!("data.applied", count = 1)));
-            assert_eq!(pane.results.len(), 1, "the statement was re-run");
+            assert_eq!(pane.results.len(), 2, "the statement was re-run");
         })
         .expect("the window is open");
     // Read back off the server by the re-run, not left over from the
@@ -109,7 +109,7 @@ fn a_refused_apply_rolls_back_and_keeps_the_staging(cx: &mut TestAppContext) {
                 pane.has_pending_edits(cx),
                 "a failed apply threw the staging away"
             );
-            assert_eq!(pane.results.len(), 1, "a failed apply re-ran the statement");
+            assert_eq!(pane.results.len(), 2, "a failed apply re-ran the statement");
         })
         .expect("the window is open");
     assert_eq!(

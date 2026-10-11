@@ -5,18 +5,27 @@ use crate::app_settings;
 use crate::connection::{self, Connected};
 
 impl QueryPane {
-    /// The grid of result tab `index`, for the assertions below.
+    /// The result-set tab at `index`, excluding the shared log.
+    fn row_result(&self, index: usize) -> &ResultTab {
+        self.results
+            .iter()
+            .filter(|tab| matches!(tab.body, ResultBody::Rows(_)))
+            .nth(index)
+            .expect("the result set exists")
+    }
+
+    /// The grid of result set `index`, for the assertions below.
     fn grid_at(&self, index: usize) -> &Entity<GridView<EditableSource>> {
-        match &self.results[index].body {
+        match &self.row_result(index).body {
             ResultBody::Rows(rows) => &rows.grid,
-            ResultBody::Message(text) => panic!("result {index} is the message {text:?}"),
+            ResultBody::Log(_) => panic!("result {index} is the execution log"),
         }
     }
 
-    /// The message of result tab `index`.
-    fn message_at(&self, index: usize) -> &SharedString {
+    /// The log entries of result tab `index`.
+    fn log_at(&self, index: usize) -> &[ResultLogEntry] {
         match &self.results[index].body {
-            ResultBody::Message(text) => text,
+            ResultBody::Log(log) => &log.entries,
             ResultBody::Rows(_) => panic!("result {index} is a grid"),
         }
     }
@@ -185,7 +194,7 @@ fn anywhere() -> Point<Pixels> {
 /// The id of the pane's first result tab.
 fn first_result(window: &WindowHandle<QueryPane>, cx: &mut TestAppContext) -> u64 {
     window
-        .update(cx, |pane, _window, _cx| pane.results[0].id)
+        .update(cx, |pane, _window, _cx| pane.row_result(0).id)
         .expect("the window is open")
 }
 
@@ -252,9 +261,11 @@ fn read_only_reason(
     cx: &mut TestAppContext,
 ) -> Option<SharedString> {
     window
-        .update(cx, |pane, _window, _cx| match &pane.results[index].body {
-            ResultBody::Rows(rows) => rows.read_only.clone(),
-            ResultBody::Message(text) => panic!("result {index} is the message {text:?}"),
+        .update(cx, |pane, _window, _cx| {
+            match &pane.row_result(index).body {
+                ResultBody::Rows(rows) => rows.read_only.clone(),
+                ResultBody::Log(_) => panic!("result {index} is the execution log"),
+            }
         })
         .expect("the window is open")
 }

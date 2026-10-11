@@ -378,6 +378,7 @@ detail:
   cache: Cache
 
 query:
+  result_log: "Ausführungsprotokoll"
   rollback: "Rollback"
   rolling_back: "Rollback läuft…"
   rolled_back: "Transaktion zurückgesetzt."

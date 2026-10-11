@@ -378,6 +378,7 @@ detail:
   cache: キャッシュ
 
 query:
+  result_log: "実行ログ"
   rollback: "ロールバック"
   rolling_back: "ロールバック中…"
   rolled_back: "トランザクションをロールバックしました。"

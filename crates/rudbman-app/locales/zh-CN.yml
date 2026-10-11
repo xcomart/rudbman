@@ -378,6 +378,7 @@ detail:
   cache: 缓存
 
 query:
+  result_log: "执行日志"
   rollback: "回滚"
   rolling_back: "正在回滚…"
   rolled_back: "事务已回滚。"

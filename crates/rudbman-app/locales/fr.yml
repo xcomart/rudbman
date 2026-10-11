@@ -378,6 +378,7 @@ detail:
   cache: Cache
 
 query:
+  result_log: "Journal d’exécution"
   rollback: "Annuler la transaction"
   rolling_back: "Annulation en cours…"
   rolled_back: "Transaction annulée."

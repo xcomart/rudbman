@@ -82,7 +82,18 @@ impl QueryPane {
             }
         });
 
-        let label = ts!("query.result", index = self.results.len() + 1);
+        let index = self
+            .results
+            .iter()
+            .filter(|tab| matches!(tab.body, ResultBody::Rows(_)))
+            .count()
+            + 1;
+        let label = ts!("query.result", index = index);
+        // Keep the first grid visible by default while the log stays available
+        // as the leading tab. Later results must not change the user's tab.
+        if index == 1 {
+            self.active_result = self.results.len();
+        }
         self.results.push(ResultTab {
             id,
             label,
@@ -225,7 +236,7 @@ impl QueryPane {
             .find(|tab| tab.id == id)
             .and_then(|tab| match &mut tab.body {
                 ResultBody::Rows(rows) => Some(&mut **rows),
-                ResultBody::Message(_) => None,
+                ResultBody::Log(_) => None,
             })
     }
 

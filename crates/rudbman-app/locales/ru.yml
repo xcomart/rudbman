@@ -378,6 +378,7 @@ detail:
   cache: Кэш
 
 query:
+  result_log: "Журнал выполнения"
   rollback: "Откатить"
   rolling_back: "Откат…"
   rolled_back: "Транзакция отменена."

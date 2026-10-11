@@ -94,7 +94,7 @@ fn toolbar_runs_the_selection_script_and_current_statement(cx: &mut TestAppConte
         window
             .update(&mut cx, |pane, _, _| pane.results.len())
             .unwrap(),
-        1
+        2
     );
     connected.close().expect("close");
 }
