@@ -218,6 +218,9 @@ impl Workspace {
         };
         let count = area.panes.get(pane).map_or(0, |pane| pane.items().len());
         let lone_pane = area.panes.leaf_count() <= 1;
+        let can_split = self
+            .active_connection()
+            .is_some_and(|open| matches!(open.state, ConnectionState::Open(_)));
         let close = |victims: Vec<usize>| {
             let this = this.clone();
             move |window: &mut Window, cx: &mut App| {
@@ -230,6 +233,15 @@ impl Workspace {
         let to_the_right: Vec<usize> = (index + 1..count).collect();
 
         vec![
+            MenuRow::new(ts!("context.rename_tab")).on_activate({
+                let this = this.clone();
+                move |window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.begin_tab_name(pane, index, window, cx);
+                    });
+                }
+            }),
+            MenuRow::separator(),
             MenuRow::new(ts!("context.close_tab")).on_activate(close(vec![index])),
             MenuRow::new(ts!("context.close_others"))
                 .enabled(!others.is_empty())
@@ -239,22 +251,24 @@ impl Workspace {
                 .on_activate(close(to_the_right)),
             MenuRow::separator(),
             MenuRow::new(ts!("context.split_right"))
+                .enabled(can_split)
                 .shortcut(format!("{PANE_SHORTCUT_LABEL}+Shift+D"))
                 .on_activate({
                     let this = this.clone();
-                    move |_window, cx| {
+                    move |window, cx| {
                         this.update(cx, |workspace, cx| {
-                            workspace.split_pane(pane, Axis::Horizontal, cx);
+                            workspace.split_pane(pane, Axis::Horizontal, window, cx);
                         });
                     }
                 }),
             MenuRow::new(ts!("context.split_below"))
+                .enabled(can_split)
                 .shortcut(format!("{PANE_SHORTCUT_LABEL}+Shift+S"))
                 .on_activate({
                     let this = this.clone();
-                    move |_window, cx| {
+                    move |window, cx| {
                         this.update(cx, |workspace, cx| {
-                            workspace.split_pane(pane, Axis::Vertical, cx);
+                            workspace.split_pane(pane, Axis::Vertical, window, cx);
                         });
                     }
                 }),

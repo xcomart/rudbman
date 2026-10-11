@@ -31,7 +31,12 @@ JVM bridge.
   editors and table details, per-connection query numbering. Switching the
   connection tab switches the explorer and the whole work area with it. With
   nothing open, a welcome screen lists the saved connections and opens one in
-  a click.
+  a click. Reopening a connection restores its tabs, split layout, SQL drafts,
+  and query builders. Right-click a work tab to rename it; leave its name blank
+  to return to the default. Workspaces save automatically and on close. SQL is
+  restored without running it; result rows and unapplied database edits are not
+  saved. Splitting copies the selected tab into the new pane. A pane disappears
+  when its last tab closes, with the final pane kept open.
 - **SSH tunnels** with password or private-key auth, loopback binds only,
   and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
   OS keychain, never on disk, and credentials are masked out of logs and

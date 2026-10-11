@@ -65,10 +65,11 @@ impl Workspace {
         else {
             return;
         };
-        drop(closed);
-        if held {
-            self.focus_active_tab(pane, window, cx);
+        if let Some(area) = self.work_area_mut() {
+            area.tab_names.remove(&closed.entity_id());
         }
+        drop(closed);
+        self.finish_tab_close(pane, held, window, cx);
         self.drop_stale_confirm(cx);
         cx.notify();
     }
@@ -178,13 +179,46 @@ impl Workspace {
         for index in order.into_iter().rev() {
             closed.extend(target.close(index));
         }
-        drop(closed);
-
-        if held {
-            self.focus_active_tab(pane, window, cx);
+        if closed.is_empty() {
+            return;
         }
+        if let Some(area) = self.work_area_mut() {
+            for item in &closed {
+                area.tab_names.remove(&item.entity_id());
+            }
+        }
+        drop(closed);
+        self.finish_tab_close(pane, held, window, cx);
         self.drop_stale_confirm(cx);
         cx.notify();
+    }
+
+    /// Collapse an emptied pane while preserving the last leaf and the focus
+    /// of a different pane when its tab was closed from a context menu.
+    fn finish_tab_close(
+        &mut self,
+        pane: PaneId,
+        held: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
+        let empty = area.panes.get(pane).is_some_and(Pane::is_empty);
+        let focus = if empty && area.panes.leaf_count() > 1 {
+            let next = area.panes.next_leaf(pane).unwrap();
+            area.panes.remove(pane);
+            if area.active_pane == pane {
+                area.active_pane = next;
+            }
+            area.active()
+        } else {
+            pane
+        };
+        if held {
+            self.focus_active_tab(focus, window, cx);
+        }
     }
 
     /// Splits `pane` along `axis`, whether or not the marker was on it.
@@ -193,11 +227,17 @@ impl Workspace {
     /// necessarily the active one — a right-click moves no marker — so the
     /// marker is moved there first and the ordinary command run from where it
     /// then stands.
-    pub(super) fn split_pane(&mut self, pane: PaneId, axis: Axis, cx: &mut Context<Self>) {
+    pub(super) fn split_pane(
+        &mut self,
+        pane: PaneId,
+        axis: Axis,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.mark_pane(pane) {
             return;
         }
-        self.split_active(axis, cx);
+        self.split_active(axis, window, cx);
     }
 
     /// Closes `pane`, whether or not the marker was on it.
@@ -383,13 +423,18 @@ impl Workspace {
                 // user was in the middle of is gone (§9.3).
                 if let Some(lease) = connected.lease() {
                     let died = lease.watch();
+                    let id = connection.id;
                     cx.spawn(async move |workspace, cx| {
                         let Ok(reason) = died.await else {
                             return;
                         };
                         workspace
                             .update(cx, |workspace, cx| {
-                                workspace.tunnel_died(index, reason, cx);
+                                if let Some(index) =
+                                    workspace.connections.iter().position(|open| open.id == id)
+                                {
+                                    workspace.tunnel_died(index, reason, cx);
+                                }
                             })
                             .ok();
                     })
@@ -438,7 +483,15 @@ impl Workspace {
     }
 
     /// Splits the active pane along `axis` and moves the marker to the new one.
-    pub(super) fn split_active(&mut self, axis: Axis, cx: &mut Context<Self>) {
+    pub(super) fn split_active(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+        // Recreating a tab needs a live session. Do not replace the requested
+        // copy with an empty pane after the connection has died.
+        if !self
+            .active_connection()
+            .is_some_and(|open| matches!(open.state, ConnectionState::Open(_)))
+        {
+            return;
+        }
         let Some(target) = self.active_pane() else {
             return;
         };
@@ -449,6 +502,7 @@ impl Workspace {
             return;
         };
         area.active_pane = new;
+        self.duplicate_tab_into(target, new, window, cx);
         cx.notify();
     }
 
@@ -470,9 +524,13 @@ impl Workspace {
         let Some(area) = self.work_area_mut() else {
             return;
         };
-        if area.panes.remove(target).is_none() {
+        let Some(closed) = area.panes.remove(target) else {
             return;
+        };
+        for item in closed.items() {
+            area.tab_names.remove(&item.entity_id());
         }
+        drop(closed);
         area.active_pane = if area.panes.contains(next) {
             next
         } else {
@@ -582,7 +640,8 @@ impl Workspace {
     /// asked for, and it must not land on top of a half-typed connection form
     /// or a running backup.
     pub(super) fn dialog_open(&self, cx: &App) -> bool {
-        self.confirm.is_some()
+        self.rename_tab.is_some()
+            || self.confirm.is_some()
             || self.about.read(cx).is_open()
             || self.connect.read(cx).is_open()
             || self.settings.read(cx).is_open()

@@ -615,6 +615,7 @@ input:
   menu_select_all: Выделить всё
 
 context:
+  rename_tab: Переименовать вкладку…
   copy_as: "Копировать как %{format}"
   select_all: Выделить всё
   clear_selection: Снять выделение
@@ -664,3 +665,7 @@ update:
   installing: Установка…
   failed: Не удалось выполнить обновление.
   open_release: Открыть страницу выпуска
+
+tab_name:
+  title: Переименовать вкладку
+  hint: Оставьте поле пустым, чтобы вернуть имя по умолчанию.

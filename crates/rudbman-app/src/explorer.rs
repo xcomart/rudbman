@@ -99,7 +99,7 @@ pub struct ConnectionId(pub u64);
 /// Both halves are optional because both levels are skippable; see the module
 /// documentation. A `None` catalogue with a `Some` schema is ordinary — that is
 /// PostgreSQL with one database — and both `None` is SQLite.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Scope {
     /// The catalogue, when the product has more than one or named the one.
     pub catalog: Option<String>,
@@ -108,7 +108,7 @@ pub struct Scope {
 }
 
 /// The kinds of object the explorer lists, one folder each.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Folder {
     /// Base tables.
     Tables,

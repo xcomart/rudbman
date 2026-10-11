@@ -34,7 +34,7 @@ use rudbman_sql::Dialect;
 
 /// One table on the canvas: where it lives, what it is called here, and the
 /// columns that can be picked from it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BuilderTable {
     /// Its catalogue, when the product has them and the driver reported one.
     pub catalog: Option<String>,
@@ -54,7 +54,7 @@ pub struct BuilderTable {
 }
 
 /// The four join types the form offers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JoinKind {
     /// Rows that match on both sides.
     Inner,
@@ -95,7 +95,7 @@ impl JoinKind {
 /// The endpoints are `(table index, column index)` into
 /// [`BuilderQuery::tables`] — the same pair `rudbman_erd::BuilderEdge` carries,
 /// so an edge drawn on the canvas becomes one of these without a lookup.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Join {
     /// The column the drag began at.
     pub from: (usize, usize),
@@ -106,7 +106,7 @@ pub struct Join {
 }
 
 /// Which way an `ORDER BY` term sorts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SortDir {
     /// Ascending, written out rather than left implicit.
     Asc,
@@ -129,7 +129,7 @@ impl SortDir {
 }
 
 /// Everything one builder tab holds, as data.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BuilderQuery {
     /// The tables, in the order they were added, which is the order the `FROM`
     /// attaches them in.

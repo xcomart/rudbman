@@ -297,6 +297,28 @@ impl DataPane {
         &self.target
     }
 
+    pub(crate) fn workspace_order(&self) -> Option<(usize, String, bool)> {
+        self.order.as_ref().map(|order| {
+            (
+                order.column,
+                order.name.clone(),
+                order.direction == SortDirection::Ascending,
+            )
+        })
+    }
+
+    pub(crate) fn restore_workspace_order(&mut self, order: Option<(usize, String, bool)>) {
+        self.order = order.map(|(column, name, ascending)| Order {
+            column,
+            name,
+            direction: if ascending {
+                SortDirection::Ascending
+            } else {
+                SortDirection::Descending
+            },
+        });
+    }
+
     /// Which connection tab this pane runs against.
     pub fn connection(&self) -> ConnectionId {
         self.connection

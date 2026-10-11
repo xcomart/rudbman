@@ -615,6 +615,7 @@ input:
   menu_select_all: すべて選択
 
 context:
+  rename_tab: タブ名を変更…
   copy_as: "%{format} でコピー"
   select_all: すべて選択
   clear_selection: 選択を解除
@@ -664,3 +665,7 @@ update:
   installing: インストールしています…
   failed: 更新に失敗しました。
   open_release: リリースページを開く
+
+tab_name:
+  title: タブ名を変更
+  hint: 空欄にすると既定の名前に戻ります。

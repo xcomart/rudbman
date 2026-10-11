@@ -615,6 +615,7 @@ input:
   menu_select_all: Alles auswählen
 
 context:
+  rename_tab: Tab umbenennen…
   copy_as: "Als %{format} kopieren"
   select_all: Alles auswählen
   clear_selection: Auswahl aufheben
@@ -664,3 +665,7 @@ update:
   installing: Wird installiert…
   failed: Das Update ist fehlgeschlagen.
   open_release: Release-Seite öffnen
+
+tab_name:
+  title: Tab umbenennen
+  hint: Leer lassen, um den Standardnamen wiederherzustellen.

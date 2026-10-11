@@ -43,6 +43,8 @@ mod dialogs;
 mod menus;
 mod objects;
 mod panes;
+mod session;
+mod tab_name;
 mod view;
 #[cfg(test)]
 use view::centered_scroll;
@@ -295,6 +297,9 @@ fn load_profiles() -> ConnectionStore {
 /// every [`connection::SessionHandle`] and every open cursor, goes before the
 /// session it was running against is closed.
 struct WorkArea {
+    /// User titles keyed by the view, never by a shifting tab index.
+    tab_names: HashMap<gpui::EntityId, String>,
+    checkpoint: Option<session::SavedWorkspace>,
     /// The panes. Never empty, though a pane may hold no tabs.
     panes: PaneTree<Pane>,
     /// The pane the status bar and the pane commands act on.
@@ -324,6 +329,8 @@ impl WorkArea {
         Self {
             panes,
             active_pane,
+            tab_names: HashMap::new(),
+            checkpoint: None,
             next_query: 1,
             next_builder: 1,
         }
@@ -526,6 +533,9 @@ struct PendingConfirm {
 
 /// The root view: title bar, work area, status bar and dialogs.
 struct Workspace {
+    sessions: session::SessionStorage,
+    autosave: Option<Task<()>>,
+    rename_tab: Option<tab_name::RenameTab>,
     /// Focus target for the window, so the shortcuts stay live.
     ///
     /// One handle for the whole shell in M0: no pane holds anything focusable
@@ -871,7 +881,20 @@ impl Workspace {
 
         let settings_snapshot = app_settings::current(cx);
 
+        cx.observe_self(|workspace, cx| workspace.schedule_workspace_save(cx))
+            .detach();
+        cx.on_release(|workspace, cx| workspace.flush_workspaces(cx))
+            .detach();
+        cx.on_app_quit(|workspace, cx| {
+            workspace.flush_workspaces(cx);
+            async {}
+        })
+        .detach();
+
         Self {
+            sessions: session::SessionStorage::default(),
+            autosave: None,
+            rename_tab: None,
             focus_handle: cx.focus_handle(),
             explorer,
             explorer_visible: settings_snapshot.explorer_visible,
@@ -915,6 +938,7 @@ impl Workspace {
 /// the same for every pane on screen, and the alternative is a `render_pane`
 /// with seven parameters, most of them constants of the frame.
 struct PaneChrome {
+    tab_names: HashMap<gpui::EntityId, String>,
     /// The pane the marker is on, drawn with an accent frame.
     active: PaneId,
     /// Whether panes are framed at all, which they are once there are two.

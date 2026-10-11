@@ -77,7 +77,7 @@ fn workspace_over_welcome(
 /// Opened outside every gpui update on purpose, as each test here does: the
 /// call blocks, and the rule the shell itself follows is that nothing
 /// blocking runs inside an update.
-fn h2_connection(name: &str) -> (ConnectionProfile, Connected) {
+pub(super) fn h2_connection(name: &str) -> (ConnectionProfile, Connected) {
     let profile = connection::h2::profile(name);
     let connected = connection::connect(
         &profile,
@@ -92,7 +92,7 @@ fn h2_connection(name: &str) -> (ConnectionProfile, Connected) {
 /// Pushes a live connection tab, brings it to the front, and puts the
 /// explorer in step with it — everything [`Workspace::open_connection`] does
 /// once the handshake is in, minus the handshake.
-fn push_connection(
+pub(super) fn push_connection(
     workspace: &mut Workspace,
     profile: ConnectionProfile,
     connected: Connected,
@@ -115,7 +115,7 @@ fn push_connection(
 
 /// A window with one live H2 connection in its tab strip, and the id that
 /// connection was given.
-fn workspace_over_h2(
+pub(super) fn workspace_over_h2(
     name: &str,
     cx: &mut gpui::TestAppContext,
 ) -> (gpui::WindowHandle<Workspace>, ConnectionId) {
@@ -127,7 +127,7 @@ fn workspace_over_h2(
 /// For the tabs that fetch something of their own: a pane over a table
 /// that does not exist would be asserting about an error message rather
 /// than about the rows.
-fn workspace_over_h2_with(
+pub(super) fn workspace_over_h2_with(
     name: &str,
     setup: &[&str],
     cx: &mut gpui::TestAppContext,

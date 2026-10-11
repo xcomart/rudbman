@@ -69,6 +69,7 @@ impl Workspace {
         };
 
         let index = self.connections.len();
+        let id = next_connection_id();
         let settings = app_settings::current(cx);
         let attempt = profile.clone();
         // Read here, on the UI thread, and moved straight into the task: the
@@ -79,15 +80,23 @@ impl Workspace {
             connection::connect(&attempt, &driver, &credentials, &settings)
         });
 
-        let task = cx.spawn(async move |workspace, cx| {
+        let task = cx.spawn_in(window, async move |workspace, cx| {
             let outcome = opening.await;
             workspace
-                .update(cx, |workspace, cx| workspace.connected(index, outcome, cx))
+                .update_in(cx, |workspace, window, cx| {
+                    // A neighbouring connection may have closed during the handshake.
+                    let Some(index) = workspace.connections.iter().position(|open| open.id == id)
+                    else {
+                        return;
+                    };
+                    workspace.connected(index, outcome, cx);
+                    workspace.restore_connection_workspace(index, window, cx);
+                })
                 .ok();
         });
 
         self.connections.push(Connection {
-            id: next_connection_id(),
+            id,
             profile,
             state: ConnectionState::Connecting { _task: task },
             work: WorkArea::new(),
@@ -189,7 +198,16 @@ impl Workspace {
             self.activate_tab(pane, index, window, cx);
             return;
         }
+        self.append_object(target, window, cx);
+    }
 
+    /// Create a distinct tab for restoration or a split, bypassing navigation lookup.
+    pub(super) fn append_object(
+        &mut self,
+        target: ObjectTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let panel = cx.new(|cx| TableDetail::new(target, cx));
         // Subscribe first, *then* ask. A panel that requested its own metadata
         // from its constructor would emit into an empty room and sit at
@@ -306,6 +324,7 @@ impl Workspace {
         // that still has the sidebar in it.
         let sidebar = self.explorer_showing();
 
+        self.save_connection_workspace(index, cx);
         let connection = self.connections.remove(index);
         let closed = connection.id;
         self.explorer.update(cx, |explorer, cx| {

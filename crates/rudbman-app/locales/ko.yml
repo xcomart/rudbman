@@ -615,6 +615,7 @@ input:
   menu_select_all: 모두 선택
 
 context:
+  rename_tab: 탭 이름 변경…
   copy_as: "%{format}(으)로 복사"
   select_all: 모두 선택
   clear_selection: 선택 해제
@@ -664,3 +665,7 @@ update:
   installing: 설치하는 중…
   failed: 업데이트에 실패했습니다.
   open_release: 릴리스 페이지 열기
+
+tab_name:
+  title: 탭 이름 변경
+  hint: 비워 두면 기본 이름으로 돌아갑니다.

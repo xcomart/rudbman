@@ -615,6 +615,7 @@ input:
   menu_select_all: 全选
 
 context:
+  rename_tab: 重命名标签页…
   copy_as: "复制为 %{format}"
   select_all: 全选
   clear_selection: 取消选择
@@ -664,3 +665,7 @@ update:
   installing: 正在安装…
   failed: 更新失败。
   open_release: 打开发布页面
+
+tab_name:
+  title: 重命名标签页
+  hint: 留空以恢复默认名称。

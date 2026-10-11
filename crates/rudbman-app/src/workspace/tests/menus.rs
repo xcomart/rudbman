@@ -198,6 +198,8 @@ fn closing_the_other_tabs_leaves_the_keyboard_in_the_one_that_stays(cx: &mut gpu
     assert_eq!(
         context_menu::labels(&rows),
         [
+            ts!("context.rename_tab").to_string(),
+            String::new(),
             ts!("context.close_tab").to_string(),
             ts!("context.close_others").to_string(),
             ts!("context.close_right").to_string(),

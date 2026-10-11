@@ -143,6 +143,9 @@ fn every_empty_state_wording_is_translated() {
 #[test]
 fn every_label_the_shell_menus_draw_has_a_translation() {
     for label in [
+        ts!("context.rename_tab"),
+        ts!("tab_name.title"),
+        ts!("tab_name.hint"),
         ts!("context.close_tab"),
         ts!("context.close_others"),
         ts!("context.close_right"),
@@ -154,6 +157,7 @@ fn every_label_the_shell_menus_draw_has_a_translation() {
     ] {
         assert!(!label.is_empty(), "empty label");
         assert!(!label.starts_with("context."), "untranslated {label:?}");
+        assert!(!label.starts_with("tab_name."), "untranslated {label:?}");
     }
 }
 

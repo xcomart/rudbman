@@ -1,0 +1,873 @@
+//! Per-profile workspaces. Only drafts and navigation are persisted: sessions,
+//! query results, staged database edits and transactions never cross a restart.
+
+use super::*;
+use crate::builder_pane::BuilderWorkspace;
+use crate::explorer::Scope;
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(super) struct SavedWorkspace {
+    version: u32,
+    layout: SavedNode,
+    active_pane: usize,
+    next_query: u64,
+    next_builder: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SavedNode {
+    Pane {
+        tabs: Vec<SavedTab>,
+        active: usize,
+    },
+    Split {
+        horizontal: bool,
+        ratio: f32,
+        first: Box<SavedNode>,
+        second: Box<SavedNode>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedTab {
+    #[serde(default)]
+    name: Option<String>,
+    content: SavedContent,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SavedContent {
+    Query {
+        number: u64,
+        sql: String,
+        selection: std::ops::Range<usize>,
+        editor_share: f32,
+    },
+    Detail {
+        target: SavedObject,
+        tab: crate::table_detail::Tab,
+    },
+    Data {
+        target: SavedObject,
+        order: Option<(usize, String, bool)>,
+    },
+    Structure {
+        target: SavedObject,
+    },
+    Erd {
+        scope: Scope,
+    },
+    Builder {
+        number: u64,
+        state: BuilderWorkspace,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedObject {
+    catalog: Option<String>,
+    schema: Option<String>,
+    folder: Folder,
+    name: String,
+}
+
+impl SavedObject {
+    fn of(target: &ObjectTarget) -> Self {
+        Self {
+            catalog: target.catalog.clone(),
+            schema: target.schema.clone(),
+            folder: target.folder,
+            name: target.name.clone(),
+        }
+    }
+
+    fn target(&self, connection: ConnectionId) -> ObjectTarget {
+        ObjectTarget {
+            connection,
+            catalog: self.catalog.clone(),
+            schema: self.schema.clone(),
+            folder: self.folder,
+            name: self.name.clone(),
+        }
+    }
+}
+
+impl WorkArea {
+    fn snapshot(&self, cx: &App) -> SavedWorkspace {
+        SavedWorkspace {
+            version: 1,
+            layout: self.snapshot_node(self.panes.root(), cx),
+            active_pane: self
+                .panes
+                .leaf_ids()
+                .iter()
+                .position(|id| *id == self.active())
+                .unwrap_or(0),
+            next_query: self.next_query,
+            next_builder: self.next_builder,
+        }
+    }
+
+    fn snapshot_node(&self, node: &PaneNode<Pane>, cx: &App) -> SavedNode {
+        match node {
+            PaneNode::Split {
+                axis,
+                ratio,
+                first,
+                second,
+                ..
+            } => SavedNode::Split {
+                horizontal: *axis == Axis::Horizontal,
+                ratio: *ratio,
+                first: Box::new(self.snapshot_node(first, cx)),
+                second: Box::new(self.snapshot_node(second, cx)),
+            },
+            PaneNode::Leaf { payload, .. } => SavedNode::Pane {
+                active: payload.active_index(),
+                tabs: payload
+                    .items()
+                    .iter()
+                    .map(|item| self.snapshot_tab(item, cx))
+                    .collect(),
+            },
+        }
+    }
+    fn snapshot_tab(&self, item: &PaneItem, cx: &App) -> SavedTab {
+        SavedTab {
+            name: self.tab_names.get(&item.entity_id()).cloned(),
+            content: match item {
+                PaneItem::Query { pane, number } => {
+                    let query = pane.read(cx);
+                    SavedContent::Query {
+                        number: *number,
+                        sql: query.editor_text(cx),
+                        selection: query.workspace_selection(cx),
+                        editor_share: query.workspace_editor_share(),
+                    }
+                }
+                PaneItem::TableDetail(pane) => SavedContent::Detail {
+                    target: SavedObject::of(pane.read(cx).target()),
+                    tab: pane.read(cx).tab(),
+                },
+                PaneItem::TableData(pane) => SavedContent::Data {
+                    target: SavedObject::of(pane.read(cx).target()),
+                    order: pane.read(cx).workspace_order(),
+                },
+                PaneItem::TableStruct(pane) => SavedContent::Structure {
+                    target: SavedObject::of(pane.read(cx).target()),
+                },
+                PaneItem::Erd(pane) => SavedContent::Erd {
+                    scope: pane.read(cx).target().scope.clone(),
+                },
+                PaneItem::QueryBuilder { pane, number } => SavedContent::Builder {
+                    number: *number,
+                    state: pane.read(cx).workspace_state(cx),
+                },
+            },
+        }
+    }
+}
+
+/// Disk writes are serialized. A final close waits for any in-flight autosave
+/// before writing the newest snapshot, so an old write cannot win a race.
+pub(super) struct SessionStorage {
+    directory: Option<PathBuf>,
+    pending: Arc<Mutex<HashMap<Uuid, SavedWorkspace>>>,
+    blocked: HashSet<Uuid>,
+}
+
+impl Default for SessionStorage {
+    fn default() -> Self {
+        // Headless tests must never read or write the user's workspaces.
+        let directory = if cfg!(test) {
+            None
+        } else {
+            rudbman_core::paths::config_dir()
+                .map(|dir| dir.join("workspaces"))
+                .ok()
+        };
+        Self {
+            directory,
+            pending: Arc::default(),
+            blocked: HashSet::new(),
+        }
+    }
+}
+
+impl SessionStorage {
+    fn load(&mut self, profile: Uuid) -> Option<SavedWorkspace> {
+        if let Some(state) = self.pending.lock().get(&profile) {
+            return Some(state.clone());
+        }
+        let path = self.directory.as_ref()?.join(format!("{profile}.json"));
+        let read = || -> anyhow::Result<Option<SavedWorkspace>> {
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            let state: SavedWorkspace =
+                serde_json::from_slice(rudbman_core::paths::strip_bom(&bytes))?;
+            anyhow::ensure!(
+                state.version == 1,
+                "unsupported workspace version {}",
+                state.version
+            );
+            Ok(Some(state))
+        };
+        match read() {
+            Ok(state) => state,
+            Err(error) => {
+                // Leave an unreadable or newer-version file intact.
+                self.blocked.insert(profile);
+                log::error!("could not restore workspace {}: {error:#}", path.display());
+                None
+            }
+        }
+    }
+
+    fn queue(&self, profile: Uuid, state: SavedWorkspace) {
+        if self.directory.is_some() && !self.blocked.contains(&profile) {
+            self.pending.lock().insert(profile, state);
+        }
+    }
+
+    fn flush(&self) {
+        if let Some(directory) = &self.directory {
+            write_pending(directory, &self.pending);
+        }
+    }
+}
+
+fn write_pending(directory: &std::path::Path, pending: &Mutex<HashMap<Uuid, SavedWorkspace>>) {
+    let mut pending = pending.lock();
+    pending.retain(|profile, state| {
+        let path = directory.join(format!("{profile}.json"));
+        let result = serde_json::to_vec_pretty(state)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| rudbman_core::paths::write_atomic(&path, &bytes));
+        if let Err(error) = result {
+            log::error!("could not save workspace {}: {error:#}", path.display());
+            true // retry on the next save, including the final close
+        } else {
+            false
+        }
+    });
+}
+
+impl Workspace {
+    fn checkpoint_connection(&mut self, index: usize, cx: &App) {
+        let Some(open) = self.connections.get_mut(index) else {
+            return;
+        };
+        if !matches!(
+            open.state,
+            ConnectionState::Open(_) | ConnectionState::Dead(_)
+        ) {
+            return;
+        }
+        let snapshot = open.work.snapshot(cx);
+        if open.work.checkpoint.as_ref() != Some(&snapshot) {
+            self.sessions.queue(open.profile.id, snapshot.clone());
+            open.work.checkpoint = Some(snapshot);
+        }
+    }
+
+    fn checkpoint_workspaces(&mut self, cx: &App) {
+        if self.sessions.directory.is_none() {
+            return;
+        }
+        for index in 0..self.connections.len() {
+            if index != self.active_connection {
+                self.checkpoint_connection(index, cx);
+            }
+        }
+        // With two live sessions on one profile, the foreground workspace wins
+        // when both changed. Unchanged older sessions never overwrite it.
+        self.checkpoint_connection(self.active_connection, cx);
+    }
+
+    pub(super) fn save_connection_workspace(&mut self, index: usize, cx: &App) {
+        if self.sessions.directory.is_none() {
+            return;
+        }
+        self.checkpoint_connection(index, cx);
+        self.sessions.flush();
+    }
+
+    pub(super) fn flush_workspaces(&mut self, cx: &App) {
+        self.checkpoint_workspaces(cx);
+        self.sessions.flush();
+    }
+
+    pub(super) fn schedule_workspace_save(&mut self, cx: &mut Context<Self>) {
+        if self.autosave.is_some() || self.sessions.directory.is_none() {
+            return;
+        }
+        // Throttle instead of restarting a debounce on every frame: a running
+        // query's elapsed clock must not postpone saving a SQL draft forever.
+        self.autosave = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(750))
+                .await;
+            this.update(cx, |workspace, cx| {
+                workspace.checkpoint_workspaces(cx);
+                let directory = workspace.sessions.directory.clone();
+                let pending = workspace.sessions.pending.clone();
+                cx.background_spawn(async move {
+                    if let Some(directory) = directory {
+                        write_pending(&directory, &pending);
+                    }
+                })
+                .detach();
+                workspace.autosave = None;
+            })
+            .ok();
+        }));
+    }
+
+    pub(super) fn duplicate_tab_into(
+        &mut self,
+        source: PaneId,
+        destination: PaneId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.active_connection() else {
+            return;
+        };
+        let Some(item) = open.work.panes.get(source).and_then(|pane| pane.active()) else {
+            return;
+        };
+        let mut tab = open.work.snapshot_tab(item, cx);
+        match &mut tab.content {
+            SavedContent::Query { number, .. } => *number = open.work.next_query,
+            SavedContent::Builder { number, .. } => *number = open.work.next_builder,
+            _ => {}
+        }
+        let id = open.id;
+        self.work_area_mut().unwrap().active_pane = destination;
+        self.restore_tab(&tab, id, window, cx);
+        self.focus_active_tab(destination, window, cx);
+    }
+
+    pub(super) fn restore_connection_workspace(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.connections.get(index) else {
+            return;
+        };
+        if !matches!(open.state, ConnectionState::Open(_)) {
+            return;
+        }
+        let id = open.id;
+        let profile = open.profile.id;
+        let Some(saved) = self.sessions.load(profile) else {
+            return;
+        };
+        let previous = self.active_connection;
+        let focus = window.focused(cx);
+        self.active_connection = index;
+        let mut tree = PaneTree::single(Pane::new());
+        let first = tree.first_leaf().0;
+        let mut leaves = Vec::new();
+        restore_layout(&saved.layout, &mut tree, first, &mut leaves);
+        self.connections[index].work = WorkArea {
+            active_pane: first,
+            panes: tree,
+            tab_names: HashMap::new(),
+            checkpoint: None,
+            next_query: 1,
+            next_builder: 1,
+        };
+        for (pane, tabs, active) in leaves {
+            self.connections[index].work.active_pane = pane;
+            for tab in tabs {
+                self.restore_tab(tab, id, window, cx);
+            }
+            let pane = self.connections[index].work.panes.get_mut(pane).unwrap();
+            pane.activate(active.min(pane.items().len().saturating_sub(1)));
+        }
+        let area = &mut self.connections[index].work;
+        area.active_pane = area
+            .panes
+            .leaf_ids()
+            .get(saved.active_pane)
+            .copied()
+            .unwrap_or(first);
+        area.next_query = area.next_query.max(saved.next_query);
+        area.next_builder = area.next_builder.max(saved.next_builder);
+        area.checkpoint = Some(area.snapshot(cx));
+        self.active_connection = previous;
+        if index == previous && !self.dialog_open(cx) {
+            self.focus_active_tab(self.connections[index].work.active(), window, cx);
+        } else if let Some(focus) = focus {
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    fn restore_tab(
+        &mut self,
+        tab: &SavedTab,
+        connection: ConnectionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &tab.content {
+            SavedContent::Query {
+                number,
+                sql,
+                selection,
+                editor_share,
+            } => {
+                self.work_area_mut().unwrap().next_query = *number;
+                self.open_query(sql, window, cx);
+                if let Some(pane) = self.active_query().cloned() {
+                    pane.update(cx, |pane, cx| {
+                        pane.restore_workspace_editor(selection.clone(), *editor_share, cx)
+                    });
+                }
+            }
+            SavedContent::Detail { target, tab } => {
+                self.append_object(target.target(connection), window, cx);
+                if let Some(PaneItem::TableDetail(panel)) = self
+                    .work_area()
+                    .and_then(|area| area.panes.get(area.active()))
+                    .and_then(|pane| pane.active())
+                {
+                    panel
+                        .clone()
+                        .update(cx, |panel, cx| panel.select_tab(*tab, cx));
+                }
+            }
+            SavedContent::Data { target, order } => {
+                self.open_data_with_order(target.target(connection), order.clone(), window, cx)
+            }
+            SavedContent::Structure { target } if target.name.is_empty() => self.open_new_table(
+                connection,
+                Scope {
+                    catalog: target.catalog.clone(),
+                    schema: target.schema.clone(),
+                },
+                window,
+                cx,
+            ),
+            SavedContent::Structure { target } => {
+                self.append_structure(target.target(connection), window, cx)
+            }
+            SavedContent::Erd { scope } => self.append_erd(
+                ErdTarget {
+                    connection,
+                    scope: scope.clone(),
+                },
+                window,
+                cx,
+            ),
+            SavedContent::Builder { number, state } => {
+                self.work_area_mut().unwrap().next_builder = *number;
+                if let Some(panel) = self.open_builder(window, cx) {
+                    panel.update(cx, |panel, cx| panel.restore_workspace(state.clone(), cx));
+                }
+            }
+        }
+        if let Some(name) = tab.name.as_ref().filter(|name| !name.trim().is_empty()) {
+            let area = self.work_area_mut().unwrap();
+            if let Some(item) = area.panes.get(area.active()).and_then(|pane| pane.active()) {
+                area.tab_names.insert(item.entity_id(), name.clone());
+            }
+        }
+    }
+}
+
+fn restore_layout<'a>(
+    node: &'a SavedNode,
+    tree: &mut PaneTree<Pane>,
+    pane: PaneId,
+    leaves: &mut Vec<(PaneId, &'a [SavedTab], usize)>,
+) {
+    match node {
+        SavedNode::Pane { tabs, active } => leaves.push((pane, tabs, *active)),
+        SavedNode::Split {
+            horizontal,
+            ratio,
+            first,
+            second,
+        } => {
+            let axis = if *horizontal {
+                Axis::Horizontal
+            } else {
+                Axis::Vertical
+            };
+            let other = tree.split(pane, axis, Pane::new()).unwrap();
+            let split = split_above(tree.root(), pane).unwrap();
+            tree.set_ratio(split, if ratio.is_finite() { *ratio } else { 0.5 });
+            restore_layout(first, tree, pane, leaves);
+            restore_layout(second, tree, other, leaves);
+        }
+    }
+}
+
+fn split_above(node: &PaneNode<Pane>, pane: PaneId) -> Option<SplitId> {
+    match node {
+        PaneNode::Split {
+            id, first, second, ..
+        } => {
+            if matches!(first.as_ref(), PaneNode::Leaf { id, .. } if *id == pane) {
+                Some(*id)
+            } else {
+                split_above(first, pane).or_else(|| split_above(second, pane))
+            }
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::tests::{
+        h2_connection, push_connection, workspace_over_h2, workspace_over_h2_with,
+    };
+    use super::*;
+
+    fn storage(directory: &std::path::Path) -> SessionStorage {
+        SessionStorage {
+            directory: Some(directory.to_path_buf()),
+            ..SessionStorage::default()
+        }
+    }
+
+    fn object(connection: ConnectionId) -> ObjectTarget {
+        ObjectTarget {
+            connection,
+            catalog: None,
+            schema: Some("PUBLIC".into()),
+            folder: Folder::Tables,
+            name: "CUSTOMER".into(),
+        }
+    }
+
+    #[gpui::test]
+    fn all_tab_kinds_names_and_nested_splits_survive_reopening(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let (window, id) = workspace_over_h2_with(
+            "workspace-round-trip",
+            &[
+                "set db_close_delay -1",
+                "create table CUSTOMER (ID int primary key, NAME varchar(40))",
+            ],
+            cx,
+        );
+        let profile = window
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                workspace.open_query(
+                    "insert into CUSTOMER values (1, 'must not run');\n-- 매출 초안",
+                    window,
+                    cx,
+                );
+                workspace
+                    .active_query()
+                    .unwrap()
+                    .clone()
+                    .update(cx, |pane, cx| {
+                        pane.restore_workspace_editor(0..6, 0.65, cx);
+                    });
+                let first = workspace.active_pane().unwrap();
+                let query = workspace.active_query().unwrap().entity_id();
+                workspace
+                    .work_area_mut()
+                    .unwrap()
+                    .tab_names
+                    .insert(query, "매출 분석".into());
+                workspace.open_object(object(id), window, cx);
+                if let Some(PaneItem::TableDetail(panel)) = workspace
+                    .work_area()
+                    .unwrap()
+                    .panes
+                    .get(first)
+                    .unwrap()
+                    .active()
+                {
+                    panel.clone().update(cx, |panel, cx| {
+                        panel.select_tab(crate::table_detail::Tab::Ddl, cx)
+                    });
+                }
+                // A detail clone must remain a separate tab, including after a restart.
+                workspace.split_active(Axis::Horizontal, window, cx);
+                let second = workspace.active_pane().unwrap();
+                let split =
+                    split_above(workspace.work_area().unwrap().panes.root(), first).unwrap();
+                workspace
+                    .work_area_mut()
+                    .unwrap()
+                    .panes
+                    .set_ratio(split, 0.32);
+                workspace.open_data_with_order(
+                    object(id),
+                    Some((0, "ID".into(), false)),
+                    window,
+                    cx,
+                );
+                workspace.open_structure(object(id), window, cx);
+                workspace.split_active(Axis::Vertical, window, cx);
+                let third = workspace.active_pane().unwrap();
+                let split =
+                    split_above(workspace.work_area().unwrap().panes.root(), second).unwrap();
+                workspace
+                    .work_area_mut()
+                    .unwrap()
+                    .panes
+                    .set_ratio(split, 0.61);
+                let builder = workspace.open_builder(window, cx).unwrap();
+                builder.update(cx, |builder, cx| {
+                    builder.add_table(
+                        &object(id),
+                        vec![rudbman_erd::ErdColumn {
+                            name: "ID".into(),
+                            type_name: "INTEGER".into(),
+                            primary_key: true,
+                            ..Default::default()
+                        }],
+                        cx,
+                    );
+                    builder.toggle_column(0, 0, cx);
+                    let mut state = serde_json::to_value(builder.workspace_state(cx)).unwrap();
+                    state["query"]["where_clauses"] = serde_json::json!(["CUSTOMER.ID > 10"]);
+                    state["positions"]["CUSTOMER"] = serde_json::json!([143.0, 87.0]);
+                    builder.restore_workspace(serde_json::from_value(state).unwrap(), cx);
+                });
+                workspace.open_erd(
+                    ErdTarget {
+                        connection: id,
+                        scope: Scope {
+                            schema: Some("PUBLIC".into()),
+                            catalog: None,
+                        },
+                    },
+                    window,
+                    cx,
+                );
+                workspace.open_new_table(
+                    id,
+                    Scope {
+                        schema: Some("PUBLIC".into()),
+                        catalog: None,
+                    },
+                    window,
+                    cx,
+                );
+                workspace.activate_tab(third, 1, window, cx);
+                workspace.connections[0].profile.clone()
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let expected = window
+            .update(cx, |workspace, window, cx| {
+                let expected = workspace.connections[0].work.snapshot(cx);
+                workspace.close_connection(0, window, cx);
+                expected
+            })
+            .unwrap();
+        assert_eq!(
+            storage(directory.path()).load(profile.id),
+            Some(expected.clone())
+        );
+        cx.run_until_parked();
+
+        let connected = connection::connect(
+            &profile,
+            &connection::h2::driver(),
+            &connection::Credentials::typed(Some(String::new()), None),
+            &AppSettings::default(),
+        )
+        .unwrap();
+        let reopened =
+            cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+        reopened
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                let mut renamed_profile = profile;
+                renamed_profile.name = "A renamed connection".into();
+                let new_id = push_connection(workspace, renamed_profile, connected, window, cx);
+                assert_ne!(new_id, id);
+                workspace.restore_connection_workspace(0, window, cx);
+                assert_eq!(workspace.connections[0].work.snapshot(cx), expected);
+                for (_, pane) in workspace.connections[0].work.panes.leaves() {
+                    for tab in pane.items() {
+                        assert_eq!(tab.connection(cx), new_id);
+                    }
+                }
+                // Restoring a SQL draft must not execute its INSERT.
+                workspace.open_data(object(new_id), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        reopened
+            .update(cx, |workspace, _window, cx| {
+                let pane = workspace.work_area().unwrap().data_panes().pop().unwrap();
+                assert_eq!(pane.read(cx).row_count(cx), Some(0));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn saves_are_profile_scoped_and_failed_connections_do_not_erase_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let (window, _) = workspace_over_h2("workspace-profiles-a", cx);
+        let (mut other, connected) = h2_connection("workspace-profiles-b");
+        let (first, second) = window
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                workspace.open_query("select 'first'", window, cx);
+                let first = workspace.connections[0].profile.id;
+                other.name = workspace.connections[0].profile.name.clone();
+                let second = other.id;
+                push_connection(workspace, other, connected, window, cx);
+                workspace.open_query("select 'second'", window, cx);
+                workspace.flush_workspaces(cx);
+                (first, second)
+            })
+            .unwrap();
+        let mut saved = storage(directory.path());
+        let first_state = saved.load(first).unwrap();
+        let second_state = saved.load(second).unwrap();
+        assert_ne!(first_state, second_state);
+        window
+            .update(cx, |workspace, _window, cx| {
+                workspace.connections[0].state = ConnectionState::Failed("offline".into());
+                workspace.connections[0].work = WorkArea::new();
+                workspace.flush_workspaces(cx);
+            })
+            .unwrap();
+        assert_eq!(saved.load(first), Some(first_state));
+        assert_eq!(saved.load(second), Some(second_state));
+    }
+
+    #[gpui::test]
+    fn closing_the_last_tab_saves_an_empty_workspace(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let (window, _) = workspace_over_h2("workspace-empty", cx);
+        let profile = window
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                workspace.open_query("select 1", window, cx);
+                workspace.flush_workspaces(cx);
+                workspace.close_tab(workspace.active_pane().unwrap(), 0, window, cx);
+                workspace.flush_workspaces(cx);
+                workspace.connections[0].profile.id
+            })
+            .unwrap();
+        assert!(
+            matches!(storage(directory.path()).load(profile).unwrap().layout, SavedNode::Pane { tabs, .. } if tabs.is_empty())
+        );
+    }
+
+    #[gpui::test]
+    fn autosave_and_window_close_preserve_the_latest_editor_text(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let (window, _) = workspace_over_h2("workspace-autosave", cx);
+        let profile = window
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                workspace.open_query("select 1", window, cx);
+                workspace.connections[0].profile.id
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        let before = storage(directory.path())
+            .load(profile)
+            .expect("the autosave ran");
+        assert!(
+            matches!(&before.layout, SavedNode::Pane { tabs, .. } if matches!(&tabs[0].content, SavedContent::Query { sql, .. } if sql == "select 1"))
+        );
+        cx.simulate_input(window.into(), "-- last edit\n");
+        let expected = window
+            .update(cx, |workspace, window, cx| {
+                let expected = workspace.connections[0].work.snapshot(cx);
+                window.remove_window();
+                expected
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_ne!(before, expected);
+        assert_eq!(storage(directory.path()).load(profile), Some(expected));
+    }
+
+    #[test]
+    fn corrupt_and_newer_snapshots_are_preserved() {
+        let directory = tempfile::tempdir().unwrap();
+        let id = Uuid::new_v4();
+        let path = directory.path().join(format!("{id}.json"));
+        let state = SavedWorkspace {
+            version: 1,
+            layout: SavedNode::Pane {
+                tabs: vec![],
+                active: 0,
+            },
+            active_pane: 0,
+            next_query: 1,
+            next_builder: 1,
+        };
+        let mut future = state.clone();
+        future.version = 2;
+        for bytes in [
+            b"broken json".to_vec(),
+            serde_json::to_vec(&future).unwrap(),
+        ] {
+            std::fs::write(&path, &bytes).unwrap();
+            let mut saved = storage(directory.path());
+            assert!(saved.load(id).is_none());
+            saved.queue(id, state.clone());
+            saved.flush();
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+    }
+
+    #[gpui::test]
+    fn background_restore_preserves_the_foreground_connection_and_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let (window, _) = workspace_over_h2("workspace-background-a", cx);
+        let (other, connected) = h2_connection("workspace-background-b");
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                workspace.open_query("select 'background'", window, cx);
+                workspace.flush_workspaces(cx);
+                workspace.connections[0].work = WorkArea::new();
+                push_connection(workspace, other, connected, window, cx);
+                workspace.open_query("select 'foreground'", window, cx);
+                let focused = window.focused(cx);
+                workspace.restore_connection_workspace(0, window, cx);
+                assert_eq!(workspace.active_connection, 1);
+                assert_eq!(window.focused(cx), focused);
+                assert_eq!(
+                    workspace.active_query().unwrap().read(cx).editor_text(cx),
+                    "select 'foreground'"
+                );
+                assert_eq!(
+                    workspace.connections[0].work.queries()[0]
+                        .read(cx)
+                        .editor_text(cx),
+                    "select 'background'"
+                );
+            })
+            .unwrap();
+    }
+}

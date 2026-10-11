@@ -19,6 +19,9 @@ impl Workspace {
     /// when its own `close` refuses and the swap is allowed to finish; see
     /// [`UpdateDialog::close`].
     pub(super) fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.rename_tab.is_some() {
+            self.finish_tab_name(false, window, cx);
+        }
         self.menu_open = false;
         self.close_context_menus(cx);
         if self.confirm.is_some() {

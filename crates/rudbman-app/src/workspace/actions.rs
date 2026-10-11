@@ -233,20 +233,20 @@ impl Workspace {
     pub(super) fn split_right_action(
         &mut self,
         _: &SplitRight,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.split_active(Axis::Horizontal, cx);
+        self.split_active(Axis::Horizontal, window, cx);
     }
 
     /// Splits the active pane downwards.
     pub(super) fn split_below_action(
         &mut self,
         _: &SplitBelow,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.split_active(Axis::Vertical, cx);
+        self.split_active(Axis::Vertical, window, cx);
     }
 
     /// Closes whatever overlay is on top, in the order they are stacked.
@@ -265,6 +265,10 @@ impl Workspace {
         // The dropdown menu paints above everything else, so it goes next.
         if self.menu_open {
             self.set_menu_open(false, cx);
+            return;
+        }
+        if self.rename_tab.is_some() {
+            self.finish_tab_name(false, window, cx);
             return;
         }
         if self.confirm.is_some() {

@@ -65,9 +65,9 @@ actions!(
         FocusNextPane,
         /// Move keyboard focus to the previous pane.
         FocusPrevPane,
-        /// Split the active pane, putting an empty pane to its right.
+        /// Split the active pane, copying its selected tab to the right.
         SplitRight,
-        /// Split the active pane, putting an empty pane below it.
+        /// Split the active pane, copying its selected tab below it.
         SplitBelow,
         /// Show or hide the explorer sidebar.
         ToggleExplorer,

@@ -785,7 +785,7 @@ content but **a list of mini-tabs** (`PaneItem::TableDetail | Query | Erd |
 QueryBuilder`), and activating the same object again moves to the open tab
 instead of adding a new one. The explorer keeps tree data for every connection
 but draws only the active connection's roots — switching is a pure filter, so
-there is no round trip. **Closing** a connection tab tears the whole document
+there is no round trip. **Closing** a connection tab saves its workspace and tears the live document
 down (panes releasing their session handles and cursors is the cleanup path of
 §9.3), and when a connection **drops**, the tab stays but query panes detach:
 the SQL and the rows already received remain readable, only execution is
@@ -797,6 +797,35 @@ key bindings against the focused element of the **last frame it drew**. Every
 path that hides or removes a subtree (sidebar toggle, closing a tab or pane,
 switching connections) has to take focus back within the same update, or every
 menu and shortcut afterwards is silently dropped.
+
+Workspaces are saved as `workspaces/<profile-uuid>.json` in the configuration
+directory. The versioned snapshot holds all six tab kinds, tab order and custom
+names, the selected tab in each pane, the active pane, nested splits and ratios,
+query/builder counters, SQL drafts with their selections and editor split,
+table-data sorting, detail sub-tabs, and the builder's query and box positions.
+Splitting a pane copies its selected tab into a distinct view in the new pane,
+including its draft and custom name. Object clones bypass the normal navigation
+lookup, and each copy survives a restart. Closing a pane's last tab removes that
+pane and collapses its split, except that the final pane stays empty. Closing a
+background pane does not steal focus from the foreground pane.
+
+Tab names are changed from the tab context menu; a blank name restores the
+default title. Names follow the tab's entity identity while it is open.
+
+Changes are coalesced into an autosave, with atomic replacement on a background
+thread. Closing a connection, closing the window, and quitting flush the latest
+snapshot before its views disappear. Restore happens only after a successful
+connection, binds targets to the new session identity, and preserves foreground
+focus when another connection finishes opening. A failed connection cannot
+replace an existing workspace. An unreadable or newer-version snapshot is left
+intact. With multiple sessions on one profile, changed workspaces replace that
+profile's saved state; when several change together, the foreground one wins.
+
+Restoring SQL never executes it. Database results, cursors, transactions and
+unapplied row/schema edits are not serialized; object tabs reload their current
+data or metadata. Closing an individual tab deliberately removes it from the
+next snapshot. ERD positions continue to use the existing per-profile layout
+file (§7.6).
 
 ### 7.2 The UI theme
 
@@ -955,8 +984,8 @@ The implemented shape (settled in M7):
   **dragging the row onto the builder canvas** (same gate, same load path — a
   drop goes into whichever builder the pointer is over). The column list is
   filled with a single `DESCRIBE columns` round trip. Adding the same table
-  twice attaches a `name_2` alias (self-joins). Builder state is not persisted —
-  the product is SQL, and SQL is already preserved by the editor and by files.
+  twice attaches a `name_2` alias (self-joins). The editable query, column
+  appearance and canvas positions are saved with the connection workspace (§7.1).
 - **The form**: the join list (type INNER/LEFT/RIGHT/FULL plus delete), WHERE
   condition rows (free text, ANDed together), GROUP BY (a toggle per selected
   column), ORDER BY (none/ASC/DESC per selected column). The SQL preview always

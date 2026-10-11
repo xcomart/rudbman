@@ -615,6 +615,7 @@ input:
   menu_select_all: Seleccionar todo
 
 context:
+  rename_tab: Cambiar nombre de pestaña…
   copy_as: "Copiar como %{format}"
   select_all: Seleccionar todo
   clear_selection: Anular la selección
@@ -664,3 +665,7 @@ update:
   installing: Instalando…
   failed: La actualización ha fallado.
   open_release: Abrir la página de la versión
+
+tab_name:
+  title: Cambiar nombre de pestaña
+  hint: Deja el campo vacío para restaurar el nombre predeterminado.

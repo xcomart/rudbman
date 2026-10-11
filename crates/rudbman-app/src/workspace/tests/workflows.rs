@@ -293,7 +293,7 @@ fn closing_a_connection_discards_its_work_area(cx: &mut gpui::TestAppContext) {
             );
 
             // And the pane commands, which have no tree to act on.
-            workspace.split_active(Axis::Horizontal, cx);
+            workspace.split_active(Axis::Horizontal, window, cx);
             workspace.close_active_pane(window, cx);
             workspace.cycle_pane(true, cx);
             assert!(workspace.work_area().is_none());
@@ -509,7 +509,7 @@ fn the_split_layout_is_per_connection(cx: &mut gpui::TestAppContext) {
     let (left, right) = window
         .update(&mut cx, |workspace, window, cx| {
             let left = active_pane(workspace);
-            workspace.split_active(Axis::Horizontal, cx);
+            workspace.split_active(Axis::Horizontal, window, cx);
             let right = active_pane(workspace);
             // A marker in the new pane, so that coming back can be told from
             // a layout that merely happens to have two panes.

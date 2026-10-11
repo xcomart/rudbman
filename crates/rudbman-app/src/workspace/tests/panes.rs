@@ -41,11 +41,14 @@ fn a_detail_and_a_query_are_two_tabs_of_one_pane(cx: &mut gpui::TestAppContext) 
 
     window
         .update(&mut cx, |workspace, window, cx| {
-            workspace.split_active(Axis::Horizontal, cx);
+            workspace.split_active(Axis::Horizontal, window, cx);
             let second = active_pane(workspace);
             assert_ne!(second, first, "the split produced a pane of its own");
             workspace.open_query("SELECT 2", window, cx);
-            assert_eq!(tab_titles(workspace, second, cx), ["Query 2"]);
+            assert_eq!(
+                tab_titles(workspace, second, cx),
+                ["PUBLIC.ORDERS", "Query 2"]
+            );
 
             // Asking for the object from the other pane jumps to the pane
             // already showing it rather than opening a copy beside it.
@@ -56,7 +59,10 @@ fn a_detail_and_a_query_are_two_tabs_of_one_pane(cx: &mut gpui::TestAppContext) 
                 tab_titles(workspace, first, cx),
                 ["PUBLIC.ORDERS", "Query 1"]
             );
-            assert_eq!(tab_titles(workspace, second, cx), ["Query 2"]);
+            assert_eq!(
+                tab_titles(workspace, second, cx),
+                ["PUBLIC.ORDERS", "Query 2"]
+            );
         })
         .expect("the window is open");
     cx.run_until_parked();
@@ -467,4 +473,126 @@ fn a_diagram_loads_from_the_database_and_its_layout_survives(cx: &mut gpui::Test
     let saved = read.positions(&target.scope);
     assert_eq!(saved.len(), 2, "{saved:?}");
     assert!(saved.contains_key("PERSON"));
+}
+
+#[gpui::test]
+fn splitting_copies_the_selected_sql_and_name_into_an_independent_editor(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (window, _) = workspace_over_h2("split-clones-query", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let (source, copy, first, second) = window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("select 'unselected'", window, cx);
+            workspace.open_query("select 'selected'", window, cx);
+            let source = workspace.active_query().unwrap().clone();
+            let first = workspace.active_pane().unwrap();
+            workspace
+                .work_area_mut()
+                .unwrap()
+                .tab_names
+                .insert(source.entity_id(), "분석".into());
+            workspace.split_active(Axis::Horizontal, window, cx);
+            let second = workspace.active_pane().unwrap();
+            let copy = workspace.active_query().unwrap().clone();
+            assert_ne!(source.entity_id(), copy.entity_id());
+            assert_eq!(copy.read(cx).editor_text(cx), "select 'selected'");
+            assert_eq!(
+                workspace
+                    .work_area()
+                    .unwrap()
+                    .panes
+                    .get(second)
+                    .unwrap()
+                    .items()
+                    .len(),
+                1
+            );
+            assert_eq!(
+                workspace.work_area().unwrap().tab_names[&copy.entity_id()],
+                "분석"
+            );
+            assert_eq!(
+                workspace
+                    .work_area()
+                    .unwrap()
+                    .panes
+                    .get(first)
+                    .unwrap()
+                    .items()
+                    .len(),
+                2
+            );
+            (source, copy, first, second)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.simulate_input("/* copy */ ");
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            assert_eq!(source.read(cx).editor_text(cx), "select 'selected'");
+            assert_eq!(
+                copy.read(cx).editor_text(cx),
+                "/* copy */ select 'selected'"
+            );
+            workspace.close_tab(second, 0, window, cx);
+            assert!(!workspace.work_area().unwrap().panes.contains(second));
+            assert_eq!(workspace.active_pane(), Some(first));
+            assert!(source.read(cx).focus_handle(cx).is_focused(window));
+            assert!(
+                !workspace
+                    .work_area()
+                    .unwrap()
+                    .tab_names
+                    .contains_key(&copy.entity_id())
+            );
+            workspace.close_tabs(first, &[0, 1], window, cx);
+            assert_eq!(workspace.work_area().unwrap().panes.leaf_count(), 1);
+            assert!(
+                workspace
+                    .work_area()
+                    .unwrap()
+                    .panes
+                    .get(first)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(workspace.focus_handle.is_focused(window));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn closing_a_background_panes_last_tab_collapses_only_that_pane(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("collapse-background-pane", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let (first, second, third) = window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("select 1", window, cx);
+            let first = workspace.active_pane().unwrap();
+            workspace.split_active(Axis::Horizontal, window, cx);
+            let second = workspace.active_pane().unwrap();
+            workspace.split_active(Axis::Vertical, window, cx);
+            let third = workspace.active_pane().unwrap();
+            workspace.activate_tab(first, 0, window, cx);
+            workspace.focus_active_tab(first, window, cx);
+            (first, second, third)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            let focus = window.focused(cx);
+            workspace.close_tab(second, 0, window, cx);
+            assert_eq!(
+                workspace.work_area().unwrap().panes.leaf_ids(),
+                vec![first, third]
+            );
+            assert_eq!(workspace.active_pane(), Some(first));
+            assert_eq!(window.focused(cx), focus);
+            workspace.close_tabs(third, &[0], window, cx);
+            assert_eq!(workspace.work_area().unwrap().panes.leaf_ids(), vec![first]);
+            assert_eq!(window.focused(cx), focus);
+        })
+        .unwrap();
 }

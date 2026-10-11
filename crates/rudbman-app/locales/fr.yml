@@ -615,6 +615,7 @@ input:
   menu_select_all: Tout sélectionner
 
 context:
+  rename_tab: Renommer l’onglet…
   copy_as: "Copier en %{format}"
   select_all: Tout sélectionner
   clear_selection: Annuler la sélection
@@ -664,3 +665,7 @@ update:
   installing: Installation…
   failed: La mise à jour a échoué.
   open_release: Ouvrir la page de la version
+
+tab_name:
+  title: Renommer l’onglet
+  hint: Laissez vide pour rétablir le nom par défaut.

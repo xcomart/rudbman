@@ -25,7 +25,12 @@ pub(super) fn render_tab_strip(
         .iter()
         .enumerate()
         .map(|(index, item)| {
-            let tab = TabItem::new(("pane-tab", index), item.title(cx));
+            let title = chrome
+                .tab_names
+                .get(&item.entity_id())
+                .map(|name| SharedString::from(name.clone()))
+                .unwrap_or_else(|| item.title(cx));
+            let tab = TabItem::new(("pane-tab", index), title);
             match chrome.colors.get(&item.connection(cx)) {
                 Some(color) => tab.dot(*color),
                 None => tab,
@@ -319,6 +324,7 @@ impl Render for Workspace {
             .is_open()
             .then(|| div().absolute().inset_0().child(self.update.clone()));
         let confirm = self.render_confirm(cx);
+        let rename_tab = self.render_rename_tab(cx);
         let context_menu = self.render_context_menu(cx);
 
         // With client-side decorations the compositor stops drawing the drop
@@ -406,6 +412,7 @@ impl Render for Workspace {
             .children(backup)
             .children(update)
             .children(confirm)
+            .children(rename_tab)
             // Last: it paints above the dialogs, as its own backdrop already
             // implies, and it takes no room in the column — the element is an
             // empty absolute box whose two halves are anchored to the window.
@@ -767,6 +774,7 @@ impl Workspace {
         let theme = theme(cx);
         let work = self.work_area().map(|area| {
             let chrome = PaneChrome {
+                tab_names: area.tab_names.clone(),
                 active: area.active(),
                 // A lone pane with nothing beside it needs no frame: there is
                 // only one thing on screen, so nothing has to be said about

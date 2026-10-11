@@ -1014,6 +1014,7 @@ input:
 # Every one of these is a command, so the imperative is the mood throughout,
 # and only a row that asks something before it acts takes an ellipsis.
 context:
+  rename_tab: Rename tab…
   # The result grid. `format` is TSV, CSV, JSON or INSERT and is never
   # translated: they are the names of the formats, not words.
   copy_as: "Copy as %{format}"
@@ -1101,3 +1102,7 @@ update:
   # The way out of the error state, and of a release with no build for this
   # platform: the browser, and the user takes it from there.
   open_release: Open the release page
+
+tab_name:
+  title: Rename tab
+  hint: Leave blank to restore the default name.
