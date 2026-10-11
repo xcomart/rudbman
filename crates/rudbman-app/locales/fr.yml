@@ -378,6 +378,11 @@ detail:
   cache: Cache
 
 query:
+  rollback: "Annuler la transaction"
+  rolling_back: "Annulation en cours…"
+  rolled_back: "Transaction annulée."
+  rollback_failed: "Échec de l’annulation : %{message}"
+  rollback_auto: "Annuler (la validation automatique est activée)"
   commit: "Valider la transaction"
   committing: "Validation en cours…"
   committed: "Transaction validée."

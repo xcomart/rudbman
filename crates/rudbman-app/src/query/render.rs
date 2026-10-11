@@ -338,7 +338,7 @@ impl QueryPane {
             let this = this.clone();
             Button::new("query-apply", ts!("data.apply"))
                 .variant(ButtonVariant::Primary)
-                .disabled(!staged || running || self.applying || self.committing)
+                .disabled(!staged || running || self.applying || self.transaction.is_some())
                 .on_click(move |_, window, cx| {
                     this.update(cx, |pane, cx| pane.apply(window, cx));
                 })

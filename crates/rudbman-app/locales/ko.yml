@@ -378,6 +378,11 @@ detail:
   cache: 캐시
 
 query:
+  rollback: "롤백"
+  rolling_back: "롤백 중…"
+  rolled_back: "트랜잭션을 롤백했습니다."
+  rollback_failed: "롤백 실패: %{message}"
+  rollback_auto: "롤백 (자동 커밋이 켜져 있습니다)"
   commit: "커밋"
   committing: "커밋 중…"
   committed: "트랜잭션을 커밋했습니다."

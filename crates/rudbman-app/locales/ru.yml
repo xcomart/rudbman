@@ -378,6 +378,11 @@ detail:
   cache: Кэш
 
 query:
+  rollback: "Откатить"
+  rolling_back: "Откат…"
+  rolled_back: "Транзакция отменена."
+  rollback_failed: "Ошибка отката: %{message}"
+  rollback_auto: "Откатить (автофиксация включена)"
   commit: "Зафиксировать"
   committing: "Фиксация…"
   committed: "Транзакция зафиксирована."

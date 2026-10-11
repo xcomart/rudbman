@@ -3,35 +3,49 @@
 use super::*;
 
 impl QueryPane {
-    pub(super) fn can_commit(&self) -> bool {
+    pub(super) fn can_finish_transaction(&self) -> bool {
         self.session.is_some()
             && self.transactional
             && !self.restore_auto_commit
             && !self.is_running()
             && !self.applying
-            && !self.committing
+            && self.transaction.is_none()
     }
 
-    /// Commit through JDBC without replacing the editor or its result tabs.
-    pub(super) fn commit(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() {
+    /// Finish the transaction through JDBC without replacing the editor or results.
+    pub(super) fn finish_transaction(&mut self, action: TransactionAction, cx: &mut Context<Self>) {
+        if !self.can_finish_transaction() {
             return;
         }
         let Some(session) = self.session.clone() else {
             return;
         };
-        self.committing = true;
-        self.notice = Some(ts!("query.committing"));
+        self.transaction = Some(action);
+        self.notice = Some(match action {
+            TransactionAction::Commit => ts!("query.committing"),
+            TransactionAction::Rollback => ts!("query.rolling_back"),
+        });
         cx.spawn(async move |pane, cx| {
             let outcome = cx
-                .background_spawn(async move { session.session().commit() })
+                .background_spawn(async move {
+                    match action {
+                        TransactionAction::Commit => session.session().commit(),
+                        TransactionAction::Rollback => session.session().rollback(),
+                    }
+                })
                 .await;
             pane.update(cx, |pane, cx| {
-                pane.committing = false;
+                pane.transaction = None;
                 if pane.session.is_some() {
-                    pane.notice = Some(match outcome {
-                        Ok(()) => ts!("query.committed"),
-                        Err(error) => ts!("query.commit_failed", message = error.to_string()),
+                    pane.notice = Some(match (action, outcome) {
+                        (TransactionAction::Commit, Ok(())) => ts!("query.committed"),
+                        (TransactionAction::Rollback, Ok(())) => ts!("query.rolled_back"),
+                        (TransactionAction::Commit, Err(error)) => {
+                            ts!("query.commit_failed", message = error.to_string())
+                        }
+                        (TransactionAction::Rollback, Err(error)) => {
+                            ts!("query.rollback_failed", message = error.to_string())
+                        }
                     });
                 }
                 cx.notify();
@@ -67,7 +81,7 @@ impl QueryPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.committing {
+        if self.transaction.is_some() {
             return;
         }
         // The one gate every run goes through, whichever way it was asked for:

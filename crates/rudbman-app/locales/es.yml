@@ -378,6 +378,11 @@ detail:
   cache: Caché
 
 query:
+  rollback: "Revertir transacción"
+  rolling_back: "Revirtiendo…"
+  rolled_back: "Transacción revertida."
+  rollback_failed: "Error al revertir: %{message}"
+  rollback_auto: "Revertir (la confirmación automática está activada)"
   commit: "Confirmar transacción"
   committing: "Confirmando…"
   committed: "Transacción confirmada."

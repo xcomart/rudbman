@@ -119,6 +119,7 @@ fn detached_toolbar_disables_execution_but_keeps_text_commands(cx: &mut TestAppC
         "query-run-all",
         "query-cancel",
         "query-commit",
+        "query-rollback",
     ] {
         click(id, &mut cx);
     }
@@ -146,7 +147,7 @@ fn toolbar_commit_persists_manual_transactions_and_keeps_the_results(cx: &mut Te
     let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
     window
         .update(&mut cx, |pane, _, _| {
-            assert!(pane.can_commit());
+            assert!(pane.can_finish_transaction());
             assert_eq!(pane.results.len(), 1);
         })
         .unwrap();
@@ -160,7 +161,7 @@ fn toolbar_commit_persists_manual_transactions_and_keeps_the_results(cx: &mut Te
                 1,
                 "commit must keep the last query's results"
             );
-            assert!(pane.can_commit());
+            assert!(pane.can_finish_transaction());
         })
         .unwrap();
     connected.session().rollback().unwrap();
@@ -169,18 +170,19 @@ fn toolbar_commit_persists_manual_transactions_and_keeps_the_results(cx: &mut Te
 }
 
 #[gpui::test]
-fn toolbar_commit_is_disabled_when_auto_commit_is_enabled(cx: &mut TestAppContext) {
+fn toolbar_transactions_are_disabled_when_auto_commit_is_enabled(cx: &mut TestAppContext) {
     let (connected, profile) = h2("toolbar-auto-commit", &[]);
     assert!(profile.auto_commit);
     let window = pane(&connected, &profile, 500, cx);
     let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
     click("query-commit", &mut cx);
+    click("query-rollback", &mut cx);
     window
         .update(&mut cx, |pane, _, _| {
-            assert!(!pane.can_commit());
+            assert!(!pane.can_finish_transaction());
             assert!(
                 pane.notice.is_none(),
-                "automatic mode must not send a manual commit"
+                "automatic mode must not send a manual transaction command"
             );
         })
         .unwrap();
@@ -188,27 +190,64 @@ fn toolbar_commit_is_disabled_when_auto_commit_is_enabled(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-fn a_commit_blocks_new_queries_until_it_finishes(cx: &mut TestAppContext) {
+fn transactions_block_new_queries_and_each_other_until_they_finish(cx: &mut TestAppContext) {
     let (connected, mut profile) = h2("toolbar-commit-busy", &[]);
     profile.auto_commit = false;
     connected.session().set_auto_commit(false).unwrap();
     let window = pane(&connected, &profile, 500, cx);
+    for action in [TransactionAction::Commit, TransactionAction::Rollback] {
+        window
+            .update(cx, |pane, window, cx| {
+                pane.finish_transaction(action, cx);
+                assert_eq!(pane.transaction, Some(action));
+                assert!(!pane.can_finish_transaction());
+                pane.finish_transaction(TransactionAction::Commit, cx);
+                pane.finish_transaction(TransactionAction::Rollback, cx);
+                assert_eq!(pane.transaction, Some(action));
+                pane.request(vec!["select 1".into()], window, cx);
+                assert!(!pane.is_running());
+                assert!(pane.results.is_empty());
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |pane, _, _| {
+                assert!(pane.transaction.is_none());
+                assert!(pane.can_finish_transaction());
+            })
+            .unwrap();
+    }
+    connected.close().expect("close");
+}
+
+#[gpui::test]
+fn toolbar_rollback_reverts_only_uncommitted_changes(cx: &mut TestAppContext) {
+    let (connected, mut profile) = h2(
+        "toolbar-rollback",
+        &[
+            "create table entries (id int)",
+            "insert into entries values (0)",
+        ],
+    );
+    profile.auto_commit = false;
+    connected.session().set_auto_commit(false).unwrap();
+    let window = pane(&connected, &profile, 500, cx);
+    run(&window, "insert into entries values (1)", cx);
+    assert_eq!(
+        server_rows(&connected, "select id from entries order by id"),
+        vec!["0", "1"]
+    );
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    click("query-rollback", &mut cx);
     window
-        .update(cx, |pane, window, cx| {
-            pane.commit(cx);
-            assert!(pane.committing);
-            assert!(!pane.can_commit());
-            pane.request(vec!["select 1".into()], window, cx);
-            assert!(!pane.is_running());
-            assert!(pane.results.is_empty());
+        .update(&mut cx, |pane, _, _| {
+            assert_eq!(pane.notice, Some(ts!("query.rolled_back")));
+            assert!(pane.transaction.is_none());
+            assert!(pane.can_finish_transaction());
+            assert_eq!(pane.results.len(), 1);
         })
         .unwrap();
-    cx.run_until_parked();
-    window
-        .update(cx, |pane, _, _| {
-            assert!(!pane.committing);
-            assert!(pane.can_commit());
-        })
-        .unwrap();
+    connected.session().commit().unwrap();
+    assert_eq!(server_rows(&connected, "select id from entries"), vec!["0"]);
     connected.close().expect("close");
 }

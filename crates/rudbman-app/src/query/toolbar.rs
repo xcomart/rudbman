@@ -2,12 +2,12 @@
 
 use super::*;
 use crate::icons;
-use gpui::{MouseButton, Stateful, svg};
+use gpui::{MouseButton, Stateful, Svg};
 use rugpui::tooltip_label;
 
 fn tool_button(
     id: &'static str,
-    icon: &'static str,
+    icon: Svg,
     label: SharedString,
     enabled: bool,
     chrome: &Theme,
@@ -21,7 +21,6 @@ fn tool_button(
         .items_center()
         .justify_center()
         .rounded_sm()
-        .text_color(chrome.icon)
         .tooltip(tooltip_label(label))
         .when(enabled, |button| {
             button
@@ -30,7 +29,7 @@ fn tool_button(
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         })
         .when(!enabled, |button| button.opacity(0.35))
-        .child(svg().path(icon).size(px(16.)))
+        .child(icon)
 }
 
 impl QueryPane {
@@ -44,14 +43,15 @@ impl QueryPane {
         let selected = editor.has_selection();
         let writable = !editor.is_read_only();
         let running = self.is_running();
-        let can_run = self.session.is_some() && !running && !self.applying && !self.committing;
+        let can_run =
+            self.session.is_some() && !running && !self.applying && self.transaction.is_none();
         let cancelling = matches!(&self.run, RunState::Running(run) if run.cancelling);
         let modifier = SHORTCUT_MODIFIER;
         let button = |id, icon, label: SharedString, shortcut, enabled, action: Box<dyn Action>| {
             let handle = handle.clone();
             tool_button(
                 id,
-                icon,
+                icons::icon(icon, px(16.), chrome.icon),
                 format!("{label} ({modifier}+{shortcut})").into(),
                 enabled,
                 chrome,
@@ -78,26 +78,49 @@ impl QueryPane {
         let this = cx.entity();
         let commit = tool_button(
             "query-commit",
-            icons::COMMIT,
-            if self.committing {
+            icons::icon(icons::COMMIT, px(16.), chrome.icon),
+            if self.transaction == Some(TransactionAction::Commit) {
                 ts!("query.committing")
             } else if self.restore_auto_commit {
                 ts!("query.commit_auto")
             } else {
                 ts!("query.commit")
             },
-            self.can_commit(),
+            self.can_finish_transaction(),
             chrome,
         )
-        .when(self.can_commit(), |button| {
+        .when(self.can_finish_transaction(), |button| {
             button.on_click(move |_, _, cx| {
-                this.update(cx, |pane, cx| pane.commit(cx));
+                this.update(cx, |pane, cx| {
+                    pane.finish_transaction(TransactionAction::Commit, cx)
+                });
+            })
+        });
+        let this = cx.entity();
+        let rollback = tool_button(
+            "query-rollback",
+            icons::icon(icons::ROLLBACK, px(16.), chrome.icon),
+            if self.transaction == Some(TransactionAction::Rollback) {
+                ts!("query.rolling_back")
+            } else if self.restore_auto_commit {
+                ts!("query.rollback_auto")
+            } else {
+                ts!("query.rollback")
+            },
+            self.can_finish_transaction(),
+            chrome,
+        )
+        .when(self.can_finish_transaction(), |button| {
+            button.on_click(move |_, _, cx| {
+                this.update(cx, |pane, cx| {
+                    pane.finish_transaction(TransactionAction::Rollback, cx)
+                });
             })
         });
         let this = cx.entity();
         let cancel = tool_button(
             "query-cancel",
-            icons::STOP,
+            icons::icon(icons::STOP, px(16.), chrome.danger),
             if cancelling {
                 ts!("query.cancelling")
             } else {
@@ -106,7 +129,6 @@ impl QueryPane {
             running && !cancelling,
             chrome,
         )
-        .text_color(chrome.danger)
         .when(running && !cancelling, |button| {
             button.on_click(move |_, _, cx| {
                 this.update(cx, |pane, cx| pane.cancel(cx));
@@ -152,7 +174,10 @@ impl QueryPane {
                 ),
                 cancel.into_any_element(),
             ]))
-            .child(group(vec![commit.into_any_element()]))
+            .child(group(vec![
+                commit.into_any_element(),
+                rollback.into_any_element(),
+            ]))
             .child(group(vec![
                 button(
                     "query-undo",

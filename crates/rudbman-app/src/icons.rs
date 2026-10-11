@@ -105,6 +105,7 @@ pub const RUN_SELECTION: &str = "icons/run-selection.svg";
 pub const RUN_ALL: &str = "icons/run-all.svg";
 pub const STOP: &str = "icons/stop.svg";
 pub const COMMIT: &str = "icons/commit.svg";
+pub const ROLLBACK: &str = "icons/rollback.svg";
 pub const UNDO: &str = "icons/undo.svg";
 pub const REDO: &str = "icons/redo.svg";
 pub const CUT: &str = "icons/cut.svg";
@@ -141,6 +142,7 @@ pub const CHEVRON_DOWN: &str = "icons/chevron-down.svg";
 /// rudbman's own icons, paired with the bytes [`ICONS`] hands back for them.
 const OWN: &[(&str, &[u8])] = &[
     (COMMIT, include_bytes!("../assets/icons/commit.svg")),
+    (ROLLBACK, include_bytes!("../assets/icons/rollback.svg")),
     (
         RUN_STATEMENT,
         include_bytes!("../assets/icons/run-statement.svg"),

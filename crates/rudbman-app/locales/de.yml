@@ -378,6 +378,11 @@ detail:
   cache: Cache
 
 query:
+  rollback: "Rollback"
+  rolling_back: "Rollback läuft…"
+  rolled_back: "Transaktion zurückgesetzt."
+  rollback_failed: "Rollback fehlgeschlagen: %{message}"
+  rollback_auto: "Rollback (automatisches Commit ist aktiviert)"
   commit: "Commit"
   committing: "Commit läuft…"
   committed: "Transaktion bestätigt."

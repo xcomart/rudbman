@@ -556,6 +556,11 @@ detail:
 # menu row or its shortcut, and over the object selected in the explorer with
 # the second row.
 query:
+  rollback: "Rollback"
+  rolling_back: "Rolling back…"
+  rolled_back: "Transaction rolled back."
+  rollback_failed: "Rollback failed: %{message}"
+  rollback_auto: "Rollback (automatic commit is enabled)"
   commit: "Commit"
   committing: "Committing…"
   committed: "Transaction committed."

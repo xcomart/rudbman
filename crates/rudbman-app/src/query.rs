@@ -335,6 +335,12 @@ enum RunState {
     Running(Box<Running>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransactionAction {
+    Commit,
+    Rollback,
+}
+
 /// A run in flight.
 struct Running {
     generation: u64,
@@ -429,8 +435,8 @@ pub struct QueryPane {
     /// What an apply puts *back* rather than a flat `true`: a profile opened
     /// with autocommit off is a session the user asked to be in a transaction.
     restore_auto_commit: bool,
-    /// A manual commit is in flight on the session's worker.
-    committing: bool,
+    /// The manual transaction operation in flight on the session's worker.
+    transaction: Option<TransactionAction>,
     /// Rows per `FETCH`, from the settings.
     fetch_rows: u32,
     /// The editor's share of the pane's height.
@@ -604,7 +610,7 @@ impl QueryPane {
             confirm_writes: profile.confirm_writes,
             transactional: true,
             restore_auto_commit: profile.auto_commit,
-            committing: false,
+            transaction: None,
             fetch_rows: settings.fetch_batch_rows,
             editor_share: DEFAULT_EDITOR_SHARE,
             results: Vec::new(),
@@ -764,7 +770,7 @@ impl QueryPane {
 
     /// Runs `statements`, once the profile's guards allow it.
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.committing {
+        if self.transaction.is_some() {
             return;
         }
         let statements: Vec<String> = statements
