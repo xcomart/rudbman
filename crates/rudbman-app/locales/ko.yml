@@ -379,6 +379,8 @@ detail:
 
 query:
   result_log: "결과 로그"
+  execution_time: "실행시간: %{seconds}초"
+  total_execution_time: "전체 실행시간: %{seconds}초"
   rollback: "롤백"
   rolling_back: "롤백 중…"
   rolled_back: "트랜잭션을 롤백했습니다."

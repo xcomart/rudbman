@@ -557,6 +557,8 @@ detail:
 # the second row.
 query:
   result_log: "Result log"
+  execution_time: "Execution time: %{seconds} s"
+  total_execution_time: "Total execution time: %{seconds} s"
   rollback: "Rollback"
   rolling_back: "Rolling back…"
   rolled_back: "Transaction rolled back."

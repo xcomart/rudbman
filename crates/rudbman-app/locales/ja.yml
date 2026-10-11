@@ -379,6 +379,8 @@ detail:
 
 query:
   result_log: "実行ログ"
+  execution_time: "実行時間: %{seconds} 秒"
+  total_execution_time: "合計実行時間: %{seconds} 秒"
   rollback: "ロールバック"
   rolling_back: "ロールバック中…"
   rolled_back: "トランザクションをロールバックしました。"

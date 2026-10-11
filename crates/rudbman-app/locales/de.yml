@@ -379,6 +379,8 @@ detail:
 
 query:
   result_log: "Ausführungsprotokoll"
+  execution_time: "Ausführungszeit: %{seconds} s"
+  total_execution_time: "Gesamte Ausführungszeit: %{seconds} s"
   rollback: "Rollback"
   rolling_back: "Rollback läuft…"
   rolled_back: "Transaktion zurückgesetzt."

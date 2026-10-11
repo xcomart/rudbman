@@ -137,6 +137,7 @@ impl QueryPane {
                         let session = session.clone();
                         async move {
                             let spec = StatementSpec::new(sql.clone()).with_fetch_size(fetch_rows);
+                            let started = Instant::now();
                             let mut cursor = session.session().execute(&spec)?;
                             let mut steps = Vec::new();
                             let pageable = advance(&mut cursor, true, fetch_rows, &mut steps)?;
@@ -144,6 +145,7 @@ impl QueryPane {
                                 sql,
                                 cursor,
                                 steps,
+                                elapsed: started.elapsed(),
                                 pageable,
                             })
                         }
@@ -209,11 +211,12 @@ impl QueryPane {
                     sql,
                     cursor,
                     steps,
+                    elapsed,
                     pageable,
                 } = executed;
                 // A cursor that cannot be paged is dropped here, which closes
                 // it; `then_some` is what does the dropping.
-                self.append(&sql, steps, pageable.then_some(cursor), window, cx);
+                self.append(&sql, steps, elapsed, pageable.then_some(cursor), window, cx);
                 self.recount(cx);
                 cx.notify();
                 true
@@ -235,6 +238,7 @@ impl QueryPane {
         &mut self,
         sql: &str,
         steps: Vec<Step>,
+        elapsed: Duration,
         cursor: Option<Cursor>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -254,7 +258,7 @@ impl QueryPane {
                     batch,
                     complete,
                 } => {
-                    self.append_log(sql, ts!("query.executed"));
+                    self.append_log(sql, ts!("query.executed"), elapsed);
                     let carried = (Some(index) == last_rows).then(|| cursor.take()).flatten();
                     let state = if complete && carried.is_none() {
                         GridSourceState::Complete
@@ -264,6 +268,7 @@ impl QueryPane {
                     self.push_rows(
                         base.clone(),
                         sql.to_string(),
+                        elapsed,
                         columns,
                         batch,
                         state,
@@ -278,14 +283,14 @@ impl QueryPane {
                     } else {
                         ts!("query.executed")
                     };
-                    self.append_log(sql, text);
+                    self.append_log(sql, text, elapsed);
                 }
             }
         }
     }
 
     /// Records every result's execution in the same log, including result sets.
-    fn append_log(&mut self, sql: &str, message: SharedString) {
+    fn append_log(&mut self, sql: &str, message: SharedString, elapsed: Duration) {
         let index = self
             .results
             .iter()
@@ -306,6 +311,7 @@ impl QueryPane {
         log.entries.push(ResultLogEntry {
             sql: preview(sql).replace(['\r', '\n'], " ").into(),
             message,
+            elapsed,
         });
         if follow {
             log.scroll.scroll_to_bottom();

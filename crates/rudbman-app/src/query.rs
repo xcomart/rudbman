@@ -247,6 +247,8 @@ struct Executed {
     /// otherwise.
     cursor: Cursor,
     steps: Vec<Step>,
+    /// Execution through the first fetch, excluding later paging.
+    elapsed: Duration,
     /// Whether the cursor is parked on a result set that can still be paged.
     pageable: bool,
 }
@@ -272,6 +274,7 @@ enum ResultBody {
 struct ResultLogEntry {
     sql: SharedString,
     message: SharedString,
+    elapsed: Duration,
 }
 
 #[derive(Default)]
@@ -316,6 +319,8 @@ struct RowsTab {
     /// and what an applied batch re-runs: the rows have to come back in the
     /// order they went away in, or the reload would look like a second sort.
     executed: String,
+    /// The original execution time, reused for results discovered while paging.
+    elapsed: Duration,
     /// The result's logical column types, for rendering later batches.
     columns: Arc<Vec<ColumnInfo>>,
     /// Where an apply would write, once the gate has been answered.

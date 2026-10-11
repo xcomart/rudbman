@@ -379,6 +379,8 @@ detail:
 
 query:
   result_log: "Журнал выполнения"
+  execution_time: "Время выполнения: %{seconds} с"
+  total_execution_time: "Общее время выполнения: %{seconds} с"
   rollback: "Откатить"
   rolling_back: "Откат…"
   rolled_back: "Транзакция отменена."

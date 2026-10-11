@@ -379,6 +379,8 @@ detail:
 
 query:
   result_log: "执行日志"
+  execution_time: "执行时间：%{seconds} 秒"
+  total_execution_time: "总执行时间：%{seconds} 秒"
   rollback: "回滚"
   rolling_back: "正在回滚…"
   rolled_back: "事务已回滚。"

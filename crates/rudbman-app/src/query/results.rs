@@ -24,6 +24,7 @@ impl QueryPane {
         &mut self,
         sql: String,
         executed: String,
+        elapsed: Duration,
         columns: Vec<ColumnInfo>,
         batch: RenderedBatch,
         state: GridSourceState,
@@ -101,6 +102,7 @@ impl QueryPane {
                 grid,
                 sql,
                 executed,
+                elapsed,
                 columns: Arc::new(columns),
                 table: None,
                 read_only: None,
@@ -312,7 +314,9 @@ impl QueryPane {
                 let mut cursor = Some(cursor);
                 // The statement that ran, not the one a sort would wrap:
                 // `append` works the second out of `sort_base` for itself.
-                let sql = self.rows_tab(id).map(|tab| tab.executed.clone());
+                let execution = self
+                    .rows_tab(id)
+                    .map(|tab| (tab.executed.clone(), tab.elapsed));
 
                 if let Some(tab) = self.rows_tab(id) {
                     tab.fetching = false;
@@ -337,10 +341,10 @@ impl QueryPane {
 
                 // Results the `MORE_RESULTS` walk picked up once this one ended.
                 if !steps.is_empty()
-                    && let Some(sql) = sql
+                    && let Some((sql, elapsed)) = execution
                 {
                     let carried = if pageable { cursor.take() } else { None };
-                    self.append(&sql, steps, carried, window, cx);
+                    self.append(&sql, steps, elapsed, carried, window, cx);
                 }
                 self.recount(cx);
             }
@@ -461,10 +465,18 @@ impl QueryPane {
         }
         let elapsed = match &self.run {
             RunState::Running(running) => running.started.elapsed(),
-            RunState::Idle => Duration::ZERO,
+            RunState::Idle => return,
         };
         self.run = RunState::Idle;
         self.finished = Some(Finished { rows: 0, elapsed });
+        // Keep the final total in view when the user was following the log.
+        for tab in &self.results {
+            if let ResultBody::Log(log) = &tab.body
+                && log.scroll.is_scrolled_to_end().unwrap_or(true)
+            {
+                log.scroll.scroll_to_bottom();
+            }
+        }
         self.recount(cx);
         cx.notify();
     }

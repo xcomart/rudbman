@@ -150,14 +150,18 @@ fn ten_thousand_rows_arrive_one_batch_at_a_time(cx: &mut TestAppContext) {
     let window = pane(&connected, &profile, 1_000, cx);
     run(&window, "select ID from BIG order by ID", cx);
 
-    let id = window
+    let (id, statement_elapsed, total_elapsed) = window
         .update(cx, |pane, _window, cx| {
             assert!(pane.error.is_none(), "{:?}", pane.error);
             assert_eq!(pane.results.len(), 2);
             let source = pane.grid_at(0).read(cx).source();
             assert_eq!(source.row_count(), 1_000, "one batch, not the whole table");
             assert_eq!(source.state(), GridSourceState::HasMore);
-            pane.row_result(0).id
+            (
+                pane.row_result(0).id,
+                pane.log_at(0)[0].elapsed,
+                pane.finished.as_ref().unwrap().elapsed,
+            )
         })
         .expect("the window is open");
 
@@ -187,12 +191,13 @@ fn ten_thousand_rows_arrive_one_batch_at_a_time(cx: &mut TestAppContext) {
                 1,
                 "paging must not log the statement again"
             );
+            assert_eq!(pane.log_at(0)[0].elapsed, statement_elapsed);
+            assert_eq!(pane.finished.as_ref().unwrap().elapsed, total_elapsed);
         })
         .expect("the window is open");
 }
 
-/// A script of three statements: two grids and a row count, in the order
-/// they were written.
+/// A mixed script keeps ordered messages and timings alongside its two grids.
 #[gpui::test]
 fn a_script_keeps_result_sets_separate_and_appends_messages_to_one_log(cx: &mut TestAppContext) {
     let (connected, profile) = h2(
@@ -245,6 +250,12 @@ fn a_script_keeps_result_sets_separate_and_appends_messages_to_one_log(cx: &mut 
             assert!(log[2].sql.starts_with("select N"));
             assert!(log[3].sql.starts_with("delete from T"));
             assert!(log[4].sql.starts_with("create table EXTRA"));
+            assert!(log.iter().all(|entry| !entry.elapsed.is_zero()));
+            let statement_total: Duration = log.iter().map(|entry| entry.elapsed).sum();
+            assert!(
+                pane.finished.as_ref().unwrap().elapsed >= statement_total,
+                "the total covers every statement, without counting earlier ones twice"
+            );
         })
         .expect("the window is open");
 

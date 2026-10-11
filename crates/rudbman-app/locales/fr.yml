@@ -379,6 +379,8 @@ detail:
 
 query:
   result_log: "Journal d’exécution"
+  execution_time: "Temps d’exécution : %{seconds} s"
+  total_execution_time: "Temps total d’exécution : %{seconds} s"
   rollback: "Annuler la transaction"
   rolling_back: "Annulation en cours…"
   rolled_back: "Transaction annulée."

@@ -488,7 +488,7 @@ impl QueryPane {
                 let chrome = chrome.clone();
                 gpui::uniform_list(
                     ("query-result-log", id),
-                    log.entries.len(),
+                    log.entries.len() + usize::from(self.finished.is_some()),
                     move |range, _, cx| {
                         let pane = pane.read(cx);
                         let Some(ResultTab {
@@ -500,42 +500,62 @@ impl QueryPane {
                         };
                         range
                             .filter_map(|index| {
-                                log.entries.get(index).map(|entry| {
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .h(px(52.))
-                                        .px(px(10.))
-                                        .gap(px(8.))
-                                        .border_b_1()
-                                        .border_color(chrome.border)
-                                        .text_size(px(12.))
-                                        .child(
-                                            div()
-                                                .flex_none()
-                                                .w(px(36.))
-                                                .text_color(chrome.text_muted)
-                                                .child((index + 1).to_string()),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .child(
-                                                    div()
-                                                        .truncate()
-                                                        .text_color(chrome.text)
-                                                        .child(entry.message.clone()),
+                                let row = div()
+                                    .flex()
+                                    .items_center()
+                                    .h(px(52.))
+                                    .px(px(10.))
+                                    .gap(px(8.))
+                                    .border_b_1()
+                                    .border_color(chrome.border)
+                                    .text_size(px(12.));
+                                if index == log.entries.len() {
+                                    return pane.finished.as_ref().map(|finished| {
+                                        row.bg(chrome.surface)
+                                            .text_color(chrome.text)
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(ts!(
+                                                "query.total_execution_time",
+                                                seconds = format!(
+                                                    "{:.3}",
+                                                    finished.elapsed.as_secs_f64()
                                                 )
-                                                .child(
-                                                    div()
-                                                        .truncate()
-                                                        .text_color(chrome.text_muted)
-                                                        .child(entry.sql.clone()),
-                                                ),
-                                        )
+                                            ))
+                                    });
+                                }
+                                log.entries.get(index).map(|entry| {
+                                    row.child(
+                                        div()
+                                            .flex_none()
+                                            .w(px(36.))
+                                            .text_color(chrome.text_muted)
+                                            .child((index + 1).to_string()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .truncate()
+                                                    .text_color(chrome.text)
+                                                    .child(entry.message.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .truncate()
+                                                    .text_color(chrome.text_muted)
+                                                    .child(entry.sql.clone()),
+                                            ),
+                                    )
+                                    .child(
+                                        div().flex_none().text_color(chrome.text_muted).child(ts!(
+                                            "query.execution_time",
+                                            seconds = format!("{:.3}", entry.elapsed.as_secs_f64())
+                                        )),
+                                    )
                                 })
                             })
                             .collect()
