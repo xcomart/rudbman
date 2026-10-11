@@ -67,7 +67,7 @@ use rudbman_jdbc::{ColumnInfo, LobFile, Param};
 use rudbman_sql::{
     Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
-use rugpui_grid::{GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
+use rugpui_grid::{CellEditor, GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
 
 use crate::query_source::{ResultSource, bit_is_boolean, column_name, key_index, sql_types};
 
@@ -622,6 +622,13 @@ impl EditableSource {
         self.columns.get(column)?.lob
     }
 
+    /// LOBs and multiline scalar text share the full value editor. The cell
+    /// itself keeps the original line breaks for copying and SQL parameters.
+    pub fn uses_value_viewer(&self, row: usize, column: usize) -> bool {
+        self.lob_kind(column).is_some()
+            || matches!(self.cell(row, column), GridCell::Text(text) if text.contains(['\n', '\r']))
+    }
+
     /// Current body, including a staged replacement; NULL/default have no file.
     pub fn lob(&self, row: usize, column: usize) -> Option<&LobFile> {
         let staged = match self.edits.locate(row, self.base.row_count())? {
@@ -738,6 +745,14 @@ impl GridSource for EditableSource {
             Some(RowRef::Base(row)) => !self.edits.is_deleted(row),
             Some(RowRef::Inserted(_)) => true,
             None => false,
+        }
+    }
+
+    fn cell_editor(&self, row: usize, column: usize) -> CellEditor {
+        if self.uses_value_viewer(row, column) {
+            CellEditor::External
+        } else {
+            CellEditor::Text
         }
     }
 }

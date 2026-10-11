@@ -679,6 +679,8 @@ completion:
   function: "函数"
 
 lob:
+  open_text: "打开文本编辑器…"
+  text: "文本"
   open: "打开 LOB…"
   export: "保存到文件…"
   import: "从文件替换…"
@@ -689,7 +691,7 @@ lob:
   truncated: "仅显示前 1 MiB。保存会导出完整内容；较大的值可通过文件替换。"
   read_only: "只读。可以查看并保存此值。"
   hex_hint: "编辑十六进制字节对。添加到更改后，使用数据表格中的“应用”写入数据库。"
-  text_hint: "CLOB 文件使用 UTF-8。添加到更改后，使用数据表格中的“应用”写入数据库。"
+  text_hint: "文本文件使用 UTF-8。添加到更改后，使用数据网格中的应用按钮写入数据库。"
   import_error: "无法导入文件（CLOB 文本必须为 UTF-8）：%{error}"
   saved: "文件已保存。"
   stage: "添加到更改"

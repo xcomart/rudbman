@@ -679,6 +679,8 @@ completion:
   function: "Funktion"
 
 lob:
+  open_text: "Texteditor öffnen…"
+  text: "Text"
   open: "LOB öffnen…"
   export: "In Datei speichern…"
   import: "Aus Datei ersetzen…"
@@ -689,7 +691,7 @@ lob:
   truncated: "Nur die ersten 1 MiB werden angezeigt. Speichern exportiert den gesamten Wert; größere Werte können durch eine Datei ersetzt werden."
   read_only: "Schreibgeschützt. Sie können den Wert ansehen und speichern."
   hex_hint: "Hexadezimale Bytepaare bearbeiten. Zu Änderungen hinzufügen und danach im Datenraster Anwenden wählen, um die Datenbank zu ändern."
-  text_hint: "CLOB-Dateien verwenden UTF-8. Zu Änderungen hinzufügen und danach im Datenraster Anwenden wählen, um die Datenbank zu ändern."
+  text_hint: "Textdateien verwenden UTF-8. Zu den Änderungen hinzufügen und dann im Datenraster anwenden, um in die Datenbank zu schreiben."
   import_error: "Datei konnte nicht importiert werden (CLOB-Text muss UTF-8 sein): %{error}"
   saved: "Datei gespeichert."
   stage: "Zu Änderungen hinzufügen"

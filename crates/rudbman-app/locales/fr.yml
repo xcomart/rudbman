@@ -679,6 +679,8 @@ completion:
   function: "Fonction"
 
 lob:
+  open_text: "Ouvrir l’éditeur de texte…"
+  text: "Texte"
   open: "Ouvrir le LOB…"
   export: "Enregistrer dans un fichier…"
   import: "Remplacer depuis un fichier…"
@@ -689,7 +691,7 @@ lob:
   truncated: "Seul le premier Mio est affiché. L’enregistrement exporte toute la valeur ; remplacez les grandes valeurs depuis un fichier."
   read_only: "Lecture seule. Vous pouvez consulter et enregistrer cette valeur."
   hex_hint: "Modifiez les paires hexadécimales. Ajoutez aux modifications, puis utilisez Appliquer dans la grille pour écrire dans la base."
-  text_hint: "Les fichiers CLOB utilisent UTF-8. Ajoutez aux modifications, puis utilisez Appliquer dans la grille pour écrire dans la base."
+  text_hint: "Les fichiers texte utilisent UTF-8. Ajoutez aux modifications, puis appliquez-les dans la grille pour écrire dans la base de données."
   import_error: "Importation impossible (le texte CLOB doit être en UTF-8) : %{error}"
   saved: "Fichier enregistré."
   stage: "Ajouter aux modifications"

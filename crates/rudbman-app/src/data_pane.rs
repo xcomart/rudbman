@@ -858,7 +858,7 @@ impl DataPane {
         let Some(grid) = self.grid().cloned() else {
             return;
         };
-        if grid.read(cx).source().lob_kind(column).is_some() {
+        if grid.read(cx).source().uses_value_viewer(row, column) {
             if self.lob_dialog.is_some() || self.applying || self.preview.is_some() {
                 return;
             }
@@ -1182,16 +1182,19 @@ impl DataPane {
         });
         let staged = cell.is_some_and(|(row, _)| source.row_status(row) != RowStatus::Unchanged);
 
-        if cell.is_some_and(|(_, column)| source.lob_kind(column).is_some()) {
+        if cell.is_some_and(|(row, column)| source.uses_value_viewer(row, column)) {
+            let label = if cell.is_some_and(|(_, column)| source.lob_kind(column).is_some()) {
+                ts!("lob.open")
+            } else {
+                ts!("lob.open_text")
+            };
             let this = this.clone();
             rows.push(MenuRow::separator());
-            rows.push(
-                MenuRow::new(ts!("lob.open")).on_activate(move |window, cx| {
-                    if let Some((row, column)) = cell {
-                        this.update(cx, |pane, cx| pane.open_cell(row, column, window, cx));
-                    }
-                }),
-            );
+            rows.push(MenuRow::new(label).on_activate(move |window, cx| {
+                if let Some((row, column)) = cell {
+                    this.update(cx, |pane, cx| pane.open_cell(row, column, window, cx));
+                }
+            }));
         }
 
         rows.push(MenuRow::separator());
@@ -2772,6 +2775,72 @@ mod tests {
             assert!(!label.starts_with("menu."), "untranslated {label:?}");
         }
     }
+    #[gpui::test]
+    fn multiline_data_cells_open_the_viewer_when_tabbing(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-multiline",
+            &[
+                "CREATE SCHEMA APP",
+                "CREATE TABLE APP.NOTES (ID INT PRIMARY KEY, NAME VARCHAR(30), BODY VARCHAR(1000))",
+                "INSERT INTO APP.NOTES VALUES (1, 'name', 'first\nsecond\n')",
+            ],
+        );
+        let handle = pane(&connected, &profile, target("NOTES"), 100, cx);
+        let mut cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                window.activate_window();
+                pane.grid().unwrap().update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(0, 1, window, cx));
+                });
+            })
+            .unwrap();
+        cx.simulate_keystrokes("tab");
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, _, cx| {
+                assert!(pane.lob_dialog.is_some());
+                assert!(pane.grid().unwrap().read(cx).editing().is_none());
+                assert!(!pane.has_pending_edits(cx));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        });
+        cx.simulate_input("new first\n새 줄🙂\n");
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-enter"
+        } else {
+            "ctrl-enter"
+        });
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                assert!(pane.lob_dialog.is_none());
+                assert!(pane.has_pending_edits(cx));
+                pane.apply(window, cx);
+                assert_eq!(
+                    pane.preview.as_ref().unwrap()[0].params[0],
+                    rudbman_jdbc::Param::Str("new first\n새 줄🙂\n".into())
+                );
+                pane.confirm_apply(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            server_rows(&connected, "SELECT BODY FROM APP.NOTES"),
+            ["new first\n새 줄🙂\n"]
+        );
+        handle
+            .update(&mut cx, |pane, _, cx| {
+                assert!(pane.apply_error.is_none());
+                assert!(!pane.has_pending_edits(cx));
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn lob_data_cells_open_the_shared_editor_and_apply_streaming_values(cx: &mut TestAppContext) {
         let (connected, profile) = h2(

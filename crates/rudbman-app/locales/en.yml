@@ -1114,6 +1114,8 @@ completion:
   function: "Function"
 
 lob:
+  open_text: "Open text editor…"
+  text: "Text"
   open: "Open LOB…"
   export: "Save to file…"
   import: "Replace from file…"
@@ -1124,7 +1126,7 @@ lob:
   truncated: "Only the first 1 MiB is shown. Save exports the complete value; use a file to replace larger values."
   read_only: "Read-only. You can view and save this value."
   hex_hint: "Edit hexadecimal byte pairs. Add to changes, then use Apply in the data grid to write to the database."
-  text_hint: "CLOB files use UTF-8. Add to changes, then use Apply in the data grid to write to the database."
+  text_hint: "Text files use UTF-8. Add to changes, then use Apply in the data grid to write to the database."
   import_error: "Could not import the file (CLOB text must be UTF-8): %{error}"
   saved: "File saved."
   stage: "Add to changes"

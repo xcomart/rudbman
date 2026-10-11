@@ -424,7 +424,7 @@ impl QueryPane {
 
     /// A cell was opened: a field over it, or a word about why not.
     ///
-    /// Opens the shared LOB viewer for BLOB/CLOB columns, including NULL values.
+    /// Opens the shared viewer for BLOB/CLOB and multiline text cells.
     /// Other cells use the grid's inline editor and its usual writability checks.
     pub(super) fn open_cell(
         &mut self,
@@ -437,7 +437,7 @@ impl QueryPane {
         let Some(grid) = self.grid_of(id).cloned() else {
             return;
         };
-        if grid.read(cx).source().lob_kind(column).is_some() {
+        if grid.read(cx).source().uses_value_viewer(row, column) {
             if self.lob_dialog.is_some()
                 || self.applying
                 || self.preview.is_some()

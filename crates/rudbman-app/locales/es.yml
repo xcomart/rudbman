@@ -679,6 +679,8 @@ completion:
   function: "Función"
 
 lob:
+  open_text: "Abrir editor de texto…"
+  text: "Texto"
   open: "Abrir LOB…"
   export: "Guardar en archivo…"
   import: "Reemplazar desde archivo…"
@@ -689,7 +691,7 @@ lob:
   truncated: "Solo se muestra el primer MiB. Guardar exporta el valor completo; reemplace los valores grandes desde un archivo."
   read_only: "Solo lectura. Puede ver y guardar este valor."
   hex_hint: "Edite pares de bytes hexadecimales. Añada a los cambios y después use Aplicar en la cuadrícula para escribir en la base de datos."
-  text_hint: "Los archivos CLOB usan UTF-8. Añada a los cambios y después use Aplicar en la cuadrícula para escribir en la base de datos."
+  text_hint: "Los archivos de texto usan UTF-8. Añada a los cambios y luego aplíquelos en la cuadrícula para escribir en la base de datos."
   import_error: "No se pudo importar el archivo (el texto CLOB debe ser UTF-8): %{error}"
   saved: "Archivo guardado."
   stage: "Añadir a los cambios"

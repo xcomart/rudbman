@@ -45,6 +45,8 @@ fn lob_previews_never_split_utf8_or_accept_incomplete_hex() {
     assert_eq!(decode_hex("").unwrap(), Vec::<u8>::new());
     for key in [
         "open",
+        "open_text",
+        "text",
         "export",
         "import",
         "empty",
@@ -67,6 +69,25 @@ fn lob_previews_never_split_utf8_or_accept_incomplete_hex() {
             assert_ne!(rust_i18n::t!(&key, locale = locale).as_ref(), key);
         }
     }
+}
+
+#[test]
+fn multiline_text_files_stage_as_strings_and_preserve_line_endings() {
+    let text = "first\r\n\r\n한🙂\nlast\r";
+    let file = LobFile::from_bytes(text.as_bytes(), false).unwrap();
+    assert_eq!(
+        Contents::File(file).stage(true).unwrap(),
+        StagedCell::Text(text.into())
+    );
+    assert_eq!(
+        Contents::Text {
+            text: text.into(),
+            binary: false
+        }
+        .stage(true)
+        .unwrap(),
+        StagedCell::Text(text.into())
+    );
 }
 
 #[gpui::test]

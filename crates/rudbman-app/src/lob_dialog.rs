@@ -1,4 +1,4 @@
-//! A shared BLOB/CLOB viewer for table data and query results.
+//! A shared BLOB/CLOB and multiline text viewer for table data and query results.
 //! The dialog stages replacements; only the existing row Apply writes to the DB.
 
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use rugpui_editor::editor::{
     CloseFind, Copy, Cut, Find, Paste, Redo, RunStatement, SelectAll, Undo,
 };
 use rugpui_editor::{EditorEvent, EditorView};
-use rugpui_grid::{GridSource, GridView};
+use rugpui_grid::{GridCell, GridSource, GridView};
 use rugpui_shell::menu_rows::{self, MenuRow};
 
 use crate::data_edit::{EditableSource, StagedCell};
@@ -34,6 +34,20 @@ enum Contents {
 }
 
 impl Contents {
+    fn stage(self, scalar: bool) -> Result<StagedCell, String> {
+        if scalar {
+            let text = match self {
+                Self::File(file) => {
+                    std::fs::read_to_string(file.path()).map_err(|error| error.to_string())?
+                }
+                Self::Text { text, .. } => text,
+            };
+            Ok(StagedCell::Text(text))
+        } else {
+            self.snapshot().map(StagedCell::Lob)
+        }
+    }
+
     fn snapshot(self) -> Result<LobFile, String> {
         match self {
             Self::File(file) => Ok(file),
@@ -55,6 +69,7 @@ pub(crate) struct LobDialog {
     column: usize,
     title: SharedString,
     binary: bool,
+    scalar: bool,
     writable: bool,
     nullable: bool,
     file: Option<LobFile>,
@@ -92,13 +107,29 @@ impl LobDialog {
             Some("LobEditor"),
         )]);
         let source = grid.read(cx).source();
-        let binary = source.lob_kind(column).unwrap_or(false);
+        let kind = source.lob_kind(column);
+        let binary = kind.unwrap_or(false);
+        let scalar = kind.is_none();
+        let text = if scalar {
+            match source.cell(row, column) {
+                GridCell::Text(text) => Some(text.to_owned()),
+                _ => None,
+            }
+        } else {
+            None
+        };
         let writable = attached && source.cell_editable(row, column);
         let nullable = source.nullable(column);
         let file = source.lob(row, column).cloned();
         let title = format!(
             "{} · {}",
-            if binary { "BLOB" } else { "CLOB" },
+            if scalar {
+                ts!("lob.text").to_string()
+            } else if binary {
+                "BLOB".into()
+            } else {
+                "CLOB".into()
+            },
             source.column(column).name
         );
         let editor = cx.new(|cx| EditorView::new(cx).read_only(true).word_wrap(!binary));
@@ -129,9 +160,10 @@ impl LobDialog {
             column,
             title: title.into(),
             binary,
+            scalar,
             writable,
             nullable,
-            is_null: file.is_none(),
+            is_null: file.is_none() && text.is_none(),
             file,
             editor,
             changed: false,
@@ -144,7 +176,11 @@ impl LobDialog {
             context_menu: None,
             _events: events,
         };
-        dialog.load_preview(cx);
+        if let Some(text) = text {
+            dialog.load_text(text, cx);
+        } else {
+            dialog.load_preview(cx);
+        }
         dialog
     }
 
@@ -183,6 +219,29 @@ impl LobDialog {
                             });
                         }
                         Err(error) => dialog.error = Some(error.into()),
+                    }
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn load_text(&mut self, text: String, cx: &mut Context<Self>) {
+        self.busy = true;
+        cx.spawn(async move |dialog, cx| {
+            let result = cx
+                .background_spawn(async move { LobFile::from_bytes(text.as_bytes(), false) })
+                .await;
+            dialog
+                .update(cx, |dialog, cx| {
+                    dialog.busy = false;
+                    match result {
+                        Ok(file) => {
+                            dialog.file = Some(file);
+                            dialog.load_preview(cx);
+                        }
+                        Err(error) => dialog.error = Some(error.to_string().into()),
                     }
                     cx.notify();
                 })
@@ -354,6 +413,7 @@ impl LobDialog {
             return;
         }
         let contents = self.contents(cx);
+        let scalar = self.scalar;
         self.busy = true;
         self.editor
             .update(cx, |editor, cx| editor.set_read_only(true, cx));
@@ -361,9 +421,9 @@ impl LobDialog {
             let result = cx
                 .background_spawn(async move {
                     contents
-                        .map(Contents::snapshot)
+                        .map(|contents| contents.stage(scalar))
                         .transpose()
-                        .map(|file| file.map_or(StagedCell::Null, StagedCell::Lob))
+                        .map(|value| value.unwrap_or(StagedCell::Null))
                 })
                 .await;
             dialog

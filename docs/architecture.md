@@ -946,10 +946,12 @@ for.
 - Cell selection, range selection, copy (TSV/CSV/INSERT statements/JSON)
 - NULL and the empty string are visually distinguished. Far too many tools
   cannot do this
-- Cell editing lives in the table data pane (§7.9), which is the one place the
-  single table and its primary key are known. The query result grid stays
-  read-only: it carries no key metadata and no table to attribute a column to,
-  and editing one is deferred
+- Cell editing is enabled when the table and its primary key can be identified
+  (§7.9), in table data and eligible query results. Other results remain read-only.
+- Multiline scalar text is painted from its first line with visible `\n`
+  separators (CRLF is one separator). The source retains the original text for
+  copy and parameters. These cells use the shared value viewer, including when
+  Tab moves from an inline field, and stage `StagedCell::Text` / `Param::Str`.
 - A LOB cell shows its size and opens a shared viewer on activation, also for
   NULL BLOB/CLOB columns. CLOB is UTF-8 text; BLOB is hexadecimal byte pairs.
   The viewer displays at most 1 MiB and disables direct edits to a partial

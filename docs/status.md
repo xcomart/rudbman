@@ -90,6 +90,12 @@ also pass real-driver round trips. LONG binary/text types use the same viewer;
 other vendor-specific LOB behaviour has not yet been verified against the
 container databases.
 
+Multiline scalar text uses that same viewer and still binds as an ordinary
+string. Grids display line breaks as `\n` from the first line; copying, editing
+and Apply preserve the actual line breaks. The shared window frame clips its
+shadow outside the body, keeping configured background opacity independent of
+active/inactive shadow intensity.
+
 ### Open items not tied to a milestone
 
 - **Editing a query result is updates and deletes, never inserts**, and only

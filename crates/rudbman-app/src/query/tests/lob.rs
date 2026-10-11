@@ -33,6 +33,89 @@ fn replace(text: &str, cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
+fn multiline_query_text_uses_the_viewer_and_keeps_string_bindings(cx: &mut TestAppContext) {
+    let original = "first\n한글🙂\n\nlast\n";
+    let replacement = "changed\nsecond\n";
+    let insert = format!("INSERT INTO NOTES VALUES (1, '{original}')");
+    let (connected, profile) = h2(
+        "query_multiline",
+        &[
+            "CREATE TABLE NOTES (ID INT PRIMARY KEY, BODY VARCHAR(1000))",
+            &insert,
+        ],
+    );
+    let handle = pane(&connected, &profile, 100, cx);
+    run(&handle, "SELECT * FROM NOTES", cx);
+    let mut cx = VisualTestContext::from_window(handle.into(), cx);
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            let source = pane.grid_at(0).read(cx).source();
+            assert_eq!(source.cell(0, 1), GridCell::Text(original));
+            assert!(source.uses_value_viewer(0, 1));
+            assert!(source.lob_kind(1).is_none());
+            assert_eq!(
+                rugpui_grid::cell_label(&source.cell(0, 1)).text,
+                "first\\n한글🙂\\n\\nlast\\n"
+            );
+        })
+        .unwrap();
+    open(&handle, 0, 1, &mut cx);
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-a cmd-c"
+    } else {
+        "ctrl-a ctrl-c"
+    });
+    cx.update(|_, cx| assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), original));
+    cx.simulate_keystrokes("escape");
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            assert!(pane.lob_dialog.is_none());
+            assert!(!pane.has_pending_edits(cx));
+        })
+        .unwrap();
+    open(&handle, 0, 1, &mut cx);
+    replace(replacement, &mut cx);
+    handle
+        .update(&mut cx, |pane, window, cx| {
+            assert!(pane.lob_dialog.is_none());
+            assert_eq!(
+                pane.grid_at(0).read(cx).source().cell(0, 1),
+                GridCell::Text(replacement)
+            );
+            pane.apply(window, cx);
+            assert_eq!(
+                pane.preview.as_ref().unwrap().statements[0].params[0],
+                rudbman_jdbc::Param::Str(replacement.into())
+            );
+            pane.confirm_apply(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        server_rows(&connected, "SELECT BODY FROM NOTES"),
+        [replacement]
+    );
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            assert!(pane.apply_error.is_none());
+            assert!(!pane.has_pending_edits(cx));
+            pane.detach(cx);
+        })
+        .unwrap();
+    open(&handle, 0, 1, &mut cx);
+    replace("must not be saved", &mut cx);
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            assert!(!pane.has_pending_edits(cx));
+            assert_eq!(
+                pane.grid_at(0).read(cx).source().cell(0, 1),
+                GridCell::Text(replacement)
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn lob_query_values_are_viewed_edited_staged_and_applied(cx: &mut TestAppContext) {
     let (connected, profile) = h2(
         "query_lob_editor",

@@ -68,6 +68,10 @@ JVM bridge.
   these stay fully exportable and can be replaced from a file without loading
   the whole value into the editor. Result snapshots use temporary disk space
   and are removed when the result and its edits are released.
+- **Multiline text cells** show the first line followed by visible `\n`
+  separators. Double-click or choose **Open text editor** to edit the actual
+  lines in the same viewer, then stage and Apply as usual. Copying and database
+  writes keep the original line breaks; ordinary text remains a string value.
 - **ERD diagrams** of a whole schema or catalog, from the explorer with
   <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>E</kbd>. Tables are placed by a
   hierarchical (Sugiyama) layout of rudbman's own and joined by orthogonal
