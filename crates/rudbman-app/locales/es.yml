@@ -319,6 +319,7 @@ driver:
 
 # La barra lateral del explorador.
 explorer:
+  refresh: Actualizar
   title: Explorador
   empty: Abre una conexión para recorrerla.
   loading: cargando…

@@ -319,6 +319,7 @@ driver:
 
 # 탐색기 사이드바.
 explorer:
+  refresh: 새로 고침
   title: 탐색기
   empty: 연결을 열면 내용을 탐색할 수 있습니다.
   loading: 불러오는 중…

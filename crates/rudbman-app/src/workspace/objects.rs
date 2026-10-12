@@ -172,6 +172,27 @@ impl Workspace {
 
         let panel =
             cx.new(|cx| StructPane::creating(session, connection, target, &profile, &dialect, cx));
+        cx.subscribe(&panel, |workspace, _panel, event, cx| {
+            let crate::struct_pane::StructPaneEvent::Created(target) = event;
+            // A create opened from a catalog uses the session's default schema.
+            // Refresh that catalog when its exact schema was not specified.
+            let node = match (&target.schema, &target.catalog) {
+                (Some(schema), catalog) => NodeId::Schema {
+                    connection: target.connection,
+                    catalog: catalog.clone(),
+                    name: schema.clone(),
+                },
+                (None, Some(catalog)) => NodeId::Catalog {
+                    connection: target.connection,
+                    name: catalog.clone(),
+                },
+                (None, None) => NodeId::Connection(target.connection),
+            };
+            workspace
+                .explorer
+                .update(cx, |explorer, cx| explorer.reload(&node, cx));
+        })
+        .detach();
         // Observed for the reason `open_structure`'s is: the tab strip's title
         // and its dot are the shell's to redraw.
         cx.observe(&panel, |_workspace, _panel, cx| cx.notify())

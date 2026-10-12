@@ -270,11 +270,13 @@ fn public() -> explorer::Scope {
     }
 }
 
-/// The two rows every explorer node offers, whatever kind it is.
+/// The scope commands and refresh row every explorer node offers.
 fn scope_labels() -> Vec<String> {
     vec![
         ts!("menu.erd").to_string(),
         ts!("menu.backup_schema").to_string(),
+        String::new(),
+        ts!("explorer.refresh").to_string(),
     ]
 }
 

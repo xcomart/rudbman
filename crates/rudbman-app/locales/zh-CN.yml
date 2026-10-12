@@ -319,6 +319,7 @@ driver:
 
 # 资源管理器侧边栏。
 explorer:
+  refresh: 刷新
   title: 资源管理器
   empty: 打开一个连接即可浏览。
   loading: 正在加载…

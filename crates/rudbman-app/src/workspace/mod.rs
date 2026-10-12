@@ -698,7 +698,9 @@ impl Workspace {
             |this, _explorer, event, window, cx| match event {
                 // The explorer has no session of its own — see its module docs —
                 // so every fetch comes back here, where the tabs live.
-                ExplorerEvent::Load(node) => this.load_node(node.clone(), cx),
+                ExplorerEvent::Load { node, generation } => {
+                    this.load_node(node.clone(), *generation, cx)
+                }
                 ExplorerEvent::Activated(target) => {
                     this.open_object((**target).clone(), window, cx);
                 }

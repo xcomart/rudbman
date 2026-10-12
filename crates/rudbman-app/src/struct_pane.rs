@@ -78,9 +78,9 @@
 use std::collections::BTreeMap;
 
 use gpui::{
-    AnyElement, App, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, IntoElement,
-    MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString, Subscription, Window, div,
-    prelude::*, px,
+    AnyElement, App, Context, Div, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString, Subscription,
+    Window, div, prelude::*, px,
 };
 use rudbman_core::ConnectionProfile;
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
@@ -104,6 +104,14 @@ use crate::table_detail::{NOTHING, flag, items, number, text, type_of};
 
 /// Element id of the body's overlay scroll indicator.
 const BODY_SCROLLBAR: &str = "struct-body-scrollbar";
+
+/// Database changes the workspace must reflect in its explorer.
+pub enum StructPaneEvent {
+    /// A new table was successfully committed.
+    Created(ObjectTarget),
+}
+
+impl EventEmitter<StructPaneEvent> for StructPane {}
 
 /// One item of a `DESCRIBE` answer.
 type Item = serde_json::Map<String, serde_json::Value>;
@@ -1067,6 +1075,7 @@ impl StructPane {
         {
             self.target.name = name.to_string();
             self.mode = Mode::Alter;
+            cx.emit(StructPaneEvent::Created(self.target.clone()));
         }
         let stale = outcome.is_ok() || self.mode == Mode::Alter;
         if stale {
@@ -3138,6 +3147,15 @@ mod tests {
     fn a_created_table_becomes_the_table_the_pane_edits(cx: &mut TestAppContext) {
         let connected = crate::explorer::tests::h2_fixture("struct-create-apply");
         let window = create_pane(&connected, false, cx);
+        let created = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let pane = window.update(cx, |_pane, _window, cx| cx.entity()).unwrap();
+        let _subscription = cx.update(|cx| {
+            let created = created.clone();
+            cx.subscribe(&pane, move |_pane, event, _cx| {
+                let StructPaneEvent::Created(target) = event;
+                created.borrow_mut().push(target.clone());
+            })
+        });
 
         window
             .update(cx, |pane, _window, cx| {
@@ -3202,6 +3220,7 @@ mod tests {
             .expect("the window is open");
 
         // And the table is there for anybody else reading the catalogue.
+        assert_eq!(*created.borrow(), vec![target("NOTE")]);
         assert_eq!(
             server_columns(&connected, "NOTE"),
             ["ID INTEGER", "BODY CHARACTER VARYING(40)"]
@@ -3217,6 +3236,15 @@ mod tests {
     fn a_refused_create_keeps_the_table_that_was_typed(cx: &mut TestAppContext) {
         let connected = crate::explorer::tests::h2_fixture("struct-create-refused");
         let window = create_pane(&connected, false, cx);
+        let created = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let pane = window.update(cx, |_pane, _window, cx| cx.entity()).unwrap();
+        let _subscription = cx.update(|cx| {
+            let created = created.clone();
+            cx.subscribe(&pane, move |_pane, event, _cx| {
+                let StructPaneEvent::Created(target) = event;
+                created.borrow_mut().push(target.clone());
+            })
+        });
 
         window
             .update(cx, |pane, _window, cx| {
@@ -3238,6 +3266,10 @@ mod tests {
                     .expect("the statement was refused");
                 assert!(!problem.error.message.is_empty(), "the driver said nothing");
                 assert_eq!(pane.mode, Mode::Create, "nothing was made");
+                assert!(
+                    created.borrow().is_empty(),
+                    "a refused create must not refresh the explorer"
+                );
                 assert!(
                     pane.has_pending_edits(),
                     "the table definition survived a typo in one type"

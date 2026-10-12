@@ -468,6 +468,7 @@ driver:
 # Never translated: catalogue, schema, table, routine and sequence names, which
 # are the database's own.
 explorer:
+  refresh: Refresh
   title: Explorer
   # Shown in place of the tree when nothing is open.
   empty: Open a connection to browse it.

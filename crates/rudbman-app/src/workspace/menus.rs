@@ -147,6 +147,16 @@ impl Workspace {
                 .enabled(live && scope.is_some())
                 .on_activate(scoped(Workspace::open_backup)),
         );
+        rows.push(MenuRow::separator());
+        let explorer = self.explorer.clone();
+        let node = node.clone();
+        rows.push(
+            MenuRow::new(ts!("explorer.refresh"))
+                .enabled(live)
+                .on_activate(move |_window: &mut Window, cx: &mut App| {
+                    explorer.update(cx, |explorer, cx| explorer.reload(&node, cx));
+                }),
+        );
         rows
     }
 

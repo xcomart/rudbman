@@ -319,6 +319,7 @@ driver:
 
 # Die Explorer-Seitenleiste.
 explorer:
+  refresh: Aktualisieren
   title: Explorer
   empty: Öffnen Sie eine Verbindung, um sie zu durchsuchen.
   loading: wird geladen …

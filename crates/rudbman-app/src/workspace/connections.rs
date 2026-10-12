@@ -152,7 +152,7 @@ impl Workspace {
     /// that connection is doing, which is the reason the tree draws a
     /// placeholder rather than pretending to be instant: a schema opened while a
     /// statement is running waits for it.
-    pub(super) fn load_node(&mut self, node: NodeId, cx: &mut Context<Self>) {
+    pub(super) fn load_node(&mut self, node: NodeId, generation: u64, cx: &mut Context<Self>) {
         let Some(session) = self.session_of(node.connection()) else {
             // The tab was closed, or its session died, between the tree asking
             // and this running. The node keeps its placeholder; there is nobody
@@ -161,7 +161,7 @@ impl Workspace {
             let message = ts!("explorer.disconnected");
             cx.defer(move |cx| {
                 explorer.update(cx, |explorer, cx| {
-                    explorer.deliver(node, Err(message), cx);
+                    explorer.deliver(node, generation, Err(message), cx);
                 });
             });
             return;
@@ -174,7 +174,9 @@ impl Workspace {
         let explorer = self.explorer.clone();
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            explorer.update(cx, |explorer, cx| explorer.deliver(node, outcome, cx));
+            explorer.update(cx, |explorer, cx| {
+                explorer.deliver(node, generation, outcome, cx)
+            });
         })
         .detach();
     }
