@@ -24,6 +24,16 @@ impl Workspace {
             self.activate_tab(pane, index, window, cx);
             return;
         }
+        self.open_data_with_order(target, None, window, cx);
+    }
+
+    pub(super) fn open_data_with_order(
+        &mut self,
+        target: ObjectTarget,
+        order: Option<(usize, String, bool)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.session_of(target.connection) else {
             return;
         };
@@ -57,7 +67,10 @@ impl Workspace {
         // panel is asked after its subscription is registered — a fetch started
         // from inside `cx.new` would be racing the tab that is meant to show
         // it.
-        panel.update(cx, |panel, cx| panel.refresh(window, cx));
+        panel.update(cx, |panel, cx| {
+            panel.restore_workspace_order(order);
+            panel.refresh(window, cx);
+        });
         self.append_tab(PaneItem::TableData(panel.clone()), window, cx);
         // Opened with a keyboard gesture as often as with the mouse, and the
         // arrows and the copy chord are the grid's own.
@@ -85,6 +98,16 @@ impl Workspace {
             self.activate_tab(pane, index, window, cx);
             return;
         }
+        self.append_structure(target, window, cx);
+    }
+
+    /// Create a distinct tab for restoration or a split, bypassing navigation lookup.
+    pub(super) fn append_structure(
+        &mut self,
+        target: ObjectTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.session_of(target.connection) else {
             return;
         };
@@ -149,6 +172,27 @@ impl Workspace {
 
         let panel =
             cx.new(|cx| StructPane::creating(session, connection, target, &profile, &dialect, cx));
+        cx.subscribe(&panel, |workspace, _panel, event, cx| {
+            let crate::struct_pane::StructPaneEvent::Created(target) = event;
+            // A create opened from a catalog uses the session's default schema.
+            // Refresh that catalog when its exact schema was not specified.
+            let node = match (&target.schema, &target.catalog) {
+                (Some(schema), catalog) => NodeId::Schema {
+                    connection: target.connection,
+                    catalog: catalog.clone(),
+                    name: schema.clone(),
+                },
+                (None, Some(catalog)) => NodeId::Catalog {
+                    connection: target.connection,
+                    name: catalog.clone(),
+                },
+                (None, None) => NodeId::Connection(target.connection),
+            };
+            workspace
+                .explorer
+                .update(cx, |explorer, cx| explorer.reload(&node, cx));
+        })
+        .detach();
         // Observed for the reason `open_structure`'s is: the tab strip's title
         // and its dot are the shell's to redraw.
         cx.observe(&panel, |_workspace, _panel, cx| cx.notify())
@@ -180,6 +224,16 @@ impl Workspace {
             self.activate_tab(pane, index, window, cx);
             return;
         }
+        self.append_erd(target, window, cx);
+    }
+
+    /// Create a distinct tab for restoration or a split, bypassing navigation lookup.
+    pub(super) fn append_erd(
+        &mut self,
+        target: ErdTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.session_of(target.connection).is_none() {
             return;
         }
@@ -637,6 +691,16 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Draft, builder and navigation changes all schedule the same save.
+        let watch = match &item {
+            PaneItem::Query { pane, .. } => cx.observe(pane, |_, _, cx| cx.notify()),
+            PaneItem::TableDetail(pane) => cx.observe(pane, |_, _, cx| cx.notify()),
+            PaneItem::TableData(pane) => cx.observe(pane, |_, _, cx| cx.notify()),
+            PaneItem::TableStruct(pane) => cx.observe(pane, |_, _, cx| cx.notify()),
+            PaneItem::Erd(pane) => cx.observe(pane, |_, _, cx| cx.notify()),
+            PaneItem::QueryBuilder { pane, .. } => cx.observe(pane, |_, _, cx| cx.notify()),
+        };
+        watch.detach();
         let Some(target) = self.active_pane() else {
             return;
         };

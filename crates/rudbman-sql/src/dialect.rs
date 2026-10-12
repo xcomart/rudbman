@@ -394,6 +394,12 @@ impl Dialect {
     pub fn is_type(&self, word: &str) -> bool {
         self.words.is_type(word)
     }
+
+    /// Keywords and type names offered by SQL completion, in uppercase.
+    /// A word shared by the common and vendor tables may occur twice.
+    pub fn completion_words(self) -> impl Iterator<Item = &'static str> {
+        self.words.completions()
+    }
 }
 
 #[cfg(test)]

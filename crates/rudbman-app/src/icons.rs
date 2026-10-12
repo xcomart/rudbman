@@ -99,6 +99,22 @@ pub const REFRESH: &str = "icons/refresh.svg";
 /// Copies the panel's text to the clipboard.
 pub const COPY: &str = "icons/copy.svg";
 
+/// Commands in the query editor toolbar.
+pub const RUN_STATEMENT: &str = "icons/run-statement.svg";
+pub const RUN_SELECTION: &str = "icons/run-selection.svg";
+pub const RUN_ALL: &str = "icons/run-all.svg";
+pub const STOP: &str = "icons/stop.svg";
+pub const COMMIT: &str = "icons/commit.svg";
+pub const ROLLBACK: &str = "icons/rollback.svg";
+pub const UNDO: &str = "icons/undo.svg";
+pub const REDO: &str = "icons/redo.svg";
+pub const CUT: &str = "icons/cut.svg";
+pub const PASTE: &str = "icons/paste.svg";
+pub const SELECT_ALL: &str = "icons/select-all.svg";
+pub const COMMENT: &str = "icons/comment.svg";
+pub const FIND: &str = "icons/find.svg";
+pub const REPLACE: &str = "icons/replace.svg";
+
 /// Shows and hides the explorer.
 pub const SIDEBAR: &str = "icons/sidebar.svg";
 
@@ -125,6 +141,26 @@ pub const CHEVRON_DOWN: &str = "icons/chevron-down.svg";
 
 /// rudbman's own icons, paired with the bytes [`ICONS`] hands back for them.
 const OWN: &[(&str, &[u8])] = &[
+    (COMMIT, include_bytes!("../assets/icons/commit.svg")),
+    (ROLLBACK, include_bytes!("../assets/icons/rollback.svg")),
+    (
+        RUN_STATEMENT,
+        include_bytes!("../assets/icons/run-statement.svg"),
+    ),
+    (
+        RUN_SELECTION,
+        include_bytes!("../assets/icons/run-selection.svg"),
+    ),
+    (RUN_ALL, include_bytes!("../assets/icons/run-all.svg")),
+    (STOP, include_bytes!("../assets/icons/stop.svg")),
+    (UNDO, include_bytes!("../assets/icons/undo.svg")),
+    (REDO, include_bytes!("../assets/icons/redo.svg")),
+    (CUT, include_bytes!("../assets/icons/cut.svg")),
+    (PASTE, include_bytes!("../assets/icons/paste.svg")),
+    (SELECT_ALL, include_bytes!("../assets/icons/select-all.svg")),
+    (COMMENT, include_bytes!("../assets/icons/comment.svg")),
+    (FIND, include_bytes!("../assets/icons/find.svg")),
+    (REPLACE, include_bytes!("../assets/icons/replace.svg")),
     (APP_ICON, include_bytes!("../../../assets/icon-128.png")),
     (TAB_LIST, include_bytes!("../assets/icons/tab-list.svg")),
     (NEW_TAB, include_bytes!("../assets/icons/new-tab.svg")),

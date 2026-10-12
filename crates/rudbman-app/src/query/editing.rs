@@ -124,7 +124,10 @@ impl QueryPane {
     /// to have the refusal stated where the write is rather than only where the
     /// button is.
     pub(super) fn apply(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only || self.applying || self.preview.is_some() {
+        if self.lob_dialog.is_some() {
+            return;
+        }
+        if self.read_only || self.applying || self.transaction.is_some() || self.preview.is_some() {
             return;
         }
         // One modal at a time: the two are irreversible in opposite directions
@@ -179,6 +182,9 @@ impl QueryPane {
     /// leave the connection mid-transaction between them, which is a state no
     /// other pane on this session could safely be allowed to find.
     pub(super) fn confirm_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.transaction.is_some() {
+            return;
+        }
         let Some(ApplyPreview { tab, statements }) = self.preview.take() else {
             return;
         };

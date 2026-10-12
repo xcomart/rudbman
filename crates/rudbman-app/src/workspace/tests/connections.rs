@@ -489,7 +489,7 @@ fn closing_a_focused_pane_takes_the_focus_back(cx: &mut gpui::TestAppContext) {
             });
             workspace.active_connection = 0;
             // Two panes, because the last one is never closed.
-            workspace.split_active(Axis::Horizontal, cx);
+            workspace.split_active(Axis::Horizontal, window, cx);
             // Opens in the new pane and puts the caret in its editor.
             workspace.open_query("SELECT 1", window, cx);
         })

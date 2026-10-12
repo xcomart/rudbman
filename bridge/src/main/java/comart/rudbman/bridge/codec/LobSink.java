@@ -1,5 +1,7 @@
 package comart.rudbman.bridge.codec;
 
+import java.sql.SQLException;
+
 /**
  * Allocates LOB identifiers for values that are referenced from a batch instead
  * of being inlined into it.
@@ -13,7 +15,7 @@ public interface LobSink {
     long UNKNOWN_SIZE = -1L;
 
     /**
-     * Records a LOB reference and returns the identifier written into the batch.
+     * Snapshots the live LOB before the cursor advances and returns its identifier.
      *
      * @param rowInCursor zero-based row index counted from the first row this
      *                    cursor ever produced, not from the start of the batch
@@ -21,7 +23,9 @@ public interface LobSink {
      * @param size        length in octets for binary LOBs, in characters for
      *                    character LOBs, or {@link #UNKNOWN_SIZE}
      * @param binary      {@code true} for BLOB-like values
+     * @param value       the live Blob, Clob, InputStream or Reader; released by the caller
      * @return a non-zero identifier, unique within the cursor
      */
-    long registerLob(long rowInCursor, int column, long size, boolean binary);
+    long registerLob(long rowInCursor, int column, long size, boolean binary, Object value)
+            throws SQLException;
 }

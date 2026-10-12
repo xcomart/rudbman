@@ -95,6 +95,23 @@ struct CanvasMenu {
     position: Point<Pixels>,
 }
 
+/// The builder's editable query and canvas, independent of a live session.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct BuilderWorkspace {
+    query: BuilderQuery,
+    columns: Vec<Vec<ColumnAppearance>>,
+    positions: std::collections::HashMap<String, (f32, f32)>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct ColumnAppearance {
+    type_name: String,
+    comment: Option<String>,
+    nullable: bool,
+    primary_key: bool,
+    foreign_key: bool,
+}
+
 /// The panel.
 pub struct BuilderPane {
     /// Which connection the tables come from, and which one the statement will
@@ -148,9 +165,7 @@ impl BuilderPane {
                 pane.toggle_column(*table, *column, cx)
             }
             BuilderEvent::JoinDrawn { from, to } => pane.add_join(*from, *to, cx),
-            // A box that moved changes the picture and not the statement, and
-            // the picture is not saved.
-            BuilderEvent::LayoutChanged => {}
+            BuilderEvent::LayoutChanged => cx.notify(),
             // The canvas holds no strings, so the menu is drawn here
             // (architecture document, §7.8).
             BuilderEvent::ContextMenu { hit, position } => {
@@ -181,6 +196,96 @@ impl BuilderPane {
             _events: events,
             condition_events: Vec::new(),
         }
+    }
+
+    pub(crate) fn workspace_state(&self, cx: &App) -> BuilderWorkspace {
+        BuilderWorkspace {
+            query: self.query(cx),
+            columns: self
+                .boxes
+                .iter()
+                .map(|table| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|column| ColumnAppearance {
+                            type_name: column.type_name.clone(),
+                            comment: column.comment.clone(),
+                            nullable: column.nullable,
+                            primary_key: column.primary_key,
+                            foreign_key: column.foreign_key,
+                        })
+                        .collect()
+                })
+                .collect(),
+            positions: self.view.read(cx).positions(),
+        }
+    }
+
+    pub(crate) fn restore_workspace(&mut self, state: BuilderWorkspace, cx: &mut Context<Self>) {
+        let BuilderWorkspace {
+            mut query,
+            columns,
+            positions,
+        } = state;
+        let valid = |&(table, column): &(usize, usize)| {
+            query
+                .tables
+                .get(table)
+                .is_some_and(|table| column < table.columns.len())
+        };
+        query.selected.retain(valid);
+        query.group_by.retain(valid);
+        query.order_by.retain(|(column, _)| valid(column));
+        query
+            .joins
+            .retain(|join| valid(&join.from) && valid(&join.to));
+        self.boxes = query
+            .tables
+            .iter()
+            .enumerate()
+            .map(|(i, table)| ErdTable {
+                name: table.alias.clone(),
+                comment: None,
+                columns: table
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(j, name)| {
+                        let appearance = columns.get(i).and_then(|columns| columns.get(j));
+                        ErdColumn {
+                            name: name.clone(),
+                            type_name: appearance.map_or_else(String::new, |c| c.type_name.clone()),
+                            comment: appearance.and_then(|c| c.comment.clone()),
+                            nullable: appearance.is_none_or(|c| c.nullable),
+                            primary_key: appearance.is_some_and(|c| c.primary_key),
+                            foreign_key: appearance.is_some_and(|c| c.foreign_key),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
+        self.tables = query.tables;
+        self.joins = query.joins;
+        self.selected = query.selected;
+        self.group_by = query.group_by;
+        self.order_by = query.order_by;
+        self.where_rows.clear();
+        self.condition_events.clear();
+        for condition in query.where_clauses {
+            self.add_condition(cx);
+            self.where_rows
+                .last()
+                .unwrap()
+                .update(cx, |input, cx| input.set_content(condition, cx));
+        }
+        self.view.update(cx, |view, cx| {
+            view.set_tables(self.boxes.clone(), cx);
+            view.restore_positions(&positions, cx);
+        });
+        self.sync_selection(cx);
+        self.sync_edges(cx);
+        cx.notify();
     }
 
     /// Which connection this builder belongs to.

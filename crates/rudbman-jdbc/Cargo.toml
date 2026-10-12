@@ -7,6 +7,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+rudbkit-jdbc.workspace = true
 # The only rudbman crate this one knows, and it is read-only: the JVM heap and
 # the extra JVM arguments come from `AppSettings`. In particular this crate does
 # *not* know `gpui` — it exposes a plain synchronous API and leaves the binding
@@ -20,6 +21,7 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 # The statement planner, for the editing tests only — never in `src`. What those
@@ -29,9 +31,6 @@ thiserror.workspace = true
 # different string than the one the application sends. The dependency is
 # acyclic: `rudbman-sql` has none at all.
 rudbman-sql.workspace = true
-# The extraction tests need a directory to write a script into and to have it
-# removed again however the test ends.
-tempfile.workspace = true
 # One test reads a job's progress off `call_raw`, because the typed path needs a
 # live `Job` and what it is testing is a job that has been dropped.
 serde_json.workspace = true

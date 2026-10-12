@@ -31,7 +31,16 @@ JVM bridge.
   editors and table details, per-connection query numbering. Switching the
   connection tab switches the explorer and the whole work area with it. With
   nothing open, a welcome screen lists the saved connections and opens one in
-  a click.
+  a click. Reopening a connection restores its tabs, split layout, SQL drafts,
+  and query builders. Right-click a work tab to rename it; leave its name blank
+  to return to the default. Workspaces save automatically and on close. SQL is
+  restored without running it; result rows and unapplied database edits are not
+  saved. Splitting copies the selected tab into the new pane. A pane disappears
+  when its last tab closes, with the final pane kept open.
+- **Connection folders.** Group saved connections by folder in the connection
+  dialog. Click a folder heading to collapse or expand it, or focus it with
+  <kbd>Tab</kbd> and press <kbd>Space</kbd> or <kbd>Enter</kbd>. Folded folders
+  stay folded when you reopen the dialog during the same app session.
 - **SSH tunnels** with password or private-key auth, loopback binds only,
   and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
   OS keychain, never on disk, and credentials are masked out of logs and
@@ -41,9 +50,32 @@ JVM bridge.
   directions, and DDL (the server's own text where the dialect offers it,
   reconstructed from metadata where it does not).
 - **A SQL workbench**: an editor with incremental dialect-aware highlighting
-  and IME support, statement splitting, run-one/run-selection/run-all,
+  and IME support, SQL keyword/function/table/column completion (including table aliases),
+  statement splitting, run-one/run-selection/run-all,
   cancellation, multiple result sets, and a virtualized grid that scrolls a
   million rows without loading a million rows.
+  Completion opens while typing or with <kbd>Ctrl</kbd>+<kbd>Space</kbd>:
+  use ↑/↓ to choose, Enter/Tab to insert, and Esc to dismiss. Names come from
+  the current connection, with columns loaded on demand; comments and string
+  literals do not trigger suggestions.
+  Built-in function suggestions include `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
+  and common scalar functions for the connection's dialect. Completing a
+  function replaces its name while preserving any existing arguments.
+- **BLOB/CLOB viewing and editing.** Double-click a LOB cell (including NULL)
+  or choose **Open LOB** from its context menu. CLOBs use a text editor and
+  UTF-8 files; BLOBs use editable hexadecimal byte pairs and binary files.
+  **Save to file** exports the complete value. **Replace from file** snapshots
+  a replacement without changing the database. **Add to changes** (Ctrl/Cmd+Enter)
+  stages the value; the grid's existing **Apply** preview and transaction perform
+  the database update. Empty values and NULL remain distinct. Read-only results
+  can still be viewed and saved. The first 1 MiB is shown for larger values;
+  these stay fully exportable and can be replaced from a file without loading
+  the whole value into the editor. Result snapshots use temporary disk space
+  and are removed when the result and its edits are released.
+- **Multiline text cells** show the first line followed by visible `\n`
+  separators. Double-click or choose **Open text editor** to edit the actual
+  lines in the same viewer, then stage and Apply as usual. Copying and database
+  writes keep the original line breaks; ordinary text remains a string value.
 - **ERD diagrams** of a whole schema or catalog, from the explorer with
   <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>E</kbd>. Tables are placed by a
   hierarchical (Sugiyama) layout of rudbman's own and joined by orthogonal
@@ -172,6 +204,13 @@ Release archives are built by
 tag: Gradle, then `jlink`, then `cargo`, then packaging.
 
 ## Architecture
+
+SSH transport, tunnel ownership, connection validation and saving, and JVM
+startup come from [rudbkit](https://github.com/xcomart/rudbkit), pinned to one
+Git revision in the root Cargo manifest. Cargo fetches it automatically. The
+application keeps its own settings, keychain, Java bridge protocol and dialog
+layout; its SSH crate is a compatibility facade over the shared transport.
+
 
 The design document — the JNI wire protocol, the columnar batch codec, the
 data-plane rule that row data never crosses the JNI boundary, the SSH tunnel

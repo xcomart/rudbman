@@ -349,6 +349,25 @@ impl BuilderView {
             .collect()
     }
 
+    /// Restore saved box positions after installing the tables.
+    pub fn restore_positions(
+        &mut self,
+        positions: &HashMap<String, (f32, f32)>,
+        cx: &mut Context<Self>,
+    ) {
+        for (table, rect) in self.tables.iter().zip(&mut self.rects) {
+            if let Some(&(x, y)) = positions.get(&table.name)
+                && x.is_finite()
+                && y.is_finite()
+            {
+                rect.x = x;
+                rect.y = y;
+            }
+        }
+        self.resolve_edges();
+        cx.notify();
+    }
+
     /// The current scale, where 1.0 is one logical unit to one pixel.
     pub fn zoom(&self) -> f32 {
         self.viewport.zoom

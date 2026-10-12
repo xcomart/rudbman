@@ -1,5 +1,163 @@
 use super::*;
 
+#[gpui::test]
+fn creating_in_a_default_schema_refreshes_its_catalog(cx: &mut gpui::TestAppContext) {
+    let (window, connection) = workspace_over_h2("explorer-refresh-default-schema", cx);
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let explorer = window
+        .update(cx, |workspace, _window, _cx| workspace.explorer.clone())
+        .unwrap();
+    let _subscription = cx.update(|cx| {
+        let seen = seen.clone();
+        cx.subscribe(&explorer, move |_explorer, event, _cx| {
+            if let ExplorerEvent::Load { node, .. } = event {
+                seen.borrow_mut().push(node.clone());
+            }
+        })
+    });
+    let folder = |catalog: &str| NodeId::Folder {
+        connection,
+        scope: explorer::Scope {
+            catalog: Some(catalog.into()),
+            schema: Some("PUBLIC".into()),
+        },
+        folder: Folder::Tables,
+    };
+    for catalog in [Some("catalog".to_string()), None] {
+        seen.borrow_mut().clear();
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.explorer.update(cx, |explorer, cx| {
+                    explorer.update_source(cx, |source| {
+                        source.set_children(folder("catalog"), vec![]);
+                        source.set_children(folder("other"), vec![]);
+                    })
+                });
+                workspace.open_new_table(
+                    connection,
+                    explorer::Scope {
+                        catalog: catalog.clone(),
+                        schema: None,
+                    },
+                    window,
+                    cx,
+                );
+                let pane = active_pane(workspace);
+                let item =
+                    &area(workspace).panes.get(pane).unwrap().items()[active_tab(workspace, pane)];
+                let PaneItem::TableStruct(panel) = item else {
+                    panic!("the new table editor is open")
+                };
+                panel.update(cx, |_panel, cx| {
+                    cx.emit(crate::struct_pane::StructPaneEvent::Created(ObjectTarget {
+                        connection,
+                        catalog: catalog.clone(),
+                        schema: None,
+                        folder: Folder::Tables,
+                        name: "NOTE".into(),
+                    }))
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(seen.borrow().contains(&folder("catalog")));
+        assert_eq!(seen.borrow().contains(&folder("other")), catalog.is_none());
+    }
+}
+
+#[gpui::test]
+fn a_created_table_and_the_refresh_menu_invalidate_the_right_scope(cx: &mut gpui::TestAppContext) {
+    use rugpui::{ChildState, TreeSource};
+    let (window, connection) = workspace_over_h2("explorer-refresh-created", cx);
+    let tables = NodeId::Folder {
+        connection,
+        scope: public(),
+        folder: Folder::Tables,
+    };
+    let views = NodeId::Folder {
+        connection,
+        scope: public(),
+        folder: Folder::Views,
+    };
+    let other = NodeId::Folder {
+        connection,
+        scope: explorer::Scope {
+            catalog: None,
+            schema: Some("OTHER".into()),
+        },
+        folder: Folder::Tables,
+    };
+    window
+        .update(cx, |workspace, window, cx| {
+            workspace.explorer.update(cx, |explorer, cx| {
+                explorer.update_source(cx, |source| {
+                    for folder in [&tables, &views, &other] {
+                        source.set_children(folder.clone(), vec![]);
+                    }
+                })
+            });
+            workspace.open_new_table(connection, public(), window, cx);
+            let pane = active_pane(workspace);
+            let item =
+                &area(workspace).panes.get(pane).unwrap().items()[active_tab(workspace, pane)];
+            let PaneItem::TableStruct(panel) = item else {
+                panic!("the new table editor is open")
+            };
+            workspace
+                .session_of(connection)
+                .unwrap()
+                .session()
+                .execute(&rudbman_jdbc::StatementSpec::new(
+                    "create table PUBLIC.NOTE (ID integer)",
+                ))
+                .unwrap();
+            panel.update(cx, |_panel, cx| {
+                cx.emit(crate::struct_pane::StructPaneEvent::Created(object(
+                    connection, "NOTE",
+                )))
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, window, cx| {
+            workspace.explorer.update(cx, |explorer, cx| {
+                explorer.update_source(cx, |source| {
+                    let ChildState::Loaded(children) = source.children(Some(&tables)) else {
+                        panic!("the table list was refreshed");
+                    };
+                    assert!(
+                        children.iter().any(|node| node
+                            .as_target()
+                            .is_some_and(|target| target.name == "NOTE"))
+                    );
+                    assert!(matches!(
+                        source.children(Some(&views)),
+                        ChildState::Loaded(_)
+                    ));
+                    assert_eq!(source.children(Some(&other)), ChildState::Loaded(vec![]));
+                    source.set_children(tables.clone(), vec![]);
+                    source.set_children(views.clone(), vec![]);
+                })
+            });
+            let schema = NodeId::Schema {
+                connection,
+                catalog: None,
+                name: "PUBLIC".into(),
+            };
+            let rows = workspace.explorer_rows(&schema, cx);
+            context_menu::row(&rows, &ts!("explorer.refresh")).activate(window, cx);
+            workspace.explorer.update(cx, |explorer, cx| {
+                explorer.update_source(cx, |source| {
+                    assert_eq!(source.children(Some(&tables)), ChildState::Loading);
+                    assert_eq!(source.children(Some(&views)), ChildState::Loading);
+                    assert_eq!(source.children(Some(&other)), ChildState::Loaded(vec![]));
+                })
+            });
+        })
+        .unwrap();
+}
+
 /// A right-click on a tree row asks the shell for a menu, and what that
 /// menu carries follows the kind of node it was raised over: a command a
 /// node cannot answer is left out rather than greyed for ever, and the
@@ -82,7 +240,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             // is no schema to make one in.
             let rows = workspace.explorer_rows(&root, cx);
             assert_eq!(context_menu::labels(&rows), scope_labels());
-            assert_eq!(context_menu::greyed(&rows), scope_labels());
+            assert_eq!(context_menu::greyed(&rows), scope_labels()[..2]);
         })
         .expect("the window is open");
 
@@ -107,6 +265,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             let mut expected = relation_labels();
             expected.pop();
             expected.extend(scope_labels());
+            expected.retain(|label| !label.is_empty());
             assert_eq!(
                 context_menu::greyed(&rows),
                 expected,
@@ -198,6 +357,8 @@ fn closing_the_other_tabs_leaves_the_keyboard_in_the_one_that_stays(cx: &mut gpu
     assert_eq!(
         context_menu::labels(&rows),
         [
+            ts!("context.rename_tab").to_string(),
+            String::new(),
             ts!("context.close_tab").to_string(),
             ts!("context.close_others").to_string(),
             ts!("context.close_right").to_string(),

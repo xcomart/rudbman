@@ -3,6 +3,59 @@
 use super::*;
 
 impl QueryPane {
+    pub(super) fn can_finish_transaction(&self) -> bool {
+        self.session.is_some()
+            && self.transactional
+            && !self.restore_auto_commit
+            && !self.is_running()
+            && !self.applying
+            && self.transaction.is_none()
+    }
+
+    /// Finish the transaction through JDBC without replacing the editor or results.
+    pub(super) fn finish_transaction(&mut self, action: TransactionAction, cx: &mut Context<Self>) {
+        if !self.can_finish_transaction() {
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        self.transaction = Some(action);
+        self.notice = Some(match action {
+            TransactionAction::Commit => ts!("query.committing"),
+            TransactionAction::Rollback => ts!("query.rolling_back"),
+        });
+        cx.spawn(async move |pane, cx| {
+            let outcome = cx
+                .background_spawn(async move {
+                    match action {
+                        TransactionAction::Commit => session.session().commit(),
+                        TransactionAction::Rollback => session.session().rollback(),
+                    }
+                })
+                .await;
+            pane.update(cx, |pane, cx| {
+                pane.transaction = None;
+                if pane.session.is_some() {
+                    pane.notice = Some(match (action, outcome) {
+                        (TransactionAction::Commit, Ok(())) => ts!("query.committed"),
+                        (TransactionAction::Rollback, Ok(())) => ts!("query.rolled_back"),
+                        (TransactionAction::Commit, Err(error)) => {
+                            ts!("query.commit_failed", message = error.to_string())
+                        }
+                        (TransactionAction::Rollback, Err(error)) => {
+                            ts!("query.rollback_failed", message = error.to_string())
+                        }
+                    });
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// The write confirmation was accepted.
     pub fn confirmed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(statements) = self.pending.take() else {
@@ -28,6 +81,9 @@ impl QueryPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.transaction.is_some() {
+            return;
+        }
         // The one gate every run goes through, whichever way it was asked for:
         // a sort round trip and an accepted write confirmation arrive here
         // without passing `request` again.
@@ -81,6 +137,7 @@ impl QueryPane {
                         let session = session.clone();
                         async move {
                             let spec = StatementSpec::new(sql.clone()).with_fetch_size(fetch_rows);
+                            let started = Instant::now();
                             let mut cursor = session.session().execute(&spec)?;
                             let mut steps = Vec::new();
                             let pageable = advance(&mut cursor, true, fetch_rows, &mut steps)?;
@@ -88,6 +145,7 @@ impl QueryPane {
                                 sql,
                                 cursor,
                                 steps,
+                                elapsed: started.elapsed(),
                                 pageable,
                             })
                         }
@@ -153,11 +211,12 @@ impl QueryPane {
                     sql,
                     cursor,
                     steps,
+                    elapsed,
                     pageable,
                 } = executed;
                 // A cursor that cannot be paged is dropped here, which closes
                 // it; `then_some` is what does the dropping.
-                self.append(&sql, steps, pageable.then_some(cursor), window, cx);
+                self.append(&sql, steps, elapsed, pageable.then_some(cursor), window, cx);
                 self.recount(cx);
                 cx.notify();
                 true
@@ -179,6 +238,7 @@ impl QueryPane {
         &mut self,
         sql: &str,
         steps: Vec<Step>,
+        elapsed: Duration,
         cursor: Option<Cursor>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -198,6 +258,7 @@ impl QueryPane {
                     batch,
                     complete,
                 } => {
+                    self.append_log(sql, ts!("query.executed"), elapsed);
                     let carried = (Some(index) == last_rows).then(|| cursor.take()).flatten();
                     let state = if complete && carried.is_none() {
                         GridSourceState::Complete
@@ -207,6 +268,7 @@ impl QueryPane {
                     self.push_rows(
                         base.clone(),
                         sql.to_string(),
+                        elapsed,
                         columns,
                         batch,
                         state,
@@ -221,15 +283,38 @@ impl QueryPane {
                     } else {
                         ts!("query.executed")
                     };
-                    let id = self.mint_id();
-                    let label = ts!("query.result", index = self.results.len() + 1);
-                    self.results.push(ResultTab {
-                        id,
-                        label,
-                        body: ResultBody::Message(text),
-                    });
+                    self.append_log(sql, text, elapsed);
                 }
             }
+        }
+    }
+
+    /// Records every result's execution in the same log, including result sets.
+    fn append_log(&mut self, sql: &str, message: SharedString, elapsed: Duration) {
+        let index = self
+            .results
+            .iter()
+            .position(|tab| matches!(tab.body, ResultBody::Log(_)))
+            .unwrap_or_else(|| {
+                let id = self.mint_id();
+                self.results.push(ResultTab {
+                    id,
+                    label: ts!("query.result_log"),
+                    body: ResultBody::Log(ResultLog::default()),
+                });
+                self.results.len() - 1
+            });
+        let ResultBody::Log(log) = &mut self.results[index].body else {
+            unreachable!("the index belongs to the execution log");
+        };
+        let follow = log.scroll.is_scrolled_to_end().unwrap_or(true);
+        log.entries.push(ResultLogEntry {
+            sql: preview(sql).replace(['\r', '\n'], " ").into(),
+            message,
+            elapsed,
+        });
+        if follow {
+            log.scroll.scroll_to_bottom();
         }
     }
 
@@ -240,7 +325,7 @@ impl QueryPane {
             .iter()
             .filter_map(|tab| match &tab.body {
                 ResultBody::Rows(rows) => Some(rows.grid.read(cx).source().row_count()),
-                ResultBody::Message(_) => None,
+                ResultBody::Log(_) => None,
             })
             .sum();
         if let Some(finished) = &mut self.finished {

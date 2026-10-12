@@ -319,6 +319,7 @@ driver:
 
 # La barre latérale de l'explorateur.
 explorer:
+  refresh: Actualiser
   title: Explorateur
   empty: Ouvrez une connexion pour la parcourir.
   loading: chargement…
@@ -378,6 +379,19 @@ detail:
   cache: Cache
 
 query:
+  result_log: "Journal d’exécution"
+  execution_time: "Temps d’exécution : %{seconds} s"
+  total_execution_time: "Temps total d’exécution : %{seconds} s"
+  rollback: "Annuler la transaction"
+  rolling_back: "Annulation en cours…"
+  rolled_back: "Transaction annulée."
+  rollback_failed: "Échec de l’annulation : %{message}"
+  rollback_auto: "Annuler (la validation automatique est activée)"
+  commit: "Valider la transaction"
+  committing: "Validation en cours…"
+  committed: "Transaction validée."
+  commit_failed: "Échec de la validation : %{message}"
+  commit_auto: "Valider (la validation automatique est activée)"
   run: Exécuter
   cancel: Annuler
   cancelling: Annulation…
@@ -396,7 +410,6 @@ query:
   confirm_title: Exécuter cette instruction ?
   confirm_body: "Instructions qui modifient des données : %{count}"
   confirm_run: Exécuter
-  lob_unsupported: La visionneuse de LOB n'existe pas encore.
   not_editable: Ces lignes ne proviennent pas d'une seule table dont la clé primaire est sélectionnée ; elles peuvent être lues mais pas modifiées.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Vérifiez la syntaxe de l'instruction et vos droits de lecture.
@@ -602,6 +615,7 @@ input:
   menu_select_all: Tout sélectionner
 
 context:
+  rename_tab: Renommer l’onglet…
   copy_as: "Copier en %{format}"
   select_all: Tout sélectionner
   clear_selection: Annuler la sélection
@@ -651,3 +665,37 @@ update:
   installing: Installation…
   failed: La mise à jour a échoué.
   open_release: Ouvrir la page de la version
+
+tab_name:
+  title: Renommer l’onglet
+  hint: Laissez vide pour rétablir le nom par défaut.
+
+completion:
+  trigger: "Complétion SQL"
+  column: "Colonne"
+  table: "Table"
+  schema: "Schéma"
+  keyword: "Mot-clé"
+  hint: "↑↓ choisir · Enter/Tab insérer · Esc fermer"
+  function: "Fonction"
+
+lob:
+  open_text: "Ouvrir l’éditeur de texte…"
+  text: "Texte"
+  open: "Ouvrir le LOB…"
+  export: "Enregistrer dans un fichier…"
+  import: "Remplacer depuis un fichier…"
+  empty: "Valeur vide"
+  loading: "Chargement…"
+  modified: "Modifié"
+  size: "%{bytes} octets"
+  truncated: "Seul le premier Mio est affiché. L’enregistrement exporte toute la valeur ; remplacez les grandes valeurs depuis un fichier."
+  read_only: "Lecture seule. Vous pouvez consulter et enregistrer cette valeur."
+  hex_hint: "Modifiez les paires hexadécimales. Ajoutez aux modifications, puis utilisez Appliquer dans la grille pour écrire dans la base."
+  text_hint: "Les fichiers texte utilisent UTF-8. Ajoutez aux modifications, puis appliquez-les dans la grille pour écrire dans la base de données."
+  import_error: "Importation impossible (le texte CLOB doit être en UTF-8) : %{error}"
+  saved: "Fichier enregistré."
+  stage: "Ajouter aux modifications"
+  discard_question: "Abandonner les modifications de cet éditeur LOB ?"
+  keep_editing: "Continuer la modification"
+  invalid_hex: "Saisissez des paires hexadécimales (00–FF), séparées par des espaces ou des sauts de ligne."

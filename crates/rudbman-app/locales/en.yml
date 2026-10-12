@@ -468,6 +468,7 @@ driver:
 # Never translated: catalogue, schema, table, routine and sequence names, which
 # are the database's own.
 explorer:
+  refresh: Refresh
   title: Explorer
   # Shown in place of the tree when nothing is open.
   empty: Open a connection to browse it.
@@ -556,6 +557,19 @@ detail:
 # menu row or its shortcut, and over the object selected in the explorer with
 # the second row.
 query:
+  result_log: "Result log"
+  execution_time: "Execution time: %{seconds} s"
+  total_execution_time: "Total execution time: %{seconds} s"
+  rollback: "Rollback"
+  rolling_back: "Rolling back…"
+  rolled_back: "Transaction rolled back."
+  rollback_failed: "Rollback failed: %{message}"
+  rollback_auto: "Rollback (automatic commit is enabled)"
+  commit: "Commit"
+  committing: "Committing…"
+  committed: "Transaction committed."
+  commit_failed: "Commit failed: %{message}"
+  commit_auto: "Commit (automatic commit is enabled)"
   # The two buttons of the run toolbar.
   run: Run
   cancel: Cancel
@@ -563,7 +577,7 @@ query:
   # answered yet. A word of its own rather than a disabled "Cancel", because
   # what is happening is not what the button offered.
   cancelling: Cancelling…
-  # One tab per result of the run. `index` counts from one.
+  # One tab per result set. The shared log does not consume an index.
   result: "Result %{index}"
   # The title of a query pane's tab in the pane it sits in. `index` counts
   # from one and is never reused, so two open tabs never share a title.
@@ -576,7 +590,7 @@ query:
   # is why it is a state rather than a sentence.
   running: running…
   # A statement that changed rows, and one that changed none — a CREATE TABLE,
-  # say. Each is a result tab of its own.
+  # say. These messages accumulate in one log tab.
   rows_affected: "%{count} rows affected"
   executed: Statement executed.
   # The status bar's row and elapsed cells. `seconds` arrives already rounded.
@@ -594,9 +608,6 @@ query:
   confirm_title: Run this statement?
   confirm_body: "Statements that change data: %{count}"
   confirm_run: Run it
-  # A LOB cell that was opened. Only its size travelled with the row, and
-  # reading the body needs a bridge operation that is not implemented yet.
-  lob_unsupported: The LOB viewer is not built yet.
   # A result grid whose rows cannot be written back through, said above the
   # grid rather than by refusing a keystroke: it is a standing fact about what
   # is being shown, not a failure. One line for all three ways a result misses
@@ -1001,6 +1012,7 @@ input:
 # Every one of these is a command, so the imperative is the mood throughout,
 # and only a row that asks something before it acts takes an ellipsis.
 context:
+  rename_tab: Rename tab…
   # The result grid. `format` is TSV, CSV, JSON or INSERT and is never
   # translated: they are the names of the formats, not words.
   copy_as: "Copy as %{format}"
@@ -1088,3 +1100,37 @@ update:
   # The way out of the error state, and of a release with no build for this
   # platform: the browser, and the user takes it from there.
   open_release: Open the release page
+
+tab_name:
+  title: Rename tab
+  hint: Leave blank to restore the default name.
+
+completion:
+  trigger: "SQL completion"
+  column: "Column"
+  table: "Table"
+  schema: "Schema"
+  keyword: "Keyword"
+  hint: "↑↓ choose · Enter/Tab insert · Esc close"
+  function: "Function"
+
+lob:
+  open_text: "Open text editor…"
+  text: "Text"
+  open: "Open LOB…"
+  export: "Save to file…"
+  import: "Replace from file…"
+  empty: "Empty value"
+  loading: "Loading…"
+  modified: "Modified"
+  size: "%{bytes} bytes"
+  truncated: "Only the first 1 MiB is shown. Save exports the complete value; use a file to replace larger values."
+  read_only: "Read-only. You can view and save this value."
+  hex_hint: "Edit hexadecimal byte pairs. Add to changes, then use Apply in the data grid to write to the database."
+  text_hint: "Text files use UTF-8. Add to changes, then use Apply in the data grid to write to the database."
+  import_error: "Could not import the file (CLOB text must be UTF-8): %{error}"
+  saved: "File saved."
+  stage: "Add to changes"
+  discard_question: "Discard the changes in this LOB editor?"
+  keep_editing: "Keep editing"
+  invalid_hex: "Enter pairs of hexadecimal digits (00–FF), separated by spaces or newlines."

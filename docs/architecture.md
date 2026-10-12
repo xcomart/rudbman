@@ -328,7 +328,7 @@ forever.
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
 | `0x24` | `CANCEL` | session | — | — | JSON `{cancelled}` |
-| `0x25` | `LOB_READ` | cursor | — | JSON `{lob_id, offset, len}` | binary |
+| `0x25` | `LOB_READ` | cursor | — | JSON `{id, offset, length}` | binary |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
@@ -393,6 +393,16 @@ Bare JSON scalars are used only for integers, strings, booleans and null.
 form.** The reason is the same one §4.6 gives for forbidding it in the other
 direction — send a `DECIMAL(20,8)` as a JSON number and it arrives rounded, and
 that cannot be undone.
+
+LOB bind parameters use `{"type":"blob_file"|"clob_file","value":"<snapshot path>","length":N}`.
+The length is bytes for binary data or UTF-16 code units for character data;
+the bridge uses length-bearing JDBC stream overloads for driver compatibility.
+`Param::Lob` owns the immutable `LobFile` for the entire execution. The in-process
+bridge opens binary or UTF-8 character streams, binds them to the prepared
+statement, and closes them on success or failure. File replacements are copied
+to private snapshots before staging, so later changes to the selected file
+cannot alter the value approved in Apply. Apply previews show type and byte
+length without embedding a large body or an internal path in SQL.
 
 ### 4.5 Response envelope
 
@@ -464,11 +474,19 @@ JSON. The codec's `kind` is **physical encoding only**; presentation decisions
 such as right alignment, NULL rendering and copy format come from the logical
 type.
 
-LOBs are never inlined into a batch. Scrolling past a row holding a 100MB BLOB
-cannot mean pushing 100MB across JNI. When the cell is opened, `LOB_READ`
-pulls it in chunks. **The address is `lob_id` and nothing else** — it has to be
-an opaque identifier independent of cursor position. Addressing by `{row, col}`
-would point at a row the result set has already passed.
+LOB bodies are never inlined into a batch. The bridge snapshots each fetched
+BLOB/CLOB into a private temporary file before advancing the JDBC row, because
+LOB locators can expire on the next row. `LOB_READ` uses an opaque `id` within
+the current cursor result, with byte offsets and a length from 1 to 1,048,576.
+It returns raw bytes, or an empty payload at EOF; character bodies are UTF-8,
+and a chunk may end inside a character. Invalid ids and ranges are rejected.
+The Rust fetch path copies these chunks into reference-counted `LobFile`
+snapshots before `MORE_RESULTS` or cursor closure. This uses bounded memory
+and requires temporary disk space for fetched LOBs, including values the user
+never opens. It deliberately preserves the fetched value instead of re-running
+SQL against data that may have changed. Bridge files are released at result
+advance/closure; Rust files live until the last result, edit, dialog or apply
+parameter releases them, including after disconnection.
 
 #### Codec norms — what the encoder and the decoder must agree on
 
@@ -500,8 +518,9 @@ silently draws the wrong data.
 
 - **`BIT` splits on precision.** `≤1` becomes `BOOL`, anything larger becomes
   `BIN` — MySQL's `BIT(n)` returns a byte string.
-- **`LONGVARCHAR`/`LONGVARBINARY` are inlined as `STR`/`BIN`, not `LOB`.**
-  MySQL's `LONGTEXT` landing here is a known sharp edge.
+- **`LONGVARCHAR`, `LONGNVARCHAR` and `LONGVARBINARY` use `LOB` references.**
+  These include drivers that report large text/binary columns without JDBC
+  Blob/Clob wrappers. Stream getters preserve bounded fetch memory.
 - **`REAL` travels as `F64`.** A 32-bit float is widened to 64 bits, so unless
   Rust displays it at f32 precision, `0.1` shows up as `0.10000000149011612`.
 
@@ -785,7 +804,7 @@ content but **a list of mini-tabs** (`PaneItem::TableDetail | Query | Erd |
 QueryBuilder`), and activating the same object again moves to the open tab
 instead of adding a new one. The explorer keeps tree data for every connection
 but draws only the active connection's roots — switching is a pure filter, so
-there is no round trip. **Closing** a connection tab tears the whole document
+there is no round trip. **Closing** a connection tab saves its workspace and tears the live document
 down (panes releasing their session handles and cursors is the cleanup path of
 §9.3), and when a connection **drops**, the tab stays but query panes detach:
 the SQL and the rows already received remain readable, only execution is
@@ -797,6 +816,35 @@ key bindings against the focused element of the **last frame it drew**. Every
 path that hides or removes a subtree (sidebar toggle, closing a tab or pane,
 switching connections) has to take focus back within the same update, or every
 menu and shortcut afterwards is silently dropped.
+
+Workspaces are saved as `workspaces/<profile-uuid>.json` in the configuration
+directory. The versioned snapshot holds all six tab kinds, tab order and custom
+names, the selected tab in each pane, the active pane, nested splits and ratios,
+query/builder counters, SQL drafts with their selections and editor split,
+table-data sorting, detail sub-tabs, and the builder's query and box positions.
+Splitting a pane copies its selected tab into a distinct view in the new pane,
+including its draft and custom name. Object clones bypass the normal navigation
+lookup, and each copy survives a restart. Closing a pane's last tab removes that
+pane and collapses its split, except that the final pane stays empty. Closing a
+background pane does not steal focus from the foreground pane.
+
+Tab names are changed from the tab context menu; a blank name restores the
+default title. Names follow the tab's entity identity while it is open.
+
+Changes are coalesced into an autosave, with atomic replacement on a background
+thread. Closing a connection, closing the window, and quitting flush the latest
+snapshot before its views disappear. Restore happens only after a successful
+connection, binds targets to the new session identity, and preserves foreground
+focus when another connection finishes opening. A failed connection cannot
+replace an existing workspace. An unreadable or newer-version snapshot is left
+intact. With multiple sessions on one profile, changed workspaces replace that
+profile's saved state; when several change together, the foreground one wins.
+
+Restoring SQL never executes it. Database results, cursors, transactions and
+unapplied row/schema edits are not serialized; object tabs reload their current
+data or metadata. Closing an individual tab deliberately removes it from the
+next snapshot. ERD positions continue to use the existing per-profile layout
+file (§7.6).
 
 ### 7.2 The UI theme
 
@@ -872,9 +920,16 @@ for.
 - Features: line numbers, current-line highlight, bracket matching, multiple
   cursors, statement-at-cursor execution (detecting the statement under the
   caret), folding, find and replace, auto-indent, comment toggling
-- Completion: suggests tables, columns and aliases from the connected session's
-  schema index. The index is filled in the background right after connecting
-  and kept in memory
+- Completion: dialect keywords and types, built-in aggregate/scalar functions,
+  schemas, tables/views, and columns
+  resolved through names and table aliases in the current query block. Typing
+  a name or a dot opens suggestions; `Ctrl+Space` and the editor context menu
+  open them explicitly. Up/Down selects, Enter/Tab inserts, and Escape closes.
+  Comments, strings and selections do not trigger completion. The query pane
+  loads table metadata in the background after a 150 ms typing pause, caches
+  it for 30 seconds, and fetches columns only for referenced tables. Metadata
+  failure leaves keyword completion available; late responses never reopen a
+  dismissed popup or modify editor text.
 - Write confirmation and sortable-result eligibility use a conservative token
   classifier. It follows `WITH` bodies, `EXPLAIN` targets and `SELECT INTO`;
   malformed or vendor-specific input is not treated as a read. This is an
@@ -891,11 +946,18 @@ for.
 - Cell selection, range selection, copy (TSV/CSV/INSERT statements/JSON)
 - NULL and the empty string are visually distinguished. Far too many tools
   cannot do this
-- Cell editing lives in the table data pane (§7.9), which is the one place the
-  single table and its primary key are known. The query result grid stays
-  read-only: it carries no key metadata and no table to attribute a column to,
-  and editing one is deferred
-- A LOB cell shows only its size and loads in chunks in a viewer when clicked
+- Cell editing is enabled when the table and its primary key can be identified
+  (§7.9), in table data and eligible query results. Other results remain read-only.
+- Multiline scalar text is painted from its first line with visible `\n`
+  separators (CRLF is one separator). The source retains the original text for
+  copy and parameters. These cells use the shared value viewer, including when
+  Tab moves from an inline field, and stage `StagedCell::Text` / `Param::Str`.
+- A LOB cell shows its size and opens a shared viewer on activation, also for
+  NULL BLOB/CLOB columns. CLOB is UTF-8 text; BLOB is hexadecimal byte pairs.
+  The viewer displays at most 1 MiB and disables direct edits to a partial
+  preview. Complete exports and file replacements stream from disk at any size.
+  Replacements are staged using the same per-cell writability/primary-key gates
+  and Apply confirmation as ordinary edits. NULL and zero-length LOBs differ.
 - Infinite scroll: hitting the bottom fetches another `FETCH` batch. Default
   batch size 500 rows
 
@@ -955,8 +1017,8 @@ The implemented shape (settled in M7):
   **dragging the row onto the builder canvas** (same gate, same load path — a
   drop goes into whichever builder the pointer is over). The column list is
   filled with a single `DESCRIBE columns` round trip. Adding the same table
-  twice attaches a `name_2` alias (self-joins). Builder state is not persisted —
-  the product is SQL, and SQL is already preserved by the editor and by files.
+  twice attaches a `name_2` alias (self-joins). The editable query, column
+  appearance and canvas positions are saved with the connection workspace (§7.1).
 - **The form**: the join list (type INNER/LEFT/RIGHT/FULL plus delete), WHERE
   condition rows (free text, ANDed together), GROUP BY (a toggle per selected
   column), ORDER BY (none/ASC/DESC per selected column). The SQL preview always
@@ -1711,18 +1773,10 @@ for "a usable tool".
 6. **SSH agent forwarding and multi-hop jump hosts** — environments exist where
    two or more bastions stack. M1 supports a single hop, and this expands once
    the need is confirmed.
-7. **The LOB re-read strategy** — the address is settled as `lob_id` (§4.6),
-   but **most drivers invalidate a `Blob`/`Clob` handle the moment the row
-   changes.** After the grid has fetched 500 rows and the user opens the BLOB
-   in the third row, that handle is already dead. The candidates:
-   (a) spill to a temp file at fetch time — accurate, but writes disk for LOBs
-   nobody will open, (b) read immediately up to an inline cap (around 4KB) and
-   re-query the single row by primary key beyond that — which has to be refused
-   on result sets with no key, (c) allow it only within the current batch.
-   No viewer exists through M3 and M4, so this is still undecided — it gets
-   decided in the milestone that adds a LOB viewer. The bridge already records
-   `lob_id → (row, column, size, is-binary)`, so either option can be bolted on
-   afterwards.
+7. **LOB re-read strategy (resolved)** — fetch-time disk snapshots, as described
+   in §4.6. The cursor may advance or close without invalidating displayed
+   results. No key is needed for viewing/export, while writes retain §7.9's
+   existing key, read-only and transaction rules.
 
 ---
 

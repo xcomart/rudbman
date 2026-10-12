@@ -302,19 +302,16 @@ fn a_missing_table_is_a_sql_error_whose_class_is_42() {
 }
 
 #[test]
-fn an_unimplemented_operation_says_so_rather_than_reading_as_unknown() {
+fn lob_reads_require_a_live_cursor() {
     let session = session();
     let error = session
         .call_raw(Op::LobRead, session.handle(), 0, Some(b"{}".to_vec()))
-        .expect_err("LOB_READ is a later milestone");
+        .expect_err("a session handle is not a cursor");
     let Error::Bridge(error) = error else {
         panic!("expected an error envelope, got {error:?}")
     };
     assert_eq!(error.kind, BridgeErrorKind::Protocol);
-    assert!(
-        error.is_not_implemented(),
-        "waiting for a milestone, not a table mismatch: {error:?}"
-    );
+    assert!(!error.is_not_implemented());
     assert!(!error.is_unknown_operation());
 }
 
@@ -2107,4 +2104,124 @@ fn an_update_that_reaches_no_row_is_reported_as_a_row_count_of_zero() {
         ["1|a"],
         "the first update stood after a row-count abort"
     );
+}
+
+#[test]
+fn lob_snapshots_round_trip_streaming_parameters_and_outlive_the_cursor() {
+    use rudbman_jdbc::LobFile;
+    let session = session();
+    exec(
+        &session,
+        "create table lob_values (id int primary key, b blob, c clob)",
+    );
+    let bytes: Vec<u8> = (0..(2 * 1024 * 1024 + 7))
+        .map(|index| (index % 256) as u8)
+        .collect();
+    let text = format!("{}한🙂\0끝", "x".repeat(1024 * 1024 - 1));
+    session
+        .execute(
+            &StatementSpec::new("insert into lob_values values (1, ?, ?)").with_params([
+                Param::Lob(LobFile::from_bytes(&bytes, true).unwrap()),
+                Param::Lob(LobFile::from_bytes(text.as_bytes(), false).unwrap()),
+            ]),
+        )
+        .unwrap();
+    exec(
+        &session,
+        "insert into lob_values values (2, X'', ''), (3, null, null)",
+    );
+    let mut cursor = session
+        .execute(&StatementSpec::new(
+            "select b, c from lob_values order by id",
+        ))
+        .unwrap();
+    let first = cursor.fetch(1).unwrap();
+    let Value::Lob {
+        id: binary,
+        size: binary_size,
+    } = first.value(0, 0).unwrap()
+    else {
+        panic!("BLOB")
+    };
+    let Value::Lob {
+        id: character,
+        size: text_size,
+    } = first.value(0, 1).unwrap()
+    else {
+        panic!("CLOB")
+    };
+    assert_eq!(binary_size, Some(bytes.len() as u64));
+    assert_eq!(text_size, Some(text.encode_utf16().count() as u64));
+    let rest = cursor.fetch(100).unwrap();
+    assert!(rest.is_last());
+    assert_eq!(
+        cursor.read_lob(binary, 65535, 9).unwrap(),
+        bytes[65535..65544]
+    );
+    assert!(cursor.read_lob(binary, 0, 0).is_err());
+    assert!(cursor.read_lob(binary, 0, 1024 * 1024 + 1).is_err());
+    assert!(cursor.read_lob(u64::MAX, 0, 1).is_err());
+    let binary = cursor.cache_lob(binary, true).unwrap();
+    let character = cursor.cache_lob(character, false).unwrap();
+    for column in 0..2 {
+        let Value::Lob { id, size } = rest.value(0, column).unwrap() else {
+            panic!("empty LOB")
+        };
+        assert_eq!(size, Some(0));
+        assert!(cursor.cache_lob(id, column == 0).unwrap().is_empty());
+        assert!(rest.value(1, column).unwrap().is_null());
+    }
+    cursor.more_results().unwrap();
+    drop(cursor);
+    assert_eq!(binary.prefix(bytes.len()).unwrap(), bytes);
+    assert_eq!(character.prefix(text.len()).unwrap(), text.as_bytes());
+    assert_eq!(character.len(), text.encode_utf16().count() as u64);
+    let directory = tempfile::tempdir().unwrap();
+    binary
+        .export_to(&directory.path().join("body.bin"))
+        .unwrap();
+    character
+        .export_to(&directory.path().join("body.txt"))
+        .unwrap();
+    assert_eq!(
+        std::fs::read(directory.path().join("body.bin")).unwrap(),
+        bytes
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("body.txt")).unwrap(),
+        text
+    );
+    // The same streaming bind path handles updates, and the old snapshot is immutable.
+    session
+        .execute(
+            &StatementSpec::new("update lob_values set b = ?, c = ? where id = 1").with_params([
+                Param::Lob(LobFile::from_bytes(&[0, 128, 255], true).unwrap()),
+                Param::Lob(LobFile::from_bytes("수정🙂".as_bytes(), false).unwrap()),
+            ]),
+        )
+        .unwrap();
+    let cursor = session
+        .execute(&StatementSpec::new(
+            "select b, c from lob_values where id = 1",
+        ))
+        .unwrap();
+    let batch = cursor.fetch(10).unwrap();
+    let Value::Lob { id, .. } = batch.value(0, 0).unwrap() else {
+        panic!("BLOB")
+    };
+    assert_eq!(
+        cursor.cache_lob(id, true).unwrap().prefix(10).unwrap(),
+        [0, 128, 255]
+    );
+    let Value::Lob { id, .. } = batch.value(0, 1).unwrap() else {
+        panic!("CLOB")
+    };
+    assert_eq!(
+        cursor.cache_lob(id, false).unwrap().prefix(100).unwrap(),
+        "수정🙂".as_bytes()
+    );
+    drop(cursor);
+    drop(session);
+    assert_eq!(binary.prefix(3).unwrap(), [0, 1, 2]);
+    assert_eq!(character.prefix(3).unwrap(), b"xxx");
 }

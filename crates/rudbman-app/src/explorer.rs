@@ -71,7 +71,9 @@ use gpui::{
     Point, Render, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session};
-use rugpui::{ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView, theme};
+use rugpui::{
+    Button, ButtonVariant, ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView, theme,
+};
 
 use crate::app_settings;
 use crate::i18n::ts;
@@ -99,7 +101,7 @@ pub struct ConnectionId(pub u64);
 /// Both halves are optional because both levels are skippable; see the module
 /// documentation. A `None` catalogue with a `Some` schema is ordinary — that is
 /// PostgreSQL with one database — and both `None` is SQLite.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Scope {
     /// The catalogue, when the product has more than one or named the one.
     pub catalog: Option<String>,
@@ -108,7 +110,7 @@ pub struct Scope {
 }
 
 /// The kinds of object the explorer lists, one folder each.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Folder {
     /// Base tables.
     Tables,
@@ -245,6 +247,50 @@ pub enum NodeId {
 }
 
 impl NodeId {
+    /// Objects refresh their containing folder; error rows retry their parent.
+    fn refresh_root(&self) -> Self {
+        match self {
+            Self::Object {
+                connection,
+                scope,
+                folder,
+                ..
+            } => Self::Folder {
+                connection: *connection,
+                scope: scope.clone(),
+                folder: *folder,
+            },
+            Self::Error(parent) => parent.refresh_root(),
+            _ => self.clone(),
+        }
+    }
+
+    /// Includes cached descendants even when catalog or schema levels are hidden.
+    fn contains(&self, node: &Self) -> bool {
+        if self.connection() != node.connection() {
+            return false;
+        }
+        if self == node {
+            return true;
+        }
+        if let Self::Error(parent) = node {
+            return self.contains(parent);
+        }
+        match self {
+            Self::Connection(_) => true,
+            Self::Catalog { name, .. } => node
+                .as_scope()
+                .is_some_and(|scope| scope.catalog.as_ref() == Some(name)),
+            Self::Schema { catalog, name, .. } => node.as_scope().is_some_and(|scope| {
+                scope.catalog == *catalog && scope.schema.as_ref() == Some(name)
+            }),
+            Self::Folder { scope, folder, .. } => {
+                matches!(node, Self::Object { scope: child_scope, folder: child_folder, .. } if scope == child_scope && folder == child_folder)
+            }
+            Self::Object { .. } | Self::Error(_) => false,
+        }
+    }
+
     /// The connection this node belongs to.
     pub fn connection(&self) -> ConnectionId {
         match self {
@@ -506,11 +552,12 @@ impl ExplorerSource {
         self.children.insert(node, ChildState::Loading);
     }
 
-    /// Drops a node's children, so that the next draw asks for them again.
+    /// Drops the whole cached subtree, including counts, errors and comments.
     pub fn invalidate(&mut self, node: &NodeId) {
-        self.children.remove(node);
-        self.errors.remove(node);
-        self.counts.remove(node);
+        self.children.retain(|child, _| !node.contains(child));
+        self.errors.retain(|child, _| !node.contains(child));
+        self.counts.retain(|child, _| !node.contains(child));
+        self.remarks.retain(|child, _| !node.contains(child));
     }
 
     /// Records the children a fetch produced.
@@ -962,7 +1009,12 @@ pub fn describe_failure(error: JdbcError) -> String {
 /// What the explorer asks the workspace for.
 pub enum ExplorerEvent {
     /// The children of `node` are wanted; the workspace has the session.
-    Load(NodeId),
+    Load {
+        /// The node whose children are wanted.
+        node: NodeId,
+        /// Identifies this request so a refresh can discard older replies.
+        generation: u64,
+    },
     /// An object was activated and should be opened in a pane.
     Activated(Box<ObjectTarget>),
     /// A row was right-clicked and wants its menu drawn over it.
@@ -985,6 +1037,8 @@ pub enum ExplorerEvent {
 pub struct Explorer {
     tree: Entity<TreeView<ExplorerSource>>,
     focus_handle: FocusHandle,
+    generation: u64,
+    pending: HashMap<NodeId, u64>,
     /// Keeps the tree's subscription alive.
     _events: Subscription,
 }
@@ -1025,16 +1079,21 @@ impl Explorer {
         Self {
             tree,
             focus_handle: cx.focus_handle(),
+            generation: 0,
+            pending: HashMap::new(),
             _events: events,
         }
     }
 
     /// Marks the node as loading and asks the workspace to fetch it.
     fn request(&mut self, node: NodeId, cx: &mut Context<Self>) {
+        self.generation += 1;
+        let generation = self.generation;
+        self.pending.insert(node.clone(), generation);
         self.tree.update(cx, |tree, cx| {
             tree.source_mut(cx).mark_loading(node.clone());
         });
-        cx.emit(ExplorerEvent::Load(node));
+        cx.emit(ExplorerEvent::Load { node, generation });
     }
 
     /// Runs `edit` against the tree's source and redraws.
@@ -1051,23 +1110,69 @@ impl Explorer {
     pub fn deliver(
         &mut self,
         node: NodeId,
+        generation: u64,
         outcome: Result<Vec<Child>, SharedString>,
         cx: &mut Context<Self>,
     ) {
+        if self.pending.get(&node) != Some(&generation) {
+            return;
+        }
+        self.pending.remove(&node);
+        if !self
+            .tree
+            .read(cx)
+            .source()
+            .info
+            .contains_key(&node.connection())
+        {
+            return;
+        }
         self.update_source(cx, |source| match outcome {
             Ok(children) => source.set_children(node, children),
             Err(message) => source.set_error(node, message),
         });
     }
 
-    /// Throws away what is under `node` so the next draw fetches it again.
+    /// Refreshes cached children under `node`, keeping the tree's expansion.
     ///
     /// What a connection finishing its handshake needs: a root the user opened
     /// while it was still connecting answered with "the connection is closed",
     /// and that row would otherwise stay until the tab did.
     pub fn reload(&mut self, node: &NodeId, cx: &mut Context<Self>) {
-        let node = node.clone();
+        let node = node.refresh_root();
+        let mut reload: Vec<_> = self
+            .tree
+            .read(cx)
+            .source()
+            .children
+            .keys()
+            .filter(|child| node.contains(child))
+            .cloned()
+            .collect();
+        if !matches!(node, NodeId::Schema { .. }) && !reload.contains(&node) {
+            reload.push(node.clone());
+        }
+        self.pending.retain(|child, _| !node.contains(child));
         self.update_source(cx, |source| source.invalidate(&node));
+        // Start these explicitly: the tree may still remember its previous
+        // request if refresh arrives before it draws the loading/result frame.
+        // Unvisited folders stay lazy; previously read folders get fresh counts.
+        for node in reload {
+            self.request(node, cx);
+        }
+    }
+
+    /// Refreshes the active connection without changing the tree's expansion.
+    fn refresh_visible(&mut self, cx: &mut Context<Self>) {
+        let source = self.tree.read(cx).source();
+        let root = source
+            .visible_roots()
+            .into_iter()
+            .next()
+            .filter(|root| source.info.get(root).is_some_and(|info| info.live));
+        if let Some(root) = root {
+            self.reload(&NodeId::Connection(root), cx);
+        }
     }
 
     /// The connection roots the tree is drawing, for the shell's own tests.
@@ -1127,6 +1232,12 @@ impl Render for Explorer {
         // part company only while nothing is open at all — and that is the state
         // the words below are for.
         let empty = self.tree.read(cx).source().visible_roots().is_empty();
+        let source = self.tree.read(cx).source();
+        let live = source
+            .visible_roots()
+            .iter()
+            .any(|root| source.info.get(root).is_some_and(|info| info.live));
+        let this = cx.entity();
 
         div()
             .id("explorer")
@@ -1149,11 +1260,21 @@ impl Render for Explorer {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .h(px(24.))
+                    .justify_between()
+                    .h(px(32.))
                     .px(px(10.))
                     .text_size(px(10.))
                     .text_color(chrome.text_muted)
-                    .child(ts!("explorer.title")),
+                    .child(ts!("explorer.title"))
+                    .child(
+                        Button::new("explorer-refresh", ts!("explorer.refresh"))
+                            .compact()
+                            .variant(ButtonVariant::Secondary)
+                            .disabled(!live)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |explorer, cx| explorer.refresh_visible(cx));
+                            }),
+                    ),
             )
             .child(if empty {
                 // A tree with no roots would draw as a blank rectangle, which
@@ -1857,6 +1978,278 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn refreshing_a_schema_clears_its_cached_subtree_only() {
+        let mut source = ExplorerSource::default();
+        let tables = NodeId::Folder {
+            connection: C,
+            scope: scope("APP"),
+            folder: Folder::Tables,
+        };
+        let views = NodeId::Folder {
+            connection: C,
+            scope: scope("APP"),
+            folder: Folder::Views,
+        };
+        let other_schema = NodeId::Folder {
+            connection: C,
+            scope: scope("OTHER"),
+            folder: Folder::Tables,
+        };
+        let other_connection = NodeId::Folder {
+            connection: ConnectionId(2),
+            scope: scope("APP"),
+            folder: Folder::Tables,
+        };
+        let table = node(Folder::Tables, "PERSON");
+        source.set_children(
+            tables.clone(),
+            vec![Child {
+                id: table.clone(),
+                remarks: Some("old comment".into()),
+            }],
+        );
+        source.set_error(views.clone(), "permission denied".into());
+        source.set_children(other_schema.clone(), vec![]);
+        source.set_children(other_connection.clone(), vec![]);
+
+        source.invalidate(&NodeId::Schema {
+            connection: C,
+            catalog: None,
+            name: "APP".to_string(),
+        });
+        assert_eq!(source.children(Some(&tables)), ChildState::NotLoaded);
+        assert_eq!(source.children(Some(&views)), ChildState::NotLoaded);
+        assert!(!source.counts.contains_key(&tables));
+        assert!(!source.errors.contains_key(&views));
+        assert!(source.remarks_of(&table).is_none());
+        assert_eq!(
+            source.children(Some(&other_schema)),
+            ChildState::Loaded(vec![])
+        );
+        assert_eq!(
+            source.children(Some(&other_connection)),
+            ChildState::Loaded(vec![])
+        );
+
+        source.invalidate(&NodeId::Connection(C));
+        assert_eq!(source.children(Some(&other_schema)), ChildState::NotLoaded);
+        assert_eq!(
+            source.children(Some(&other_connection)),
+            ChildState::Loaded(vec![])
+        );
+    }
+
+    #[test]
+    fn refreshing_a_catalog_includes_folders_with_no_schema_level() {
+        let mut source = ExplorerSource::default();
+        let folder = |catalog: &str| NodeId::Folder {
+            connection: C,
+            scope: Scope {
+                catalog: Some(catalog.into()),
+                schema: None,
+            },
+            folder: Folder::Tables,
+        };
+        source.set_children(folder("first"), vec![]);
+        source.set_children(folder("second"), vec![]);
+        source.invalidate(&NodeId::Catalog {
+            connection: C,
+            name: "first".into(),
+        });
+        assert_eq!(
+            source.children(Some(&folder("first"))),
+            ChildState::NotLoaded
+        );
+        assert_eq!(
+            source.children(Some(&folder("second"))),
+            ChildState::Loaded(vec![])
+        );
+    }
+
+    #[gpui::test]
+    fn a_refresh_discards_older_replies_and_retries_an_objects_folder(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let explorer = cx.new(Explorer::new);
+        let folder = node(Folder::Tables, "PERSON").refresh_root();
+        explorer.update(cx, |explorer, cx| {
+            explorer.update_source(cx, |source| {
+                source.upsert_root(
+                    C,
+                    RootInfo {
+                        name: "test".into(),
+                        color: None,
+                        live: true,
+                    },
+                )
+            });
+            explorer.request(folder.clone(), cx);
+            let old = explorer.generation;
+            explorer.reload(&node(Folder::Tables, "PERSON"), cx);
+            let current = explorer.generation;
+            explorer.deliver(folder.clone(), old, Err("old failure".into()), cx);
+            assert_eq!(
+                explorer.tree.read(cx).source().children(Some(&folder)),
+                ChildState::Loading
+            );
+            explorer.deliver(
+                folder.clone(),
+                current,
+                Ok(vec![Child::plain(node(Folder::Tables, "NOTE"))]),
+                cx,
+            );
+            explorer.deliver(folder.clone(), old, Ok(vec![]), cx);
+            assert_eq!(
+                explorer.tree.read(cx).source().children(Some(&folder)),
+                ChildState::Loaded(vec![node(Folder::Tables, "NOTE")])
+            );
+
+            explorer.request(folder.clone(), cx);
+            let current = explorer.generation;
+            explorer.update_source(cx, |source| source.remove_root(C));
+            explorer.deliver(folder.clone(), current, Ok(vec![]), cx);
+            assert_eq!(
+                explorer.tree.read(cx).source().children(Some(&folder)),
+                ChildState::NotLoaded
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn refreshing_before_the_loading_frame_still_starts_a_new_request(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let explorer = window
+            .update(cx, |_explorer, _window, cx| cx.entity())
+            .unwrap();
+        let loads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            let loads = loads.clone();
+            cx.subscribe(&explorer, move |explorer, event, cx| {
+                if let ExplorerEvent::Load { node, generation } = event {
+                    loads.set(loads.get() + 1);
+                    explorer.update(cx, |explorer, cx| {
+                        if loads.get() == 1 {
+                            explorer.reload(node, cx);
+                        } else {
+                            explorer.deliver(node.clone(), *generation, Ok(vec![]), cx);
+                        }
+                    });
+                }
+            })
+        });
+        explorer.update(cx, |explorer, cx| {
+            explorer.update_source(cx, |source| {
+                source.upsert_root(
+                    C,
+                    RootInfo {
+                        name: "test".into(),
+                        color: None,
+                        live: true,
+                    },
+                );
+                source.set_visible_root(Some(C));
+            });
+            explorer
+                .tree
+                .update(cx, |tree, cx| tree.expand(&NodeId::Connection(C), cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            loads.get(),
+            2,
+            "refresh must not wait for the original reply"
+        );
+        explorer.update(cx, |explorer, cx| {
+            assert_eq!(
+                explorer
+                    .tree
+                    .read(cx)
+                    .source()
+                    .children(Some(&NodeId::Connection(C))),
+                ChildState::Loaded(vec![])
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn refreshing_the_visible_connection_reloads_expanded_folders(cx: &mut gpui::TestAppContext) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        let folder = node(Folder::Tables, "PERSON").refresh_root();
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, |source| {
+                    source.upsert_root(
+                        C,
+                        RootInfo {
+                            name: "test".into(),
+                            color: None,
+                            live: true,
+                        },
+                    );
+                    source.set_visible_root(Some(C));
+                    source.set_children(root.clone(), vec![Child::plain(folder.clone())]);
+                    source.set_children(
+                        folder.clone(),
+                        vec![Child::plain(node(Folder::Tables, "PERSON"))],
+                    );
+                });
+                explorer.tree.update(cx, |tree, cx| {
+                    tree.expand(&root, cx);
+                    tree.expand(&folder, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.refresh_visible(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                let generation = *explorer
+                    .pending
+                    .get(&root)
+                    .expect("the root was requested again");
+                explorer.deliver(
+                    root.clone(),
+                    generation,
+                    Ok(vec![Child::plain(folder.clone())]),
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                let generation = *explorer
+                    .pending
+                    .get(&folder)
+                    .expect("the expanded folder was requested again");
+                explorer.deliver(
+                    folder.clone(),
+                    generation,
+                    Ok(vec![Child::plain(node(Folder::Tables, "NOTE"))]),
+                    cx,
+                );
+                assert!(explorer.tree.read(cx).is_expanded(&root));
+                assert!(explorer.tree.read(cx).is_expanded(&folder));
+                assert_eq!(
+                    explorer.tree.read(cx).source().children(Some(&folder)),
+                    ChildState::Loaded(vec![node(Folder::Tables, "NOTE")])
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn every_label_the_explorer_draws_has_a_translation() {
         for folder in FOLDERS {
             let label = folder.label();
@@ -1865,6 +2258,7 @@ pub(crate) mod tests {
         }
         for label in [
             ts!("explorer.title"),
+            ts!("explorer.refresh"),
             ts!("explorer.empty"),
             ts!("explorer.loading"),
             ts!("explorer.unknown_connection"),

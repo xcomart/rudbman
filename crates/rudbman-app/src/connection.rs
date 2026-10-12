@@ -37,6 +37,7 @@
 //! type that touches one — [`ConnectionSpec`], [`TunnelSpec`], [`SshAuth`] —
 //! masks it in `Debug`, and nothing in this module renders one by hand.
 
+#[cfg(test)]
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -53,79 +54,11 @@ use rudbman_jdbc::{
     BridgeError, BridgeErrorKind, ConnectionSpec, Error as JdbcError, Jvm, JvmConfig,
     KeepAliveSpec, Session, SessionInfo, default_bridge_jar,
 };
-use rudbman_ssh::{HostKeyVerifier, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
+use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
-/// Placeholders that name the catalogue rather than the server.
-///
-/// `{database}`, `{service}`, `{sid}` and `{file}` all stand for the same thing
-/// on screen — what a product calls the thing you connect *to* — but each driver
-/// family spells it its own way, so one field on screen fills whichever of these
-/// the template happens to use.
-pub const CATALOGUE_PLACEHOLDERS: [&str; 4] = ["database", "service", "sid", "file"];
-
-/// Fills `{placeholder}` holes in a driver's URL template.
-///
-/// An unknown placeholder is left as it stands rather than blanked: a template
-/// from a hand-written `drivers.json` may well use a hole the editor has no
-/// field for, and leaving `{warehouse}` visible in the preview says so, whereas
-/// silently dropping it produces a URL that fails at the driver with no clue
-/// where the gap came from.
-pub fn substitute(template: &str, values: &HashMap<String, String>) -> String {
-    let mut out = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let Some(close) = rest[open..].find('}').map(|index| open + index) else {
-            // An unbalanced brace is part of the URL, not a hole.
-            out.push_str(&rest[open..]);
-            return out;
-        };
-        let name = &rest[open + 1..close];
-        match values.get(name) {
-            Some(value) => out.push_str(value),
-            None => out.push_str(&rest[open..=close]),
-        }
-        rest = &rest[close + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The placeholders a template actually uses, in the order they appear.
-pub fn placeholders_of(template: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        let Some(close) = rest[open..].find('}').map(|index| open + index) else {
-            break;
-        };
-        let name = rest[open + 1..close].to_string();
-        if !name.is_empty() && !found.contains(&name) {
-            found.push(name);
-        }
-        rest = &rest[close + 1..];
-    }
-    found
-}
-
-/// Rewrites the host and port of an already-assembled JDBC URL.
-///
-/// What the tunnel needs: the profile's URL names the database as it is called
-/// *inside* the remote network, and the driver has to be pointed at the local
-/// port instead. Only the authority — the `host:port` between `//` and the next
-/// `/`, `;`, `?` or end — is touched, so a URL's grammar survives whatever shape
-/// it has. A URL with no `//` (SQLite's `jdbc:sqlite:/path`, H2's
-/// `jdbc:h2:mem:x`) is left alone: there is no server in it to redirect.
-pub fn redirect_authority(url: &str, host: &str, port: u16) -> String {
-    let Some(slashes) = url.find("//") else {
-        return url.to_string();
-    };
-    let start = slashes + 2;
-    let end = url[start..]
-        .find(['/', ';', '?'])
-        .map_or(url.len(), |index| start + index);
-    format!("{}{host}:{port}{}", &url[..start], &url[end..])
-}
+pub use rudbkit_core::url::{
+    CATALOGUE_PLACEHOLDERS, placeholders_of, redirect_authority, substitute,
+};
 
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
@@ -611,13 +544,11 @@ struct Shared {
     tunnel: SshTunnel,
     /// The port the OS actually bound, which is what goes into the URL.
     local_port: u16,
-    /// How many sessions are using it.
-    leases: usize,
     /// Set once the tunnel has ended, so a lease taken in the same instant is
     /// not handed a corpse.
     dead: Arc<AtomicBool>,
     /// One sender per lease, fired with the reason when the tunnel ends.
-    watchers: Vec<oneshot::Sender<String>>,
+    watchers: Arc<Mutex<Vec<oneshot::Sender<String>>>>,
 }
 
 /// The tunnels currently up, keyed by bastion and target.
@@ -625,7 +556,7 @@ struct Shared {
 /// A process-wide map rather than something the workspace owns, because it has
 /// to be reachable from the background threads that do the connecting, and
 /// those hold no gpui context.
-static TUNNELS: Mutex<Option<HashMap<TunnelKey, Arc<Mutex<Shared>>>>> = Mutex::new(None);
+static TUNNELS: LeasePool<TunnelKey, Mutex<Shared>> = LeasePool::new();
 
 /// One session's claim on a shared tunnel.
 ///
@@ -668,37 +599,20 @@ impl TunnelLease {
     /// miss the news by having asked a moment too late.
     pub fn watch(&self) -> oneshot::Receiver<String> {
         let (sender, receiver) = oneshot::channel();
-        let mut shared = self.shared.lock();
-        if shared.dead.load(Ordering::Relaxed) {
+        let shared = self.shared.lock();
+        let mut watchers = shared.watchers.lock();
+        if shared.dead.load(Ordering::Acquire) {
             let _ = sender.send("the tunnel is down".to_string());
         } else {
-            shared.watchers.push(sender);
+            watchers.push(sender);
         }
         receiver
     }
 }
 
-impl Drop for TunnelLease {
+impl Drop for Shared {
     fn drop(&mut self) {
-        let mut registry = TUNNELS.lock();
-        let Some(map) = registry.as_mut() else {
-            return;
-        };
-        let Some(shared) = map.get(&self.key).cloned() else {
-            return;
-        };
-        let last = {
-            let mut shared = shared.lock();
-            shared.leases = shared.leases.saturating_sub(1);
-            shared.leases == 0
-        };
-        if last {
-            map.remove(&self.key);
-            // Dropped after the map entry is gone so that a connect racing this
-            // one starts a fresh tunnel rather than joining a closing one.
-            drop(registry);
-            shared.lock().tunnel.close();
-        }
+        self.tunnel.close();
     }
 }
 
@@ -706,28 +620,23 @@ impl Drop for TunnelLease {
 fn open_tunnel(config: &TunnelConfig, secret: Option<String>) -> Result<TunnelLease, ConnectError> {
     let key = TunnelKey::of(config);
 
-    // An existing tunnel: take a lease and go, without touching the network.
-    {
-        let mut registry = TUNNELS.lock();
-        let map = registry.get_or_insert_with(HashMap::new);
-        if let Some(shared) = map.get(&key).cloned() {
-            let mut guard = shared.lock();
-            if !guard.dead.load(Ordering::Relaxed) {
-                guard.leases += 1;
-                let local_port = guard.local_port;
-                drop(guard);
-                return Ok(TunnelLease {
-                    key,
-                    shared,
-                    local_port,
-                });
-            }
-            // A tunnel that has died but whose last lease has not been dropped
-            // yet must not be handed out again.
-            map.remove(&key);
-        }
-    }
+    let shared = TUNNELS.acquire(
+        key.clone(),
+        |shared| !shared.lock().dead.load(Ordering::Acquire),
+        || create_tunnel(config, secret),
+    )?;
+    let local_port = shared.lock().local_port;
+    Ok(TunnelLease {
+        key,
+        shared,
+        local_port,
+    })
+}
 
+fn create_tunnel(
+    config: &TunnelConfig,
+    secret: Option<String>,
+) -> Result<Mutex<Shared>, ConnectError> {
     let spec = TunnelSpec::from_config(config, secret);
     let verifier = Arc::new(StoredHostKeys::new(config.host.clone(), config.port));
     let (tunnel, mut events) = SshTunnel::open(spec, verifier.clone());
@@ -758,18 +667,17 @@ fn open_tunnel(config: &TunnelConfig, secret: Option<String>) -> Result<TunnelLe
     };
 
     let dead = Arc::new(AtomicBool::new(false));
-    let shared = Arc::new(Mutex::new(Shared {
+    let watchers = Arc::new(Mutex::new(Vec::new()));
+    let shared = Mutex::new(Shared {
         tunnel,
         local_port,
-        leases: 1,
         dead: Arc::clone(&dead),
-        watchers: Vec::new(),
-    }));
+        watchers: Arc::clone(&watchers),
+    });
 
     // The rest of the event stream is drained on a thread of its own: a tunnel
     // that dies has to reach the sessions above it, and nothing else is
     // listening once `connect` has returned.
-    let watched = Arc::clone(&shared);
     std::thread::Builder::new()
         .name("rudbman-tunnel-watch".to_string())
         .spawn(move || {
@@ -785,24 +693,17 @@ fn open_tunnel(config: &TunnelConfig, secret: Option<String>) -> Result<TunnelLe
                 }
                 "the tunnel ended".to_string()
             });
-            dead.store(true, Ordering::Relaxed);
-            let watchers = std::mem::take(&mut watched.lock().watchers);
+            let mut watching = watchers.lock();
+            dead.store(true, Ordering::Release);
+            let watchers = std::mem::take(&mut *watching);
+            drop(watching);
             for watcher in watchers {
                 let _ = watcher.send(reason.clone());
             }
         })
         .map_err(|error| ConnectError::Tunnel(error.to_string()))?;
 
-    TUNNELS
-        .lock()
-        .get_or_insert_with(HashMap::new)
-        .insert(key.clone(), Arc::clone(&shared));
-
-    Ok(TunnelLease {
-        key,
-        shared,
-        local_port,
-    })
+    Ok(shared)
 }
 
 /// How many tunnels are currently up.
@@ -811,7 +712,7 @@ fn open_tunnel(config: &TunnelConfig, secret: Option<String>) -> Result<TunnelLe
 /// registry as they found it, and that is not observable any other way.
 #[cfg(test)]
 pub fn open_tunnel_count() -> usize {
-    TUNNELS.lock().as_ref().map_or(0, HashMap::len)
+    TUNNELS.live_count()
 }
 
 /// Host key policy: `known_hosts` decides, and an unknown key is refused.

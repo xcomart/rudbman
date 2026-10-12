@@ -3,20 +3,30 @@ use gpui::{TestAppContext, WindowHandle};
 use super::*;
 use crate::app_settings;
 use crate::connection::{self, Connected};
+use rugpui_grid::GridCell;
 
 impl QueryPane {
-    /// The grid of result tab `index`, for the assertions below.
+    /// The result-set tab at `index`, excluding the shared log.
+    fn row_result(&self, index: usize) -> &ResultTab {
+        self.results
+            .iter()
+            .filter(|tab| matches!(tab.body, ResultBody::Rows(_)))
+            .nth(index)
+            .expect("the result set exists")
+    }
+
+    /// The grid of result set `index`, for the assertions below.
     fn grid_at(&self, index: usize) -> &Entity<GridView<EditableSource>> {
-        match &self.results[index].body {
+        match &self.row_result(index).body {
             ResultBody::Rows(rows) => &rows.grid,
-            ResultBody::Message(text) => panic!("result {index} is the message {text:?}"),
+            ResultBody::Log(_) => panic!("result {index} is the execution log"),
         }
     }
 
-    /// The message of result tab `index`.
-    fn message_at(&self, index: usize) -> &SharedString {
+    /// The log entries of result tab `index`.
+    fn log_at(&self, index: usize) -> &[ResultLogEntry] {
         match &self.results[index].body {
-            ResultBody::Message(text) => text,
+            ResultBody::Log(log) => &log.entries,
             ResultBody::Rows(_) => panic!("result {index} is a grid"),
         }
     }
@@ -26,7 +36,7 @@ impl QueryPane {
 ///
 /// `DB_CLOSE_DELAY=-1` keeps it alive between connections, exactly as the
 /// explorer's own fixture does.
-fn h2(name: &str, setup: &[&str]) -> (Connected, ConnectionProfile) {
+pub(super) fn h2(name: &str, setup: &[&str]) -> (Connected, ConnectionProfile) {
     let mut profile = connection::h2::profile(name);
     profile.url = format!("{};DB_CLOSE_DELAY=-1", profile.url);
     // The guards are switched on by the one test that is about them; the
@@ -51,7 +61,7 @@ fn h2(name: &str, setup: &[&str]) -> (Connected, ConnectionProfile) {
 }
 
 /// A window whose whole content is one query pane over `connected`.
-fn pane(
+pub(super) fn pane(
     connected: &Connected,
     profile: &ConnectionProfile,
     batch_rows: u32,
@@ -110,7 +120,7 @@ fn column_zero(
                     // nothing: only the data pane's overlay can leave a
                     // column to the server (§7.9).
                     GridCell::Default => "DEFAULT".to_string(),
-                    GridCell::Lob { size } => format!("lob {size:?}"),
+                    GridCell::Lob { size, .. } => format!("lob {size:?}"),
                 })
                 .collect()
         })
@@ -185,7 +195,7 @@ fn anywhere() -> Point<Pixels> {
 /// The id of the pane's first result tab.
 fn first_result(window: &WindowHandle<QueryPane>, cx: &mut TestAppContext) -> u64 {
     window
-        .update(cx, |pane, _window, _cx| pane.results[0].id)
+        .update(cx, |pane, _window, _cx| pane.row_result(0).id)
         .expect("the window is open")
 }
 
@@ -229,7 +239,7 @@ fn column_at(
                     // server, and §7.9 gives a query result no way to add
                     // one.
                     GridCell::Default => "DEFAULT".to_string(),
-                    GridCell::Lob { size } => format!("lob {size:?}"),
+                    GridCell::Lob { size, .. } => format!("lob {size:?}"),
                 })
                 .collect()
         })
@@ -252,9 +262,11 @@ fn read_only_reason(
     cx: &mut TestAppContext,
 ) -> Option<SharedString> {
     window
-        .update(cx, |pane, _window, _cx| match &pane.results[index].body {
-            ResultBody::Rows(rows) => rows.read_only.clone(),
-            ResultBody::Message(text) => panic!("result {index} is the message {text:?}"),
+        .update(cx, |pane, _window, _cx| {
+            match &pane.row_result(index).body {
+                ResultBody::Rows(rows) => rows.read_only.clone(),
+                ResultBody::Log(_) => panic!("result {index} is the execution log"),
+            }
         })
         .expect("the window is open")
 }
@@ -336,5 +348,7 @@ fn server_rows(connected: &Connected, sql: &str) -> Vec<String> {
 
 mod editing;
 mod execution;
+mod lob;
 mod menus;
 mod statements;
+mod toolbar;

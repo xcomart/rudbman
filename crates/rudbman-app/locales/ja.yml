@@ -319,6 +319,7 @@ driver:
 
 # エクスプローラーのサイドバー。
 explorer:
+  refresh: 更新
   title: エクスプローラー
   empty: 接続を開くと中身をたどれます。
   loading: 読み込み中…
@@ -378,6 +379,19 @@ detail:
   cache: キャッシュ
 
 query:
+  result_log: "実行ログ"
+  execution_time: "実行時間: %{seconds} 秒"
+  total_execution_time: "合計実行時間: %{seconds} 秒"
+  rollback: "ロールバック"
+  rolling_back: "ロールバック中…"
+  rolled_back: "トランザクションをロールバックしました。"
+  rollback_failed: "ロールバックに失敗しました: %{message}"
+  rollback_auto: "ロールバック（自動コミットが有効です）"
+  commit: "コミット"
+  committing: "コミット中…"
+  committed: "トランザクションをコミットしました。"
+  commit_failed: "コミットに失敗しました: %{message}"
+  commit_auto: "コミット（自動コミットが有効です）"
   run: 実行
   cancel: キャンセル
   cancelling: キャンセル中…
@@ -396,7 +410,6 @@ query:
   confirm_title: この文を実行しますか?
   confirm_body: "データを変更する文: %{count} 件"
   confirm_run: 実行する
-  lob_unsupported: LOB ビューアーはまだありません。
   not_editable: この行は主キーを選択した単一のテーブルから来ていないため、読み取りはできますが変更はできません。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 文の構文と、対象を読む権限があるかを確認してください。
@@ -602,6 +615,7 @@ input:
   menu_select_all: すべて選択
 
 context:
+  rename_tab: タブ名を変更…
   copy_as: "%{format} でコピー"
   select_all: すべて選択
   clear_selection: 選択を解除
@@ -651,3 +665,37 @@ update:
   installing: インストールしています…
   failed: 更新に失敗しました。
   open_release: リリースページを開く
+
+tab_name:
+  title: タブ名を変更
+  hint: 空欄にすると既定の名前に戻ります。
+
+completion:
+  trigger: "SQL 補完"
+  column: "列"
+  table: "テーブル"
+  schema: "スキーマ"
+  keyword: "キーワード"
+  hint: "↑↓ 選択 · Enter/Tab 挿入 · Esc 閉じる"
+  function: "関数"
+
+lob:
+  open_text: "テキストエディターを開く…"
+  text: "テキスト"
+  open: "LOBを開く…"
+  export: "ファイルに保存…"
+  import: "ファイルで置換…"
+  empty: "空の値"
+  loading: "読み込み中…"
+  modified: "変更あり"
+  size: "%{bytes} バイト"
+  truncated: "先頭の1 MiBのみ表示します。保存は全内容を出力します。大きな値はファイルで置換できます。"
+  read_only: "読み取り専用です。表示とファイル保存ができます。"
+  hex_hint: "16進数のバイトを編集します。変更に追加した後、データグリッドの適用でDBに反映します。"
+  text_hint: "テキストファイルはUTF-8を使用します。変更に追加してから、データグリッドの適用でデータベースに反映します。"
+  import_error: "ファイルを読み込めません（CLOBはUTF-8が必要です）: %{error}"
+  saved: "ファイルを保存しました。"
+  stage: "変更に追加"
+  discard_question: "このLOBエディターの変更を破棄しますか？"
+  keep_editing: "編集を続ける"
+  invalid_hex: "2桁の16進数（00–FF）を空白または改行で区切って入力してください。"

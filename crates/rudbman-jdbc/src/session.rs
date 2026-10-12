@@ -333,10 +333,9 @@ impl Session {
 
     /// Calls an operation this crate does not model yet.
     ///
-    /// The escape hatch for `LOB_READ`, which the bridge answers with a
-    /// `protocol` [not implemented](crate::BridgeError::is_not_implemented)
-    /// error until its request shape is settled. Goes through the worker like
+    /// An escape hatch for protocol extensions. Goes through the worker like
     /// every other command, so it stays serialised against the connection.
+    /// Prefer typed methods such as [`Cursor::read_lob`] where available.
     pub fn call_raw(
         &self,
         op: Op,
@@ -474,6 +473,57 @@ impl Cursor {
                     .call(Op::Fetch, self.handle, i64::from(max_rows), None)?,
             )?;
         Ok(Batch::decode(&payload)?)
+    }
+
+    /// Reads up to 1 MiB from a LOB in the current result. Offsets are bytes;
+    /// CLOB chunks contain UTF-8 and may split a character. An empty chunk is EOF.
+    pub fn read_lob(&self, id: u64, offset: u64, length: u32) -> Result<Vec<u8>> {
+        if length == 0 || length > 1024 * 1024 || offset > i64::MAX as u64 || id > i64::MAX as u64 {
+            return Err(Error::Protocol("invalid LOB read range".into()));
+        }
+        let request = serde_json::to_vec(&serde_json::json!({
+            "id": id, "offset": offset, "length": length
+        }))?;
+        let bytes = take_payload(
+            self.worker
+                .call(Op::LobRead, self.handle, 0, Some(request))?,
+        )?;
+        if bytes.len() > length as usize {
+            return Err(Error::Protocol("LOB chunk exceeds requested length".into()));
+        }
+        Ok(bytes)
+    }
+
+    /// Copies a LOB to a private local snapshot before the cursor advances or
+    /// closes. Uses bounded buffers even for values larger than available memory.
+    pub fn cache_lob(&self, id: u64, binary: bool) -> Result<crate::LobFile> {
+        struct Chunks<'a> {
+            cursor: &'a Cursor,
+            id: u64,
+            offset: u64,
+        }
+        impl std::io::Read for Chunks<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if buffer.is_empty() {
+                    return Ok(0);
+                }
+                let bytes = self
+                    .cursor
+                    .read_lob(self.id, self.offset, buffer.len().min(1024 * 1024) as u32)
+                    .map_err(std::io::Error::other)?;
+                buffer[..bytes.len()].copy_from_slice(&bytes);
+                self.offset += bytes.len() as u64;
+                Ok(bytes.len())
+            }
+        }
+        Ok(crate::LobFile::from_reader(
+            Chunks {
+                cursor: self,
+                id,
+                offset: 0,
+            },
+            binary,
+        )?)
     }
 
     /// Advances to the statement's next result.

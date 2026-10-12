@@ -102,7 +102,7 @@ pub struct Ddl {
 }
 
 /// Which tab is on screen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Tab {
     /// The column list.
     Columns,
@@ -256,8 +256,7 @@ impl TableDetail {
         }
     }
 
-    /// The tab on screen.
-    #[cfg(test)]
+    /// The tab on screen, also saved with the connection workspace.
     pub fn tab(&self) -> Tab {
         self.tab
     }

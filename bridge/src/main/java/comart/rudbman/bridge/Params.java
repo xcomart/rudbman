@@ -5,6 +5,15 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.PreparedStatement;
@@ -33,11 +42,20 @@ import java.util.Base64;
  *
  * <p>Recognised type names: {@code null}, {@code bool}, {@code i64},
  * {@code f64}, {@code string}, {@code decimal}, {@code date}, {@code time},
- * {@code timestamp}, {@code bytes} (base64).
+ * {@code timestamp}, {@code bytes} (base64), {@code blob_file} and
+ * {@code clob_file} (an immutable local snapshot; the latter is UTF-8).
  */
-public final class Params {
+public final class Params implements AutoCloseable {
+    private final List<Closeable> streams = new ArrayList<>();
 
-    private Params() {
+    Params() { }
+
+    @Override
+    public void close() {
+        for (Closeable stream : streams) {
+            try { stream.close(); } catch (IOException ignored) { }
+        }
+        streams.clear();
     }
 
     /**
@@ -45,13 +63,13 @@ public final class Params {
      * @param params the request's {@code params} array
      * @throws SQLException if the driver rejects a binding
      */
-    public static void bind(PreparedStatement ps, JsonArray params) throws SQLException {
+    public void bind(PreparedStatement ps, JsonArray params) throws SQLException {
         for (int i = 0; i < params.size(); i++) {
             bindOne(ps, i + 1, params.get(i));
         }
     }
 
-    private static void bindOne(PreparedStatement ps, int idx, JsonElement e) throws SQLException {
+    private void bindOne(PreparedStatement ps, int idx, JsonElement e) throws SQLException {
         if (e == null || e.isJsonNull()) {
             setNull(ps, idx);
             return;
@@ -78,7 +96,7 @@ public final class Params {
         }
     }
 
-    private static void bindTyped(PreparedStatement ps, int idx, JsonObject o) throws SQLException {
+    private void bindTyped(PreparedStatement ps, int idx, JsonObject o) throws SQLException {
         String type = Json.str(o, "type");
         JsonElement v = o.get("value");
         if (type == null) {
@@ -116,6 +134,36 @@ public final class Params {
                 break;
             case "timestamp":
                 ps.setTimestamp(idx, Timestamp.valueOf(v.getAsString()));
+                break;
+            case "blob_file":
+            case "clob_file":
+                try {
+                    Path path = Path.of(v.getAsString());
+                    if ("blob_file".equals(type)) {
+                        InputStream stream = Files.newInputStream(path);
+                        streams.add(stream);
+                        long length = Files.size(path);
+                        if (length <= Integer.MAX_VALUE) {
+                            // Some drivers only implement the JDBC 2 int-length overload.
+                            ps.setBinaryStream(idx, stream, (int) length);
+                        } else {
+                            ps.setBinaryStream(idx, stream, length);
+                        }
+                    } else {
+                        Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8);
+                        streams.add(reader);
+                        long length = o.has("length") ? o.get("length").getAsLong() : -1;
+                        if (length < 0) {
+                            ps.setCharacterStream(idx, reader);
+                        } else if (length <= Integer.MAX_VALUE) {
+                            ps.setCharacterStream(idx, reader, (int) length);
+                        } else {
+                            ps.setCharacterStream(idx, reader, length);
+                        }
+                    }
+                } catch (IOException e) {
+                    throw new SQLException("cannot open LOB parameter " + idx, e);
+                }
                 break;
             case "bytes":
                 ps.setBytes(idx, Base64.getDecoder().decode(v.getAsString()));

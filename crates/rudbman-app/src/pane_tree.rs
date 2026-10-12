@@ -115,6 +115,18 @@ pub enum PaneItem {
 }
 
 impl PaneItem {
+    /// Stable for this tab's lifetime, including moves between panes.
+    pub fn entity_id(&self) -> gpui::EntityId {
+        match self {
+            Self::TableDetail(panel) => panel.entity_id(),
+            Self::Query { pane, .. } => pane.entity_id(),
+            Self::Erd(panel) => panel.entity_id(),
+            Self::TableData(panel) => panel.entity_id(),
+            Self::TableStruct(panel) => panel.entity_id(),
+            Self::QueryBuilder { pane, .. } => pane.entity_id(),
+        }
+    }
+
     /// The title its tab carries.
     ///
     /// A detail panel is named after the object it describes, qualified by its

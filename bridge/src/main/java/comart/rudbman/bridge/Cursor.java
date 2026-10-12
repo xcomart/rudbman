@@ -6,15 +6,12 @@ import comart.rudbman.bridge.codec.BatchWriter;
 import comart.rudbman.bridge.codec.ColumnKind;
 import comart.rudbman.bridge.codec.ColumnWriter;
 import comart.rudbman.bridge.codec.ColumnWriters;
-import comart.rudbman.bridge.codec.LobSink;
 import comart.rudbman.bridge.meta.SqlTypes;
 
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -48,27 +45,7 @@ public final class Cursor {
     private long rowsEmitted;
     private volatile boolean closed;
 
-    private final AtomicLong lobSeq = new AtomicLong(1);
-    private final ConcurrentHashMap<Long, LobRef> lobs = new ConcurrentHashMap<>();
-
-    /** A LOB referenced from a batch but not carried in it. */
-    public static final class LobRef {
-        /** Zero-based row index within the cursor. */
-        public final long row;
-        /** One-based JDBC column index. */
-        public final int column;
-        /** Octets for binary LOBs, characters for character LOBs, -1 unknown. */
-        public final long size;
-        /** Whether the LOB is binary. */
-        public final boolean binary;
-
-        LobRef(long row, int column, long size, boolean binary) {
-            this.row = row;
-            this.column = column;
-            this.size = size;
-            this.binary = binary;
-        }
-    }
+    private final LobStore lobs = new LobStore();
 
     /**
      * @param session owning session
@@ -242,25 +219,21 @@ public final class Cursor {
 
     private ColumnWriter[] newWriters(int capacity) {
         ColumnWriter[] w = new ColumnWriter[colTypes.length];
-        LobSink sink = this::registerLob;
         for (int i = 0; i < w.length; i++) {
-            w[i] = ColumnWriters.forColumn(colTypes[i], colPrecision[i], capacity, sink);
+            w[i] = ColumnWriters.forColumn(colTypes[i], colPrecision[i], capacity, lobs);
         }
         return w;
     }
 
-    private long registerLob(long row, int column, long size, boolean binary) {
-        long id = lobSeq.getAndIncrement();
-        lobs.put(id, new LobRef(row, column, size, binary));
-        return id;
-    }
-
-    /**
-     * @param id a LOB identifier previously written into a batch
-     * @return the reference, or {@code null} when unknown
-     */
-    public LobRef lob(long id) {
-        return lobs.get(id);
+    /** Reads a bounded chunk from a LOB snapshot while this result is alive. */
+    public byte[] readLob(JsonObject request) throws java.io.IOException {
+        session.lock();
+        try {
+            if (closed) throw new BridgeException("protocol", "cursor " + handle + " is closed");
+            return lobs.read(request);
+        } finally {
+            session.unlock();
+        }
     }
 
     /**
@@ -308,6 +281,7 @@ public final class Cursor {
         session.lockForCleanup();
         try {
             closeResultSet();
+            lobs.clear();
             try {
                 stmt.close();
             } catch (SQLException e) {
@@ -316,7 +290,6 @@ public final class Cursor {
         } finally {
             session.unlock();
         }
-        lobs.clear();
     }
 
     /** Closes without ever throwing; used from session teardown. */

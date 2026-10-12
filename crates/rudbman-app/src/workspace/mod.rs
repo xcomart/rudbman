@@ -37,12 +37,16 @@ use crate::{
 
 mod actions;
 mod bootstrap;
+mod events;
+mod startup;
 use bootstrap::{app_menus, apply_themes, chrome_titlebar, record_window_geometry};
 mod connections;
 mod dialogs;
 mod menus;
 mod objects;
 mod panes;
+mod session;
+mod tab_name;
 mod view;
 #[cfg(test)]
 use view::centered_scroll;
@@ -295,6 +299,9 @@ fn load_profiles() -> ConnectionStore {
 /// every [`connection::SessionHandle`] and every open cursor, goes before the
 /// session it was running against is closed.
 struct WorkArea {
+    /// User titles keyed by the view, never by a shifting tab index.
+    tab_names: HashMap<gpui::EntityId, String>,
+    checkpoint: Option<session::SavedWorkspace>,
     /// The panes. Never empty, though a pane may hold no tabs.
     panes: PaneTree<Pane>,
     /// The pane the status bar and the pane commands act on.
@@ -324,6 +331,8 @@ impl WorkArea {
         Self {
             panes,
             active_pane,
+            tab_names: HashMap::new(),
+            checkpoint: None,
             next_query: 1,
             next_builder: 1,
         }
@@ -526,6 +535,9 @@ struct PendingConfirm {
 
 /// The root view: title bar, work area, status bar and dialogs.
 struct Workspace {
+    sessions: session::SessionStorage,
+    autosave: Option<Task<()>>,
+    rename_tab: Option<tab_name::RenameTab>,
     /// Focus target for the window, so the shortcuts stay live.
     ///
     /// One handle for the whole shell in M0: no pane holds anything focusable
@@ -643,214 +655,30 @@ impl Workspace {
         }
 
         let about = cx.new(AboutDialog::new);
-        let about_events =
-            cx.subscribe_in(
-                &about,
-                window,
-                |this, dialog, event, window, cx| match event {
-                    AboutDialogEvent::Dismissed => {
-                        dialog.update(cx, |dialog, cx| dialog.close(cx));
-                        this.focus_shell(window, cx);
-                    }
-                },
-            );
+        let about_events = cx.subscribe_in(&about, window, Self::on_about_event);
 
         let connect = cx.new(ConnectionDialog::new);
-        let connect_events = cx.subscribe_in(
-            &connect,
-            window,
-            |this, dialog, event, window, cx| match event {
-                // The dialog has already saved the profile and closed itself;
-                // opening the session is the shell's half of the workflow,
-                // because the tab it produces belongs here.
-                //
-                // The welcome screen is re-read on the way out of the dialog by
-                // either door: whichever one was taken, the file behind the
-                // list may have been saved, renamed or deleted since it was
-                // last read, and the list is what the user comes back to when
-                // this tab is closed again.
-                ConnectionDialogEvent::Connect(profile) => {
-                    this.profiles = load_profiles();
-                    this.open_connection((**profile).clone(), window, cx);
-                }
-                ConnectionDialogEvent::Dismissed => {
-                    dialog.update(cx, |dialog, cx| dialog.close(cx));
-                    this.profiles = load_profiles();
-                    this.focus_shell(window, cx);
-                }
-            },
-        );
+        let connect_events = cx.subscribe_in(&connect, window, Self::on_connect_event);
 
         let explorer = cx.new(Explorer::new);
-        let explorer_events = cx.subscribe_in(
-            &explorer,
-            window,
-            |this, _explorer, event, window, cx| match event {
-                // The explorer has no session of its own — see its module docs —
-                // so every fetch comes back here, where the tabs live.
-                ExplorerEvent::Load(node) => this.load_node(node.clone(), cx),
-                ExplorerEvent::Activated(target) => {
-                    this.open_object((**target).clone(), window, cx);
-                }
-                // The tree holds no strings and none of the five object
-                // commands, so its menu is drawn here (architecture document,
-                // §7.8).
-                //
-                // An error row is the one node with no menu at all: it names
-                // nothing — it is the sentence saying why its parent could not
-                // be read — so every command would be greyed, and a panel of
-                // nothing but greyed rows says less than no panel.
-                ExplorerEvent::ContextMenu { node, position } => {
-                    if !matches!(node, NodeId::Error(_)) {
-                        this.open_context_menu(
-                            ContextTarget::Explorer(Box::new(node.clone())),
-                            *position,
-                            cx,
-                        );
-                    }
-                }
-            },
-        );
+        let explorer_events = cx.subscribe_in(&explorer, window, Self::on_explorer_event);
 
         let settings = cx.new(SettingsDialog::new);
-        let settings_events = cx.subscribe_in(
-            &settings,
-            window,
-            |this, dialog, event, window, cx| match event {
-                // The dialog has already replaced and persisted the settings
-                // global by the time it emits this; the shell re-applies the
-                // parts that touch the live window.
-                SettingsDialogEvent::Applied => {
-                    this.apply_settings(window, cx);
-                    // The dialog closes itself after applying; without a refocus
-                    // the window focus dangles on its unrendered controls and
-                    // macOS disables every menu item validated through it.
-                    this.focus_shell(window, cx);
-                }
-                // The user is still in the dialog and nothing has been saved, so
-                // only the palettes and the fonts follow — and the focus stays
-                // where it is, since taking it back now would pull it out from
-                // under whoever is typing.
-                SettingsDialogEvent::Previewed => this.apply_preview(window, cx),
-                // Closing dropped the preview, so re-applying now resolves back
-                // to the settings on disk. That is the whole of the undo.
-                SettingsDialogEvent::Dismissed => {
-                    dialog.update(cx, |dialog, cx| dialog.close(cx));
-                    this.apply_preview(window, cx);
-                    this.focus_shell(window, cx);
-                }
-            },
-        );
+        let settings_events = cx.subscribe_in(&settings, window, Self::on_settings_event);
 
         let extract = cx.new(ExtractDialog::new);
-        let extract_events = cx.subscribe_in(
-            &extract,
-            window,
-            |this, dialog, event, window, cx| match event {
-                ExtractDialogEvent::Dismissed => {
-                    dialog.update(cx, |dialog, cx| dialog.close(cx));
-                    this.focus_shell(window, cx);
-                }
-            },
-        );
+        let extract_events = cx.subscribe_in(&extract, window, Self::on_extract_event);
 
         let transfer = cx.new(TransferDialog::new);
-        let transfer_events = cx.subscribe_in(
-            &transfer,
-            window,
-            |this, dialog, event, window, cx| match event {
-                TransferDialogEvent::Dismissed => {
-                    dialog.update(cx, |dialog, cx| dialog.close(cx));
-                    this.focus_shell(window, cx);
-                }
-            },
-        );
+        let transfer_events = cx.subscribe_in(&transfer, window, Self::on_transfer_event);
 
         let backup = cx.new(BackupDialog::new);
-        let backup_events =
-            cx.subscribe_in(
-                &backup,
-                window,
-                |this, dialog, event, window, cx| match event {
-                    BackupDialogEvent::Dismissed => {
-                        dialog.update(cx, |dialog, cx| dialog.close(cx));
-                        this.focus_shell(window, cx);
-                    }
-                },
-            );
+        let backup_events = cx.subscribe_in(&backup, window, Self::on_backup_event);
 
         let update = cx.new(UpdateDialog::new);
-        let update_events = cx.subscribe_in(&update, window, |this, dialog, event, window, cx| {
-            match event {
-                UpdateDialogEvent::Ignored { tag } => {
-                    // The dialog has already closed itself; writing the file is
-                    // this workspace's job, through the policy `app_identity`
-                    // installed, because the settings are rudbman's.
-                    update::remember_ignored(tag, cx);
-                    this.focus_shell(window, cx);
-                }
-                UpdateDialogEvent::Installed(_) => {
-                    // The new build is on disk and the dialog is still on
-                    // screen, deliberately: the restart is imminent and a
-                    // dialog that closed itself first would flash the window
-                    // back into view for a fraction of a second. Restarting is
-                    // the application's call and not the shell's — a staged
-                    // update merely spends its restart applying itself and
-                    // re-executing once more.
-                    //
-                    // The path comes from the shell because only it knows that
-                    // the install just renamed the running image aside:
-                    // `restart_path` is the `current_exe()` of the moment
-                    // `init_process_identity` ran, before any of that happened.
-                    // `None` — the platform never said, or no identity was
-                    // installed — is left unset, which is gpui's own default
-                    // and therefore exactly the same thing.
-                    if let Some(path) = rugpui_shell::restart_path() {
-                        cx.set_restart_path(path);
-                    }
-                    cx.restart();
-                }
-                UpdateDialogEvent::Dismissed => {
-                    dialog.update(cx, |dialog, cx| dialog.close(cx));
-                    this.focus_shell(window, cx);
-                }
-            }
-        });
+        let update_events = cx.subscribe_in(&update, window, Self::on_update_event);
 
-        // The start-up update check, off the UI thread: it is an HTTPS request
-        // to GitHub, and nothing on screen waits for it. The tag the user may
-        // have ignored is read here, on the UI thread, because the settings
-        // global is only reachable from it.
-        //
-        // The answer opens a dialog, so it deliberately does *not* go through
-        // `open_about`'s `close_overlays` route: this is the one dialog nobody
-        // asked for, arriving at a moment nobody chose, and it must never take
-        // the screen from something the user opened themselves — a half-typed
-        // connection form above all. If anything is already up, the check simply
-        // says nothing and tries again next launch.
-        //
-        let ignored = app_settings::current(cx).ignored_update;
-        cx.spawn(async move |this, cx| {
-            let found = cx
-                .background_executor()
-                .spawn(async move { update::check(ignored.as_deref()) })
-                .await;
-            let Some(release) = found else {
-                return;
-            };
-            this.update(cx, |workspace, cx| {
-                if workspace.dialog_open(cx) {
-                    log::debug!("update {} announced while a dialog is open", release.tag);
-                    return;
-                }
-                workspace.update.update(cx, |dialog, cx| {
-                    dialog.open(release, cx);
-                });
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        Self::start_background_work(cx);
 
         // In memory only; the file is written once, when the window closes. See
         // [`app_settings::record_window_geometry`].
@@ -871,7 +699,20 @@ impl Workspace {
 
         let settings_snapshot = app_settings::current(cx);
 
+        cx.observe_self(|workspace, cx| workspace.schedule_workspace_save(cx))
+            .detach();
+        cx.on_release(|workspace, cx| workspace.flush_workspaces(cx))
+            .detach();
+        cx.on_app_quit(|workspace, cx| {
+            workspace.flush_workspaces(cx);
+            async {}
+        })
+        .detach();
+
         Self {
+            sessions: session::SessionStorage::default(),
+            autosave: None,
+            rename_tab: None,
             focus_handle: cx.focus_handle(),
             explorer,
             explorer_visible: settings_snapshot.explorer_visible,
@@ -915,6 +756,7 @@ impl Workspace {
 /// the same for every pane on screen, and the alternative is a `render_pane`
 /// with seven parameters, most of them constants of the frame.
 struct PaneChrome {
+    tab_names: HashMap<gpui::EntityId, String>,
     /// The pane the marker is on, drawn with an accent frame.
     active: PaneId,
     /// Whether panes are framed at all, which they are once there are two.

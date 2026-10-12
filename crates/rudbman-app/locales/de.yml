@@ -319,6 +319,7 @@ driver:
 
 # Die Explorer-Seitenleiste.
 explorer:
+  refresh: Aktualisieren
   title: Explorer
   empty: Öffnen Sie eine Verbindung, um sie zu durchsuchen.
   loading: wird geladen …
@@ -378,6 +379,19 @@ detail:
   cache: Cache
 
 query:
+  result_log: "Ausführungsprotokoll"
+  execution_time: "Ausführungszeit: %{seconds} s"
+  total_execution_time: "Gesamte Ausführungszeit: %{seconds} s"
+  rollback: "Rollback"
+  rolling_back: "Rollback läuft…"
+  rolled_back: "Transaktion zurückgesetzt."
+  rollback_failed: "Rollback fehlgeschlagen: %{message}"
+  rollback_auto: "Rollback (automatisches Commit ist aktiviert)"
+  commit: "Commit"
+  committing: "Commit läuft…"
+  committed: "Transaktion bestätigt."
+  commit_failed: "Commit fehlgeschlagen: %{message}"
+  commit_auto: "Commit (automatisches Commit ist aktiviert)"
   run: Ausführen
   cancel: Abbrechen
   cancelling: Wird abgebrochen…
@@ -396,7 +410,6 @@ query:
   confirm_title: Diese Anweisung ausführen?
   confirm_body: "Anweisungen, die Daten ändern: %{count}"
   confirm_run: Ausführen
-  lob_unsupported: Der LOB-Betrachter existiert noch nicht.
   not_editable: Diese Zeilen stammen nicht aus einer Tabelle samt ausgewähltem Primärschlüssel; sie lassen sich lesen, aber nicht ändern.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Prüfen Sie die Syntax der Anweisung und Ihre Leserechte auf das Genannte.
@@ -602,6 +615,7 @@ input:
   menu_select_all: Alles auswählen
 
 context:
+  rename_tab: Tab umbenennen…
   copy_as: "Als %{format} kopieren"
   select_all: Alles auswählen
   clear_selection: Auswahl aufheben
@@ -651,3 +665,37 @@ update:
   installing: Wird installiert…
   failed: Das Update ist fehlgeschlagen.
   open_release: Release-Seite öffnen
+
+tab_name:
+  title: Tab umbenennen
+  hint: Leer lassen, um den Standardnamen wiederherzustellen.
+
+completion:
+  trigger: "SQL-Vervollständigung"
+  column: "Spalte"
+  table: "Tabelle"
+  schema: "Schema"
+  keyword: "Schlüsselwort"
+  hint: "↑↓ wählen · Enter/Tab einfügen · Esc schließen"
+  function: "Funktion"
+
+lob:
+  open_text: "Texteditor öffnen…"
+  text: "Text"
+  open: "LOB öffnen…"
+  export: "In Datei speichern…"
+  import: "Aus Datei ersetzen…"
+  empty: "Leerer Wert"
+  loading: "Wird geladen…"
+  modified: "Geändert"
+  size: "%{bytes} Bytes"
+  truncated: "Nur die ersten 1 MiB werden angezeigt. Speichern exportiert den gesamten Wert; größere Werte können durch eine Datei ersetzt werden."
+  read_only: "Schreibgeschützt. Sie können den Wert ansehen und speichern."
+  hex_hint: "Hexadezimale Bytepaare bearbeiten. Zu Änderungen hinzufügen und danach im Datenraster Anwenden wählen, um die Datenbank zu ändern."
+  text_hint: "Textdateien verwenden UTF-8. Zu den Änderungen hinzufügen und dann im Datenraster anwenden, um in die Datenbank zu schreiben."
+  import_error: "Datei konnte nicht importiert werden (CLOB-Text muss UTF-8 sein): %{error}"
+  saved: "Datei gespeichert."
+  stage: "Zu Änderungen hinzufügen"
+  discard_question: "Änderungen in diesem LOB-Editor verwerfen?"
+  keep_editing: "Weiter bearbeiten"
+  invalid_hex: "Hexadezimale Ziffernpaare (00–FF), getrennt durch Leerzeichen oder Zeilenumbrüche, eingeben."

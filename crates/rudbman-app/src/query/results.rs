@@ -24,6 +24,7 @@ impl QueryPane {
         &mut self,
         sql: String,
         executed: String,
+        elapsed: Duration,
         columns: Vec<ColumnInfo>,
         batch: RenderedBatch,
         state: GridSourceState,
@@ -82,7 +83,18 @@ impl QueryPane {
             }
         });
 
-        let label = ts!("query.result", index = self.results.len() + 1);
+        let index = self
+            .results
+            .iter()
+            .filter(|tab| matches!(tab.body, ResultBody::Rows(_)))
+            .count()
+            + 1;
+        let label = ts!("query.result", index = index);
+        // Keep the first grid visible by default while the log stays available
+        // as the leading tab. Later results must not change the user's tab.
+        if index == 1 {
+            self.active_result = self.results.len();
+        }
         self.results.push(ResultTab {
             id,
             label,
@@ -90,6 +102,7 @@ impl QueryPane {
                 grid,
                 sql,
                 executed,
+                elapsed,
                 columns: Arc::new(columns),
                 table: None,
                 read_only: None,
@@ -225,7 +238,7 @@ impl QueryPane {
             .find(|tab| tab.id == id)
             .and_then(|tab| match &mut tab.body {
                 ResultBody::Rows(rows) => Some(&mut **rows),
-                ResultBody::Message(_) => None,
+                ResultBody::Log(_) => None,
             })
     }
 
@@ -301,7 +314,9 @@ impl QueryPane {
                 let mut cursor = Some(cursor);
                 // The statement that ran, not the one a sort would wrap:
                 // `append` works the second out of `sort_base` for itself.
-                let sql = self.rows_tab(id).map(|tab| tab.executed.clone());
+                let execution = self
+                    .rows_tab(id)
+                    .map(|tab| (tab.executed.clone(), tab.elapsed));
 
                 if let Some(tab) = self.rows_tab(id) {
                     tab.fetching = false;
@@ -326,10 +341,10 @@ impl QueryPane {
 
                 // Results the `MORE_RESULTS` walk picked up once this one ended.
                 if !steps.is_empty()
-                    && let Some(sql) = sql
+                    && let Some((sql, elapsed)) = execution
                 {
                     let carried = if pageable { cursor.take() } else { None };
-                    self.append(&sql, steps, carried, window, cx);
+                    self.append(&sql, steps, elapsed, carried, window, cx);
                 }
                 self.recount(cx);
             }
@@ -409,16 +424,8 @@ impl QueryPane {
 
     /// A cell was opened: a field over it, or a word about why not.
     ///
-    /// A LOB has no body in the grid — only its size travelled — and reading
-    /// one needs `LOB_READ` (0x25), which the bridge answers "not implemented"
-    /// (architecture document, §12, open question 7). Saying so is better than
-    /// a viewer that shows nothing.
-    ///
-    /// Anything else goes to [`GridView::begin_edit`], which refuses on its own
-    /// for a cell that cannot take a field — a result that failed §7.9's gate,
-    /// a computed column, a row on its way out — so there is nothing to check
-    /// here that is not already checked where it is known.
-    // TODO(M4): open a chunked LOB viewer once `LOB_READ` lands in the bridge.
+    /// Opens the shared viewer for BLOB/CLOB and multiline text cells.
+    /// Other cells use the grid's inline editor and its usual writability checks.
     pub(super) fn open_cell(
         &mut self,
         id: u64,
@@ -430,11 +437,31 @@ impl QueryPane {
         let Some(grid) = self.grid_of(id).cloned() else {
             return;
         };
-        if matches!(
-            grid.read(cx).source().cell(row, column),
-            GridCell::Lob { .. }
-        ) {
-            self.notice = Some(ts!("query.lob_unsupported"));
+        if grid.read(cx).source().uses_value_viewer(row, column) {
+            if self.lob_dialog.is_some()
+                || self.applying
+                || self.preview.is_some()
+                || self.transaction.is_some()
+            {
+                return;
+            }
+            self.close_completion(cx);
+            self.context_menu = None;
+            let attached = self.session.is_some();
+            let dialog = cx.new(|cx| {
+                crate::lob_dialog::LobDialog::new(grid.clone(), row, column, attached, window, cx)
+            });
+            self.lob_events = Some(cx.subscribe_in(
+                &dialog,
+                window,
+                move |pane, _, _: &crate::lob_dialog::Closed, window, cx| {
+                    pane.lob_dialog = None;
+                    pane.lob_events = None;
+                    window.focus(&grid.read(cx).focus_handle(cx), cx);
+                    cx.notify();
+                },
+            ));
+            self.lob_dialog = Some(dialog);
             cx.notify();
             return;
         }
@@ -450,10 +477,18 @@ impl QueryPane {
         }
         let elapsed = match &self.run {
             RunState::Running(running) => running.started.elapsed(),
-            RunState::Idle => Duration::ZERO,
+            RunState::Idle => return,
         };
         self.run = RunState::Idle;
         self.finished = Some(Finished { rows: 0, elapsed });
+        // Keep the final total in view when the user was following the log.
+        for tab in &self.results {
+            if let ResultBody::Log(log) = &tab.body
+                && log.scroll.is_scrolled_to_end().unwrap_or(true)
+            {
+                log.scroll.scroll_to_bottom();
+            }
+        }
         self.recount(cx);
         cx.notify();
     }

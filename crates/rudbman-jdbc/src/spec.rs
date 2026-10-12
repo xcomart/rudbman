@@ -238,6 +238,8 @@ pub enum Param {
     Timestamp(String),
     /// Raw bytes; base64-encoded on the wire.
     Bytes(Vec<u8>),
+    /// A file-backed BLOB/CLOB, streamed by the bridge while this value owns its snapshot.
+    Lob(crate::LobFile),
 }
 
 impl Serialize for Param {
@@ -279,6 +281,23 @@ impl Serialize for Param {
             Param::Time(text) => typed(serializer, "time", text),
             Param::Timestamp(text) => typed(serializer, "timestamp", text),
             Param::Bytes(bytes) => typed(serializer, "bytes", &base64(bytes)),
+            Param::Lob(value) => {
+                let path = value.path().to_str().ok_or_else(|| {
+                    serde::ser::Error::custom("LOB snapshot path is not valid Unicode")
+                })?;
+                let mut object = serializer.serialize_struct("Param", 3)?;
+                object.serialize_field(
+                    "type",
+                    if value.is_binary() {
+                        "blob_file"
+                    } else {
+                        "clob_file"
+                    },
+                )?;
+                object.serialize_field("value", path)?;
+                object.serialize_field("length", &value.len())?;
+                object.end()
+            }
         }
     }
 }

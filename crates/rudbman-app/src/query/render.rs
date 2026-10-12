@@ -92,18 +92,19 @@ pub fn error_lines(error: &QueryError, chrome: &Theme) -> Div {
 }
 
 impl Render for QueryPane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
         let fonts = crate::app_settings::effective(cx);
         let share = self.editor_share.clamp(MIN_SHARE, 1. - MIN_SHARE);
         let id = cx.entity_id();
+        let editor_toolbar = self.render_editor_toolbar(&chrome, cx);
         let toolbar = self.render_toolbar(&chrome, cx);
         let banner = self.render_banner(&chrome);
         let failure = self
             .apply_error
             .as_ref()
             .map(|problem| render_apply_error(problem, &chrome));
-        let results = self.render_results(&chrome);
+        let results = self.render_results(&chrome, cx);
         let context_menu = self.render_context_menu(cx);
         // Both modals are `row_apply`'s; what each button does is this pane's,
         // and it is said here rather than threaded through as an entity.
@@ -172,16 +173,31 @@ impl Render for QueryPane {
                 // monospace default rather than the UI font: SQL is columnar
                 // text, and the DDL tab already reads the same way.
                 div()
+                    .key_context("QueryEditor")
+                    .on_action(cx.listener(
+                        |pane, _: &super::completion::CompleteSql, window, cx| {
+                            pane.trigger_completion(window, cx);
+                        },
+                    ))
                     .flex()
+                    .flex_col()
                     .flex_basis(relative(share))
                     .min_w_0()
                     .min_h_0()
-                    .font_family(fonts.editor_font_family.clone().map_or_else(
-                        || crate::app_settings::monospace_family(cx),
-                        SharedString::from,
-                    ))
-                    .text_size(px(fonts.editor_font_size))
-                    .child(self.editor.clone()),
+                    .child(editor_toolbar)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .font_family(fonts.editor_font_family.clone().map_or_else(
+                                || crate::app_settings::monospace_family(cx),
+                                SharedString::from,
+                            ))
+                            .text_size(px(fonts.editor_font_size))
+                            .child(self.editor.clone()),
+                    ),
             )
             .child(
                 div()
@@ -240,10 +256,12 @@ impl Render for QueryPane {
             // order between themselves decides nothing.
             .children(confirm)
             .children(preview)
+            .children(self.render_completion(window, cx))
             // Takes no room in the column — the element is an empty absolute
             // box whose two halves are anchored to the window — so it can
             // simply be the last child, above the divider it may cover.
             .children(context_menu)
+            .children(self.lob_dialog.clone())
     }
 }
 
@@ -270,7 +288,6 @@ impl QueryPane {
     pub(super) fn render_toolbar(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity();
         let running = self.is_running();
-        let cancelling = matches!(&self.run, RunState::Running(running) if running.cancelling);
 
         let tabs: Vec<_> = self
             .results
@@ -308,39 +325,6 @@ impl QueryPane {
             })
             .collect();
 
-        let run = {
-            let this = this.clone();
-            Button::new("query-run", ts!("query.run"))
-                .variant(ButtonVariant::Primary)
-                .disabled(running)
-                .on_click(move |_, window, cx| {
-                    this.update(cx, |pane, cx| {
-                        let text = pane.editor.read(cx).text();
-                        let statements = match pane.editor.read(cx).statement_at_caret() {
-                            Some(span) => vec![span.sql(&text).to_string()],
-                            None => Vec::new(),
-                        };
-                        pane.request(statements, window, cx);
-                    });
-                })
-        };
-        let cancel = running.then(|| {
-            let this = this.clone();
-            Button::new(
-                "query-cancel",
-                if cancelling {
-                    ts!("query.cancelling")
-                } else {
-                    ts!("query.cancel")
-                },
-            )
-            .variant(ButtonVariant::Danger)
-            .disabled(cancelling)
-            .on_click(move |_, _window, cx| {
-                this.update(cx, |pane, cx| pane.cancel(cx));
-            })
-        });
-
         // Drawn only over a result that passed §7.9's gate. On one that did
         // not, nothing can be staged, so an Apply that could never light up
         // would be furniture — and the line under the toolbar has already said
@@ -362,7 +346,7 @@ impl QueryPane {
             let this = this.clone();
             Button::new("query-apply", ts!("data.apply"))
                 .variant(ButtonVariant::Primary)
-                .disabled(!staged || running || self.applying)
+                .disabled(!staged || running || self.applying || self.transaction.is_some())
                 .on_click(move |_, window, cx| {
                     this.update(cx, |pane, cx| pane.apply(window, cx));
                 })
@@ -414,8 +398,6 @@ impl QueryPane {
             })
             .children(apply)
             .children(discard)
-            .children(cancel)
-            .child(run)
             .into_any_element()
     }
 
@@ -478,8 +460,8 @@ impl QueryPane {
         )
     }
 
-    /// The result area's body: a grid, a message, a failure, or an empty state.
-    pub(super) fn render_results(&self, chrome: &Theme) -> AnyElement {
+    /// The result area's body: a grid, the execution log, a failure, or an empty state.
+    pub(super) fn render_results(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
         if let Some(error) = &self.error {
             return render_error(error, chrome);
         }
@@ -505,9 +487,95 @@ impl QueryPane {
                 .child(rows.grid.clone())
                 .into_any_element(),
             Some(ResultTab {
-                body: ResultBody::Message(text),
+                id,
+                body: ResultBody::Log(log),
                 ..
-            }) => note(text.clone(), chrome.text),
+            }) => {
+                let pane = cx.entity();
+                let id = *id;
+                let chrome = chrome.clone();
+                gpui::uniform_list(
+                    ("query-result-log", id),
+                    log.entries.len() + usize::from(self.finished.is_some()),
+                    move |range, _, cx| {
+                        let pane = pane.read(cx);
+                        let Some(ResultTab {
+                            body: ResultBody::Log(log),
+                            ..
+                        }) = pane.results.iter().find(|tab| tab.id == id)
+                        else {
+                            return Vec::new();
+                        };
+                        range
+                            .filter_map(|index| {
+                                let row = div()
+                                    .flex()
+                                    .items_center()
+                                    .h(px(52.))
+                                    .px(px(10.))
+                                    .gap(px(8.))
+                                    .border_b_1()
+                                    .border_color(chrome.border)
+                                    .text_size(px(12.));
+                                if index == log.entries.len() {
+                                    return pane.finished.as_ref().map(|finished| {
+                                        row.bg(chrome.surface)
+                                            .text_color(chrome.text)
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(ts!(
+                                                "query.total_execution_time",
+                                                seconds = format!(
+                                                    "{:.3}",
+                                                    finished.elapsed.as_secs_f64()
+                                                )
+                                            ))
+                                    });
+                                }
+                                log.entries.get(index).map(|entry| {
+                                    row.child(
+                                        div()
+                                            .flex_none()
+                                            .w(px(36.))
+                                            .text_color(chrome.text_muted)
+                                            .child((index + 1).to_string()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .truncate()
+                                                    .text_color(chrome.text)
+                                                    .child(entry.message.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .truncate()
+                                                    .text_color(chrome.text_muted)
+                                                    .child(entry.sql.clone()),
+                                            ),
+                                    )
+                                    .child(
+                                        div().flex_none().text_color(chrome.text_muted).child(ts!(
+                                            "query.execution_time",
+                                            seconds = format!("{:.3}", entry.elapsed.as_secs_f64())
+                                        )),
+                                    )
+                                })
+                            })
+                            .collect()
+                    },
+                )
+                .track_scroll(&log.scroll)
+                .size_full()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .into_any_element()
+            }
             None => note(ts!("query.empty"), chrome.text_muted),
         }
     }

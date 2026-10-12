@@ -21,6 +21,7 @@ mod explorer;
 mod extract_dialog;
 mod i18n;
 mod icons;
+mod lob_dialog;
 mod maven;
 // The pane tree is written as a self-contained data structure with its own
 // tests rather than for the call sites the shell currently has, so it offers
@@ -65,9 +66,9 @@ actions!(
         FocusNextPane,
         /// Move keyboard focus to the previous pane.
         FocusPrevPane,
-        /// Split the active pane, putting an empty pane to its right.
+        /// Split the active pane, copying its selected tab to the right.
         SplitRight,
-        /// Split the active pane, putting an empty pane below it.
+        /// Split the active pane, copying its selected tab below it.
         SplitBelow,
         /// Show or hide the explorer sidebar.
         ToggleExplorer,

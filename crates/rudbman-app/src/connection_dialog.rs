@@ -36,7 +36,7 @@
 //! stays live throughout, which matters most precisely when the connection is
 //! the one that hangs.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use gpui::{
     App, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -93,6 +93,14 @@ pub(crate) const ROW_SELECTOR: &str = "profile-row:";
 /// something the caller cannot write.
 pub(crate) type ProfileContextHandler =
     std::rc::Rc<dyn Fn(Uuid, Point<Pixels>, &mut Window, &mut App)>;
+
+/// Folder disclosure controls used by the connection dialog.
+pub(crate) struct ProfileFolderControls<'a> {
+    collapsed: &'a HashSet<String>,
+    on_toggle: FolderToggleHandler,
+}
+
+type FolderToggleHandler = std::rc::Rc<dyn Fn(&str, &mut App)>;
 
 /// The dialog's two scrolling surfaces and the id of each one's overlay bar.
 const SCROLLBARS: [(&str, Surface); 2] = [
@@ -257,6 +265,8 @@ pub struct ConnectionDialog {
     drivers: DriverStore,
     /// Id of the profile being edited.
     selected: Option<Uuid>,
+    /// Folded folders, retained while this dialog exists.
+    collapsed_folders: HashSet<String>,
     /// Whether the driver dropdown is showing its list.
     driver_list_open: bool,
     /// Whether the tunnel section is expanded.
@@ -362,6 +372,7 @@ impl ConnectionDialog {
             store: ConnectionStore::default(),
             drivers: DriverStore::default(),
             selected: None,
+            collapsed_folders: HashSet::new(),
             driver_list_open: false,
             tunnel_open: false,
             tunnel_enabled: false,
@@ -408,14 +419,13 @@ impl ConnectionDialog {
     /// What the welcome screen's "edit…" row opens: that list offers one
     /// profile at a time and the dialog it leads to has to be showing that
     /// one, not whichever happens to be first. An id no saved profile answers
-    /// to leaves [`ConnectionDialog::open`]'s own choice standing rather than
-    /// opening a form over nothing — a profile can be deleted between the
-    /// screen being drawn and the row being clicked.
+    /// to falls back to the first saved profile — a profile can be deleted
+    /// between the screen being drawn and the row being clicked.
     pub fn open_at(&mut self, id: Uuid, cx: &mut Context<Self>) {
         self.open_showing(Some(id), cx);
     }
 
-    /// Shows the dialog, re-reading both stores.
+    /// Shows a new connection form, re-reading both stores.
     pub fn open(&mut self, cx: &mut Context<Self>) {
         self.open_showing(None, cx);
     }
@@ -566,6 +576,10 @@ impl ConnectionDialog {
         );
 
         self.rebuild_props(&profile.props, cx);
+        // A different profile starts with its own URL values and driver defaults.
+        // Reusing the previous inputs would retain its host, port and database
+        // whenever the new profile has no URL to decompose.
+        self.url_parts.clear();
         self.rebuild_url_parts(cx);
         // A stored URL that the template cannot reproduce is an override, and
         // saying so up front is what stops the first keystroke in a port field
@@ -739,89 +753,74 @@ impl ConnectionDialog {
 
     /// Writes the form to `connections.json` and the keychain.
     ///
-    /// Returns the profile that was saved, or `None` when something refused.
-    fn persist(&mut self, cx: &mut Context<Self>) -> Option<ConnectionProfile> {
+    /// Returns the saved profile or the error from this save attempt.
+    fn persist(&mut self, cx: &mut Context<Self>) -> Result<ConnectionProfile, SaveError> {
         let profile = self.collect(cx);
-        if profile.name.trim().is_empty() {
-            self.report(Level::Error, ts!("connect.name_required"), cx);
-            return None;
-        }
-        if profile.url.trim().is_empty() {
-            self.report(Level::Error, ts!("connect.url_required"), cx);
-            return None;
-        }
-
-        self.store.upsert(profile.clone());
-        if let Err(error) = self.store.save() {
-            log::error!("could not write connections.json: {error:#}");
-            self.report(
-                Level::Error,
-                ts!("connect.save_failed", error = format!("{error:#}")),
-                cx,
-            );
-            return None;
-        }
-
-        // The two secrets, each written or cleared to match the form. A blank
-        // field means "no stored secret", which is a deletion rather than an
-        // empty password — an empty entry in the keychain would be handed to the
-        // driver as a login attempt.
-        self.write_secret(
-            profile.id,
-            SecretSlot::Connection,
-            &text(&self.password_input, cx),
-            cx,
-        );
-        if self.tunnel_enabled {
-            self.write_secret(
-                profile.id,
-                SecretSlot::Tunnel,
-                &text(&self.tunnel_secret_input, cx),
-                cx,
-            );
-        }
-
+        let password = text(&self.password_input, cx);
+        let tunnel_secret = self
+            .tunnel_enabled
+            .then(|| text(&self.tunnel_secret_input, cx));
+        rudbkit_core::save::save_connection(
+            &profile.name,
+            &profile.url,
+            || {
+                self.store.upsert(profile.clone());
+                self.store.save()
+            },
+            || {
+                write_secret(profile.id, SecretSlot::Connection, &password)?;
+                if let Some(secret) = tunnel_secret {
+                    write_secret(profile.id, SecretSlot::Tunnel, &secret)?;
+                }
+                Ok(())
+            },
+        )?;
         self.selected = Some(profile.id);
-        Some(profile)
+        Ok(profile)
     }
 
-    /// Saves or clears one keychain slot, reporting a refusal.
-    fn write_secret(&mut self, id: Uuid, slot: SecretSlot, secret: &str, cx: &mut Context<Self>) {
-        let outcome = if secret.is_empty() {
-            SecretStore::delete(id, slot)
-        } else {
-            SecretStore::set(id, slot, secret)
-        };
-        if let Err(error) = outcome {
-            log::warn!("could not write the {slot} secret: {error:#}");
-            self.report(
-                Level::Error,
-                ts!("connect.keychain_failed", error = format!("{error:#}")),
-                cx,
-            );
-        }
-    }
-
-    /// Saves and reports it.
-    fn save(&mut self, cx: &mut Context<Self>) {
-        if self.persist(cx).is_some()
-            && self.status.as_ref().map(|(level, _)| *level) != Some(Level::Error)
-        {
-            self.report(Level::Ok, ts!("connect.saved"), cx);
+    fn saved(
+        &mut self,
+        result: Result<ConnectionProfile, SaveError>,
+        connect: bool,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(profile) => {
+                if connect {
+                    cx.emit(ConnectionDialogEvent::Connect(Box::new(profile)));
+                    self.close(cx);
+                } else {
+                    self.report(Level::Ok, ts!("connect.saved"), cx);
+                }
+            }
+            Err(error) => {
+                let message = match error {
+                    SaveError::Name => ts!("connect.name_required"),
+                    SaveError::Url => ts!("connect.url_required"),
+                    SaveError::Store(error) => {
+                        ts!("connect.save_failed", error = format!("{error:#}"))
+                    }
+                    SaveError::Secret(error) => {
+                        ts!("connect.keychain_failed", error = format!("{error:#}"))
+                    }
+                };
+                self.report(Level::Error, message, cx);
+            }
         }
         cx.notify();
     }
 
+    /// Saves and reports it.
+    fn save(&mut self, cx: &mut Context<Self>) {
+        let result = self.persist(cx);
+        self.saved(result, false, cx);
+    }
+
     /// Saves, then asks the shell to open the profile.
     fn connect(&mut self, cx: &mut Context<Self>) {
-        let Some(profile) = self.persist(cx) else {
-            return;
-        };
-        if self.status.as_ref().map(|(level, _)| *level) == Some(Level::Error) {
-            return;
-        }
-        cx.emit(ConnectionDialogEvent::Connect(Box::new(profile)));
-        self.close(cx);
+        let result = self.persist(cx);
+        self.saved(result, true, cx);
     }
 
     /// Opens a session with what the form currently holds, pings it, closes it.
@@ -1164,9 +1163,18 @@ impl ConnectionDialog {
         });
     }
 
+    /// Fold or unfold a folder without changing the current form.
+    fn toggle_folder(&mut self, folder: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_folders.remove(folder) {
+            self.collapsed_folders.insert(folder.to_owned());
+        }
+        cx.notify();
+    }
+
     /// The saved profile list, grouped by folder.
     fn render_list(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
+        let folders_this = this.clone();
         let rows = profile_rows(
             self.store.connections(),
             self.selected,
@@ -1178,6 +1186,12 @@ impl ConnectionDialog {
             // selected profile, so every command a menu would carry is a
             // control the user can see.
             None,
+            Some(ProfileFolderControls {
+                collapsed: &self.collapsed_folders,
+                on_toggle: std::rc::Rc::new(move |folder, cx| {
+                    folders_this.update(cx, |dialog, cx| dialog.toggle_folder(folder, cx));
+                }),
+            }),
         );
 
         div()
@@ -1229,6 +1243,7 @@ impl ConnectionDialog {
                     chrome.border
                 })
                 .tab_index(tab::COLOR + index as isize)
+                .focus(|style| style.border_color(chrome.text))
                 .on_click(move |_, _window, cx| {
                     this.update(cx, |dialog, cx| {
                         dialog.color = value.map(SharedString::from);
@@ -1344,10 +1359,34 @@ impl ConnectionDialog {
         if profile.driver_id == id {
             return;
         }
+        let previous_port = self
+            .url_parts
+            .get("port")
+            .map(|input| text(input, cx))
+            .unwrap_or_default();
+        let use_default_port = previous_port.is_empty()
+            || self
+                .current_driver()
+                .and_then(|driver| driver.default_port)
+                .is_some_and(|port| previous_port == port.to_string());
         profile.driver_id = id;
         self.store.upsert(profile);
         self.driver_list_open = false;
         self.rebuild_url_parts(cx);
+        // Shared fields keep the host and database, but a default port belongs
+        // to its driver. Apply it after URL decomposition so a matching old
+        // template cannot restore the previous driver's port.
+        if let Some(input) = self.url_parts.get("port") {
+            let port = if use_default_port {
+                self.current_driver()
+                    .and_then(|driver| driver.default_port)
+                    .map(|port| port.to_string())
+                    .unwrap_or_default()
+            } else {
+                previous_port
+            };
+            set_text(input, port, cx);
+        }
         // The template changed, so an override that was written for the old
         // driver's grammar is no longer an override of *this* template.
         self.url_overridden = false;
@@ -2043,18 +2082,17 @@ impl Render for ConnectionDialog {
 /// Which saved profile a dialog opening over `wanted` should show.
 ///
 /// `wanted` is the welcome list's "edit…" naming the row that was
-/// right-clicked; `None` is the plain "new connection" door, which has no
-/// opinion. Either way the answer falls back to the first saved profile, which
-/// is what the dialog has always opened over — a profile can be deleted between
-/// the welcome screen being drawn and its row being clicked, and a form opened
-/// over nothing would be worse than a form opened over the wrong thing.
+/// right-clicked; `None` starts a new profile. Only an edit request can fall
+/// back to the first saved profile if its row was deleted after being drawn.
 ///
 /// Separate from [`ConnectionDialog::open_showing`] because that one re-reads
 /// the file first, and the rule itself is worth pinning down without one.
 fn profile_to_show(store: &ConnectionStore, wanted: Option<Uuid>) -> Option<Uuid> {
-    wanted
-        .filter(|id| store.get(*id).is_some())
-        .or_else(|| store.connections().first().map(|profile| profile.id))
+    let wanted = wanted?;
+    store
+        .get(wanted)
+        .or_else(|| store.connections().first())
+        .map(|profile| profile.id)
 }
 
 /// The saved profiles as rows, grouped under the folder each is filed in.
@@ -2085,6 +2123,7 @@ pub(crate) fn profile_rows(
     chrome: &Theme,
     on_click: impl Fn(Uuid, &mut Window, &mut App) + Clone + 'static,
     on_context: Option<ProfileContextHandler>,
+    folders: Option<ProfileFolderControls<'_>>,
 ) -> Vec<gpui::AnyElement> {
     let mut groups: Vec<(Option<String>, Vec<&ConnectionProfile>)> = Vec::new();
     for profile in profiles {
@@ -2097,18 +2136,64 @@ pub(crate) fn profile_rows(
 
     let mut index = 0usize;
     let mut rows: Vec<gpui::AnyElement> = Vec::new();
-    for (folder, members) in groups {
+    for (group_index, (folder, members)) in groups.into_iter().enumerate() {
+        let collapsed = folder.as_ref().is_some_and(|folder| {
+            folders
+                .as_ref()
+                .is_some_and(|controls| controls.collapsed.contains(folder))
+        });
         if let Some(folder) = folder {
+            let selector_folder = folder.clone();
             rows.push(
                 div()
+                    .id(("profile-folder", group_index))
+                    .debug_selector(move || format!("profile-folder:{selector_folder}"))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
                     .px(px(6.))
-                    .pt(px(6.))
-                    .text_size(px(10.))
+                    .py(px(5.))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .text_size(px(11.))
                     .text_color(chrome.text_muted)
-                    .truncate()
-                    .child(SharedString::from(folder))
+                    .when_some(folders.as_ref(), |heading, controls| {
+                        let on_toggle = controls.on_toggle.clone();
+                        let folder = folder.clone();
+                        heading
+                            .tab_index((tab::LIST + index as isize).min(tab::LIST_LIMIT))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(chrome.surface_hover))
+                            .focus(|style| style.border_color(chrome.accent))
+                            .child(
+                                gpui::svg()
+                                    .size(px(12.))
+                                    .flex_none()
+                                    .text_color(chrome.text_muted)
+                                    .path(if collapsed {
+                                        icons::CHEVRON_RIGHT
+                                    } else {
+                                        icons::CHEVRON_DOWN
+                                    }),
+                            )
+                            .on_click(move |_, _, cx| on_toggle(&folder, cx))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(SharedString::from(folder)),
+                    )
                     .into_any_element(),
             );
+            if folders.is_some() {
+                index += 1;
+            }
+        }
+        if collapsed {
+            continue;
         }
         for profile in members {
             let id = profile.id;
@@ -2151,6 +2236,9 @@ pub(crate) fn profile_rows(
                     // The same range in both lists, because neither puts
                     // anything else between the tab ring's start and the rows.
                     .tab_index((tab::LIST + index as isize).min(tab::LIST_LIMIT))
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .focus(|style| style.border_color(chrome.accent))
                     .when(selected, |row| row.bg(chrome.surface_active))
                     .when(!selected, |row| {
                         row.hover(|row| row.bg(chrome.surface_hover))
@@ -2334,8 +2422,72 @@ fn parse_or<T: std::str::FromStr>(input: &Entity<TextInput>, default: T, cx: &Ap
     text(input, cx).parse::<T>().unwrap_or(default)
 }
 
+type SaveError = rudbkit_core::save::SaveError<anyhow::Error>;
+
+fn write_secret(id: Uuid, slot: SecretSlot, secret: &str) -> anyhow::Result<()> {
+    if secret.is_empty() {
+        SecretStore::delete(id, slot)
+    } else {
+        SecretStore::set(id, slot, secret)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[gpui::test]
+    fn successful_save_replaces_an_earlier_validation_error(cx: &mut gpui::TestAppContext) {
+        let dialog = cx.new(ConnectionDialog::new);
+        dialog.update(cx, |dialog, cx| {
+            dialog.saved(Err(SaveError::Name), false, cx);
+            assert_eq!(
+                dialog.status.as_ref().map(|(level, _)| *level),
+                Some(Level::Error)
+            );
+            dialog.saved(Ok(ConnectionProfile::default()), false, cx);
+            assert_eq!(
+                dialog.status.as_ref().map(|(level, _)| *level),
+                Some(Level::Ok)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn successful_retry_connects_despite_an_earlier_error(cx: &mut gpui::TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+        let connected = Rc::new(Cell::new(false));
+        let dialog = cx.new(ConnectionDialog::new);
+        let subscription = cx.update(|cx| {
+            let connected = connected.clone();
+            cx.subscribe(&dialog, move |_, event, _| {
+                if matches!(event, ConnectionDialogEvent::Connect(_)) {
+                    connected.set(true);
+                }
+            })
+        });
+        dialog.update(cx, |dialog, cx| {
+            dialog.open = true;
+            dialog.saved(Err(SaveError::Url), true, cx);
+            dialog.saved(Ok(ConnectionProfile::default()), true, cx);
+            assert!(!dialog.open);
+        });
+        assert!(connected.get());
+        drop(subscription);
+    }
+
+    #[gpui::test]
+    fn a_current_save_failure_keeps_the_dialog_open(cx: &mut gpui::TestAppContext) {
+        let dialog = cx.new(ConnectionDialog::new);
+        dialog.update(cx, |dialog, cx| {
+            dialog.open = true;
+            dialog.saved(Err(SaveError::Secret(anyhow::anyhow!("locked"))), true, cx);
+            assert!(dialog.open);
+            assert_eq!(
+                dialog.status.as_ref().map(|(level, _)| *level),
+                Some(Level::Error)
+            );
+        });
+    }
+
     use std::ops::Deref;
 
     use gpui::VisualTestContext;
@@ -2353,8 +2505,8 @@ mod tests {
         // The welcome list's "edit…" names a row, and that is the one the form
         // opens over — not whichever profile happens to be first.
         assert_eq!(profile_to_show(&store, Some(second.id)), Some(second.id));
-        // The plain door has no opinion and takes the first, as it always has.
-        assert_eq!(profile_to_show(&store, None), Some(first.id));
+        // New connection must not select any saved profile.
+        assert_eq!(profile_to_show(&store, None), None);
         // A profile deleted between the screen being drawn and the row being
         // clicked falls back rather than opening a form over nothing.
         assert_eq!(
@@ -2661,6 +2813,206 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         (dialog, cx)
+    }
+
+    #[gpui::test]
+    fn folder_disclosures_hide_rows_and_preserve_unsaved_edits(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        let selected = dialog.update(&mut cx, |dialog, cx| {
+            let mut first = dialog.current().unwrap().clone();
+            first.folder = Some("production".to_owned());
+            let selected = first.id;
+            dialog.store.upsert(first);
+            let mut second = ConnectionProfile::new("second", "postgresql", "", "app");
+            second.folder = Some("production".to_owned());
+            dialog.store.upsert(second);
+            let mut third = ConnectionProfile::new("third", "postgresql", "", "app");
+            third.folder = Some("staging".to_owned());
+            dialog.store.upsert(third);
+            dialog
+                .store
+                .upsert(ConnectionProfile::new("unfiled", "postgresql", "", "app"));
+            set_text(&dialog.name_input, "unsaved name", cx);
+            cx.notify();
+            selected
+        });
+        cx.run_until_parked();
+        let staging_y = cx.debug_bounds("profile-folder:staging").unwrap().origin.y;
+        let header = cx.debug_bounds("profile-folder:production").unwrap();
+        cx.simulate_click(header.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("profile-folder:staging").unwrap().origin.y < staging_y);
+        dialog.update(&mut cx, |dialog, cx| {
+            assert!(dialog.collapsed_folders.contains("production"));
+            assert!(!dialog.collapsed_folders.contains("staging"));
+            assert_eq!(dialog.selected, Some(selected));
+            assert_eq!(text(&dialog.name_input, cx), "unsaved name");
+        });
+
+        // Tab skips the hidden connections and lands on the next folder.
+        cx.simulate_keystrokes("tab");
+        let key = gpui::Keystroke::parse("space").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        dialog.update(&mut cx, |dialog, _| {
+            assert!(dialog.collapsed_folders.contains("staging"));
+        });
+        cx.simulate_keystrokes("shift-tab");
+        let key = gpui::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.debug_bounds("profile-folder:staging").unwrap().origin.y,
+            staging_y
+        );
+        dialog.update(&mut cx, |dialog, cx| {
+            assert!(!dialog.collapsed_folders.contains("production"));
+            assert!(dialog.collapsed_folders.contains("staging"));
+            dialog.close(cx);
+            assert!(dialog.collapsed_folders.contains("staging"));
+        });
+    }
+
+    #[gpui::test]
+    fn switching_drivers_updates_default_ports_and_preserves_custom_ports(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for (old_port, new_port) in [("5432", "3306"), ("", "3306"), ("15432", "15432")] {
+            let dialog = cx.new(ConnectionDialog::new);
+            dialog.update(cx, |dialog, cx| {
+                let profile = ConnectionProfile::new("staging", "postgresql", "", "app");
+                dialog.selected = Some(profile.id);
+                dialog.store.upsert(profile);
+                dialog.rebuild_url_parts(cx);
+                set_text(&dialog.url_parts["host"], "db.example.com", cx);
+                set_text(&dialog.url_parts["database"], "app", cx);
+                set_text(&dialog.url_parts["port"], old_port, cx);
+                dialog.refresh_url(cx);
+
+                dialog.set_driver("mysql".to_owned(), cx);
+                assert_eq!(text(&dialog.url_parts["port"], cx), new_port);
+                assert_eq!(
+                    text(&dialog.url_input, cx),
+                    format!("jdbc:mysql://db.example.com:{new_port}/app")
+                );
+
+                dialog.set_driver("postgresql".to_owned(), cx);
+                let restored = if old_port == "15432" { "15432" } else { "5432" };
+                assert_eq!(text(&dialog.url_parts["port"], cx), restored);
+                assert_eq!(
+                    text(&dialog.url_input, cx),
+                    format!("jdbc:postgresql://db.example.com:{restored}/app")
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn switching_drivers_with_the_same_url_template_uses_the_new_default(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for (old_port, default_port, expected) in [
+            ("5432", Some(6432), "6432"),
+            ("5432", None, ""),
+            ("15432", Some(6432), "15432"),
+        ] {
+            let dialog = cx.new(ConnectionDialog::new);
+            dialog.update(cx, |dialog, cx| {
+                let mut driver = dialog.drivers.get("postgresql").unwrap().clone();
+                driver.id = "custom-postgresql".to_owned();
+                driver.default_port = default_port;
+                dialog.drivers.upsert(driver);
+                let profile = ConnectionProfile::new("staging", "postgresql", "", "app");
+                dialog.selected = Some(profile.id);
+                dialog.store.upsert(profile);
+                dialog.rebuild_url_parts(cx);
+                set_text(&dialog.url_parts["host"], "db.example.com", cx);
+                set_text(&dialog.url_parts["database"], "app", cx);
+                set_text(&dialog.url_parts["port"], old_port, cx);
+                dialog.refresh_url(cx);
+
+                dialog.set_driver("custom-postgresql".to_owned(), cx);
+                assert_eq!(text(&dialog.url_parts["port"], cx), expected);
+                assert_eq!(
+                    text(&dialog.url_input, cx),
+                    format!("jdbc:postgresql://db.example.com:{expected}/app")
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn a_new_profile_clears_the_previous_connections_inputs(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        cx.update(|_, cx| {
+            dialog.update(cx, |dialog, cx| {
+                // Use the same driver as a fresh connection so every URL field
+                // could otherwise be reused, including a non-default port.
+                let driver = dialog.drivers.drivers()[0].id.clone();
+                dialog.set_driver(driver, cx);
+                for (name, input) in &dialog.url_parts {
+                    set_text(input, format!("previous-{name}"), cx);
+                }
+                set_text(&dialog.name_input, "previous connection", cx);
+                set_text(&dialog.folder_input, "previous folder", cx);
+                set_text(&dialog.username_input, "previous user", cx);
+                set_text(&dialog.password_input, "previous password", cx);
+                set_text(&dialog.url_input, "jdbc:previous:custom", cx);
+                set_text(&dialog.tunnel_host_input, "previous tunnel", cx);
+                set_text(&dialog.tunnel_secret_input, "previous secret", cx);
+                dialog.url_overridden = true;
+                dialog.read_only = true;
+                dialog.auto_commit = false;
+                dialog.keep_alive_enabled = true;
+                dialog.tunnel_enabled = true;
+                let previous = dialog.selected;
+
+                dialog.add_profile(cx);
+
+                assert_ne!(dialog.selected, previous);
+                assert_eq!(text(&dialog.name_input, cx), ts!("connect.new_name"));
+                for input in [
+                    &dialog.folder_input,
+                    &dialog.username_input,
+                    &dialog.password_input,
+                    &dialog.tunnel_host_input,
+                    &dialog.tunnel_secret_input,
+                ] {
+                    assert!(text(input, cx).is_empty());
+                }
+                assert!(!dialog.url_overridden);
+                assert!(!dialog.read_only);
+                assert!(dialog.auto_commit);
+                assert!(!dialog.keep_alive_enabled);
+                assert!(!dialog.tunnel_enabled);
+            });
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            let port = dialog.current_driver().unwrap().default_port;
+            for (name, input) in &dialog.url_parts {
+                let expected = if name == "port" {
+                    port.map(|port| port.to_string()).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                assert_eq!(text(input, cx), expected, "stale URL field: {name}");
+            }
+            assert_eq!(text(&dialog.url_input, cx), dialog.assembled_url(cx));
+            assert!(!text(&dialog.url_input, cx).contains("previous"));
+        });
     }
 
     /// The hint under the field says the URL can be typed over, so it has to

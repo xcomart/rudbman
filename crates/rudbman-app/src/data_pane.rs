@@ -72,7 +72,7 @@ use rugpui_grid::{
 use crate::builder_sql;
 use crate::connection::SessionHandle;
 use crate::context_menu::{self, MenuRow};
-use crate::data_edit::{EditableSource, PlannedStatement, StagedCell, plan_apply};
+use crate::data_edit::{EditableSource, PlannedStatement, RowRef, StagedCell, plan_apply};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::{QueryError, note, render_error};
@@ -237,6 +237,8 @@ pub struct DataPane {
     /// for "nothing you asked for has happened".
     apply_error: Option<Box<ApplyProblem>>,
     focus_handle: FocusHandle,
+    lob_dialog: Option<Entity<crate::lob_dialog::LobDialog>>,
+    lob_events: Option<Subscription>,
 }
 
 impl DataPane {
@@ -276,6 +278,8 @@ impl DataPane {
             applying: false,
             apply_error: None,
             focus_handle: cx.focus_handle(),
+            lob_dialog: None,
+            lob_events: None,
         }
     }
 
@@ -297,6 +301,28 @@ impl DataPane {
         &self.target
     }
 
+    pub(crate) fn workspace_order(&self) -> Option<(usize, String, bool)> {
+        self.order.as_ref().map(|order| {
+            (
+                order.column,
+                order.name.clone(),
+                order.direction == SortDirection::Ascending,
+            )
+        })
+    }
+
+    pub(crate) fn restore_workspace_order(&mut self, order: Option<(usize, String, bool)>) {
+        self.order = order.map(|(column, name, ascending)| Order {
+            column,
+            name,
+            direction: if ascending {
+                SortDirection::Ascending
+            } else {
+                SortDirection::Descending
+            },
+        });
+    }
+
     /// Which connection tab this pane runs against.
     pub fn connection(&self) -> ConnectionId {
         self.connection
@@ -309,6 +335,9 @@ impl DataPane {
     /// the session and its tunnel standing under a pane nobody can use. What
     /// stays is the rows already fetched, which are the user's to read.
     pub fn detach(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.lob_dialog {
+            dialog.update(cx, |dialog, cx| dialog.detach(cx));
+        }
         self.session = None;
         // Dropping the cursor closes it, and is what stops a scroll asking a
         // session that is being closed for another page.
@@ -331,6 +360,14 @@ impl DataPane {
     /// focus for itself when a cell is clicked, and a focus left on it would
     /// strand when the tab stops being rendered.
     pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        if self.lob_dialog.as_ref().is_some_and(|dialog| {
+            dialog
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        }) {
+            return true;
+        }
         if self.focus_handle.contains_focused(window, cx) {
             return true;
         }
@@ -346,6 +383,10 @@ impl DataPane {
 
     /// Puts the keyboard on the rows, or on the pane while there are none.
     pub fn take_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.lob_dialog {
+            window.focus(&dialog.read(cx).focus_handle(cx), cx);
+            return;
+        }
         match &self.load {
             Load::Ready(rows) => {
                 let handle = rows.grid.read(cx).focus_handle(cx);
@@ -363,6 +404,13 @@ impl DataPane {
     /// because the last of those three is the shell's: the tab strip is what
     /// closes a tab, so the tab strip is what has to ask.
     pub fn has_pending_edits(&self, cx: &App) -> bool {
+        if self
+            .lob_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.read(cx).has_changes())
+        {
+            return true;
+        }
         match &self.load {
             Load::Ready(rows) => !rows.grid.read(cx).source().edits().is_empty(),
             Load::Running | Load::Failed(_) => false,
@@ -436,6 +484,9 @@ impl DataPane {
     /// moment, and the key has to be known before the grid is built or the key
     /// columns would draw unmarked for a frame and then jump.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lob_dialog.is_some() {
+            return;
+        }
         if self.has_pending_edits(cx) {
             self.notice = Some(ts!("data.discard_first"));
             cx.notify();
@@ -537,45 +588,44 @@ impl DataPane {
                     grid.update(cx, |grid, cx| grid.set_sort(sort, cx));
                 }
                 let events =
-                    cx.subscribe_in(&grid, window, |pane, grid, event, window, cx| match event {
-                        GridEvent::NearEnd => pane.fetch_more(cx),
-                        GridEvent::SortRequested { column, direction } => {
-                            pane.reorder(*column, *direction, window, cx);
-                        }
-                        // A double click or `Enter` opens the field. The grid
-                        // refuses on its own for a cell that cannot take one —
-                        // a LOB, a hidden column, anything the source says is
-                        // not editable — so there is nothing to check here that
-                        // is not already checked where it is known.
-                        GridEvent::CellActivated { row, column } => {
-                            grid.update(cx, |grid, cx| {
-                                grid.begin_edit(*row, *column, window, cx);
-                            });
-                        }
-                        GridEvent::EditCommitted { row, column, value } => {
-                            // The two ways a field ends. An emptied field is
-                            // the empty string — that is how one is typed —
-                            // and only the clearing gesture asks for `NULL`,
-                            // which is the same thing the grid's own "set
-                            // null" row stages.
-                            let staged = match value {
-                                rugpui_grid::EditValue::Text(text) => {
-                                    StagedCell::Text(text.clone())
-                                }
-                                rugpui_grid::EditValue::Null => StagedCell::Null,
-                            };
-                            pane.stage(*row, *column, staged, cx);
-                        }
-                        // The grid holds no strings, so its menu is drawn here
-                        // (architecture document, §7.8).
-                        GridEvent::ContextMenu { target, position } => {
-                            pane.context_menu = Some(GridMenu {
-                                target: *target,
-                                position: *position,
-                            });
-                            cx.notify();
-                        }
-                    });
+                    cx.subscribe_in(
+                        &grid,
+                        window,
+                        |pane, _grid, event, window, cx| match event {
+                            GridEvent::NearEnd => pane.fetch_more(cx),
+                            GridEvent::SortRequested { column, direction } => {
+                                pane.reorder(*column, *direction, window, cx);
+                            }
+                            // LOB columns use the shared viewer; other cells
+                            // keep the grid's inline field and writability checks.
+                            GridEvent::CellActivated { row, column } => {
+                                pane.open_cell(*row, *column, window, cx);
+                            }
+                            GridEvent::EditCommitted { row, column, value } => {
+                                // The two ways a field ends. An emptied field is
+                                // the empty string — that is how one is typed —
+                                // and only the clearing gesture asks for `NULL`,
+                                // which is the same thing the grid's own "set
+                                // null" row stages.
+                                let staged = match value {
+                                    rugpui_grid::EditValue::Text(text) => {
+                                        StagedCell::Text(text.clone())
+                                    }
+                                    rugpui_grid::EditValue::Null => StagedCell::Null,
+                                };
+                                pane.stage(*row, *column, staged, cx);
+                            }
+                            // The grid holds no strings, so its menu is drawn here
+                            // (architecture document, §7.8).
+                            GridEvent::ContextMenu { target, position } => {
+                                pane.context_menu = Some(GridMenu {
+                                    target: *target,
+                                    position: *position,
+                                });
+                                cx.notify();
+                            }
+                        },
+                    );
 
                 self.load = Load::Ready(Box::new(Rows {
                     grid,
@@ -798,11 +848,44 @@ impl DataPane {
         self.stage(row, column, StagedCell::Null, cx);
     }
 
-    /// Adds a row after the last one, and starts typing into it.
-    ///
-    /// Scrolled to and opened rather than merely appended: a new row a hundred
-    /// screens down that the user has to go and find is a row they will type
-    /// into the wrong place.
+    fn open_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        if grid.read(cx).source().uses_value_viewer(row, column) {
+            if self.lob_dialog.is_some() || self.applying || self.preview.is_some() {
+                return;
+            }
+            self.context_menu = None;
+            let attached = self.session.is_some();
+            let dialog = cx.new(|cx| {
+                crate::lob_dialog::LobDialog::new(grid.clone(), row, column, attached, window, cx)
+            });
+            self.lob_events = Some(cx.subscribe_in(
+                &dialog,
+                window,
+                move |pane, _, _: &crate::lob_dialog::Closed, window, cx| {
+                    pane.lob_dialog = None;
+                    pane.lob_events = None;
+                    window.focus(&grid.read(cx).focus_handle(cx), cx);
+                    cx.notify();
+                },
+            ));
+            self.lob_dialog = Some(dialog);
+            cx.notify();
+        } else {
+            grid.update(cx, |grid, cx| grid.begin_edit(row, column, window, cx));
+        }
+    }
+
+    /// Adds a row above the fetched rows, and starts typing into it.
+    /// Paging can then append without moving the new row or its editor.
     fn insert_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only_reason().is_some() {
             return;
@@ -810,24 +893,37 @@ impl DataPane {
         let Some(grid) = self.grid().cloned() else {
             return;
         };
-        let row = grid.update(cx, |grid, cx| {
-            let source = grid.source_mut(cx);
-            let columns = source.column_count();
-            source.edits_mut().add_insert(columns);
-            source.row_count() - 1
-        });
-        grid.update(cx, |grid, cx| {
-            grid.scroll_to_row(row, cx);
-            // The first column that will take a value *and* has somewhere to
-            // draw a field: a hidden column is neither.
-            let first = (0..grid.source().column_count()).find(|column| {
-                grid.source().cell_editable(row, *column) && !grid.is_column_hidden(*column)
+        // Commit events use display indices. Let the current field's event
+        // reach the staging buffer before prepending shifts those indices.
+        grid.update(cx, |grid, cx| grid.commit_edit(cx));
+        cx.defer_in(window, move |pane, window, cx| {
+            if pane.grid() != Some(&grid) || pane.read_only_reason().is_some() {
+                return;
+            }
+            let first = grid.update(cx, |grid, cx| {
+                let source = grid.source_mut(cx);
+                let columns = source.column_count();
+                source.edits_mut().add_insert(columns);
+                grid.scroll_to_row(0, cx);
+                // A hidden column has nowhere to draw the input field.
+                (0..columns).find(|column| {
+                    grid.source().cell_editable(0, *column) && !grid.is_column_hidden(*column)
+                })
             });
             if let Some(column) = first {
-                grid.begin_edit(row, column, window, cx);
+                // The scroll handle is applied during layout. Opening the
+                // field before that frame would place it at the old offset
+                // and let the grid dismiss it as off screen.
+                cx.on_next_frame(window, move |pane, window, cx| {
+                    if pane.grid() == Some(&grid)
+                        && grid.read(cx).source().row_status(0) == RowStatus::Inserted
+                    {
+                        pane.open_cell(0, column, window, cx);
+                    }
+                });
             }
+            cx.notify();
         });
-        cx.notify();
     }
 
     /// Marks a row to be deleted, or takes the mark off.
@@ -843,7 +939,7 @@ impl DataPane {
         };
         grid.update(cx, |grid, cx| {
             let source = grid.source_mut(cx);
-            if row < source.base_rows() {
+            if let Some(RowRef::Base(row)) = source.edits().locate(row, source.base_rows()) {
                 source.edits_mut().toggle_deleted(row);
             }
         });
@@ -856,11 +952,29 @@ impl DataPane {
             return;
         };
         grid.update(cx, |grid, cx| {
-            let source = grid.source_mut(cx);
-            let base = source.base_rows();
-            source.edits_mut().discard_row(row, base);
+            if grid.editing().is_some_and(|(editing, _)| editing == row) {
+                grid.cancel_edit(cx);
+            } else {
+                grid.commit_edit(cx);
+            }
         });
-        cx.notify();
+        let pane = cx.entity();
+        cx.defer(move |cx| {
+            pane.update(cx, |pane, cx| {
+                if pane.grid() != Some(&grid) {
+                    return;
+                }
+                // Any other field commits before removing an inserted row
+                // changes the display indices below it.
+                grid.update(cx, |grid, cx| {
+                    let source = grid.source_mut(cx);
+                    let base = source.base_rows();
+                    source.edits_mut().discard_row(row, base);
+                    grid.clear_selection(cx);
+                });
+                cx.notify();
+            });
+        });
     }
 
     /// Throws away everything staged, and puts the confirmation away with it.
@@ -874,7 +988,9 @@ impl DataPane {
             return;
         };
         grid.update(cx, |grid, cx| {
+            grid.cancel_edit(cx);
             grid.source_mut(cx).edits_mut().discard_all();
+            grid.clear_selection(cx);
         });
         self.notice = None;
         cx.notify();
@@ -893,6 +1009,9 @@ impl DataPane {
     /// to have the refusal stated where the write is rather than only where the
     /// button is.
     fn apply(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.lob_dialog.is_some() {
+            return;
+        }
         if self.read_only_reason().is_some() || self.applying || self.preview.is_some() {
             return;
         }
@@ -1082,9 +1201,8 @@ impl DataPane {
         let cell = self.menu_cell(cx);
         let source = grid.read(cx).source();
         let writable = source.writable();
-        let base_rows = source.base_rows();
         let deleted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Deleted);
-        let inserted = cell.is_some_and(|(row, _)| row >= base_rows);
+        let inserted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Inserted);
         // A cell may take a NULL when it may take anything at all *and* the
         // catalogue lets the column hold one. Both halves are the source's:
         // this side only asks.
@@ -1092,6 +1210,21 @@ impl DataPane {
             source.cell_editable(row, column) && source.nullable(column)
         });
         let staged = cell.is_some_and(|(row, _)| source.row_status(row) != RowStatus::Unchanged);
+
+        if cell.is_some_and(|(row, column)| source.uses_value_viewer(row, column)) {
+            let label = if cell.is_some_and(|(_, column)| source.lob_kind(column).is_some()) {
+                ts!("lob.open")
+            } else {
+                ts!("lob.open_text")
+            };
+            let this = this.clone();
+            rows.push(MenuRow::separator());
+            rows.push(MenuRow::new(label).on_activate(move |window, cx| {
+                if let Some((row, column)) = cell {
+                    this.update(cx, |pane, cx| pane.open_cell(row, column, window, cx));
+                }
+            }));
+        }
 
         rows.push(MenuRow::separator());
         rows.push({
@@ -1420,6 +1553,7 @@ impl Render for DataPane {
             .children(confirm)
             .children(preview)
             .children(menu)
+            .children(self.lob_dialog.clone())
     }
 }
 
@@ -1541,6 +1675,7 @@ mod tests {
         cx.update(|cx| {
             app_settings::init(cx);
             rugpui::init(cx);
+            rugpui_editor::init(cx);
             rugpui_grid::init(cx);
         });
         let settings = AppSettings {
@@ -1585,7 +1720,7 @@ mod tests {
                         GridCell::Text(text) => text.to_string(),
                         GridCell::Null => "NULL".to_string(),
                         GridCell::Default => "DEFAULT".to_string(),
-                        GridCell::Lob { size } => format!("lob {size:?}"),
+                        GridCell::Lob { size, .. } => format!("lob {size:?}"),
                     })
                     .collect()
             })
@@ -2038,37 +2173,51 @@ mod tests {
         connected.close().expect("close");
     }
 
-    /// A new row appears after the last one, is scrolled to, and is already
+    fn next_frame(window: WindowHandle<DataPane>, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_next_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    /// A new row appears above the fetched rows, is scrolled to, and is already
     /// taking a value — with the columns nobody typed into left to the server.
     #[gpui::test]
-    fn an_inserted_row_appears_at_the_end_and_opens_a_field(cx: &mut TestAppContext) {
+    fn an_inserted_row_appears_at_the_top_and_opens_a_field(cx: &mut TestAppContext) {
         let (connected, profile) = person("data-insert");
         let window = pane(&connected, &profile, target("PERSON"), 500, cx);
 
         window
             .update(cx, |pane, window, cx| {
                 pane.insert_row(window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        next_frame(window, cx);
+        window
+            .update(cx, |pane, _window, cx| {
                 let grid = pane.grid().expect("the pane holds rows").read(cx);
                 assert_eq!(grid.source().row_count(), 3, "the row is not there");
                 assert_eq!(
                     grid.editing(),
-                    Some((2, 0)),
+                    Some((0, 0)),
                     "the field did not open on the new row's first column"
                 );
             })
             .expect("the window is open");
 
-        assert_eq!(status(&window, 2, cx), RowStatus::Inserted);
+        assert_eq!(status(&window, 0, cx), RowStatus::Inserted);
         // Every column of it is the server's until something is typed in, and
         // that is not the same thing as NULL.
-        assert_eq!(column(&window, 0, cx), ["1", "2", "DEFAULT"]);
-        assert_eq!(column(&window, 2, cx), ["NULL", "", "DEFAULT"]);
+        assert_eq!(column(&window, 0, cx), ["DEFAULT", "1", "2"]);
+        assert_eq!(column(&window, 2, cx), ["DEFAULT", "NULL", ""]);
 
-        assert!(type_into(&window, 2, 1, "c", cx));
-        assert_eq!(column(&window, 1, cx), ["a", "b", "c"]);
+        assert!(type_into(&window, 0, 1, "c", cx));
+        assert_eq!(column(&window, 1, cx), ["c", "a", "b"]);
         assert_eq!(
             column(&window, 0, cx),
-            ["1", "2", "DEFAULT"],
+            ["DEFAULT", "1", "2"],
             "an untyped column is still the server's"
         );
         window
@@ -2086,7 +2235,7 @@ mod tests {
 
         // Discarding an inserted row takes the row itself: it *is* the change.
         let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
-        select(&window, 2, 0, &mut cx);
+        select(&window, 0, 0, &mut cx);
         let rows = cell_menu(&window, &mut cx);
         assert!(
             !context_menu::row(&rows, &ts!("data.delete_row")).is_enabled(),
@@ -2099,6 +2248,192 @@ mod tests {
             })
             .expect("the window is open");
         assert_eq!(column(&window, 1, &mut cx), ["a", "b"]);
+        connected.close().expect("close");
+    }
+
+    #[gpui::test]
+    fn a_new_row_is_visible_above_a_large_paged_table(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-insert-paging",
+            &[
+                "create schema if not exists APP",
+                "create table APP.BIG (ID int auto_increment primary key, NAME varchar(20))",
+                "insert into APP.BIG (NAME) select 'row' from system_range(1, 2500)",
+            ],
+        );
+        let window = pane(&connected, &profile, target("BIG"), 1_000, cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                pane.grid()
+                    .unwrap()
+                    .update(cx, |grid, cx| grid.scroll_to_row(900, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let loaded = window
+            .update(&mut cx, |pane, _window, cx| pane.row_count(cx).unwrap())
+            .unwrap();
+        assert!(
+            loaded < 2_500,
+            "the test must still have another page to fetch"
+        );
+        window
+            .update(&mut cx, |pane, window, cx| pane.insert_row(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, &mut cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                let grid = pane.grid().unwrap().read(cx);
+                assert_eq!(grid.source().base_rows(), loaded);
+                assert_eq!(grid.source().row_status(0), RowStatus::Inserted);
+                assert!(
+                    grid.visible_rows().contains(&0),
+                    "the new row is off screen"
+                );
+                assert_eq!(grid.editing(), Some((0, 1)));
+            })
+            .unwrap();
+        cx.simulate_input("new row");
+        // A page already on its way must not reassign the typed value to a
+        // fetched row. The insert stays at index zero after the page arrives.
+        window
+            .update(&mut cx, |pane, _window, cx| pane.fetch_more(cx))
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                let grid = pane.grid().unwrap().read(cx);
+                assert_eq!(grid.source().base_rows(), (loaded + 1_000).min(2_500));
+                assert_eq!(grid.source().row_status(0), RowStatus::Inserted);
+                assert_eq!(grid.source().cell(0, 1), GridCell::Text("new row"));
+                assert_eq!(grid.source().cell(1, 1), GridCell::Text("row"));
+                assert_eq!(grid.source().edits().counts().changed, 0);
+            })
+            .unwrap();
+        assert!(type_into(&window, 0, 1, "still editable", &mut cx));
+        connected.close().expect("close");
+    }
+
+    #[gpui::test]
+    fn prepending_rows_keeps_pending_typing_and_existing_row_keys(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-prepend-edits");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        window
+            .update(cx, |pane, window, cx| {
+                let grid = pane.grid().cloned().unwrap();
+                grid.update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(1, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("existing", cx);
+                    });
+                });
+                pane.insert_row(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 1, cx), ["DEFAULT", "a", "existing"]);
+        assert!(type_into(&window, 0, 0, "3", cx));
+        window
+            .update(cx, |pane, window, cx| {
+                let grid = pane.grid().cloned().unwrap();
+                grid.update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(0, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("first", cx);
+                    });
+                });
+                pane.insert_row(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(
+            column(&window, 1, cx),
+            ["DEFAULT", "first", "a", "existing"]
+        );
+        assert!(type_into(&window, 0, 0, "4", cx));
+        assert!(type_into(&window, 0, 1, "second", cx));
+        window
+            .update(cx, |pane, window, cx| {
+                pane.toggle_delete(2, cx);
+                pane.apply(window, cx);
+                pane.confirm_apply(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["existing", "first", "second"]
+        );
+        connected.close().expect("close");
+    }
+
+    #[gpui::test]
+    fn discarding_inserted_rows_keeps_pending_edits_on_their_own_rows(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-discard-insert");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        window
+            .update(cx, |pane, window, cx| pane.insert_row(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        window
+            .update(cx, |pane, _window, cx| {
+                let input = pane.grid().unwrap().read(cx).editor().cloned().unwrap();
+                input.update(cx, |input, cx| input.set_content("999", cx));
+                pane.discard_row(0, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 0, cx), ["1", "2"]);
+        window
+            .update(cx, |pane, window, cx| {
+                assert!(!pane.has_pending_edits(cx));
+                pane.insert_row(window, cx);
+            })
+            .unwrap();
+        window
+            .update(cx, |pane, window, cx| pane.insert_row(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        window
+            .update(cx, |pane, window, cx| {
+                pane.grid().unwrap().update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(3, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("kept", cx);
+                    });
+                });
+                pane.discard_row(1, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 1, cx), ["DEFAULT", "a", "kept"]);
+        window
+            .update(cx, |pane, window, cx| {
+                pane.grid().unwrap().update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(0, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("discard me", cx);
+                    });
+                });
+                pane.discard_all(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 1, cx), ["a", "b"]);
+        window
+            .update(cx, |pane, _window, cx| assert!(!pane.has_pending_edits(cx)))
+            .unwrap();
         connected.close().expect("close");
     }
 
@@ -2348,7 +2683,7 @@ mod tests {
                 pane.insert_row(window, cx);
             })
             .expect("the window is open");
-        assert!(type_into(&window, 3, 1, "d", cx));
+        assert!(type_into(&window, 0, 1, "d", cx));
 
         // Apply plans and shows; nothing has gone out yet.
         window
@@ -2668,5 +3003,171 @@ mod tests {
             assert!(!label.starts_with("data."), "untranslated {label:?}");
             assert!(!label.starts_with("menu."), "untranslated {label:?}");
         }
+    }
+    #[gpui::test]
+    fn multiline_data_cells_open_the_viewer_when_tabbing(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-multiline",
+            &[
+                "CREATE SCHEMA APP",
+                "CREATE TABLE APP.NOTES (ID INT PRIMARY KEY, NAME VARCHAR(30), BODY VARCHAR(1000))",
+                "INSERT INTO APP.NOTES VALUES (1, 'name', 'first\nsecond\n')",
+            ],
+        );
+        let handle = pane(&connected, &profile, target("NOTES"), 100, cx);
+        let mut cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                window.activate_window();
+                pane.grid().unwrap().update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(0, 1, window, cx));
+                });
+            })
+            .unwrap();
+        cx.simulate_keystrokes("tab");
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, _, cx| {
+                assert!(pane.lob_dialog.is_some());
+                assert!(pane.grid().unwrap().read(cx).editing().is_none());
+                assert!(!pane.has_pending_edits(cx));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        });
+        cx.simulate_input("new first\n새 줄🙂\n");
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-enter"
+        } else {
+            "ctrl-enter"
+        });
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                assert!(pane.lob_dialog.is_none());
+                assert!(pane.has_pending_edits(cx));
+                pane.apply(window, cx);
+                assert_eq!(
+                    pane.preview.as_ref().unwrap()[0].params[0],
+                    rudbman_jdbc::Param::Str("new first\n새 줄🙂\n".into())
+                );
+                pane.confirm_apply(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            server_rows(&connected, "SELECT BODY FROM APP.NOTES"),
+            ["new first\n새 줄🙂\n"]
+        );
+        handle
+            .update(&mut cx, |pane, _, cx| {
+                assert!(pane.apply_error.is_none());
+                assert!(!pane.has_pending_edits(cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn lob_data_cells_open_the_shared_editor_and_apply_streaming_values(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-lob",
+            &[
+                "CREATE SCHEMA APP",
+                "CREATE TABLE APP.FILES (ID INT PRIMARY KEY, B BLOB, C CLOB)",
+                "INSERT INTO APP.FILES VALUES (1, X'00FF', 'before')",
+            ],
+        );
+        let handle = pane(&connected, &profile, target("FILES"), 100, cx);
+        let mut cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                window.activate_window();
+                let grid = pane.grid().unwrap().clone();
+                assert_eq!(
+                    rugpui_grid::cell_label(&grid.read(cx).source().cell(0, 1)).text,
+                    "00FF"
+                );
+                assert_eq!(
+                    rugpui_grid::cell_label(&grid.read(cx).source().cell(0, 2)).text,
+                    "before"
+                );
+                assert_eq!(
+                    grid.read(cx)
+                        .source()
+                        .lob(0, 1)
+                        .unwrap()
+                        .prefix(10)
+                        .unwrap(),
+                    [0, 255]
+                );
+                grid.update(cx, |_, cx| {
+                    cx.emit(GridEvent::CellActivated { row: 0, column: 1 })
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, _, _| assert!(pane.lob_dialog.is_some()))
+            .unwrap();
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        });
+        cx.simulate_input("DE AD 00 FF");
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-enter"
+        } else {
+            "ctrl-enter"
+        });
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                assert!(pane.lob_dialog.is_none());
+                assert!(pane.has_pending_edits(cx));
+                assert_eq!(
+                    pane.grid()
+                        .unwrap()
+                        .read(cx)
+                        .source()
+                        .lob(0, 1)
+                        .unwrap()
+                        .prefix(10)
+                        .unwrap(),
+                    [0xde, 0xad, 0, 255]
+                );
+                pane.apply(window, cx);
+                assert!(matches!(
+                    pane.preview.as_ref().unwrap()[0].params[0],
+                    rudbman_jdbc::Param::Lob(_)
+                ));
+                pane.confirm_apply(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, _, cx| {
+                assert!(pane.apply_error.is_none());
+                assert!(!pane.has_pending_edits(cx));
+                assert_eq!(
+                    pane.grid()
+                        .unwrap()
+                        .read(cx)
+                        .source()
+                        .lob(0, 1)
+                        .unwrap()
+                        .prefix(10)
+                        .unwrap(),
+                    [0xde, 0xad, 0, 255]
+                );
+            })
+            .unwrap();
+        assert_eq!(
+            server_rows(&connected, "SELECT RAWTOHEX(B) FROM APP.FILES"),
+            ["dead00ff"]
+        );
     }
 }

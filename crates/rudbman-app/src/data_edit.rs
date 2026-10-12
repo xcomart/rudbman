@@ -17,11 +17,11 @@
 //! `(row, column) → value` at all, and it is also why a sort or a refresh —
 //! which throw the source away — have to ask before they run.
 //!
-//! Rows the user inserts are a list of their own, drawn after the last fetched
-//! row. Their grid indices are *not* stable: paging in another batch grows the
-//! base and slides them all down. That is fine and deliberate — nothing is keyed
-//! by an inserted row's grid index, only by its position in that list, and
-//! [`EditSet::locate`] is the one place the two spaces are told apart.
+//! Rows the user inserts are a list of their own, drawn before the fetched
+//! rows, newest first. Paging leaves their grid indices alone. Adding or
+//! discarding an insert changes the base rows' display positions, but their
+//! stored indices and staged edits stay the same. [`EditSet::locate`] maps a
+//! grid index to either a stable base index or a position in the insert list.
 //!
 //! A deleted row keeps its slot. It goes on being drawn, struck through, until
 //! the change is applied or discarded: a deletion that made the row vanish
@@ -63,11 +63,11 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
-use rudbman_jdbc::{ColumnInfo, Param};
+use rudbman_jdbc::{ColumnInfo, LobFile, Param};
 use rudbman_sql::{
     Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
-use rugpui_grid::{GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
+use rugpui_grid::{CellEditor, GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
 
 use crate::query_source::{ResultSource, bit_is_boolean, column_name, key_index, sql_types};
 
@@ -95,6 +95,8 @@ pub enum StagedCell {
     /// will make of it, and a layer that silently trimmed a `CHAR(10)` would be
     /// wrong in a way nobody could see.
     Text(String),
+    /// An immutable, file-backed LOB replacement. Its lifetime includes apply.
+    Lob(LobFile),
 }
 
 impl StagedCell {
@@ -107,6 +109,7 @@ impl StagedCell {
             StagedCell::Unset => false,
             StagedCell::Null => original.is_none(),
             StagedCell::Text(text) => original == Some(text.as_str()),
+            StagedCell::Lob(_) => false,
         }
     }
 }
@@ -189,14 +192,14 @@ impl EditSet {
 
     /// Which row space `row` falls in, against a base of `base_rows` rows.
     ///
-    /// `None` for an index past the last inserted row, which the grid can ask
+    /// `None` for an index past the last displayed row, which the grid can ask
     /// for between a layout and a paint.
     pub fn locate(&self, row: usize, base_rows: usize) -> Option<RowRef> {
-        if row < base_rows {
-            return Some(RowRef::Base(row));
+        if row < self.inserted.len() {
+            return Some(RowRef::Inserted(self.inserted.len() - 1 - row));
         }
-        let index = row - base_rows;
-        (index < self.inserted.len()).then_some(RowRef::Inserted(index))
+        let index = row - self.inserted.len();
+        (index < base_rows).then_some(RowRef::Base(index))
     }
 
     /// How many rows the grid sees: the base, plus the ones being added.
@@ -408,6 +411,8 @@ struct ColumnRules {
     /// other two are: it cannot change while the result stands, and the apply
     /// asks it once per staged cell rather than once per frame.
     kind: DmlKind,
+    /// BLOB is true, CLOB/NCLOB false; none for an ordinary scalar column.
+    lob: Option<bool>,
 }
 
 /// `ResultSetMetaData.columnNoNulls`, the one answer that forbids NULL.
@@ -424,6 +429,14 @@ impl ColumnRules {
             writable: !column.read_only && !column.auto_increment && named,
             nullable: column.nullable != COLUMN_NO_NULLS,
             kind: dml_kind(column),
+            lob: match column.sql_type {
+                sql_types::BLOB | sql_types::LONGVARBINARY => Some(true),
+                sql_types::CLOB
+                | sql_types::NCLOB
+                | sql_types::LONGVARCHAR
+                | sql_types::LONGNVARCHAR => Some(false),
+                _ => None,
+            },
         }
     }
 }
@@ -521,9 +534,8 @@ impl EditableSource {
 
     /// The rows the server sent, to append another page to.
     ///
-    /// Growing the base slides the inserted rows down the grid, which is right:
-    /// they are drawn after the last fetched row, and there is now one more of
-    /// those.
+    /// Growing the base leaves both the existing rows and the inserted rows
+    /// at the same display positions.
     pub fn base_mut(&mut self) -> &mut ResultSource {
         &mut self.base
     }
@@ -538,7 +550,7 @@ impl EditableSource {
         &mut self.edits
     }
 
-    /// How many rows the server sent, which is where the inserted ones begin.
+    /// How many rows the server sent, excluding the inserted rows above them.
     pub fn base_rows(&self) -> usize {
         self.base.row_count()
     }
@@ -548,13 +560,12 @@ impl EditableSource {
         self.base.set_state(state);
     }
 
-    /// The value the server gave for a cell, whatever is staged over it.
+    /// The value the server gave for a cell, addressed by its stable base index.
     ///
     /// The `WHERE` clause of an `UPDATE` is written from this and never from
     /// [`GridSource::cell`]: a key column the user retyped is *set* to its new
     /// value and *found* by its old one, so a statement built from the overlay
-    /// would name a row that does not exist. `None` for an inserted row, which
-    /// the server has never seen.
+    /// would name a row that does not exist. Inserted rows have no base index.
     pub fn original(&self, row: usize, column: usize) -> Option<GridCell<'_>> {
         (row < self.base.row_count()).then(|| self.base.cell(row, column))
     }
@@ -567,8 +578,7 @@ impl EditableSource {
     pub fn original_text(&self, row: usize, column: usize) -> Option<&str> {
         match self.original(row, column)? {
             GridCell::Text(text) => Some(text),
-            // A LOB has no text here and is not editable anyway; treating it as
-            // NULL only decides whether an edit that cannot happen would count.
+            // LOB bodies are separate; stage handles their identity explicitly.
             GridCell::Null | GridCell::Default | GridCell::Lob { .. } => None,
         }
     }
@@ -581,6 +591,16 @@ impl EditableSource {
     pub fn stage(&mut self, row: usize, column: usize, value: StagedCell) {
         match self.edits.locate(row, self.base.row_count()) {
             Some(RowRef::Base(row)) => {
+                if matches!(self.base.cell(row, column), GridCell::Lob { .. }) {
+                    let unchanged = matches!(&value, StagedCell::Lob(file) if self.base.lob(row, column) == Some(file));
+                    if matches!(value, StagedCell::Unset) || unchanged {
+                        self.edits.changed.remove(&(row, column));
+                    } else {
+                        // A LOB is not NULL just because it has no inline text.
+                        self.edits.changed.insert((row, column), value);
+                    }
+                    return;
+                }
                 let original = self.original_text(row, column).map(str::to_owned);
                 self.edits.stage(row, column, value, original.as_deref());
             }
@@ -593,6 +613,31 @@ impl EditableSource {
     /// described it.
     pub fn nullable(&self, column: usize) -> bool {
         self.columns.get(column).is_some_and(|rules| rules.nullable)
+    }
+
+    /// Whether the column needs the LOB viewer, including currently NULL cells.
+    pub fn lob_kind(&self, column: usize) -> Option<bool> {
+        self.columns.get(column)?.lob
+    }
+
+    /// LOBs and multiline scalar text share the full value editor. The cell
+    /// itself keeps the original line breaks for copying and SQL parameters.
+    pub fn uses_value_viewer(&self, row: usize, column: usize) -> bool {
+        self.lob_kind(column).is_some()
+            || matches!(self.cell(row, column), GridCell::Text(text) if text.contains(['\n', '\r']))
+    }
+
+    /// Current body, including a staged replacement; NULL/default have no file.
+    pub fn lob(&self, row: usize, column: usize) -> Option<&LobFile> {
+        let (staged, base_row) = match self.edits.locate(row, self.base.row_count())? {
+            RowRef::Base(row) => (self.edits.staged(row, column), Some(row)),
+            RowRef::Inserted(index) => (self.edits.inserted_cell(index, column), None),
+        };
+        match staged {
+            Some(StagedCell::Lob(file)) => Some(file),
+            Some(StagedCell::Null | StagedCell::Unset | StagedCell::Text(_)) => None,
+            None => self.base.lob(base_row?, column),
+        }
     }
 
     /// The form values of `column` are bound in.
@@ -649,6 +694,10 @@ impl GridSource for EditableSource {
         match self.edits.locate(row, self.base.row_count()) {
             Some(RowRef::Base(row)) => match self.edits.staged(row, column) {
                 Some(StagedCell::Text(text)) => GridCell::Text(text),
+                Some(StagedCell::Lob(file)) => GridCell::Lob {
+                    size: Some(file.len()),
+                    preview: Some(file.preview()),
+                },
                 Some(StagedCell::Null) => GridCell::Null,
                 // Never recorded against a base row; falling through to the
                 // server's value is what it would mean if it were.
@@ -656,6 +705,10 @@ impl GridSource for EditableSource {
             },
             Some(RowRef::Inserted(index)) => match self.edits.inserted_cell(index, column) {
                 Some(StagedCell::Text(text)) => GridCell::Text(text),
+                Some(StagedCell::Lob(file)) => GridCell::Lob {
+                    size: Some(file.len()),
+                    preview: Some(file.preview()),
+                },
                 Some(StagedCell::Null) => GridCell::Null,
                 Some(StagedCell::Unset) => GridCell::Default,
                 // A column the row was not built with, which only a source that
@@ -689,12 +742,17 @@ impl GridSource for EditableSource {
             // A row on its way out takes no more typing: the value would be
             // staged into an `UPDATE` that is never written, and the cell is
             // struck through while the user types it.
-            Some(RowRef::Base(row)) => {
-                !self.edits.is_deleted(row)
-                    && !matches!(self.base.cell(row, column), GridCell::Lob { .. })
-            }
+            Some(RowRef::Base(row)) => !self.edits.is_deleted(row),
             Some(RowRef::Inserted(_)) => true,
             None => false,
+        }
+    }
+
+    fn cell_editor(&self, row: usize, column: usize) -> CellEditor {
+        if self.uses_value_viewer(row, column) {
+            CellEditor::External
+        } else {
+            CellEditor::Text
         }
     }
 }
@@ -824,6 +882,11 @@ pub fn plan_apply(
         planned.deletes.push(row_key(source, &names, &key, *row)?);
     }
 
+    // plan_edits preserves statement order and SET/INSERT parameter order.
+    // Keep file-backed bindings beside the scalar planner input; the planner
+    // only needs a placeholder and must never load a LOB into a SQL string.
+    let mut lob_bindings: HashMap<(usize, usize), LobFile> = HashMap::new();
+
     // `changed` is a `HashMap`, so the rows it names have to be put back in
     // order before anything is generated: a batch whose statements came out in
     // a different order every time would be a preview nobody could check
@@ -860,6 +923,13 @@ pub fn plan_apply(
                 StagedCell::Text(text) => {
                     set.push((column, checked_value(kind, text, name)?));
                 }
+                StagedCell::Lob(file) => {
+                    lob_bindings.insert(
+                        (planned.deletes.len() + planned.updates.len(), set.len()),
+                        file.clone(),
+                    );
+                    set.push((column, DmlValue::null(kind)));
+                }
             }
         }
         if set.is_empty() {
@@ -873,6 +943,7 @@ pub fn plan_apply(
 
     for row in &edits.inserted {
         let mut cells = Vec::with_capacity(row.len());
+        let mut parameter = 0;
         for (column, staged) in row.iter().enumerate() {
             let name = names.get(column).map_or("", String::as_str);
             let kind = source.kind(column);
@@ -880,7 +951,20 @@ pub fn plan_apply(
                 StagedCell::Unset => InsertCell::Unset,
                 StagedCell::Null => InsertCell::Set(DmlValue::null(kind)),
                 StagedCell::Text(text) => InsertCell::Set(checked_value(kind, text, name)?),
+                StagedCell::Lob(file) => {
+                    lob_bindings.insert(
+                        (
+                            planned.deletes.len() + planned.updates.len() + planned.inserts.len(),
+                            parameter,
+                        ),
+                        file.clone(),
+                    );
+                    InsertCell::Set(DmlValue::null(kind))
+                }
             });
+            if !matches!(staged, StagedCell::Unset) {
+                parameter += 1;
+            }
         }
         planned.inserts.push(cells);
     }
@@ -897,11 +981,36 @@ pub fn plan_apply(
         .enumerate()
         .map(|(index, statement)| PlannedStatement {
             sql: statement.sql,
-            params: statement.values.iter().map(param).collect(),
+            params: statement
+                .values
+                .iter()
+                .enumerate()
+                .map(|(position, value)| {
+                    lob_bindings
+                        .get(&(index, position))
+                        .map_or_else(|| param(value), |file| Param::Lob(file.clone()))
+                })
+                .collect(),
             values: statement
                 .values
                 .iter()
-                .map(|value| value.text().map(str::to_owned))
+                .enumerate()
+                .map(|(position, value)| {
+                    lob_bindings.get(&(index, position)).map_or_else(
+                        || value.text().map(str::to_owned),
+                        |file| {
+                            Some(format!(
+                                "[{}: {} B]",
+                                if file.is_binary() {
+                                    "BLOB"
+                                } else {
+                                    "CLOB UTF-8"
+                                },
+                                file.byte_len()
+                            ))
+                        },
+                    )
+                })
                 .collect(),
             checked: index < checked,
         })
@@ -1197,22 +1306,22 @@ mod tests {
         let index = source.edits_mut().add_insert(3);
         assert_eq!(index, 0);
         assert_eq!(source.row_count(), 3);
-        assert_eq!(source.row_status(2), RowStatus::Inserted);
+        assert_eq!(source.row_status(0), RowStatus::Inserted);
 
-        source.stage(2, 0, StagedCell::Text("c".into()));
-        source.stage(2, 1, StagedCell::Null);
+        source.stage(0, 0, StagedCell::Text("c".into()));
+        source.stage(0, 1, StagedCell::Null);
         // Column 2 is left alone.
 
-        assert_eq!(source.cell(2, 0), GridCell::Text("c"));
-        assert_eq!(source.cell(2, 1), GridCell::Null);
+        assert_eq!(source.cell(0, 0), GridCell::Text("c"));
+        assert_eq!(source.cell(0, 1), GridCell::Null);
         assert_eq!(
-            source.cell(2, 2),
+            source.cell(0, 2),
             GridCell::Default,
             "an untouched column is the server's, not NULL"
         );
-        assert!(source.cell_dirty(2, 0));
-        assert!(source.cell_dirty(2, 1), "a deliberate NULL is a value");
-        assert!(!source.cell_dirty(2, 2), "an untouched column is not typed");
+        assert!(source.cell_dirty(0, 0));
+        assert!(source.cell_dirty(0, 1), "a deliberate NULL is a value");
+        assert!(!source.cell_dirty(0, 2), "an untouched column is not typed");
         assert_eq!(
             source.edits().inserted[0],
             [
@@ -1223,14 +1332,13 @@ mod tests {
         );
     }
 
-    /// Paging in another batch slides the inserted rows down and leaves the
-    /// base rows' staging exactly where it was.
+    /// Paging leaves both the inserted rows and the base rows' edits in place.
     #[test]
-    fn a_page_moves_the_inserted_rows_and_nothing_else() {
+    fn paging_keeps_inserted_rows_at_the_top() {
         let mut source = source(true);
         source.stage(1, 0, StagedCell::Text("B".into()));
         source.edits_mut().add_insert(3);
-        source.stage(2, 0, StagedCell::Text("new".into()));
+        source.stage(0, 0, StagedCell::Text("new".into()));
 
         let columns = vec![
             info(1, "ID", 4, 0),
@@ -1243,14 +1351,14 @@ mod tests {
         ));
 
         assert_eq!(source.row_count(), 4);
-        assert_eq!(source.cell(1, 0), GridCell::Text("B"), "the edit held");
-        assert_eq!(source.cell(2, 0), GridCell::Text("c"), "the new base row");
+        assert_eq!(source.cell(2, 0), GridCell::Text("B"), "the edit held");
+        assert_eq!(source.cell(3, 0), GridCell::Text("c"), "the new base row");
         assert_eq!(
-            source.cell(3, 0),
+            source.cell(0, 0),
             GridCell::Text("new"),
-            "the inserted row moved down with the base"
+            "the inserted row stayed above the base"
         );
-        assert_eq!(source.row_status(3), RowStatus::Inserted);
+        assert_eq!(source.row_status(0), RowStatus::Inserted);
     }
 
     /// The `WHERE` clause reads the row the server has, not the one on screen.
@@ -1265,9 +1373,9 @@ mod tests {
 
         source.edits_mut().add_insert(3);
         assert_eq!(
-            source.original(2, 0),
-            None,
-            "an inserted row has no original"
+            source.original(0, 0),
+            Some(GridCell::Text("a")),
+            "the original is addressed by its base index despite the new row"
         );
     }
 
@@ -1280,15 +1388,15 @@ mod tests {
         source.stage(1, 0, StagedCell::Text("B".into()));
         source.edits_mut().toggle_deleted(0);
         source.edits_mut().add_insert(3);
-        source.stage(2, 0, StagedCell::Text("new".into()));
+        source.stage(0, 0, StagedCell::Text("new".into()));
 
         let base = source.base_rows();
-        assert!(source.edits_mut().discard_row(0, base));
-        assert_eq!(source.row_status(0), RowStatus::Unchanged);
-        assert_eq!(source.cell(0, 0), GridCell::Text("a"));
-        assert_eq!(source.cell(1, 0), GridCell::Text("B"), "row 1 kept its own");
+        assert!(source.edits_mut().discard_row(1, base));
+        assert_eq!(source.row_status(1), RowStatus::Unchanged);
+        assert_eq!(source.cell(1, 0), GridCell::Text("a"));
+        assert_eq!(source.cell(2, 0), GridCell::Text("B"), "row 1 kept its own");
 
-        assert!(source.edits_mut().discard_row(2, base));
+        assert!(source.edits_mut().discard_row(0, base));
         assert_eq!(source.row_count(), 2, "the inserted row went with it");
         assert!(!source.edits().is_empty(), "row 1 is still staged");
 
@@ -1476,8 +1584,8 @@ mod tests {
         source.stage(0, 2, StagedCell::Null);
         source.edits_mut().toggle_deleted(1);
         source.edits_mut().add_insert(3);
-        source.stage(2, 0, StagedCell::Text("9".into()));
-        source.stage(2, 1, StagedCell::Text("new".into()));
+        source.stage(0, 0, StagedCell::Text("9".into()));
+        source.stage(0, 1, StagedCell::Text("new".into()));
         // NOTE is left alone, so the server supplies it.
 
         let batch = plan(&source).expect("the edits plan");
@@ -1731,5 +1839,63 @@ mod tests {
         source.stage(9, 0, StagedCell::Text("x".into()));
         assert!(source.edits().is_empty());
         assert!(!source.edits_mut().discard_row(9, 2));
+    }
+    #[test]
+    fn lob_bindings_keep_their_slots_beside_deletes_scalars_keys_and_defaults() {
+        let columns = vec![
+            info(1, "ID", 4, 0),
+            info(2, "B", 2004, 0),
+            info(3, "NAME", 12, 0),
+            info(4, "C", 2005, 0),
+            info(5, "N", 4, 0),
+        ];
+        let mut base = ResultSource::new(&columns);
+        base.push(render_batch(
+            &batch(&[
+                &[Some("1"), Some("2")],
+                &[None, None],
+                &[Some("old"), Some("other")],
+                &[None, None],
+                &[Some("5"), Some("6")],
+            ]),
+            &columns,
+        ));
+        let mut source = EditableSource::new(base, &columns, true, TableSource::Known);
+        let binary = LobFile::from_bytes(&[0, 255], true).unwrap();
+        let character = LobFile::from_bytes("문자🙂".as_bytes(), false).unwrap();
+        source.stage(0, 1, StagedCell::Lob(binary.clone()));
+        source.stage(0, 2, StagedCell::Text("new".into()));
+        source.stage(0, 3, StagedCell::Lob(character.clone()));
+        source.edits_mut().toggle_deleted(1);
+        source.edits_mut().add_insert(columns.len());
+        source.stage(0, 1, StagedCell::Lob(binary.clone()));
+        source.stage(0, 3, StagedCell::Null);
+        source.stage(0, 4, StagedCell::Text("9".into()));
+        let plan = plan_apply(
+            &source,
+            &columns,
+            vec!["FILES".into()],
+            &["ID".into()],
+            &Dialect::from_id("h2"),
+        )
+        .unwrap();
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[0].params, [Param::I64(2)]);
+        assert_eq!(
+            plan[1].params,
+            [
+                Param::Lob(binary.clone()),
+                Param::Str("new".into()),
+                Param::Lob(character),
+                Param::I64(1)
+            ]
+        );
+        assert_eq!(
+            plan[2].params,
+            [Param::Lob(binary), Param::Null, Param::I64(9)]
+        );
+        assert!(plan[1].values[0].as_ref().unwrap().contains("BLOB"));
+        assert!(plan[1].values[2].as_ref().unwrap().contains("CLOB"));
+        assert!(plan[0].checked && plan[1].checked && !plan[2].checked);
     }
 }

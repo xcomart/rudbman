@@ -73,6 +73,7 @@
 //!   source a staged edit is keyed to, so both ask first while anything is
 //!   staged.
 
+mod completion;
 mod editing;
 mod execution;
 mod menus;
@@ -81,6 +82,7 @@ use render::{elapsed_label, preview};
 pub use render::{error_lines, note, render_error};
 mod results;
 mod statements;
+mod toolbar;
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
 use std::sync::Arc;
@@ -103,8 +105,7 @@ use rugpui_editor::editor::{
 };
 use rugpui_editor::{EditorEvent, EditorView};
 use rugpui_grid::{
-    GridCell, GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
-    SortDirection,
+    GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
 };
 
 use crate::SHORTCUT_MODIFIER;
@@ -246,11 +247,13 @@ struct Executed {
     /// otherwise.
     cursor: Cursor,
     steps: Vec<Step>,
+    /// Execution through the first fetch, excluding later paging.
+    elapsed: Duration,
     /// Whether the cursor is parked on a result set that can still be paged.
     pageable: bool,
 }
 
-/// One result of one statement, as a tab of the result area.
+/// A result set or the shared execution log, as a tab of the result area.
 struct ResultTab {
     /// Stable identity, so a grid's subscription finds its own tab however the
     /// list has been rebuilt since.
@@ -263,8 +266,21 @@ struct ResultTab {
 enum ResultBody {
     /// Rows, in a grid.
     Rows(Box<RowsTab>),
-    /// An update count, or a bare success.
-    Message(SharedString),
+    /// Execution messages for every result of the current run.
+    Log(ResultLog),
+}
+
+#[derive(Debug)]
+struct ResultLogEntry {
+    sql: SharedString,
+    message: SharedString,
+    elapsed: Duration,
+}
+
+#[derive(Default)]
+struct ResultLog {
+    entries: Vec<ResultLogEntry>,
+    scroll: gpui::UniformListScrollHandle,
 }
 
 /// The table one result's rows may be written back to.
@@ -303,6 +319,8 @@ struct RowsTab {
     /// and what an applied batch re-runs: the rows have to come back in the
     /// order they went away in, or the reload would look like a second sort.
     executed: String,
+    /// The original execution time, reused for results discovered while paging.
+    elapsed: Duration,
     /// The result's logical column types, for rendering later batches.
     columns: Arc<Vec<ColumnInfo>>,
     /// Where an apply would write, once the gate has been answered.
@@ -332,6 +350,12 @@ enum RunState {
     Idle,
     /// A statement is in flight.
     Running(Box<Running>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransactionAction {
+    Commit,
+    Rollback,
 }
 
 /// A run in flight.
@@ -428,6 +452,8 @@ pub struct QueryPane {
     /// What an apply puts *back* rather than a flat `true`: a profile opened
     /// with autocommit off is a session the user asked to be in a transaction.
     restore_auto_commit: bool,
+    /// The manual transaction operation in flight on the session's worker.
+    transaction: Option<TransactionAction>,
     /// Rows per `FETCH`, from the settings.
     fetch_rows: u32,
     /// The editor's share of the pane's height.
@@ -435,8 +461,7 @@ pub struct QueryPane {
     results: Vec<ResultTab>,
     active_result: usize,
     error: Option<QueryError>,
-    /// A line the pane wants to say without it being a failure — "already
-    /// running", "the LOB viewer is not built yet".
+    /// A line the pane wants to say without it being a failure — "already running".
     notice: Option<SharedString>,
     run: RunState,
     /// The generation of the newest run. Every delivery carries one, and one
@@ -486,6 +511,10 @@ pub struct QueryPane {
     /// faded in with the other passing remarks would be the wrong weight for
     /// "nothing you asked for has happened".
     apply_error: Option<Box<ApplyProblem>>,
+    completion: completion::CompletionState,
+    lob_dialog: Option<Entity<crate::lob_dialog::LobDialog>>,
+    lob_events: Option<Subscription>,
+    _completion_blur: Subscription,
     _editor_events: Subscription,
 }
 
@@ -538,6 +567,7 @@ impl QueryPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        completion::init(cx);
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
             let mut editor = EditorView::new(cx)
@@ -580,21 +610,35 @@ impl QueryPane {
                     // The editor holds no strings, so its menu is drawn here
                     // (architecture document, §7.8).
                     EditorEvent::ContextMenu { position } => {
+                        pane.close_completion(cx);
                         pane.context_menu = Some(PaneMenu::Editor {
                             position: *position,
                         });
                         cx.notify();
                     }
-                    // `Changed` and `SelectionChanged` are drawn from the
-                    // editor's own state on the next frame; `Intercepted` is a
-                    // navigation key handed back by an editor that was asked to
-                    // hand them back, which this pane never asks for.
-                    EditorEvent::Changed
-                    | EditorEvent::SelectionChanged
-                    | EditorEvent::Intercepted(_) => {}
+                    // The toolbar belongs to the pane, so editor changes must
+                    // also redraw its selection and undo/redo availability.
+                    EditorEvent::Changed => {
+                        pane.refresh_completion(false, window, cx);
+                        cx.notify();
+                    }
+                    EditorEvent::SelectionChanged => {
+                        if pane.completion.wanted {
+                            pane.refresh_completion(pane.completion.explicit, window, cx);
+                        }
+                        cx.notify();
+                    }
+                    EditorEvent::Intercepted(key) => pane.completion_key(*key, cx),
                 },
             );
 
+        let completion_blur = cx.on_blur(
+            &editor.read(cx).focus_handle(cx),
+            window,
+            |pane, _window, cx| {
+                pane.close_completion(cx);
+            },
+        );
         Self {
             editor,
             session: Some(session),
@@ -604,6 +648,7 @@ impl QueryPane {
             confirm_writes: profile.confirm_writes,
             transactional: true,
             restore_auto_commit: profile.auto_commit,
+            transaction: None,
             fetch_rows: settings.fetch_batch_rows,
             editor_share: DEFAULT_EDITOR_SHARE,
             results: Vec::new(),
@@ -623,6 +668,10 @@ impl QueryPane {
             preview: None,
             applying: false,
             apply_error: None,
+            completion: completion::CompletionState::default(),
+            lob_dialog: None,
+            lob_events: None,
+            _completion_blur: completion_blur,
             _editor_events: editor_events,
         }
     }
@@ -657,6 +706,11 @@ impl QueryPane {
     /// refuses from here on, and the status bar says the pane is disconnected
     /// rather than idle.
     pub fn detach(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.lob_dialog {
+            dialog.update(cx, |dialog, cx| dialog.detach(cx));
+        }
+        self.close_completion(cx);
+        self.completion.tables.clear();
         self.session = None;
         // A confirmation still on screen would run nothing if it were answered.
         self.pending = None;
@@ -686,15 +740,34 @@ impl QueryPane {
         self.session.is_some()
     }
 
-    /// What is in the editor, for the shell's tests.
-    ///
-    /// The editor is the pane's own field and the workspace's tests are in
-    /// another module, so opening a file into a pane can only be asserted
-    /// through an accessor. Test-only: nothing on screen reads the buffer this
-    /// way — the run pipeline goes through the editor's own events.
-    #[cfg(test)]
+    /// The SQL draft saved with this connection's workspace.
     pub fn editor_text(&self, cx: &App) -> String {
         self.editor.read(cx).text()
+    }
+
+    pub(crate) fn workspace_selection(&self, cx: &App) -> std::ops::Range<usize> {
+        self.editor.read(cx).selection()
+    }
+
+    pub(crate) fn workspace_editor_share(&self) -> f32 {
+        self.editor_share
+    }
+
+    /// Restore the editor, without submitting any SQL to the database.
+    pub(crate) fn restore_workspace_editor(
+        &mut self,
+        selection: std::ops::Range<usize>,
+        share: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor_share = if share.is_finite() {
+            share.clamp(MIN_SHARE, 1. - MIN_SHARE)
+        } else {
+            DEFAULT_EDITOR_SHARE
+        };
+        self.editor
+            .update(cx, |editor, cx| editor.select_range(selection, cx));
+        cx.notify();
     }
 
     /// Puts the keyboard in the editor.
@@ -713,6 +786,14 @@ impl QueryPane {
     /// both, or a focus left on a grid strands exactly the way the workspace's
     /// `reclaim_focus` exists to prevent.
     pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        if self.lob_dialog.as_ref().is_some_and(|dialog| {
+            dialog
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        }) {
+            return true;
+        }
         if self
             .editor
             .read(cx)
@@ -727,7 +808,7 @@ impl QueryPane {
                 .read(cx)
                 .focus_handle(cx)
                 .contains_focused(window, cx),
-            ResultBody::Message(_) => false,
+            ResultBody::Log(_) => false,
         })
     }
 
@@ -763,6 +844,10 @@ impl QueryPane {
 
     /// Runs `statements`, once the profile's guards allow it.
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_completion(cx);
+        if self.lob_dialog.is_some() || self.transaction.is_some() {
+            return;
+        }
         let statements: Vec<String> = statements
             .into_iter()
             .filter(|sql| {
@@ -842,7 +927,7 @@ impl QueryPane {
             .find(|tab| tab.id == id)
             .and_then(|tab| match &tab.body {
                 ResultBody::Rows(rows) => Some(&rows.grid),
-                ResultBody::Message(_) => None,
+                ResultBody::Log(_) => None,
             })
     }
 
@@ -873,10 +958,13 @@ impl QueryPane {
     /// Public because the last of those three paths is the shell's: the tab
     /// strip is what closes a tab, so the tab strip is what has to ask.
     pub fn has_pending_edits(&self, cx: &App) -> bool {
-        self.results.iter().any(|tab| match &tab.body {
-            ResultBody::Rows(rows) => !rows.grid.read(cx).source().edits().is_empty(),
-            ResultBody::Message(_) => false,
-        })
+        self.lob_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.read(cx).has_changes())
+            || self.results.iter().any(|tab| match &tab.body {
+                ResultBody::Rows(rows) => !rows.grid.read(cx).source().edits().is_empty(),
+                ResultBody::Log(_) => false,
+            })
     }
 }
 
@@ -884,7 +972,10 @@ impl Focusable for QueryPane {
     /// The editor's handle: focusing the pane means putting the caret in the
     /// SQL, which is the only thing in here anyone types into.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.editor.read(cx).focus_handle(cx)
+        self.lob_dialog.as_ref().map_or_else(
+            || self.editor.read(cx).focus_handle(cx),
+            |dialog| dialog.read(cx).focus_handle(cx),
+        )
     }
 }
 

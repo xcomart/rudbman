@@ -139,6 +139,7 @@
 #![warn(missing_docs)]
 
 pub mod access;
+pub mod completion;
 pub mod ddl;
 pub mod dialect;
 pub mod dml;
