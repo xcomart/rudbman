@@ -1509,6 +1509,10 @@ impl StructPane {
 
         div()
             .id(id)
+            .tab_index(0)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .focus(|style| style.border_color(chrome.accent))
             .flex()
             .flex_row()
             .items_center()
