@@ -117,11 +117,17 @@ fn multiline_query_text_uses_the_viewer_and_keeps_string_bindings(cx: &mut TestA
 
 #[gpui::test]
 fn lob_query_values_are_viewed_edited_staged_and_applied(cx: &mut TestAppContext) {
+    let large = "한🙂".repeat(200);
+    let insert = format!(
+        "INSERT INTO FILES VALUES (1, X'00FF', 'original'), (2, NULL, NULL), \
+         (3, X'', ''), (4, X'{}', '{large}')",
+        "AB".repeat(100)
+    );
     let (connected, profile) = h2(
         "query_lob_editor",
         &[
             "CREATE TABLE FILES (ID INT PRIMARY KEY, B BLOB, C CLOB)",
-            "INSERT INTO FILES VALUES (1, X'00FF', 'original'), (2, NULL, NULL)",
+            &insert,
         ],
     );
     let handle = pane(&connected, &profile, 100, cx);
@@ -132,6 +138,26 @@ fn lob_query_values_are_viewed_edited_staged_and_applied(cx: &mut TestAppContext
             let source = pane.grid_at(0).read(cx).source();
             assert_eq!(source.lob(0, 1).unwrap().prefix(10).unwrap(), [0, 255]);
             assert_eq!(source.lob(0, 2).unwrap().prefix(100).unwrap(), b"original");
+            for (row, column, expected) in [
+                (0, 1, "00FF".to_owned()),
+                (0, 2, "original".to_owned()),
+                (2, 1, String::new()),
+                (2, 2, String::new()),
+                (3, 1, format!("{}…", "AB".repeat(64))),
+                (3, 2, format!("{}…", "한🙂".repeat(128))),
+            ] {
+                assert_eq!(
+                    rugpui_grid::cell_label(&source.cell(row, column)).text,
+                    expected
+                );
+                assert!(source.uses_value_viewer(row, column));
+            }
+            assert_eq!(source.cell(1, 1), GridCell::Null);
+            assert_eq!(source.cell(1, 2), GridCell::Null);
+            assert_eq!(
+                source.lob(3, 2).unwrap().prefix(large.len()).unwrap(),
+                large.as_bytes()
+            );
             assert!(source.writable());
             assert_eq!(source.state(), GridSourceState::Complete);
         })
@@ -147,6 +173,10 @@ fn lob_query_values_are_viewed_edited_staged_and_applied(cx: &mut TestAppContext
                 "새 본문🙂\nsecond line".as_bytes()
             );
             assert_eq!(source.edits().counts().changed, 1);
+            assert_eq!(
+                rugpui_grid::cell_label(&source.cell(0, 2)).text,
+                "새 본문🙂\\nsecond line"
+            );
         })
         .unwrap();
     assert_eq!(
@@ -181,6 +211,7 @@ fn lob_query_values_are_viewed_edited_staged_and_applied(cx: &mut TestAppContext
             assert!(pane.apply_error.is_none());
             assert!(!pane.has_pending_edits(cx));
             let source = pane.grid_at(0).read(cx).source();
+            assert_eq!(rugpui_grid::cell_label(&source.cell(0, 1)).text, "0080FF01");
             assert_eq!(
                 source.lob(0, 1).unwrap().prefix(10).unwrap(),
                 [0, 128, 255, 1]

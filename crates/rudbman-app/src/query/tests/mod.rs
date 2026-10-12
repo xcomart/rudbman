@@ -120,7 +120,7 @@ fn column_zero(
                     // nothing: only the data pane's overlay can leave a
                     // column to the server (§7.9).
                     GridCell::Default => "DEFAULT".to_string(),
-                    GridCell::Lob { size } => format!("lob {size:?}"),
+                    GridCell::Lob { size, .. } => format!("lob {size:?}"),
                 })
                 .collect()
         })
@@ -239,7 +239,7 @@ fn column_at(
                     // server, and §7.9 gives a query result no way to add
                     // one.
                     GridCell::Default => "DEFAULT".to_string(),
-                    GridCell::Lob { size } => format!("lob {size:?}"),
+                    GridCell::Lob { size, .. } => format!("lob {size:?}"),
                 })
                 .collect()
         })

@@ -612,13 +612,18 @@ impl GridSource for ResultSource {
                 let (start, end) = (offsets[local] as usize, offsets[local + 1] as usize);
                 GridCell::Text(&data[start..end])
             }
-            Some(RenderedColumn::Lob { sizes, valid, .. }) => {
+            Some(RenderedColumn::Lob {
+                sizes,
+                valid,
+                values,
+            }) => {
                 if !is_valid(valid, local) {
                     return GridCell::Null;
                 }
                 let size = sizes[local];
                 GridCell::Lob {
                     size: (size != LOB_SIZE_UNKNOWN).then_some(size),
+                    preview: values[local].as_ref().map(rudbman_jdbc::LobFile::preview),
                 }
             }
         }

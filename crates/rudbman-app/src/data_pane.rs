@@ -1691,7 +1691,7 @@ mod tests {
                         GridCell::Text(text) => text.to_string(),
                         GridCell::Null => "NULL".to_string(),
                         GridCell::Default => "DEFAULT".to_string(),
-                        GridCell::Lob { size } => format!("lob {size:?}"),
+                        GridCell::Lob { size, .. } => format!("lob {size:?}"),
                     })
                     .collect()
             })
@@ -2857,6 +2857,14 @@ mod tests {
             .update(&mut cx, |pane, window, cx| {
                 window.activate_window();
                 let grid = pane.grid().unwrap().clone();
+                assert_eq!(
+                    rugpui_grid::cell_label(&grid.read(cx).source().cell(0, 1)).text,
+                    "00FF"
+                );
+                assert_eq!(
+                    rugpui_grid::cell_label(&grid.read(cx).source().cell(0, 2)).text,
+                    "before"
+                );
                 assert_eq!(
                     grid.read(cx)
                         .source()

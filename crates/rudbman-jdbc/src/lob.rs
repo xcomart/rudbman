@@ -10,6 +10,9 @@ use std::sync::Arc;
 
 use tempfile::NamedTempFile;
 
+const TEXT_PREVIEW_CHARS: usize = 256;
+const BINARY_PREVIEW_BYTES: usize = 64;
+
 /// An owned BLOB or UTF-8 CLOB snapshot. Cloning keeps the same file alive.
 #[derive(Clone, Debug)]
 pub struct LobFile {
@@ -17,6 +20,7 @@ pub struct LobFile {
     binary: bool,
     bytes: u64,
     units: u64,
+    preview: Arc<str>,
 }
 
 impl PartialEq for LobFile {
@@ -35,6 +39,12 @@ impl LobFile {
         let mut pending = Vec::with_capacity(buffer.len() + 3);
         let mut bytes = 0u64;
         let mut units = 0u64;
+        let preview_limit = if binary {
+            BINARY_PREVIEW_BYTES
+        } else {
+            TEXT_PREVIEW_CHARS * 4
+        };
+        let mut prefix = Vec::with_capacity(preview_limit);
         loop {
             let read = input.read(&mut buffer)?;
             if read == 0 {
@@ -42,6 +52,7 @@ impl LobFile {
             }
             file.write_all(&buffer[..read])?;
             bytes += read as u64;
+            prefix.extend_from_slice(&buffer[..read.min(preview_limit - prefix.len())]);
             if !binary {
                 pending.extend_from_slice(&buffer[..read]);
                 let valid = match std::str::from_utf8(&pending) {
@@ -63,11 +74,36 @@ impl LobFile {
             ));
         }
         file.flush()?;
+        let mut preview = if binary {
+            use std::fmt::Write as _;
+            let mut hex = String::with_capacity(prefix.len() * 2 + 3);
+            for byte in &prefix {
+                write!(&mut hex, "{byte:02X}").expect("writing to a String");
+            }
+            hex
+        } else {
+            // The complete stream was validated above. Only the bounded
+            // prefix may end inside a scalar; never show a replacement glyph.
+            let end = match std::str::from_utf8(&prefix) {
+                Ok(_) => prefix.len(),
+                Err(error) => error.valid_up_to(),
+            };
+            std::str::from_utf8(&prefix[..end])
+                .map_err(io::Error::other)?
+                .chars()
+                .take(TEXT_PREVIEW_CHARS)
+                .collect::<String>()
+        };
+        let shown_bytes = if binary { prefix.len() } else { preview.len() };
+        if bytes > shown_bytes as u64 {
+            preview.push('…');
+        }
         Ok(Self {
             file: Arc::new(file),
             binary,
             bytes,
             units: if binary { bytes } else { units },
+            preview: preview.into(),
         })
     }
 
@@ -99,6 +135,12 @@ impl LobFile {
     /// Whether the value has zero length. An empty LOB is distinct from SQL NULL.
     pub fn is_empty(&self) -> bool {
         self.bytes == 0
+    }
+
+    /// A cached grid preview: up to 256 Unicode scalars, or 64 bytes as hex.
+    /// A trailing ellipsis marks omitted content. Access never reads the file.
+    pub fn preview(&self) -> &str {
+        &self.preview
     }
 
     /// Path used by the in-process JDBC bridge to bind a streaming parameter.
@@ -134,6 +176,65 @@ impl LobFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_previews_are_bounded_without_splitting_unicode_or_changing_the_body() {
+        for text in ["", "short\ntext", &"🙂".repeat(256)] {
+            let file = LobFile::from_bytes(text.as_bytes(), false).unwrap();
+            assert_eq!(file.preview(), text);
+        }
+        let text = format!("{}tail", "한🙂".repeat(128));
+        let file = LobFile::from_bytes(text.as_bytes(), false).unwrap();
+        assert_eq!(file.preview(), format!("{}…", "한🙂".repeat(128)));
+        assert_eq!(file.prefix(text.len()).unwrap(), text.as_bytes());
+        assert_eq!(file.byte_len(), text.len() as u64);
+        assert_eq!(file.clone().preview(), file.preview());
+        // The 1024-byte prefix itself ends inside the next emoji here.
+        let text = format!("x{}", "🙂".repeat(300));
+        let file = LobFile::from_bytes(text.as_bytes(), false).unwrap();
+        assert_eq!(file.preview(), format!("x{}…", "🙂".repeat(255)));
+    }
+
+    #[test]
+    fn previews_handle_utf8_split_across_small_reads() {
+        struct SmallReads<'a>(&'a [u8]);
+        impl Read for SmallReads<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                let length = buffer.len().min(3);
+                self.0.read(&mut buffer[..length])
+            }
+        }
+        let text = format!("{}🙂suffix", "x".repeat(255));
+        let file = LobFile::from_reader(SmallReads(text.as_bytes()), false).unwrap();
+        assert_eq!(file.preview(), format!("{}🙂…", "x".repeat(255)));
+    }
+
+    #[test]
+    fn binary_previews_show_hex_and_mark_only_truncated_bodies() {
+        assert_eq!(LobFile::from_bytes(&[], true).unwrap().preview(), "");
+        assert_eq!(
+            LobFile::from_bytes(&[0, 128, 255], true).unwrap().preview(),
+            "0080FF"
+        );
+        let bytes = (0..65).collect::<Vec<u8>>();
+        let file = LobFile::from_bytes(&bytes, true).unwrap();
+        assert_eq!(
+            file.preview(),
+            concat!(
+                "000102030405060708090A0B0C0D0E0F",
+                "101112131415161718191A1B1C1D1E1F",
+                "202122232425262728292A2B2C2D2E2F",
+                "303132333435363738393A3B3C3D3E3F…",
+            )
+        );
+        assert_eq!(file.prefix(65).unwrap(), bytes);
+        assert!(
+            !LobFile::from_bytes(&bytes[..64], true)
+                .unwrap()
+                .preview()
+                .ends_with('…')
+        );
+    }
 
     #[test]
     fn snapshots_preserve_bytes_validate_utf8_and_remove_their_file() {

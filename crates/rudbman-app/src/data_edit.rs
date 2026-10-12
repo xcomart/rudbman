@@ -698,6 +698,7 @@ impl GridSource for EditableSource {
                 Some(StagedCell::Text(text)) => GridCell::Text(text),
                 Some(StagedCell::Lob(file)) => GridCell::Lob {
                     size: Some(file.len()),
+                    preview: Some(file.preview()),
                 },
                 Some(StagedCell::Null) => GridCell::Null,
                 // Never recorded against a base row; falling through to the
@@ -708,6 +709,7 @@ impl GridSource for EditableSource {
                 Some(StagedCell::Text(text)) => GridCell::Text(text),
                 Some(StagedCell::Lob(file)) => GridCell::Lob {
                     size: Some(file.len()),
+                    preview: Some(file.preview()),
                 },
                 Some(StagedCell::Null) => GridCell::Null,
                 Some(StagedCell::Unset) => GridCell::Default,
