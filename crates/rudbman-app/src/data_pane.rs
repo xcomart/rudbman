@@ -72,7 +72,7 @@ use rugpui_grid::{
 use crate::builder_sql;
 use crate::connection::SessionHandle;
 use crate::context_menu::{self, MenuRow};
-use crate::data_edit::{EditableSource, PlannedStatement, StagedCell, plan_apply};
+use crate::data_edit::{EditableSource, PlannedStatement, RowRef, StagedCell, plan_apply};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::{QueryError, note, render_error};
@@ -884,11 +884,8 @@ impl DataPane {
         }
     }
 
-    /// Adds a row after the last one, and starts typing into it.
-    ///
-    /// Scrolled to and opened rather than merely appended: a new row a hundred
-    /// screens down that the user has to go and find is a row they will type
-    /// into the wrong place.
+    /// Adds a row above the fetched rows, and starts typing into it.
+    /// Paging can then append without moving the new row or its editor.
     fn insert_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only_reason().is_some() {
             return;
@@ -896,24 +893,37 @@ impl DataPane {
         let Some(grid) = self.grid().cloned() else {
             return;
         };
-        let row = grid.update(cx, |grid, cx| {
-            let source = grid.source_mut(cx);
-            let columns = source.column_count();
-            source.edits_mut().add_insert(columns);
-            source.row_count() - 1
+        // Commit events use display indices. Let the current field's event
+        // reach the staging buffer before prepending shifts those indices.
+        grid.update(cx, |grid, cx| grid.commit_edit(cx));
+        cx.defer_in(window, move |pane, window, cx| {
+            if pane.grid() != Some(&grid) || pane.read_only_reason().is_some() {
+                return;
+            }
+            let first = grid.update(cx, |grid, cx| {
+                let source = grid.source_mut(cx);
+                let columns = source.column_count();
+                source.edits_mut().add_insert(columns);
+                grid.scroll_to_row(0, cx);
+                // A hidden column has nowhere to draw the input field.
+                (0..columns).find(|column| {
+                    grid.source().cell_editable(0, *column) && !grid.is_column_hidden(*column)
+                })
+            });
+            if let Some(column) = first {
+                // The scroll handle is applied during layout. Opening the
+                // field before that frame would place it at the old offset
+                // and let the grid dismiss it as off screen.
+                cx.on_next_frame(window, move |pane, window, cx| {
+                    if pane.grid() == Some(&grid)
+                        && grid.read(cx).source().row_status(0) == RowStatus::Inserted
+                    {
+                        pane.open_cell(0, column, window, cx);
+                    }
+                });
+            }
+            cx.notify();
         });
-        let first = grid.update(cx, |grid, cx| {
-            grid.scroll_to_row(row, cx);
-            // The first column that will take a value *and* has somewhere to
-            // draw a field: a hidden column is neither.
-            (0..grid.source().column_count()).find(|column| {
-                grid.source().cell_editable(row, *column) && !grid.is_column_hidden(*column)
-            })
-        });
-        if let Some(column) = first {
-            self.open_cell(row, column, window, cx);
-        }
-        cx.notify();
     }
 
     /// Marks a row to be deleted, or takes the mark off.
@@ -929,7 +939,7 @@ impl DataPane {
         };
         grid.update(cx, |grid, cx| {
             let source = grid.source_mut(cx);
-            if row < source.base_rows() {
+            if let Some(RowRef::Base(row)) = source.edits().locate(row, source.base_rows()) {
                 source.edits_mut().toggle_deleted(row);
             }
         });
@@ -942,11 +952,29 @@ impl DataPane {
             return;
         };
         grid.update(cx, |grid, cx| {
-            let source = grid.source_mut(cx);
-            let base = source.base_rows();
-            source.edits_mut().discard_row(row, base);
+            if grid.editing().is_some_and(|(editing, _)| editing == row) {
+                grid.cancel_edit(cx);
+            } else {
+                grid.commit_edit(cx);
+            }
         });
-        cx.notify();
+        let pane = cx.entity();
+        cx.defer(move |cx| {
+            pane.update(cx, |pane, cx| {
+                if pane.grid() != Some(&grid) {
+                    return;
+                }
+                // Any other field commits before removing an inserted row
+                // changes the display indices below it.
+                grid.update(cx, |grid, cx| {
+                    let source = grid.source_mut(cx);
+                    let base = source.base_rows();
+                    source.edits_mut().discard_row(row, base);
+                    grid.clear_selection(cx);
+                });
+                cx.notify();
+            });
+        });
     }
 
     /// Throws away everything staged, and puts the confirmation away with it.
@@ -960,7 +988,9 @@ impl DataPane {
             return;
         };
         grid.update(cx, |grid, cx| {
+            grid.cancel_edit(cx);
             grid.source_mut(cx).edits_mut().discard_all();
+            grid.clear_selection(cx);
         });
         self.notice = None;
         cx.notify();
@@ -1171,9 +1201,8 @@ impl DataPane {
         let cell = self.menu_cell(cx);
         let source = grid.read(cx).source();
         let writable = source.writable();
-        let base_rows = source.base_rows();
         let deleted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Deleted);
-        let inserted = cell.is_some_and(|(row, _)| row >= base_rows);
+        let inserted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Inserted);
         // A cell may take a NULL when it may take anything at all *and* the
         // catalogue lets the column hold one. Both halves are the source's:
         // this side only asks.
@@ -2144,37 +2173,51 @@ mod tests {
         connected.close().expect("close");
     }
 
-    /// A new row appears after the last one, is scrolled to, and is already
+    fn next_frame(window: WindowHandle<DataPane>, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_next_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    /// A new row appears above the fetched rows, is scrolled to, and is already
     /// taking a value — with the columns nobody typed into left to the server.
     #[gpui::test]
-    fn an_inserted_row_appears_at_the_end_and_opens_a_field(cx: &mut TestAppContext) {
+    fn an_inserted_row_appears_at_the_top_and_opens_a_field(cx: &mut TestAppContext) {
         let (connected, profile) = person("data-insert");
         let window = pane(&connected, &profile, target("PERSON"), 500, cx);
 
         window
             .update(cx, |pane, window, cx| {
                 pane.insert_row(window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        next_frame(window, cx);
+        window
+            .update(cx, |pane, _window, cx| {
                 let grid = pane.grid().expect("the pane holds rows").read(cx);
                 assert_eq!(grid.source().row_count(), 3, "the row is not there");
                 assert_eq!(
                     grid.editing(),
-                    Some((2, 0)),
+                    Some((0, 0)),
                     "the field did not open on the new row's first column"
                 );
             })
             .expect("the window is open");
 
-        assert_eq!(status(&window, 2, cx), RowStatus::Inserted);
+        assert_eq!(status(&window, 0, cx), RowStatus::Inserted);
         // Every column of it is the server's until something is typed in, and
         // that is not the same thing as NULL.
-        assert_eq!(column(&window, 0, cx), ["1", "2", "DEFAULT"]);
-        assert_eq!(column(&window, 2, cx), ["NULL", "", "DEFAULT"]);
+        assert_eq!(column(&window, 0, cx), ["DEFAULT", "1", "2"]);
+        assert_eq!(column(&window, 2, cx), ["DEFAULT", "NULL", ""]);
 
-        assert!(type_into(&window, 2, 1, "c", cx));
-        assert_eq!(column(&window, 1, cx), ["a", "b", "c"]);
+        assert!(type_into(&window, 0, 1, "c", cx));
+        assert_eq!(column(&window, 1, cx), ["c", "a", "b"]);
         assert_eq!(
             column(&window, 0, cx),
-            ["1", "2", "DEFAULT"],
+            ["DEFAULT", "1", "2"],
             "an untyped column is still the server's"
         );
         window
@@ -2192,7 +2235,7 @@ mod tests {
 
         // Discarding an inserted row takes the row itself: it *is* the change.
         let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
-        select(&window, 2, 0, &mut cx);
+        select(&window, 0, 0, &mut cx);
         let rows = cell_menu(&window, &mut cx);
         assert!(
             !context_menu::row(&rows, &ts!("data.delete_row")).is_enabled(),
@@ -2205,6 +2248,192 @@ mod tests {
             })
             .expect("the window is open");
         assert_eq!(column(&window, 1, &mut cx), ["a", "b"]);
+        connected.close().expect("close");
+    }
+
+    #[gpui::test]
+    fn a_new_row_is_visible_above_a_large_paged_table(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-insert-paging",
+            &[
+                "create schema if not exists APP",
+                "create table APP.BIG (ID int auto_increment primary key, NAME varchar(20))",
+                "insert into APP.BIG (NAME) select 'row' from system_range(1, 2500)",
+            ],
+        );
+        let window = pane(&connected, &profile, target("BIG"), 1_000, cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                pane.grid()
+                    .unwrap()
+                    .update(cx, |grid, cx| grid.scroll_to_row(900, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let loaded = window
+            .update(&mut cx, |pane, _window, cx| pane.row_count(cx).unwrap())
+            .unwrap();
+        assert!(
+            loaded < 2_500,
+            "the test must still have another page to fetch"
+        );
+        window
+            .update(&mut cx, |pane, window, cx| pane.insert_row(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, &mut cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                let grid = pane.grid().unwrap().read(cx);
+                assert_eq!(grid.source().base_rows(), loaded);
+                assert_eq!(grid.source().row_status(0), RowStatus::Inserted);
+                assert!(
+                    grid.visible_rows().contains(&0),
+                    "the new row is off screen"
+                );
+                assert_eq!(grid.editing(), Some((0, 1)));
+            })
+            .unwrap();
+        cx.simulate_input("new row");
+        // A page already on its way must not reassign the typed value to a
+        // fetched row. The insert stays at index zero after the page arrives.
+        window
+            .update(&mut cx, |pane, _window, cx| pane.fetch_more(cx))
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                let grid = pane.grid().unwrap().read(cx);
+                assert_eq!(grid.source().base_rows(), (loaded + 1_000).min(2_500));
+                assert_eq!(grid.source().row_status(0), RowStatus::Inserted);
+                assert_eq!(grid.source().cell(0, 1), GridCell::Text("new row"));
+                assert_eq!(grid.source().cell(1, 1), GridCell::Text("row"));
+                assert_eq!(grid.source().edits().counts().changed, 0);
+            })
+            .unwrap();
+        assert!(type_into(&window, 0, 1, "still editable", &mut cx));
+        connected.close().expect("close");
+    }
+
+    #[gpui::test]
+    fn prepending_rows_keeps_pending_typing_and_existing_row_keys(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-prepend-edits");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        window
+            .update(cx, |pane, window, cx| {
+                let grid = pane.grid().cloned().unwrap();
+                grid.update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(1, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("existing", cx);
+                    });
+                });
+                pane.insert_row(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 1, cx), ["DEFAULT", "a", "existing"]);
+        assert!(type_into(&window, 0, 0, "3", cx));
+        window
+            .update(cx, |pane, window, cx| {
+                let grid = pane.grid().cloned().unwrap();
+                grid.update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(0, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("first", cx);
+                    });
+                });
+                pane.insert_row(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(
+            column(&window, 1, cx),
+            ["DEFAULT", "first", "a", "existing"]
+        );
+        assert!(type_into(&window, 0, 0, "4", cx));
+        assert!(type_into(&window, 0, 1, "second", cx));
+        window
+            .update(cx, |pane, window, cx| {
+                pane.toggle_delete(2, cx);
+                pane.apply(window, cx);
+                pane.confirm_apply(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["existing", "first", "second"]
+        );
+        connected.close().expect("close");
+    }
+
+    #[gpui::test]
+    fn discarding_inserted_rows_keeps_pending_edits_on_their_own_rows(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-discard-insert");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        window
+            .update(cx, |pane, window, cx| pane.insert_row(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        window
+            .update(cx, |pane, _window, cx| {
+                let input = pane.grid().unwrap().read(cx).editor().cloned().unwrap();
+                input.update(cx, |input, cx| input.set_content("999", cx));
+                pane.discard_row(0, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 0, cx), ["1", "2"]);
+        window
+            .update(cx, |pane, window, cx| {
+                assert!(!pane.has_pending_edits(cx));
+                pane.insert_row(window, cx);
+            })
+            .unwrap();
+        window
+            .update(cx, |pane, window, cx| pane.insert_row(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        window
+            .update(cx, |pane, window, cx| {
+                pane.grid().unwrap().update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(3, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("kept", cx);
+                    });
+                });
+                pane.discard_row(1, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 1, cx), ["DEFAULT", "a", "kept"]);
+        window
+            .update(cx, |pane, window, cx| {
+                pane.grid().unwrap().update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(0, 1, window, cx));
+                    grid.editor().cloned().unwrap().update(cx, |input, cx| {
+                        input.set_content("discard me", cx);
+                    });
+                });
+                pane.discard_all(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        next_frame(window, cx);
+        assert_eq!(column(&window, 1, cx), ["a", "b"]);
+        window
+            .update(cx, |pane, _window, cx| assert!(!pane.has_pending_edits(cx)))
+            .unwrap();
         connected.close().expect("close");
     }
 
@@ -2454,7 +2683,7 @@ mod tests {
                 pane.insert_row(window, cx);
             })
             .expect("the window is open");
-        assert!(type_into(&window, 3, 1, "d", cx));
+        assert!(type_into(&window, 0, 1, "d", cx));
 
         // Apply plans and shows; nothing has gone out yet.
         window

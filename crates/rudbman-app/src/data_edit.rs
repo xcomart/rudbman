@@ -17,11 +17,11 @@
 //! `(row, column) → value` at all, and it is also why a sort or a refresh —
 //! which throw the source away — have to ask before they run.
 //!
-//! Rows the user inserts are a list of their own, drawn after the last fetched
-//! row. Their grid indices are *not* stable: paging in another batch grows the
-//! base and slides them all down. That is fine and deliberate — nothing is keyed
-//! by an inserted row's grid index, only by its position in that list, and
-//! [`EditSet::locate`] is the one place the two spaces are told apart.
+//! Rows the user inserts are a list of their own, drawn before the fetched
+//! rows, newest first. Paging leaves their grid indices alone. Adding or
+//! discarding an insert changes the base rows' display positions, but their
+//! stored indices and staged edits stay the same. [`EditSet::locate`] maps a
+//! grid index to either a stable base index or a position in the insert list.
 //!
 //! A deleted row keeps its slot. It goes on being drawn, struck through, until
 //! the change is applied or discarded: a deletion that made the row vanish
@@ -192,14 +192,14 @@ impl EditSet {
 
     /// Which row space `row` falls in, against a base of `base_rows` rows.
     ///
-    /// `None` for an index past the last inserted row, which the grid can ask
+    /// `None` for an index past the last displayed row, which the grid can ask
     /// for between a layout and a paint.
     pub fn locate(&self, row: usize, base_rows: usize) -> Option<RowRef> {
-        if row < base_rows {
-            return Some(RowRef::Base(row));
+        if row < self.inserted.len() {
+            return Some(RowRef::Inserted(self.inserted.len() - 1 - row));
         }
-        let index = row - base_rows;
-        (index < self.inserted.len()).then_some(RowRef::Inserted(index))
+        let index = row - self.inserted.len();
+        (index < base_rows).then_some(RowRef::Base(index))
     }
 
     /// How many rows the grid sees: the base, plus the ones being added.
@@ -534,9 +534,8 @@ impl EditableSource {
 
     /// The rows the server sent, to append another page to.
     ///
-    /// Growing the base slides the inserted rows down the grid, which is right:
-    /// they are drawn after the last fetched row, and there is now one more of
-    /// those.
+    /// Growing the base leaves both the existing rows and the inserted rows
+    /// at the same display positions.
     pub fn base_mut(&mut self) -> &mut ResultSource {
         &mut self.base
     }
@@ -551,7 +550,7 @@ impl EditableSource {
         &mut self.edits
     }
 
-    /// How many rows the server sent, which is where the inserted ones begin.
+    /// How many rows the server sent, excluding the inserted rows above them.
     pub fn base_rows(&self) -> usize {
         self.base.row_count()
     }
@@ -561,13 +560,12 @@ impl EditableSource {
         self.base.set_state(state);
     }
 
-    /// The value the server gave for a cell, whatever is staged over it.
+    /// The value the server gave for a cell, addressed by its stable base index.
     ///
     /// The `WHERE` clause of an `UPDATE` is written from this and never from
     /// [`GridSource::cell`]: a key column the user retyped is *set* to its new
     /// value and *found* by its old one, so a statement built from the overlay
-    /// would name a row that does not exist. `None` for an inserted row, which
-    /// the server has never seen.
+    /// would name a row that does not exist. Inserted rows have no base index.
     pub fn original(&self, row: usize, column: usize) -> Option<GridCell<'_>> {
         (row < self.base.row_count()).then(|| self.base.cell(row, column))
     }
@@ -631,14 +629,14 @@ impl EditableSource {
 
     /// Current body, including a staged replacement; NULL/default have no file.
     pub fn lob(&self, row: usize, column: usize) -> Option<&LobFile> {
-        let staged = match self.edits.locate(row, self.base.row_count())? {
-            RowRef::Base(row) => self.edits.staged(row, column),
-            RowRef::Inserted(index) => self.edits.inserted_cell(index, column),
+        let (staged, base_row) = match self.edits.locate(row, self.base.row_count())? {
+            RowRef::Base(row) => (self.edits.staged(row, column), Some(row)),
+            RowRef::Inserted(index) => (self.edits.inserted_cell(index, column), None),
         };
         match staged {
             Some(StagedCell::Lob(file)) => Some(file),
             Some(StagedCell::Null | StagedCell::Unset | StagedCell::Text(_)) => None,
-            None => self.base.lob(row, column),
+            None => self.base.lob(base_row?, column),
         }
     }
 
@@ -1308,22 +1306,22 @@ mod tests {
         let index = source.edits_mut().add_insert(3);
         assert_eq!(index, 0);
         assert_eq!(source.row_count(), 3);
-        assert_eq!(source.row_status(2), RowStatus::Inserted);
+        assert_eq!(source.row_status(0), RowStatus::Inserted);
 
-        source.stage(2, 0, StagedCell::Text("c".into()));
-        source.stage(2, 1, StagedCell::Null);
+        source.stage(0, 0, StagedCell::Text("c".into()));
+        source.stage(0, 1, StagedCell::Null);
         // Column 2 is left alone.
 
-        assert_eq!(source.cell(2, 0), GridCell::Text("c"));
-        assert_eq!(source.cell(2, 1), GridCell::Null);
+        assert_eq!(source.cell(0, 0), GridCell::Text("c"));
+        assert_eq!(source.cell(0, 1), GridCell::Null);
         assert_eq!(
-            source.cell(2, 2),
+            source.cell(0, 2),
             GridCell::Default,
             "an untouched column is the server's, not NULL"
         );
-        assert!(source.cell_dirty(2, 0));
-        assert!(source.cell_dirty(2, 1), "a deliberate NULL is a value");
-        assert!(!source.cell_dirty(2, 2), "an untouched column is not typed");
+        assert!(source.cell_dirty(0, 0));
+        assert!(source.cell_dirty(0, 1), "a deliberate NULL is a value");
+        assert!(!source.cell_dirty(0, 2), "an untouched column is not typed");
         assert_eq!(
             source.edits().inserted[0],
             [
@@ -1334,14 +1332,13 @@ mod tests {
         );
     }
 
-    /// Paging in another batch slides the inserted rows down and leaves the
-    /// base rows' staging exactly where it was.
+    /// Paging leaves both the inserted rows and the base rows' edits in place.
     #[test]
-    fn a_page_moves_the_inserted_rows_and_nothing_else() {
+    fn paging_keeps_inserted_rows_at_the_top() {
         let mut source = source(true);
         source.stage(1, 0, StagedCell::Text("B".into()));
         source.edits_mut().add_insert(3);
-        source.stage(2, 0, StagedCell::Text("new".into()));
+        source.stage(0, 0, StagedCell::Text("new".into()));
 
         let columns = vec![
             info(1, "ID", 4, 0),
@@ -1354,14 +1351,14 @@ mod tests {
         ));
 
         assert_eq!(source.row_count(), 4);
-        assert_eq!(source.cell(1, 0), GridCell::Text("B"), "the edit held");
-        assert_eq!(source.cell(2, 0), GridCell::Text("c"), "the new base row");
+        assert_eq!(source.cell(2, 0), GridCell::Text("B"), "the edit held");
+        assert_eq!(source.cell(3, 0), GridCell::Text("c"), "the new base row");
         assert_eq!(
-            source.cell(3, 0),
+            source.cell(0, 0),
             GridCell::Text("new"),
-            "the inserted row moved down with the base"
+            "the inserted row stayed above the base"
         );
-        assert_eq!(source.row_status(3), RowStatus::Inserted);
+        assert_eq!(source.row_status(0), RowStatus::Inserted);
     }
 
     /// The `WHERE` clause reads the row the server has, not the one on screen.
@@ -1376,9 +1373,9 @@ mod tests {
 
         source.edits_mut().add_insert(3);
         assert_eq!(
-            source.original(2, 0),
-            None,
-            "an inserted row has no original"
+            source.original(0, 0),
+            Some(GridCell::Text("a")),
+            "the original is addressed by its base index despite the new row"
         );
     }
 
@@ -1391,15 +1388,15 @@ mod tests {
         source.stage(1, 0, StagedCell::Text("B".into()));
         source.edits_mut().toggle_deleted(0);
         source.edits_mut().add_insert(3);
-        source.stage(2, 0, StagedCell::Text("new".into()));
+        source.stage(0, 0, StagedCell::Text("new".into()));
 
         let base = source.base_rows();
-        assert!(source.edits_mut().discard_row(0, base));
-        assert_eq!(source.row_status(0), RowStatus::Unchanged);
-        assert_eq!(source.cell(0, 0), GridCell::Text("a"));
-        assert_eq!(source.cell(1, 0), GridCell::Text("B"), "row 1 kept its own");
+        assert!(source.edits_mut().discard_row(1, base));
+        assert_eq!(source.row_status(1), RowStatus::Unchanged);
+        assert_eq!(source.cell(1, 0), GridCell::Text("a"));
+        assert_eq!(source.cell(2, 0), GridCell::Text("B"), "row 1 kept its own");
 
-        assert!(source.edits_mut().discard_row(2, base));
+        assert!(source.edits_mut().discard_row(0, base));
         assert_eq!(source.row_count(), 2, "the inserted row went with it");
         assert!(!source.edits().is_empty(), "row 1 is still staged");
 
@@ -1587,8 +1584,8 @@ mod tests {
         source.stage(0, 2, StagedCell::Null);
         source.edits_mut().toggle_deleted(1);
         source.edits_mut().add_insert(3);
-        source.stage(2, 0, StagedCell::Text("9".into()));
-        source.stage(2, 1, StagedCell::Text("new".into()));
+        source.stage(0, 0, StagedCell::Text("9".into()));
+        source.stage(0, 1, StagedCell::Text("new".into()));
         // NOTE is left alone, so the server supplies it.
 
         let batch = plan(&source).expect("the edits plan");
@@ -1871,9 +1868,9 @@ mod tests {
         source.stage(0, 3, StagedCell::Lob(character.clone()));
         source.edits_mut().toggle_deleted(1);
         source.edits_mut().add_insert(columns.len());
-        source.stage(2, 1, StagedCell::Lob(binary.clone()));
-        source.stage(2, 3, StagedCell::Null);
-        source.stage(2, 4, StagedCell::Text("9".into()));
+        source.stage(0, 1, StagedCell::Lob(binary.clone()));
+        source.stage(0, 3, StagedCell::Null);
+        source.stage(0, 4, StagedCell::Text("9".into()));
         let plan = plan_apply(
             &source,
             &columns,
