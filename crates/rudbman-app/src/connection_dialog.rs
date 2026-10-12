@@ -1359,10 +1359,34 @@ impl ConnectionDialog {
         if profile.driver_id == id {
             return;
         }
+        let previous_port = self
+            .url_parts
+            .get("port")
+            .map(|input| text(input, cx))
+            .unwrap_or_default();
+        let use_default_port = previous_port.is_empty()
+            || self
+                .current_driver()
+                .and_then(|driver| driver.default_port)
+                .is_some_and(|port| previous_port == port.to_string());
         profile.driver_id = id;
         self.store.upsert(profile);
         self.driver_list_open = false;
         self.rebuild_url_parts(cx);
+        // Shared fields keep the host and database, but a default port belongs
+        // to its driver. Apply it after URL decomposition so a matching old
+        // template cannot restore the previous driver's port.
+        if let Some(input) = self.url_parts.get("port") {
+            let port = if use_default_port {
+                self.current_driver()
+                    .and_then(|driver| driver.default_port)
+                    .map(|port| port.to_string())
+                    .unwrap_or_default()
+            } else {
+                previous_port
+            };
+            set_text(input, port, cx);
+        }
         // The template changed, so an override that was written for the old
         // driver's grammar is no longer an override of *this* template.
         self.url_overridden = false;
@@ -2857,6 +2881,74 @@ mod tests {
             dialog.close(cx);
             assert!(dialog.collapsed_folders.contains("staging"));
         });
+    }
+
+    #[gpui::test]
+    fn switching_drivers_updates_default_ports_and_preserves_custom_ports(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for (old_port, new_port) in [("5432", "3306"), ("", "3306"), ("15432", "15432")] {
+            let dialog = cx.new(ConnectionDialog::new);
+            dialog.update(cx, |dialog, cx| {
+                let profile = ConnectionProfile::new("staging", "postgresql", "", "app");
+                dialog.selected = Some(profile.id);
+                dialog.store.upsert(profile);
+                dialog.rebuild_url_parts(cx);
+                set_text(&dialog.url_parts["host"], "db.example.com", cx);
+                set_text(&dialog.url_parts["database"], "app", cx);
+                set_text(&dialog.url_parts["port"], old_port, cx);
+                dialog.refresh_url(cx);
+
+                dialog.set_driver("mysql".to_owned(), cx);
+                assert_eq!(text(&dialog.url_parts["port"], cx), new_port);
+                assert_eq!(
+                    text(&dialog.url_input, cx),
+                    format!("jdbc:mysql://db.example.com:{new_port}/app")
+                );
+
+                dialog.set_driver("postgresql".to_owned(), cx);
+                let restored = if old_port == "15432" { "15432" } else { "5432" };
+                assert_eq!(text(&dialog.url_parts["port"], cx), restored);
+                assert_eq!(
+                    text(&dialog.url_input, cx),
+                    format!("jdbc:postgresql://db.example.com:{restored}/app")
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn switching_drivers_with_the_same_url_template_uses_the_new_default(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for (old_port, default_port, expected) in [
+            ("5432", Some(6432), "6432"),
+            ("5432", None, ""),
+            ("15432", Some(6432), "15432"),
+        ] {
+            let dialog = cx.new(ConnectionDialog::new);
+            dialog.update(cx, |dialog, cx| {
+                let mut driver = dialog.drivers.get("postgresql").unwrap().clone();
+                driver.id = "custom-postgresql".to_owned();
+                driver.default_port = default_port;
+                dialog.drivers.upsert(driver);
+                let profile = ConnectionProfile::new("staging", "postgresql", "", "app");
+                dialog.selected = Some(profile.id);
+                dialog.store.upsert(profile);
+                dialog.rebuild_url_parts(cx);
+                set_text(&dialog.url_parts["host"], "db.example.com", cx);
+                set_text(&dialog.url_parts["database"], "app", cx);
+                set_text(&dialog.url_parts["port"], old_port, cx);
+                dialog.refresh_url(cx);
+
+                dialog.set_driver("custom-postgresql".to_owned(), cx);
+                assert_eq!(text(&dialog.url_parts["port"], cx), expected);
+                assert_eq!(
+                    text(&dialog.url_input, cx),
+                    format!("jdbc:postgresql://db.example.com:{expected}/app")
+                );
+            });
+        }
     }
 
     #[gpui::test]
