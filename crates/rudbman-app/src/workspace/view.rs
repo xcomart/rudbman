@@ -899,6 +899,7 @@ impl Workspace {
                     workspace.open_context_menu(ContextTarget::Profile(id), position, cx);
                 });
             })),
+            None,
         );
 
         // A first run has nothing saved and no habit of the chord yet, so the

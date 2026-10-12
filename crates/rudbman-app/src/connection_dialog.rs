@@ -36,7 +36,7 @@
 //! stays live throughout, which matters most precisely when the connection is
 //! the one that hangs.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use gpui::{
     App, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -93,6 +93,14 @@ pub(crate) const ROW_SELECTOR: &str = "profile-row:";
 /// something the caller cannot write.
 pub(crate) type ProfileContextHandler =
     std::rc::Rc<dyn Fn(Uuid, Point<Pixels>, &mut Window, &mut App)>;
+
+/// Folder disclosure controls used by the connection dialog.
+pub(crate) struct ProfileFolderControls<'a> {
+    collapsed: &'a HashSet<String>,
+    on_toggle: FolderToggleHandler,
+}
+
+type FolderToggleHandler = std::rc::Rc<dyn Fn(&str, &mut App)>;
 
 /// The dialog's two scrolling surfaces and the id of each one's overlay bar.
 const SCROLLBARS: [(&str, Surface); 2] = [
@@ -257,6 +265,8 @@ pub struct ConnectionDialog {
     drivers: DriverStore,
     /// Id of the profile being edited.
     selected: Option<Uuid>,
+    /// Folded folders, retained while this dialog exists.
+    collapsed_folders: HashSet<String>,
     /// Whether the driver dropdown is showing its list.
     driver_list_open: bool,
     /// Whether the tunnel section is expanded.
@@ -362,6 +372,7 @@ impl ConnectionDialog {
             store: ConnectionStore::default(),
             drivers: DriverStore::default(),
             selected: None,
+            collapsed_folders: HashSet::new(),
             driver_list_open: false,
             tunnel_open: false,
             tunnel_enabled: false,
@@ -1152,9 +1163,18 @@ impl ConnectionDialog {
         });
     }
 
+    /// Fold or unfold a folder without changing the current form.
+    fn toggle_folder(&mut self, folder: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_folders.remove(folder) {
+            self.collapsed_folders.insert(folder.to_owned());
+        }
+        cx.notify();
+    }
+
     /// The saved profile list, grouped by folder.
     fn render_list(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
+        let folders_this = this.clone();
         let rows = profile_rows(
             self.store.connections(),
             self.selected,
@@ -1166,6 +1186,12 @@ impl ConnectionDialog {
             // selected profile, so every command a menu would carry is a
             // control the user can see.
             None,
+            Some(ProfileFolderControls {
+                collapsed: &self.collapsed_folders,
+                on_toggle: std::rc::Rc::new(move |folder, cx| {
+                    folders_this.update(cx, |dialog, cx| dialog.toggle_folder(folder, cx));
+                }),
+            }),
         );
 
         div()
@@ -2073,6 +2099,7 @@ pub(crate) fn profile_rows(
     chrome: &Theme,
     on_click: impl Fn(Uuid, &mut Window, &mut App) + Clone + 'static,
     on_context: Option<ProfileContextHandler>,
+    folders: Option<ProfileFolderControls<'_>>,
 ) -> Vec<gpui::AnyElement> {
     let mut groups: Vec<(Option<String>, Vec<&ConnectionProfile>)> = Vec::new();
     for profile in profiles {
@@ -2085,18 +2112,64 @@ pub(crate) fn profile_rows(
 
     let mut index = 0usize;
     let mut rows: Vec<gpui::AnyElement> = Vec::new();
-    for (folder, members) in groups {
+    for (group_index, (folder, members)) in groups.into_iter().enumerate() {
+        let collapsed = folder.as_ref().is_some_and(|folder| {
+            folders
+                .as_ref()
+                .is_some_and(|controls| controls.collapsed.contains(folder))
+        });
         if let Some(folder) = folder {
+            let selector_folder = folder.clone();
             rows.push(
                 div()
+                    .id(("profile-folder", group_index))
+                    .debug_selector(move || format!("profile-folder:{selector_folder}"))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
                     .px(px(6.))
-                    .pt(px(6.))
-                    .text_size(px(10.))
+                    .py(px(5.))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .text_size(px(11.))
                     .text_color(chrome.text_muted)
-                    .truncate()
-                    .child(SharedString::from(folder))
+                    .when_some(folders.as_ref(), |heading, controls| {
+                        let on_toggle = controls.on_toggle.clone();
+                        let folder = folder.clone();
+                        heading
+                            .tab_index((tab::LIST + index as isize).min(tab::LIST_LIMIT))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(chrome.surface_hover))
+                            .focus(|style| style.border_color(chrome.accent))
+                            .child(
+                                gpui::svg()
+                                    .size(px(12.))
+                                    .flex_none()
+                                    .text_color(chrome.text_muted)
+                                    .path(if collapsed {
+                                        icons::CHEVRON_RIGHT
+                                    } else {
+                                        icons::CHEVRON_DOWN
+                                    }),
+                            )
+                            .on_click(move |_, _, cx| on_toggle(&folder, cx))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(SharedString::from(folder)),
+                    )
                     .into_any_element(),
             );
+            if folders.is_some() {
+                index += 1;
+            }
+        }
+        if collapsed {
+            continue;
         }
         for profile in members {
             let id = profile.id;
@@ -2716,6 +2789,74 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         (dialog, cx)
+    }
+
+    #[gpui::test]
+    fn folder_disclosures_hide_rows_and_preserve_unsaved_edits(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        let selected = dialog.update(&mut cx, |dialog, cx| {
+            let mut first = dialog.current().unwrap().clone();
+            first.folder = Some("production".to_owned());
+            let selected = first.id;
+            dialog.store.upsert(first);
+            let mut second = ConnectionProfile::new("second", "postgresql", "", "app");
+            second.folder = Some("production".to_owned());
+            dialog.store.upsert(second);
+            let mut third = ConnectionProfile::new("third", "postgresql", "", "app");
+            third.folder = Some("staging".to_owned());
+            dialog.store.upsert(third);
+            dialog
+                .store
+                .upsert(ConnectionProfile::new("unfiled", "postgresql", "", "app"));
+            set_text(&dialog.name_input, "unsaved name", cx);
+            cx.notify();
+            selected
+        });
+        cx.run_until_parked();
+        let staging_y = cx.debug_bounds("profile-folder:staging").unwrap().origin.y;
+        let header = cx.debug_bounds("profile-folder:production").unwrap();
+        cx.simulate_click(header.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("profile-folder:staging").unwrap().origin.y < staging_y);
+        dialog.update(&mut cx, |dialog, cx| {
+            assert!(dialog.collapsed_folders.contains("production"));
+            assert!(!dialog.collapsed_folders.contains("staging"));
+            assert_eq!(dialog.selected, Some(selected));
+            assert_eq!(text(&dialog.name_input, cx), "unsaved name");
+        });
+
+        // Tab skips the hidden connections and lands on the next folder.
+        cx.simulate_keystrokes("tab");
+        let key = gpui::Keystroke::parse("space").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        dialog.update(&mut cx, |dialog, _| {
+            assert!(dialog.collapsed_folders.contains("staging"));
+        });
+        cx.simulate_keystrokes("shift-tab");
+        let key = gpui::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.debug_bounds("profile-folder:staging").unwrap().origin.y,
+            staging_y
+        );
+        dialog.update(&mut cx, |dialog, cx| {
+            assert!(!dialog.collapsed_folders.contains("production"));
+            assert!(dialog.collapsed_folders.contains("staging"));
+            dialog.close(cx);
+            assert!(dialog.collapsed_folders.contains("staging"));
+        });
     }
 
     #[gpui::test]

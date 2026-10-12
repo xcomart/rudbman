@@ -37,6 +37,10 @@ JVM bridge.
   restored without running it; result rows and unapplied database edits are not
   saved. Splitting copies the selected tab into the new pane. A pane disappears
   when its last tab closes, with the final pane kept open.
+- **Connection folders.** Group saved connections by folder in the connection
+  dialog. Click a folder heading to collapse or expand it, or focus it with
+  <kbd>Tab</kbd> and press <kbd>Space</kbd> or <kbd>Enter</kbd>. Folded folders
+  stay folded when you reopen the dialog during the same app session.
 - **SSH tunnels** with password or private-key auth, loopback binds only,
   and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
   OS keychain, never on disk, and credentials are masked out of logs and
