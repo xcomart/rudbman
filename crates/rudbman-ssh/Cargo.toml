@@ -26,3 +26,5 @@ tokio.workspace = true
 # features back to the `aws-lc-rs` default, which needs NASM on Windows. For the
 # same reason the test server's host key is a checked-in throwaway PEM rather
 # than a freshly generated one — generating would pull `rand` into the tree.
+
+parking_lot.workspace = true

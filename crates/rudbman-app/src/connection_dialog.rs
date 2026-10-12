@@ -743,88 +743,71 @@ impl ConnectionDialog {
     /// Writes the form to `connections.json` and the keychain.
     ///
     /// Returns the profile that was saved, or `None` when something refused.
-    fn persist(&mut self, cx: &mut Context<Self>) -> Option<ConnectionProfile> {
+    fn persist(&mut self, cx: &mut Context<Self>) -> Result<ConnectionProfile, SaveError> {
         let profile = self.collect(cx);
-        if profile.name.trim().is_empty() {
-            self.report(Level::Error, ts!("connect.name_required"), cx);
-            return None;
-        }
-        if profile.url.trim().is_empty() {
-            self.report(Level::Error, ts!("connect.url_required"), cx);
-            return None;
-        }
-
+        validate_profile(&profile)?;
         self.store.upsert(profile.clone());
-        if let Err(error) = self.store.save() {
-            log::error!("could not write connections.json: {error:#}");
-            self.report(
-                Level::Error,
-                ts!("connect.save_failed", error = format!("{error:#}")),
-                cx,
-            );
-            return None;
-        }
-
-        // The two secrets, each written or cleared to match the form. A blank
-        // field means "no stored secret", which is a deletion rather than an
-        // empty password — an empty entry in the keychain would be handed to the
-        // driver as a login attempt.
-        self.write_secret(
+        self.store.save().map_err(SaveError::Store)?;
+        write_secret(
             profile.id,
             SecretSlot::Connection,
             &text(&self.password_input, cx),
-            cx,
-        );
+        )
+        .map_err(SaveError::Secret)?;
         if self.tunnel_enabled {
-            self.write_secret(
+            write_secret(
                 profile.id,
                 SecretSlot::Tunnel,
                 &text(&self.tunnel_secret_input, cx),
-                cx,
-            );
+            )
+            .map_err(SaveError::Secret)?;
         }
-
         self.selected = Some(profile.id);
-        Some(profile)
+        Ok(profile)
     }
 
-    /// Saves or clears one keychain slot, reporting a refusal.
-    fn write_secret(&mut self, id: Uuid, slot: SecretSlot, secret: &str, cx: &mut Context<Self>) {
-        let outcome = if secret.is_empty() {
-            SecretStore::delete(id, slot)
-        } else {
-            SecretStore::set(id, slot, secret)
-        };
-        if let Err(error) = outcome {
-            log::warn!("could not write the {slot} secret: {error:#}");
-            self.report(
-                Level::Error,
-                ts!("connect.keychain_failed", error = format!("{error:#}")),
-                cx,
-            );
-        }
-    }
-
-    /// Saves and reports it.
-    fn save(&mut self, cx: &mut Context<Self>) {
-        if self.persist(cx).is_some()
-            && self.status.as_ref().map(|(level, _)| *level) != Some(Level::Error)
-        {
-            self.report(Level::Ok, ts!("connect.saved"), cx);
+    fn saved(
+        &mut self,
+        result: Result<ConnectionProfile, SaveError>,
+        connect: bool,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(profile) => {
+                if connect {
+                    cx.emit(ConnectionDialogEvent::Connect(Box::new(profile)));
+                    self.close(cx);
+                } else {
+                    self.report(Level::Ok, ts!("connect.saved"), cx);
+                }
+            }
+            Err(error) => {
+                let message = match error {
+                    SaveError::Name => ts!("connect.name_required"),
+                    SaveError::Url => ts!("connect.url_required"),
+                    SaveError::Store(error) => {
+                        ts!("connect.save_failed", error = format!("{error:#}"))
+                    }
+                    SaveError::Secret(error) => {
+                        ts!("connect.keychain_failed", error = format!("{error:#}"))
+                    }
+                };
+                self.report(Level::Error, message, cx);
+            }
         }
         cx.notify();
     }
 
+    /// Saves and reports it.
+    fn save(&mut self, cx: &mut Context<Self>) {
+        let result = self.persist(cx);
+        self.saved(result, false, cx);
+    }
+
     /// Saves, then asks the shell to open the profile.
     fn connect(&mut self, cx: &mut Context<Self>) {
-        let Some(profile) = self.persist(cx) else {
-            return;
-        };
-        if self.status.as_ref().map(|(level, _)| *level) == Some(Level::Error) {
-            return;
-        }
-        cx.emit(ConnectionDialogEvent::Connect(Box::new(profile)));
-        self.close(cx);
+        let result = self.persist(cx);
+        self.saved(result, true, cx);
     }
 
     /// Opens a session with what the form currently holds, pings it, closes it.
@@ -2340,8 +2323,88 @@ fn parse_or<T: std::str::FromStr>(input: &Entity<TextInput>, default: T, cx: &Ap
     text(input, cx).parse::<T>().unwrap_or(default)
 }
 
+#[derive(Debug)]
+enum SaveError {
+    Name,
+    Url,
+    Store(anyhow::Error),
+    Secret(anyhow::Error),
+}
+
+fn validate_profile(profile: &ConnectionProfile) -> Result<(), SaveError> {
+    if profile.name.trim().is_empty() {
+        return Err(SaveError::Name);
+    }
+    if profile.url.trim().is_empty() {
+        return Err(SaveError::Url);
+    }
+    Ok(())
+}
+
+fn write_secret(id: Uuid, slot: SecretSlot, secret: &str) -> anyhow::Result<()> {
+    if secret.is_empty() {
+        SecretStore::delete(id, slot)
+    } else {
+        SecretStore::set(id, slot, secret)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[gpui::test]
+    fn successful_save_replaces_an_earlier_validation_error(cx: &mut gpui::TestAppContext) {
+        let dialog = cx.new(ConnectionDialog::new);
+        dialog.update(cx, |dialog, cx| {
+            dialog.saved(Err(SaveError::Name), false, cx);
+            assert_eq!(
+                dialog.status.as_ref().map(|(level, _)| *level),
+                Some(Level::Error)
+            );
+            dialog.saved(Ok(ConnectionProfile::default()), false, cx);
+            assert_eq!(
+                dialog.status.as_ref().map(|(level, _)| *level),
+                Some(Level::Ok)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn successful_retry_connects_despite_an_earlier_error(cx: &mut gpui::TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+        let connected = Rc::new(Cell::new(false));
+        let dialog = cx.new(ConnectionDialog::new);
+        let subscription = cx.update(|cx| {
+            let connected = connected.clone();
+            cx.subscribe(&dialog, move |_, event, _| {
+                if matches!(event, ConnectionDialogEvent::Connect(_)) {
+                    connected.set(true);
+                }
+            })
+        });
+        dialog.update(cx, |dialog, cx| {
+            dialog.open = true;
+            dialog.saved(Err(SaveError::Url), true, cx);
+            dialog.saved(Ok(ConnectionProfile::default()), true, cx);
+            assert!(!dialog.open);
+        });
+        assert!(connected.get());
+        drop(subscription);
+    }
+
+    #[gpui::test]
+    fn a_current_save_failure_keeps_the_dialog_open(cx: &mut gpui::TestAppContext) {
+        let dialog = cx.new(ConnectionDialog::new);
+        dialog.update(cx, |dialog, cx| {
+            dialog.open = true;
+            dialog.saved(Err(SaveError::Secret(anyhow::anyhow!("locked"))), true, cx);
+            assert!(dialog.open);
+            assert_eq!(
+                dialog.status.as_ref().map(|(level, _)| *level),
+                Some(Level::Error)
+            );
+        });
+    }
+
     use std::ops::Deref;
 
     use gpui::VisualTestContext;

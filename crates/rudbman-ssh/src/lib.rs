@@ -81,3 +81,6 @@ pub use verify::{
 // direct dependency on `russh` — which would also mean restating the crate's
 // non-default feature set, a second place for the `ring` pin to rot.
 pub use russh::keys::PublicKey;
+
+mod pool;
+pub use pool::LeasePool;
