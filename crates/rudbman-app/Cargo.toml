@@ -19,6 +19,7 @@ path = "src/main.rs"
 winresource.workspace = true
 
 [dependencies]
+rudbkit-core.workspace = true
 rudbman-core.workspace = true
 # The ERD canvas. The shell wraps it in `ErdPane`, which owns the loading
 # state, the toolbar, the translated strings and the saved layout — everything

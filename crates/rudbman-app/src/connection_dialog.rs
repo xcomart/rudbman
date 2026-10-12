@@ -742,26 +742,28 @@ impl ConnectionDialog {
 
     /// Writes the form to `connections.json` and the keychain.
     ///
-    /// Returns the profile that was saved, or `None` when something refused.
+    /// Returns the saved profile or the error from this save attempt.
     fn persist(&mut self, cx: &mut Context<Self>) -> Result<ConnectionProfile, SaveError> {
         let profile = self.collect(cx);
-        validate_profile(&profile)?;
-        self.store.upsert(profile.clone());
-        self.store.save().map_err(SaveError::Store)?;
-        write_secret(
-            profile.id,
-            SecretSlot::Connection,
-            &text(&self.password_input, cx),
-        )
-        .map_err(SaveError::Secret)?;
-        if self.tunnel_enabled {
-            write_secret(
-                profile.id,
-                SecretSlot::Tunnel,
-                &text(&self.tunnel_secret_input, cx),
-            )
-            .map_err(SaveError::Secret)?;
-        }
+        let password = text(&self.password_input, cx);
+        let tunnel_secret = self
+            .tunnel_enabled
+            .then(|| text(&self.tunnel_secret_input, cx));
+        rudbkit_core::save::save_connection(
+            &profile.name,
+            &profile.url,
+            || {
+                self.store.upsert(profile.clone());
+                self.store.save()
+            },
+            || {
+                write_secret(profile.id, SecretSlot::Connection, &password)?;
+                if let Some(secret) = tunnel_secret {
+                    write_secret(profile.id, SecretSlot::Tunnel, &secret)?;
+                }
+                Ok(())
+            },
+        )?;
         self.selected = Some(profile.id);
         Ok(profile)
     }
@@ -2323,23 +2325,7 @@ fn parse_or<T: std::str::FromStr>(input: &Entity<TextInput>, default: T, cx: &Ap
     text(input, cx).parse::<T>().unwrap_or(default)
 }
 
-#[derive(Debug)]
-enum SaveError {
-    Name,
-    Url,
-    Store(anyhow::Error),
-    Secret(anyhow::Error),
-}
-
-fn validate_profile(profile: &ConnectionProfile) -> Result<(), SaveError> {
-    if profile.name.trim().is_empty() {
-        return Err(SaveError::Name);
-    }
-    if profile.url.trim().is_empty() {
-        return Err(SaveError::Url);
-    }
-    Ok(())
-}
+type SaveError = rudbkit_core::save::SaveError<anyhow::Error>;
 
 fn write_secret(id: Uuid, slot: SecretSlot, secret: &str) -> anyhow::Result<()> {
     if secret.is_empty() {

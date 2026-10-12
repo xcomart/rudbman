@@ -7,6 +7,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+rudbkit-core.workspace = true
 anyhow.workspace = true
 log.workspace = true
 serde.workspace = true

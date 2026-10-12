@@ -37,6 +37,7 @@
 //! type that touches one — [`ConnectionSpec`], [`TunnelSpec`], [`SshAuth`] —
 //! masks it in `Debug`, and nothing in this module renders one by hand.
 
+#[cfg(test)]
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -55,77 +56,9 @@ use rudbman_jdbc::{
 };
 use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
-/// Placeholders that name the catalogue rather than the server.
-///
-/// `{database}`, `{service}`, `{sid}` and `{file}` all stand for the same thing
-/// on screen — what a product calls the thing you connect *to* — but each driver
-/// family spells it its own way, so one field on screen fills whichever of these
-/// the template happens to use.
-pub const CATALOGUE_PLACEHOLDERS: [&str; 4] = ["database", "service", "sid", "file"];
-
-/// Fills `{placeholder}` holes in a driver's URL template.
-///
-/// An unknown placeholder is left as it stands rather than blanked: a template
-/// from a hand-written `drivers.json` may well use a hole the editor has no
-/// field for, and leaving `{warehouse}` visible in the preview says so, whereas
-/// silently dropping it produces a URL that fails at the driver with no clue
-/// where the gap came from.
-pub fn substitute(template: &str, values: &HashMap<String, String>) -> String {
-    let mut out = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let Some(close) = rest[open..].find('}').map(|index| open + index) else {
-            // An unbalanced brace is part of the URL, not a hole.
-            out.push_str(&rest[open..]);
-            return out;
-        };
-        let name = &rest[open + 1..close];
-        match values.get(name) {
-            Some(value) => out.push_str(value),
-            None => out.push_str(&rest[open..=close]),
-        }
-        rest = &rest[close + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The placeholders a template actually uses, in the order they appear.
-pub fn placeholders_of(template: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        let Some(close) = rest[open..].find('}').map(|index| open + index) else {
-            break;
-        };
-        let name = rest[open + 1..close].to_string();
-        if !name.is_empty() && !found.contains(&name) {
-            found.push(name);
-        }
-        rest = &rest[close + 1..];
-    }
-    found
-}
-
-/// Rewrites the host and port of an already-assembled JDBC URL.
-///
-/// What the tunnel needs: the profile's URL names the database as it is called
-/// *inside* the remote network, and the driver has to be pointed at the local
-/// port instead. Only the authority — the `host:port` between `//` and the next
-/// `/`, `;`, `?` or end — is touched, so a URL's grammar survives whatever shape
-/// it has. A URL with no `//` (SQLite's `jdbc:sqlite:/path`, H2's
-/// `jdbc:h2:mem:x`) is left alone: there is no server in it to redirect.
-pub fn redirect_authority(url: &str, host: &str, port: u16) -> String {
-    let Some(slashes) = url.find("//") else {
-        return url.to_string();
-    };
-    let start = slashes + 2;
-    let end = url[start..]
-        .find(['/', ';', '?'])
-        .map_or(url.len(), |index| start + index);
-    format!("{}{host}:{port}{}", &url[..start], &url[end..])
-}
+pub use rudbkit_core::url::{
+    CATALOGUE_PLACEHOLDERS, placeholders_of, redirect_authority, substitute,
+};
 
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
