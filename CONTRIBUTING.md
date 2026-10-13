@@ -161,8 +161,15 @@ Read their setup requirements and select only the relevant tests with
 `dev` is the integration branch. Fork if needed, branch from the latest upstream
 `dev`, and open a focused pull request targeting `dev`. Maintainers working
 directly in this workspace validate and commit on `dev`, then push to
-`origin/dev`. Match the existing imperative commit style, for example
-`Fix inserted row selection` or `Add contribution guide`.
+`origin/dev`.
+
+Use `type: summary` for new commit subjects, with a concise imperative summary.
+Choose `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, `ci` or `chore`
+to describe the change, for example `fix: preserve inserted row selection`
+or `docs: add contribution guide`. Release and merge commits also use a prefix,
+such as `chore: release <version>` or `chore: merge dev into main`. This convention
+applies across all five repositories; do not rewrite existing history to rename
+older commits.
 
 Describe the problem, resulting behavior, checks run and checks not run in the
 pull request. Include database/driver versions for integration changes,
