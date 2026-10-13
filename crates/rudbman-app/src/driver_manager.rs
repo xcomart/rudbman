@@ -38,6 +38,7 @@
 //! a flag the download checks once per chunk, so the button takes effect within
 //! one read rather than at the end of the transfer.
 
+use rugpui::SmoothScrollExt;
 use std::path::PathBuf;
 
 use futures::StreamExt;
@@ -896,6 +897,7 @@ impl DriverManager {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .smooth_scroll(&self.list_scroll)
                     .restrict_scroll_to_axis()
                     .children(rows),
             )
@@ -1356,6 +1358,7 @@ impl DriverManager {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .smooth_scroll(&self.body_scroll)
                     .restrict_scroll_to_axis()
                     .child(form_row(ts!("driver.name"), self.name_input.clone()))
                     .child(form_row(ts!("driver.class"), class_row))
