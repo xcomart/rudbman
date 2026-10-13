@@ -249,6 +249,11 @@ kept byte-identical with the same four in
 [rulogman](https://github.com/xcomart/rulogman), so a fix moves between the
 projects as a plain diff.
 
+## Contributing
+
+See the [contribution guide](CONTRIBUTING.md) for development setup, bridge and
+database tests, project structure and the workflow for submitting changes.
+
 ## License
 
 [MIT](LICENSE). The gpui crates rugpui vendors keep their upstream licenses.
