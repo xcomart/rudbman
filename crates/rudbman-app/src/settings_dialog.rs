@@ -25,7 +25,11 @@
 //! re-entrantly in the first place; they are applied once, on save, from the
 //! shell's event handler.
 
-use std::sync::{Arc, Once};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Once},
+};
 
 use gpui::{
     App, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement,
@@ -33,6 +37,7 @@ use gpui::{
     Subscription, Window, actions, div, prelude::*, px,
 };
 use rudbman_core::{AppSettings, TitlebarStyle};
+use rugpui::SmoothScrollExt;
 use rugpui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorTheme, EditorThemeRegistry, SchemePreview,
     SchemeSelect, SchemeSwatch, Scrollbar, ScrollbarAxis, ScrollbarState, Segmented, Select,
@@ -283,6 +288,13 @@ impl StatusLevel {
     }
 }
 
+type PaletteChoices = (Rc<[SchemeSwatch]>, Rc<[SchemeSwatch]>);
+type FontChoices = (
+    SharedString,
+    Option<SharedString>,
+    Rc<[rugpui::SelectOption]>,
+);
+
 /// Modal dialog editing [`rudbman_core::AppSettings`].
 ///
 /// Create it once with [`SettingsDialog::new`], keep the handle, subscribe to
@@ -290,6 +302,9 @@ impl StatusLevel {
 /// root. It renders nothing while [`SettingsDialog::is_open`] is `false`, so it
 /// is safe to render unconditionally.
 pub struct SettingsDialog {
+    // Invalidated when opening the dialog or changing a palette catalogue.
+    palette_choices: RefCell<Option<PaletteChoices>>,
+    font_choices: RefCell<Option<FontChoices>>,
     /// Whether the dialog is currently visible.
     open: bool,
     /// Chrome theme id currently selected in the form.
@@ -492,6 +507,8 @@ impl SettingsDialog {
             visible_section: 0,
             open_list: None,
             fonts: Vec::new(),
+            palette_choices: RefCell::new(None),
+            font_choices: RefCell::new(None),
             font_scroll: ScrollHandle::new(),
             language_scroll: ScrollHandle::new(),
             ui_theme_scroll: ScrollHandle::new(),
@@ -612,6 +629,8 @@ impl SettingsDialog {
 
     /// Show the dialog, re-reading the current settings into the form.
     pub fn open(&mut self, cx: &mut Context<Self>) {
+        self.palette_choices.get_mut().take();
+        self.font_choices.get_mut().take();
         let settings = app_settings::current(cx);
         self.fonts = installed_fonts(cx);
         self.fill_form(&settings, cx);
@@ -694,7 +713,10 @@ impl SettingsDialog {
             // Files were written or removed and the registries reloaded, so a
             // palette already in use has to repaint under its new colours
             // without the settings themselves having been saved.
-            CatalogActionEvent::Changed => dialog.refresh_preview(cx),
+            CatalogActionEvent::Changed => {
+                dialog.palette_choices.get_mut().take();
+                dialog.refresh_preview(cx);
+            }
         });
         (row, events)
     }
@@ -770,6 +792,7 @@ impl SettingsDialog {
         self.editor_events = None;
         self.pending_focus = true;
         if saved {
+            self.palette_choices.get_mut().take();
             self.refresh_preview(cx);
         }
         cx.notify();
@@ -983,6 +1006,34 @@ impl SettingsDialog {
         }
     }
 
+    fn cached_palettes(&self, cx: &App) -> PaletteChoices {
+        self.palette_choices
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                (
+                    ui_theme_swatches(cx).into(),
+                    editor_theme_swatches(cx).into(),
+                )
+            })
+            .clone()
+    }
+
+    fn cached_fonts(&self) -> Rc<[rugpui::SelectOption]> {
+        let label = system_default();
+        let mut cache = self.font_choices.borrow_mut();
+        if cache.as_ref().is_none_or(|(cached_label, family, _)| {
+            cached_label != &label || family != &self.font_family
+        }) {
+            let options = self
+                .font_options()
+                .into_iter()
+                .map(rugpui::SelectOption::from)
+                .collect();
+            *cache = Some((label, self.font_family.clone(), options));
+        }
+        cache.as_ref().unwrap().2.clone()
+    }
+
     /// The entries of the font dropdown: the "leave it to the OS" row first,
     /// then every installed family.
     ///
@@ -1118,7 +1169,7 @@ impl SettingsDialog {
 
         SchemeSelect::new("settings-editor-theme")
             .chevron_icon(icons::CHEVRON_DOWN)
-            .options(editor_theme_swatches(cx))
+            .options_shared(self.cached_palettes(cx).1)
             .selected(Some(self.editor_theme.clone()))
             .open(self.open_list == Some(OpenList::EditorTheme))
             .tab_index(tab::EDITOR_THEME)
@@ -1154,7 +1205,7 @@ impl SettingsDialog {
 
         let theme_picker = SchemeSelect::new("settings-ui-theme")
             .chevron_icon(icons::CHEVRON_DOWN)
-            .options(ui_theme_swatches(cx))
+            .options_shared(self.cached_palettes(cx).0)
             .selected(Some(self.ui_theme.clone()))
             .open(self.open_list == Some(OpenList::UiTheme))
             .tab_index(tab::UI_THEME)
@@ -1211,7 +1262,7 @@ impl SettingsDialog {
 
         let font = Select::new("settings-editor-font")
             .chevron_icon(icons::CHEVRON_DOWN)
-            .options(self.font_options())
+            .options_shared(self.cached_fonts())
             .selected(self.font_family.clone())
             .placeholder(system_default())
             .open(self.open_list == Some(OpenList::Font))
@@ -1498,6 +1549,7 @@ impl SettingsDialog {
                             .gap(px(14.))
                             .max_h(px(BODY_MAX_HEIGHT))
                             .overflow_y_scroll()
+                            .smooth_scroll(&self.body_scroll)
                             .restrict_scroll_to_axis()
                             .child(self.render_appearance(cx))
                             .child(self.render_window(cx))
@@ -2030,5 +2082,36 @@ mod tests {
     fn a_font_size_is_shown_without_a_pointless_decimal() {
         assert_eq!(format_number(14.0), "14");
         assert_eq!(format_number(13.5), "13.5");
+    }
+
+    #[gpui::test]
+    fn unchanged_choices_are_reused_and_missing_fonts_remain_selectable(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let dialog = cx.new(SettingsDialog::new);
+        dialog.update(cx, |dialog, cx| {
+            dialog.fonts = (0..500)
+                .map(|index| format!("Font {index}").into())
+                .collect();
+            dialog.font_family = None;
+            let fonts = dialog.cached_fonts();
+            assert_eq!(fonts.len(), 501);
+            assert!(Rc::ptr_eq(&fonts, &dialog.cached_fonts()));
+            dialog.font_family = Some("Uninstalled font".into());
+            let changed = dialog.cached_fonts();
+            assert_eq!(changed.len(), 502);
+            assert!(!Rc::ptr_eq(&fonts, &changed));
+            assert!(Rc::ptr_eq(&changed, &dialog.cached_fonts()));
+
+            let palettes = dialog.cached_palettes(cx);
+            let same = dialog.cached_palettes(cx);
+            assert!(Rc::ptr_eq(&palettes.0, &same.0));
+            assert!(Rc::ptr_eq(&palettes.1, &same.1));
+            dialog.close_editor(true, cx);
+            let refreshed = dialog.cached_palettes(cx);
+            assert!(!Rc::ptr_eq(&palettes.0, &refreshed.0));
+            assert!(!Rc::ptr_eq(&palettes.1, &refreshed.1));
+        });
     }
 }

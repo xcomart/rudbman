@@ -121,12 +121,22 @@ pub(super) fn render_pane(
                 theme.border
             };
             let body = match payload.active() {
-                Some(PaneItem::TableDetail(panel)) => panel.clone().into_any_element(),
-                Some(PaneItem::Query { pane, .. }) => pane.clone().into_any_element(),
-                Some(PaneItem::Erd(panel)) => panel.clone().into_any_element(),
-                Some(PaneItem::TableData(panel)) => panel.clone().into_any_element(),
-                Some(PaneItem::TableStruct(panel)) => panel.clone().into_any_element(),
-                Some(PaneItem::QueryBuilder { pane, .. }) => pane.clone().into_any_element(),
+                Some(PaneItem::TableDetail(panel)) => {
+                    rugpui::cached_view(panel.clone()).into_any_element()
+                }
+                Some(PaneItem::Query { pane, .. }) => {
+                    rugpui::cached_view(pane.clone()).into_any_element()
+                }
+                Some(PaneItem::Erd(panel)) => rugpui::cached_view(panel.clone()).into_any_element(),
+                Some(PaneItem::TableData(panel)) => {
+                    rugpui::cached_view(panel.clone()).into_any_element()
+                }
+                Some(PaneItem::TableStruct(panel)) => {
+                    rugpui::cached_view(panel.clone()).into_any_element()
+                }
+                Some(PaneItem::QueryBuilder { pane, .. }) => {
+                    rugpui::cached_view(pane.clone()).into_any_element()
+                }
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
                 // — never because there is nothing to connect to.
@@ -815,7 +825,7 @@ impl Workspace {
                 .flex_none()
                 .w(px(self.explorer_width))
                 .min_h_0()
-                .child(self.explorer.clone())
+                .child(rugpui::cached_view(self.explorer.clone()))
                 .child(
                     ResizeHandle::new("explorer-divider", gpui::Axis::Horizontal, DraggedExplorer)
                         .at_end()

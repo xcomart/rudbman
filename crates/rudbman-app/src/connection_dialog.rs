@@ -36,6 +36,7 @@
 //! stays live throughout, which matters most precisely when the connection is
 //! the one that hangs.
 
+use rugpui::SmoothScrollExt;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use gpui::{
@@ -1211,6 +1212,7 @@ impl ConnectionDialog {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .smooth_scroll(&self.list_scroll)
                     .restrict_scroll_to_axis()
                     .children(rows),
             )
@@ -1737,6 +1739,7 @@ impl ConnectionDialog {
                     .min_h_0()
                     .max_h(px(BODY_MAX_HEIGHT))
                     .overflow_y_scroll()
+                    .smooth_scroll(&self.body_scroll)
                     .restrict_scroll_to_axis()
                     .child(form_row(ts!("connect.name"), self.name_input.clone()))
                     .child(form_row(ts!("connect.folder"), self.folder_input.clone()))
