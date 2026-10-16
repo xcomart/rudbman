@@ -10,7 +10,7 @@ common:
   close: 닫기
 
 menu:
-  new_connection: 새 연결…
+  new_connection: 연결 관리…
   settings: 설정…
   toggle_explorer: 탐색기
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: 보기
   tip_menu: 메뉴
   mac:
-    new_connection: 새 연결…
+    new_connection: 연결 관리…
     quit: rudbman 종료
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "새 연결 (%{shortcut})"
 
 welcome:
-  hint: "%{shortcut} 키를 누르면 새 연결을 열 수 있습니다."
-  new_connection: 새 연결…
+  hint: "%{shortcut} 키를 누르면 연결 관리를 열 수 있습니다."
+  new_connection: 연결 관리…
   saved: 저장된 연결
 
 empty:

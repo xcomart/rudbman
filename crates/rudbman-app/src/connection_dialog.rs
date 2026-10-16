@@ -426,12 +426,16 @@ impl ConnectionDialog {
         self.open_showing(Some(id), cx);
     }
 
-    /// Shows a new connection form, re-reading both stores.
+    /// Shows the connection manager over the first saved profile,
+    /// re-reading both stores. Only when nothing is saved does it start an
+    /// empty form instead.
     pub fn open(&mut self, cx: &mut Context<Self>) {
         self.open_showing(None, cx);
     }
 
     /// The whole of both, differing only in which profile the form opens over.
+    /// `None` shows the first saved profile; an empty form is started only
+    /// when nothing is saved.
     fn open_showing(&mut self, wanted: Option<Uuid>, cx: &mut Context<Self>) {
         self.reload(cx);
         self.selected = profile_to_show(&self.store, wanted);
@@ -2085,17 +2089,22 @@ impl Render for ConnectionDialog {
 /// Which saved profile a dialog opening over `wanted` should show.
 ///
 /// `wanted` is the welcome list's "edit…" naming the row that was
-/// right-clicked; `None` starts a new profile. Only an edit request can fall
-/// back to the first saved profile if its row was deleted after being drawn.
+/// right-clicked; `None` is the connection manager, which opens over the
+/// first saved profile so no empty one is created beside the saved ones.
+/// With nothing saved there is nothing to show, and the caller starts a
+/// new profile instead. An edit request for a row deleted after being drawn
+/// falls back to the first saved profile the same way.
 ///
 /// Separate from [`ConnectionDialog::open_showing`] because that one re-reads
 /// the file first, and the rule itself is worth pinning down without one.
 fn profile_to_show(store: &ConnectionStore, wanted: Option<Uuid>) -> Option<Uuid> {
-    let wanted = wanted?;
-    store
-        .get(wanted)
-        .or_else(|| store.connections().first())
-        .map(|profile| profile.id)
+    match wanted {
+        Some(id) => store
+            .get(id)
+            .or_else(|| store.connections().first())
+            .map(|profile| profile.id),
+        None => store.connections().first().map(|profile| profile.id),
+    }
 }
 
 /// The saved profiles as rows, grouped under the folder each is filed in.
@@ -2508,8 +2517,12 @@ mod tests {
         // The welcome list's "edit…" names a row, and that is the one the form
         // opens over — not whichever profile happens to be first.
         assert_eq!(profile_to_show(&store, Some(second.id)), Some(second.id));
-        // New connection must not select any saved profile.
-        assert_eq!(profile_to_show(&store, None), None);
+        // The connection manager names no row, so it opens over the first
+        // saved profile rather than starting an empty one beside them.
+        assert_eq!(profile_to_show(&store, None), Some(first.id));
+        // With nothing saved there is nothing to show, so the manager starts
+        // an empty form instead.
+        assert_eq!(profile_to_show(&ConnectionStore::default(), None), None);
         // A profile deleted between the screen being drawn and the row being
         // clicked falls back rather than opening a form over nothing.
         assert_eq!(

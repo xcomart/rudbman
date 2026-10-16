@@ -32,7 +32,7 @@ common:
 # An ellipsis marks a row that asks something before it acts, which is every
 # row here except "About" and "Quit".
 menu:
-  new_connection: New connection…
+  new_connection: Manage connections…
   settings: Settings…
   # Shows and hides the explorer sidebar.
   toggle_explorer: Explorer
@@ -84,7 +84,7 @@ menu:
   # opens rather than described, the way the tab strip's own buttons are.
   tip_menu: Menu
   mac:
-    new_connection: New Connection…
+    new_connection: Manage Connections…
     quit: Quit rudbman
 
 # The tab strip in the title bar. One tab per open connection.
@@ -104,10 +104,10 @@ welcome:
   # has saved nothing at all reads `empty.hint` there instead: no habit of the
   # chord exists yet, and the words say what a connection is for.
   # `%{shortcut}` is "Cmd+N" or "Ctrl+N"; neither is translated.
-  hint: Press %{shortcut} to open a new connection.
+  hint: Press %{shortcut} to manage connections.
   # The button. Takes the ellipsis for the same reason the menu row does: it
   # asks before it acts.
-  new_connection: New connection…
+  new_connection: Manage connections…
   # Heading of the saved list.
   saved: Saved connections
 

@@ -10,7 +10,7 @@ common:
   close: Закрыть
 
 menu:
-  new_connection: Новое подключение…
+  new_connection: Управление подключениями…
   settings: Настройки…
   toggle_explorer: Обозреватель
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: Вид
   tip_menu: Меню
   mac:
-    new_connection: Новое подключение…
+    new_connection: Управление подключениями…
     quit: Завершить rudbman
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "Новое подключение (%{shortcut})"
 
 welcome:
-  hint: Нажмите %{shortcut}, чтобы открыть новое подключение.
-  new_connection: Новое подключение…
+  hint: Нажмите %{shortcut}, чтобы управлять подключениями.
+  new_connection: Управление подключениями…
   saved: Сохранённые подключения
 
 empty:

@@ -10,7 +10,7 @@ common:
   close: 閉じる
 
 menu:
-  new_connection: 新規接続…
+  new_connection: 接続管理…
   settings: 設定…
   toggle_explorer: エクスプローラー
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: 表示
   tip_menu: メニュー
   mac:
-    new_connection: 新規接続…
+    new_connection: 接続管理…
     quit: rudbman を終了
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "新規接続 (%{shortcut})"
 
 welcome:
-  hint: "%{shortcut} で新しい接続を開きます。"
-  new_connection: 新規接続…
+  hint: "%{shortcut} で接続を管理します。"
+  new_connection: 接続管理…
   saved: 保存した接続
 
 empty:

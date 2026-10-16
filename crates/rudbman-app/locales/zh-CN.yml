@@ -10,7 +10,7 @@ common:
   close: 关闭
 
 menu:
-  new_connection: 新建连接…
+  new_connection: 管理连接…
   settings: 设置…
   toggle_explorer: 资源管理器
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: 视图
   tip_menu: 菜单
   mac:
-    new_connection: 新建连接…
+    new_connection: 管理连接…
     quit: 退出 rudbman
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "新建连接 (%{shortcut})"
 
 welcome:
-  hint: 按 %{shortcut} 即可打开新连接。
-  new_connection: 新建连接…
+  hint: 按 %{shortcut} 即可管理连接。
+  new_connection: 管理连接…
   saved: 已保存的连接
 
 empty:

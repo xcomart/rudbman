@@ -10,7 +10,7 @@ common:
   close: Fermer
 
 menu:
-  new_connection: Nouvelle connexion…
+  new_connection: Gérer les connexions…
   settings: Préférences…
   toggle_explorer: Explorateur
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: Affichage
   tip_menu: Menu
   mac:
-    new_connection: Nouvelle connexion…
+    new_connection: Gérer les connexions…
     quit: Quitter rudbman
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "Nouvelle connexion (%{shortcut})"
 
 welcome:
-  hint: Appuyez sur %{shortcut} pour ouvrir une nouvelle connexion.
-  new_connection: Nouvelle connexion…
+  hint: Appuyez sur %{shortcut} pour gérer les connexions.
+  new_connection: Gérer les connexions…
   saved: Connexions enregistrées
 
 empty:
