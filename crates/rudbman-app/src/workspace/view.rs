@@ -23,14 +23,16 @@ pub(super) fn render_tab_strip(
     let tabs: Vec<TabItem> = pane
         .items()
         .iter()
-        .enumerate()
-        .map(|(index, item)| {
+        .map(|item| {
             let title = chrome
                 .tab_names
                 .get(&item.entity_id())
                 .map(|name| SharedString::from(name.clone()))
                 .unwrap_or_else(|| item.title(cx));
-            let tab = TabItem::new(("pane-tab", index), title);
+            // Stable while the tab lives: an index id would name a different
+            // tab after every reorder, shuffling whatever gpui keeps per
+            // element — including the drag the reorder itself started.
+            let tab = TabItem::new(("pane-tab", item.entity_id()), title);
             match chrome.colors.get(&item.connection(cx)) {
                 Some(color) => tab.dot(*color),
                 None => tab,
@@ -45,6 +47,22 @@ pub(super) fn render_tab_strip(
         // Only the third slot can ever be read: this strip carries neither the
         // dropdown nor the "+" the first two label.
         .tooltips("", "", ts!("tab.close"))
+        .drag_source(id.as_u64())
+        .on_reorder({
+            let this = this.clone();
+            move |dragged, to, window, cx| {
+                this.update(cx, |workspace, cx| {
+                    workspace.move_tab(
+                        PaneId::from_u64(dragged.source),
+                        dragged.index,
+                        id,
+                        to,
+                        window,
+                        cx,
+                    );
+                });
+            }
+        })
         .on_select({
             let this = this.clone();
             move |index, window, cx| {
@@ -115,6 +133,7 @@ pub(super) fn render_pane(
     match node {
         PaneNode::Leaf { id, payload } => {
             let id = *id;
+            let this = cx.entity();
             let theme = &chrome.theme;
             let border = if id == chrome.active {
                 theme.accent
@@ -150,6 +169,24 @@ pub(super) fn render_pane(
                         cx.notify();
                     }
                 }))
+                // A tab dropped on the body lands after the last one. Drops
+                // on a tab or on the strip's empty stretch stop at those
+                // targets first, so this answers for the body alone.
+                .on_drop::<DraggedTab>({
+                    let this = this.clone();
+                    move |dragged, window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            workspace.move_tab(
+                                PaneId::from_u64(dragged.source),
+                                dragged.index,
+                                id,
+                                usize::MAX,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                })
                 .flex()
                 .flex_col()
                 .size_full()

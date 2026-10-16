@@ -64,10 +64,10 @@ use rudbman_core::{
     AppSettings, ConnectionProfile, ConnectionStore, DriverStore, TitlebarStyle, WindowState,
 };
 use rugpui::{
-    Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
-    MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter, TabBar, TabItem,
-    TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal, scroll_to, scrolled,
-    set_editor_theme, set_theme, set_window_tint, theme, theme_store,
+    Button, ButtonVariant, DraggedTab, DraggedThumb, EditorThemeEntry, EditorThemeRegistry,
+    MenuButton, MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter,
+    TabBar, TabItem, TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal, scroll_to,
+    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use rugpui_shell::chrome::{
     SHADOW_BAND, client_tiling, draws_own_titlebar, render_client_frame, titlebar_gestures,
