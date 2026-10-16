@@ -632,6 +632,7 @@ context:
   undo: 실행 취소
   redo: 다시 실행
   toggle_comment: 주석 토글
+  format_sql: SQL 서식 정리
   run_statement: 문장 실행
   run_selection: 선택 영역 실행
   run_all: 전체 실행

@@ -632,6 +632,7 @@ context:
   undo: Deshacer
   redo: Rehacer
   toggle_comment: Comentar o descomentar
+  format_sql: Dar formato al SQL
   run_statement: Ejecutar la sentencia
   run_selection: Ejecutar la selección
   run_all: Ejecutar todo

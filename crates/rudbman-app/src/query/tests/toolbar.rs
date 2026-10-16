@@ -251,3 +251,50 @@ fn toolbar_rollback_reverts_only_uncommitted_changes(cx: &mut TestAppContext) {
     assert_eq!(server_rows(&connected, "select id from entries"), vec!["0"]);
     connected.close().expect("close");
 }
+
+#[gpui::test]
+fn format_sql_formats_the_selection_or_the_script_as_one_undo_step(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-format", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let text = |cx: &mut gpui::VisualTestContext| {
+        window
+            .update(cx, |pane, _, cx| pane.editor_text(cx))
+            .unwrap()
+    };
+    let script = "select 1;\nselect a, 'x  y' from t where a = 1 and b = 2;";
+    window
+        .update(&mut cx, |pane, window, cx| {
+            pane.editor.update(cx, |editor, cx| {
+                editor.set_text(script, cx);
+                editor.select_range(10..script.len(), cx);
+            });
+            pane.focus_editor(window, cx);
+        })
+        .unwrap();
+
+    // The selection alone, which stays selected.
+    click("query-format", &mut cx);
+    let formatted = "SELECT a,\n    'x  y'\nFROM t\nWHERE a = 1\n    AND b = 2;";
+    assert_eq!(text(&mut cx), format!("select 1;\n{formatted}"));
+    window
+        .update(&mut cx, |pane, _, cx| {
+            assert_eq!(pane.editor.read(cx).selection(), 10..10 + formatted.len());
+        })
+        .unwrap();
+    click("query-undo", &mut cx);
+    assert_eq!(text(&mut cx), script);
+
+    // Nothing selected: the whole script, through the keyboard chord.
+    window
+        .update(&mut cx, |pane, _, cx| {
+            pane.editor.update(cx, |editor, cx| editor.move_to(0, cx));
+        })
+        .unwrap();
+    cx.dispatch_action(super::super::format::FormatSql);
+    cx.run_until_parked();
+    assert_eq!(text(&mut cx), format!("SELECT 1;\n\n{formatted}"));
+    click("query-undo", &mut cx);
+    assert_eq!(text(&mut cx), script);
+    connected.close().expect("close");
+}

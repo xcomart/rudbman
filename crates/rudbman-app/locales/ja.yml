@@ -632,6 +632,7 @@ context:
   undo: 元に戻す
   redo: やり直し
   toggle_comment: コメントの切り替え
+  format_sql: SQL を整形
   run_statement: ステートメントを実行
   run_selection: 選択範囲を実行
   run_all: すべて実行

@@ -1038,6 +1038,7 @@ context:
   undo: Undo
   redo: Redo
   toggle_comment: Toggle comment
+  format_sql: Format SQL
   run_statement: Run statement
   run_selection: Run selection
   run_all: Run all

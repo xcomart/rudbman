@@ -632,6 +632,7 @@ context:
   undo: Annuler
   redo: Rétablir
   toggle_comment: Commenter ou décommenter
+  format_sql: Mettre en forme le SQL
   run_statement: Exécuter l'instruction
   run_selection: Exécuter la sélection
   run_all: Tout exécuter

@@ -632,6 +632,7 @@ context:
   undo: Отменить
   redo: Вернуть
   toggle_comment: Закомментировать или раскомментировать
+  format_sql: Форматировать SQL
   run_statement: Выполнить запрос
   run_selection: Выполнить выделенное
   run_all: Выполнить всё

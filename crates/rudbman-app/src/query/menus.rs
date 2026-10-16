@@ -113,6 +113,12 @@ impl QueryPane {
                 Box::new(ToggleComment),
             ),
             row(
+                ts!("context.format_sql"),
+                format!("{modifier}+Shift+F"),
+                writable,
+                Box::new(super::format::FormatSql),
+            ),
+            row(
                 ts!("completion.trigger"),
                 "Ctrl+Space".to_string(),
                 writable,

@@ -632,6 +632,7 @@ context:
   undo: Rückgängig
   redo: Wiederholen
   toggle_comment: Kommentar umschalten
+  format_sql: SQL formatieren
   run_statement: Anweisung ausführen
   run_selection: Auswahl ausführen
   run_all: Alles ausführen

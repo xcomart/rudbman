@@ -179,6 +179,9 @@ impl Render for QueryPane {
                             pane.trigger_completion(window, cx);
                         },
                     ))
+                    .on_action(cx.listener(|pane, _: &super::format::FormatSql, _, cx| {
+                        pane.format_sql(cx);
+                    }))
                     .flex()
                     .flex_col()
                     .flex_basis(relative(share))

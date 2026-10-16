@@ -632,6 +632,7 @@ context:
   undo: 撤销
   redo: 重做
   toggle_comment: 切换注释
+  format_sql: 格式化 SQL
   run_statement: 执行语句
   run_selection: 执行所选内容
   run_all: 全部执行

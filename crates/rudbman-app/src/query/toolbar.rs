@@ -230,14 +230,24 @@ impl QueryPane {
                     Box::new(SelectAll),
                 ),
             ]))
-            .child(group(vec![button(
-                "query-comment",
-                icons::COMMENT,
-                ts!("context.toggle_comment"),
-                "/",
-                writable,
-                Box::new(ToggleComment),
-            )]))
+            .child(group(vec![
+                button(
+                    "query-comment",
+                    icons::COMMENT,
+                    ts!("context.toggle_comment"),
+                    "/",
+                    writable,
+                    Box::new(ToggleComment),
+                ),
+                button(
+                    "query-format",
+                    icons::FORMAT,
+                    ts!("context.format_sql"),
+                    "Shift+F",
+                    writable,
+                    Box::new(super::format::FormatSql),
+                ),
+            ]))
             .child(button(
                 "query-find",
                 icons::FIND,

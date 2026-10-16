@@ -112,6 +112,7 @@ pub const CUT: &str = "icons/cut.svg";
 pub const PASTE: &str = "icons/paste.svg";
 pub const SELECT_ALL: &str = "icons/select-all.svg";
 pub const COMMENT: &str = "icons/comment.svg";
+pub const FORMAT: &str = "icons/format.svg";
 pub const FIND: &str = "icons/find.svg";
 pub const REPLACE: &str = "icons/replace.svg";
 
@@ -159,6 +160,7 @@ const OWN: &[(&str, &[u8])] = &[
     (PASTE, include_bytes!("../assets/icons/paste.svg")),
     (SELECT_ALL, include_bytes!("../assets/icons/select-all.svg")),
     (COMMENT, include_bytes!("../assets/icons/comment.svg")),
+    (FORMAT, include_bytes!("../assets/icons/format.svg")),
     (FIND, include_bytes!("../assets/icons/find.svg")),
     (REPLACE, include_bytes!("../assets/icons/replace.svg")),
     (APP_ICON, include_bytes!("../../../assets/icon-128.png")),

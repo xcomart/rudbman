@@ -76,6 +76,7 @@
 mod completion;
 mod editing;
 mod execution;
+mod format;
 mod menus;
 mod render;
 use render::{elapsed_label, preview};
@@ -568,6 +569,7 @@ impl QueryPane {
         cx: &mut Context<Self>,
     ) -> Self {
         completion::init(cx);
+        format::init(cx);
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
             let mut editor = EditorView::new(cx)
