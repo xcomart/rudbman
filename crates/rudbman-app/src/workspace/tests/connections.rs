@@ -515,3 +515,99 @@ fn closing_a_focused_pane_takes_the_focus_back(cx: &mut gpui::TestAppContext) {
         .expect("the window is open");
     cx.run_until_parked();
 }
+
+/// A drag along the connection strip reorders it: the dropped tab tucks in
+/// before the one it landed on, the tab on top stays the tab on top unless it
+/// was the one moved, and the moved tab carries the top with it.
+#[gpui::test]
+fn moving_a_connection_tab_reorders_the_strip(cx: &mut gpui::TestAppContext) {
+    fn names(workspace: &Workspace) -> Vec<String> {
+        workspace
+            .connections
+            .iter()
+            .map(|open| open.profile.name.clone())
+            .collect()
+    }
+
+    let window = workspace_over_welcome(&[], cx);
+    window
+        .update(cx, |workspace, _window, cx| {
+            for name in ["a", "b", "c"] {
+                workspace.connections.push(Connection {
+                    id: next_connection_id(),
+                    profile: unopenable_profile(name),
+                    state: ConnectionState::Failed("no driver".into()),
+                    work: WorkArea::new(),
+                });
+            }
+            workspace.active_connection = 2;
+            assert_eq!(names(workspace), ["a", "b", "c"]);
+
+            // The first tab dropped on the third lands between second and
+            // third, and the top tab — which did not move — stays on top.
+            workspace.move_connection(0, 2, cx);
+            assert_eq!(names(workspace), ["b", "a", "c"]);
+            assert_eq!(workspace.active_connection, 2);
+            assert_eq!(
+                workspace.active_connection().expect("one tab").profile.name,
+                "c"
+            );
+
+            // The tab on top follows when it is the one moved.
+            workspace.move_connection(2, 0, cx);
+            assert_eq!(names(workspace), ["c", "b", "a"]);
+            assert_eq!(workspace.active_connection, 0);
+
+            // Past the end appends; a background move keeps the same tab on
+            // top by identity rather than by index.
+            workspace.move_connection(0, 3, cx);
+            assert_eq!(names(workspace), ["b", "a", "c"]);
+            assert_eq!(workspace.active_connection, 2);
+            assert_eq!(
+                workspace.active_connection().expect("one tab").profile.name,
+                "c"
+            );
+        })
+        .expect("the window is open");
+}
+
+/// A move that would leave the strip as it was changes nothing, and neither
+/// does anything naming no tab.
+#[gpui::test]
+fn moving_a_connection_tab_refuses_what_would_change_nothing(cx: &mut gpui::TestAppContext) {
+    fn names(workspace: &Workspace) -> Vec<String> {
+        workspace
+            .connections
+            .iter()
+            .map(|open| open.profile.name.clone())
+            .collect()
+    }
+
+    let window = workspace_over_welcome(&[], cx);
+    window
+        .update(cx, |workspace, _window, cx| {
+            for name in ["a", "b", "c"] {
+                workspace.connections.push(Connection {
+                    id: next_connection_id(),
+                    profile: unopenable_profile(name),
+                    state: ConnectionState::Failed("no driver".into()),
+                    work: WorkArea::new(),
+                });
+            }
+            workspace.active_connection = 1;
+
+            // Onto itself, and before its own neighbour, both change nothing.
+            workspace.move_connection(1, 1, cx);
+            workspace.move_connection(1, 2, cx);
+            assert_eq!(names(workspace), ["a", "b", "c"]);
+            assert_eq!(workspace.active_connection, 1);
+
+            // Past the end from the end, and anything out of range, likewise.
+            workspace.move_connection(2, 3, cx);
+            workspace.move_connection(0, 4, cx);
+            workspace.move_connection(3, 0, cx);
+            assert_eq!(names(workspace), ["a", "b", "c"]);
+            assert_eq!(workspace.active_connection, 1);
+        })
+        .expect("the window is open");
+}
