@@ -114,8 +114,9 @@ pub(super) fn render_pane(
 ) -> AnyElement {
     match node {
         PaneNode::Leaf { id, payload } => {
+            let id = *id;
             let theme = &chrome.theme;
-            let border = if *id == chrome.active {
+            let border = if id == chrome.active {
                 theme.accent
             } else {
                 theme.border
@@ -144,6 +145,11 @@ pub(super) fn render_pane(
             };
             div()
                 .id(("pane", id.as_u64()))
+                .capture_any_mouse_down(cx.listener(move |workspace, _, _, cx| {
+                    if workspace.mark_pane(id) {
+                        cx.notify();
+                    }
+                }))
                 .flex()
                 .flex_col()
                 .size_full()
@@ -158,7 +164,7 @@ pub(super) fn render_pane(
                         .flex()
                         .flex_none()
                         .w_full()
-                        .child(render_tab_strip(*id, payload, chrome, cx))
+                        .child(render_tab_strip(id, payload, chrome, cx))
                 }))
                 .child(div().flex().flex_1().min_w_0().min_h_0().child(body))
                 .into_any_element()
