@@ -1377,6 +1377,7 @@ impl DataPane {
                 // no cell to right-click, and a table nobody can put the first
                 // row into would be a strange thing to ship.
                 Button::new("data-insert", ts!("data.insert_row"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(loading)
                     .on_click(move |_, window, cx| {
@@ -1386,6 +1387,7 @@ impl DataPane {
             .children(writable.then(|| {
                 let this = this.clone();
                 Button::new("data-apply", ts!("data.apply"))
+                    .compact()
                     .variant(ButtonVariant::Primary)
                     .disabled(!staged || loading || self.applying)
                     .on_click(move |_, window, cx| {
@@ -1395,6 +1397,7 @@ impl DataPane {
             .children(writable.then(|| {
                 let this = this.clone();
                 Button::new("data-discard", ts!("data.discard"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(!staged || loading || self.applying)
                     .on_click(move |_, _window, cx| {
@@ -1407,6 +1410,7 @@ impl DataPane {
             }))
             .child(
                 Button::new("data-refresh", ts!("data.refresh"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(loading || self.applying)
                     .on_click(move |_, window, cx| {

@@ -1231,6 +1231,7 @@ impl StructPane {
                 // a pane in a different mode rather than one that may not be
                 // written to. The banner underneath is where that is said.
                 Button::new("struct-apply", self.apply_label())
+                    .compact()
                     .variant(ButtonVariant::Primary)
                     .disabled(!writable || !staged || loading || self.applying)
                     .on_click(move |_, _window, cx| {
@@ -1240,6 +1241,7 @@ impl StructPane {
             .child({
                 let this = this.clone();
                 Button::new("struct-discard", ts!("struct.discard"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(!staged || self.applying)
                     .on_click(move |_, _window, cx| {
@@ -1248,6 +1250,7 @@ impl StructPane {
             })
             .child(
                 Button::new("struct-refresh", ts!("struct.refresh"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(loading)
                     .on_click(move |_, _window, cx| {

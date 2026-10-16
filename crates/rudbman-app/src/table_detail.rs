@@ -380,6 +380,7 @@ impl TableDetail {
             .children(self.target.folder.is_relation().then(|| {
                 let this = this.clone();
                 Button::new("detail-view-data", ts!("menu.view_data"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .on_click(move |_, _window, cx| {
                         this.update(cx, |detail, cx| detail.view_data(cx));
@@ -388,6 +389,7 @@ impl TableDetail {
             .children(self.target.folder.is_relation().then(|| {
                 let this = this.clone();
                 Button::new("detail-view-structure", ts!("menu.view_structure"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .on_click(move |_, _window, cx| {
                         this.update(cx, |detail, cx| detail.view_structure(cx));
@@ -395,6 +397,7 @@ impl TableDetail {
             }))
             .child(
                 Button::new("detail-refresh", ts!("detail.refresh"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(loading)
                     .on_click(move |_, _window, cx| {
