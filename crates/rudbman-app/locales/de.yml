@@ -669,6 +669,7 @@ update:
   installing: Wird installiert…
   failed: Das Update ist fehlgeschlagen.
   open_release: Release-Seite öffnen
+  notes: Neuerungen
 
 tab_name:
   title: Tab umbenennen

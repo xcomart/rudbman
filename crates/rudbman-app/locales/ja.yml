@@ -669,6 +669,7 @@ update:
   installing: インストールしています…
   failed: 更新に失敗しました。
   open_release: リリースページを開く
+  notes: 変更内容
 
 tab_name:
   title: タブ名を変更

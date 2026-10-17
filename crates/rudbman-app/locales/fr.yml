@@ -669,6 +669,7 @@ update:
   installing: Installation…
   failed: La mise à jour a échoué.
   open_release: Ouvrir la page de la version
+  notes: Nouveautés
 
 tab_name:
   title: Renommer l’onglet
