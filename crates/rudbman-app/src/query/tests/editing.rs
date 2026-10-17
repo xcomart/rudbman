@@ -78,6 +78,56 @@ fn a_select_of_one_keyed_table_is_edited_and_applied(cx: &mut TestAppContext) {
     connected.close().expect("close");
 }
 
+/// Under manual commit a write run from the editor leaves the session's one
+/// transaction open, and a grid apply — which ends it with a commit — waits
+/// until the user has settled it rather than committing it for them.
+#[gpui::test]
+fn an_open_transaction_holds_a_grid_apply_back_until_it_is_settled(cx: &mut TestAppContext) {
+    let (connected, mut profile) = people("query-edit-uncommitted");
+    profile.auto_commit = false;
+    connected.session().set_auto_commit(false).unwrap();
+    let handle = connected.handle();
+    let window = pane(&connected, &profile, 500, cx);
+
+    run(&window, "update PERSON set NAME = 'z' where ID = 2", cx);
+    assert!(
+        handle.has_uncommitted(),
+        "the write left nothing on the books"
+    );
+    run(&window, "select ID, NAME from PERSON order by ID", cx);
+    assert!(handle.has_uncommitted(), "a read settled the transaction");
+
+    assert!(type_into(&window, 0, 0, 1, "A", cx), "the field refused");
+    window
+        .update(cx, |pane, window, cx| {
+            pane.apply(window, cx);
+            assert!(pane.preview.is_none(), "the confirmation was raised");
+            assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+            pane.finish_transaction(TransactionAction::Rollback, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    assert!(
+        !handle.has_uncommitted(),
+        "the rollback left it on the books"
+    );
+
+    window
+        .update(cx, |pane, window, cx| {
+            pane.apply(window, cx);
+            assert!(pane.preview.is_some());
+            pane.confirm_apply(window, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    assert_eq!(
+        server_rows(&connected, "select NAME from PERSON order by ID"),
+        ["A", "b"],
+        "the editor's own update was committed by the apply"
+    );
+    connected.close().expect("close");
+}
+
 /// A statement the server refuses rolls the batch back and leaves every
 /// staged change exactly where it was.
 ///

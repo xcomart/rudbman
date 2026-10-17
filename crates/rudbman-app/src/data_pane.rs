@@ -1015,6 +1015,18 @@ impl DataPane {
         if self.read_only_reason().is_some() || self.applying || self.preview.is_some() {
             return;
         }
+        // The batch ends with a commit or a rollback, or for an `ALTER` with an
+        // autocommit flip, and on a session every pane shares that would end a
+        // query editor's open transaction along with it.
+        if self
+            .session
+            .as_ref()
+            .is_some_and(SessionHandle::has_uncommitted)
+        {
+            self.notice = Some(ts!("query.uncommitted_pending"));
+            cx.notify();
+            return;
+        }
         // One modal at a time: the two are irreversible in opposite directions
         // and stacking them would leave the user answering the wrong one.
         self.confirm_discard = false;
@@ -1057,6 +1069,17 @@ impl DataPane {
     /// mid-transaction between them, which is a state no other pane on this
     /// session could safely be allowed to find.
     fn confirm_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Asked again, since an editor may have written in the meantime; the
+        // preview stays up so the apply can be confirmed once that is settled.
+        if self
+            .session
+            .as_ref()
+            .is_some_and(SessionHandle::has_uncommitted)
+        {
+            self.notice = Some(ts!("query.uncommitted_pending"));
+            cx.notify();
+            return;
+        }
         let Some(statements) = self.preview.take() else {
             return;
         };
@@ -2942,6 +2965,44 @@ mod tests {
         assert_eq!(
             server_rows(&connected, "select NAME from APP.PERSON order by ID"),
             ["a", "b"]
+        );
+        connected.close().expect("close");
+    }
+
+    /// The batch ends in a commit or a rollback on the session every pane of the
+    /// connection shares, so it waits for a query editor's open transaction to
+    /// be settled rather than ending it along the way.
+    #[gpui::test]
+    fn an_open_editor_transaction_holds_the_apply_back(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-apply-uncommitted");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let handle = connected.handle();
+        handle.mark_uncommitted();
+
+        assert!(type_into(&window, 0, 1, "A", cx));
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply(window, cx);
+                assert!(pane.preview.is_none(), "the confirmation was raised");
+                assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+
+                handle.clear_uncommitted();
+                pane.apply(window, cx);
+                assert!(pane.preview.is_some());
+
+                // Opened again between the confirmation and its answer: the
+                // modal stays up and nothing is sent.
+                handle.mark_uncommitted();
+                pane.confirm_apply(window, cx);
+                assert!(pane.preview.is_some(), "the confirmation went away");
+                assert!(!pane.applying);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(
+            server_rows(&connected, "select NAME from APP.PERSON order by ID"),
+            ["a", "b"],
+            "the batch went out over an open transaction"
         );
         connected.close().expect("close");
     }

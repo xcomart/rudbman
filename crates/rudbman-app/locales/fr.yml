@@ -387,6 +387,7 @@ query:
   rolled_back: "Transaction annulée."
   rollback_failed: "Échec de l’annulation : %{message}"
   rollback_auto: "Annuler (la validation automatique est activée)"
+  uncommitted_pending: "Cette connexion contient des modifications non validées d'un éditeur de requêtes. Validez-les ou annulez-les d'abord dans celui-ci."
   commit: "Valider la transaction"
   committing: "Validation en cours…"
   committed: "Transaction validée."

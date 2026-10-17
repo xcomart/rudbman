@@ -963,6 +963,18 @@ impl StructPane {
         if self.read_only_reason().is_some() || self.applying || self.preview.is_some() {
             return;
         }
+        // The batch ends with a commit or a rollback, or for an `ALTER` with an
+        // autocommit flip, and on a session every pane shares that would end a
+        // query editor's open transaction along with it.
+        if self
+            .session
+            .as_ref()
+            .is_some_and(SessionHandle::has_uncommitted)
+        {
+            self.notice = Some(ts!("query.uncommitted_pending"));
+            cx.notify();
+            return;
+        }
         self.apply_error = None;
         self.apply_asked = true;
         // An empty batch is what an empty staging plans to, and there is
@@ -983,6 +995,17 @@ impl StructPane {
     /// background call. Splitting it across awaits would leave the connection
     /// in a mode nothing else on this session asked for between them.
     fn confirm_apply(&mut self, cx: &mut Context<Self>) {
+        // Asked again, since an editor may have written in the meantime; the
+        // preview stays up so the apply can be confirmed once that is settled.
+        if self
+            .session
+            .as_ref()
+            .is_some_and(SessionHandle::has_uncommitted)
+        {
+            self.notice = Some(ts!("query.uncommitted_pending"));
+            cx.notify();
+            return;
+        }
         let Some(statements) = self.preview.take() else {
             return;
         };
@@ -3466,6 +3489,45 @@ mod tests {
             server_columns(&connected, "TEAM"),
             ["ID INTEGER", "NAME CHARACTER VARYING(40)"],
             "the confirmation sent something"
+        );
+        connected.close().expect("close");
+    }
+
+    /// An `ALTER` batch flips autocommit on, which JDBC defines as a commit, so
+    /// it waits for a query editor's open transaction to be settled first.
+    #[gpui::test]
+    fn an_open_editor_transaction_holds_the_batch_back(cx: &mut TestAppContext) {
+        let connected = crate::explorer::tests::h2_fixture("struct-uncommitted");
+        let window = pane(&connected, target("TEAM"), cx);
+        let handle = connected.handle();
+        handle.mark_uncommitted();
+
+        window
+            .update(cx, |pane, _window, cx| {
+                stage_batch(pane, "VARCHAR(80)", cx);
+                pane.apply(cx);
+                assert!(pane.preview.is_none(), "the confirmation was raised");
+                assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+
+                handle.clear_uncommitted();
+                pane.apply(cx);
+                assert!(pane.preview.is_some());
+
+                // Opened again between the confirmation and its answer: the
+                // modal stays up and nothing is sent.
+                handle.mark_uncommitted();
+                pane.confirm_apply(cx);
+                assert!(pane.preview.is_some(), "the confirmation went away");
+                assert!(!pane.applying);
+                pane.preview = None;
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+
+        assert_eq!(
+            server_columns(&connected, "TEAM"),
+            ["ID INTEGER", "NAME CHARACTER VARYING(40)"],
+            "the batch went out over an open transaction"
         );
         connected.close().expect("close");
     }

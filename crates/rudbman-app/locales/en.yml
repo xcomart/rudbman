@@ -565,6 +565,7 @@ query:
   rolled_back: "Transaction rolled back."
   rollback_failed: "Rollback failed: %{message}"
   rollback_auto: "Rollback (automatic commit is enabled)"
+  uncommitted_pending: "This connection has uncommitted changes from a query editor. Commit or roll them back there first."
   commit: "Commit"
   committing: "Committing…"
   committed: "Transaction committed."

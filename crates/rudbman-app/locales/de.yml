@@ -387,6 +387,7 @@ query:
   rolled_back: "Transaktion zurückgesetzt."
   rollback_failed: "Rollback fehlgeschlagen: %{message}"
   rollback_auto: "Rollback (automatisches Commit ist aktiviert)"
+  uncommitted_pending: "Diese Verbindung hat nicht festgeschriebene Änderungen aus einem Abfrageeditor. Führen Sie dort zuerst Commit oder Rollback aus."
   commit: "Commit"
   committing: "Commit läuft…"
   committed: "Transaktion bestätigt."

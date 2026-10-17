@@ -387,6 +387,7 @@ query:
   rolled_back: "トランザクションをロールバックしました。"
   rollback_failed: "ロールバックに失敗しました: %{message}"
   rollback_auto: "ロールバック（自動コミットが有効です）"
+  uncommitted_pending: "この接続にはクエリエディタで実行した未コミットの変更があります。先にクエリタブでコミットまたはロールバックしてください。"
   commit: "コミット"
   committing: "コミット中…"
   committed: "トランザクションをコミットしました。"

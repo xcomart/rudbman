@@ -27,15 +27,21 @@ impl QueryPane {
         });
         cx.spawn(async move |pane, cx| {
             let outcome = cx
-                .background_spawn(async move {
-                    match action {
-                        TransactionAction::Commit => session.session().commit(),
-                        TransactionAction::Rollback => session.session().rollback(),
+                .background_spawn({
+                    let session = session.clone();
+                    async move {
+                        match action {
+                            TransactionAction::Commit => session.session().commit(),
+                            TransactionAction::Rollback => session.session().rollback(),
+                        }
                     }
                 })
                 .await;
             pane.update(cx, |pane, cx| {
                 pane.transaction = None;
+                if outcome.is_ok() {
+                    session.clear_uncommitted();
+                }
                 if pane.session.is_some() {
                     pane.notice = Some(match (action, outcome) {
                         (TransactionAction::Commit, Ok(())) => ts!("query.committed"),
@@ -125,20 +131,48 @@ impl QueryPane {
         }));
 
         let fetch_rows = self.fetch_rows;
+        // What each statement does to the books [`SessionHandle::has_uncommitted`]
+        // keeps, worked out here because the dialect stays with the pane. Only a
+        // session that is really in a transaction of the user's — manual commit,
+        // on a product that has transactions — has anything to keep.
+        //
+        // [`SessionHandle::has_uncommitted`]: crate::connection::SessionHandle::has_uncommitted
+        let manual = self.transactional && !self.restore_auto_commit;
+        let statements: Vec<(String, Effect)> = statements
+            .into_iter()
+            .map(|sql| {
+                let effect = if !manual {
+                    Effect::None
+                } else if ends_transaction(&sql, &self.dialect) {
+                    Effect::Ends
+                } else if is_write_statement(&sql, &self.dialect) {
+                    Effect::Opens
+                } else {
+                    Effect::None
+                };
+                (sql, effect)
+            })
+            .collect();
 
         // `spawn_in` rather than `spawn`: the grids this run ends in are
         // subscribed to with a window, because answering a double click with
         // [`GridView::begin_edit`] means putting the keyboard in a field and
         // there is no window to be had inside a plain `cx.subscribe` (§7.9).
         cx.spawn_in(window, async move |pane, cx| {
-            for sql in statements {
+            for (sql, effect) in statements {
                 let outcome = cx
                     .background_spawn({
                         let session = session.clone();
                         async move {
                             let spec = StatementSpec::new(sql.clone()).with_fetch_size(fetch_rows);
                             let started = Instant::now();
+                            if effect == Effect::Opens {
+                                session.mark_uncommitted();
+                            }
                             let mut cursor = session.session().execute(&spec)?;
+                            if effect == Effect::Ends {
+                                session.clear_uncommitted();
+                            }
                             let mut steps = Vec::new();
                             let pageable = advance(&mut cursor, true, fetch_rows, &mut steps)?;
                             Ok::<Executed, JdbcError>(Executed {
@@ -354,4 +388,16 @@ impl QueryPane {
         .detach();
         cx.notify();
     }
+}
+
+/// What one statement of a run does to the transaction its session keeps
+/// account of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Effect {
+    /// Neither opens nor ends one: a read, or a session in autocommit.
+    None,
+    /// A write under manual commit, which leaves the transaction open.
+    Opens,
+    /// A `COMMIT` or a full `ROLLBACK` typed into the editor.
+    Ends,
 }

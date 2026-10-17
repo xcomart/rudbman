@@ -245,6 +245,9 @@ impl From<JdbcError> for ConnectError {
 struct Live {
     /// The JDBC session. Declared first, so it is closed first.
     session: Session,
+    /// Whether a query editor has sent writes under manual commit that nothing
+    /// has committed or rolled back yet; see [`SessionHandle::has_uncommitted`].
+    uncommitted: AtomicBool,
     /// The tunnel underneath, if any. Declared last, so it lies down last.
     lease: Option<TunnelLease>,
 }
@@ -263,6 +266,33 @@ impl SessionHandle {
     /// The session, for the blocking calls that make up a fetch.
     pub fn session(&self) -> &Session {
         &self.0.session
+    }
+
+    /// Whether this session holds writes a query editor sent under manual
+    /// commit and nobody has committed or rolled back yet.
+    ///
+    /// Every pane of a connection shares the one session, and with it the one
+    /// transaction. A grid apply, an `ALTER` batch or a transfer ends that
+    /// transaction on its way out — with a commit, a rollback, or an autocommit
+    /// flip that JDBC defines as a commit — so running one of them now would
+    /// commit or discard the editor's work behind the user's back. They ask
+    /// this first and refuse while it is `true`.
+    pub fn has_uncommitted(&self) -> bool {
+        self.0.uncommitted.load(Ordering::Acquire)
+    }
+
+    /// Records that a write went out under manual commit.
+    ///
+    /// Called *before* the statement is sent: a write that fails half way may
+    /// still have changed rows, and an open transaction reported where there is
+    /// none costs a click, where the reverse costs the user's work.
+    pub fn mark_uncommitted(&self) {
+        self.0.uncommitted.store(true, Ordering::Release);
+    }
+
+    /// Records that the session's transaction was committed or rolled back.
+    pub fn clear_uncommitted(&self) {
+        self.0.uncommitted.store(false, Ordering::Release);
     }
 }
 
@@ -333,7 +363,7 @@ impl Connected {
     /// thread's task on a query nobody is going to read.
     pub fn close(self) -> Result<(), JdbcError> {
         match Arc::try_unwrap(self.live) {
-            Ok(Live { session, lease }) => {
+            Ok(Live { session, lease, .. }) => {
                 let result = session.close();
                 drop(lease);
                 result
@@ -488,7 +518,11 @@ fn connect_once(
     let info = session.info().map_err(ConnectError::from)?;
 
     Ok(Connected {
-        live: Arc::new(Live { session, lease }),
+        live: Arc::new(Live {
+            session,
+            uncommitted: AtomicBool::new(false),
+            lease,
+        }),
         info,
     })
 }

@@ -387,6 +387,7 @@ query:
   rolled_back: "Transacción revertida."
   rollback_failed: "Error al revertir: %{message}"
   rollback_auto: "Revertir (la confirmación automática está activada)"
+  uncommitted_pending: "Esta conexión tiene cambios sin confirmar de un editor de consultas. Confírmelos o reviértalos allí primero."
   commit: "Confirmar transacción"
   committing: "Confirmando…"
   committed: "Transacción confirmada."

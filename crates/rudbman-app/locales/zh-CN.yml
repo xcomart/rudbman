@@ -387,6 +387,7 @@ query:
   rolled_back: "事务已回滚。"
   rollback_failed: "回滚失败：%{message}"
   rollback_auto: "回滚（自动提交已启用）"
+  uncommitted_pending: "此连接有来自查询编辑器的未提交更改。请先在查询选项卡中提交或回滚。"
   commit: "提交"
   committing: "正在提交…"
   committed: "事务已提交。"

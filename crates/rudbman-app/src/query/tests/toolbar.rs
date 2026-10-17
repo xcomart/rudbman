@@ -253,6 +253,44 @@ fn toolbar_rollback_reverts_only_uncommitted_changes(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_books_follow_writes_commits_and_rollbacks_under_manual_commit(cx: &mut TestAppContext) {
+    let (connected, mut profile) = h2("toolbar-uncommitted", &["create table entries (id int)"]);
+    profile.auto_commit = false;
+    connected.session().set_auto_commit(false).unwrap();
+    let handle = connected.handle();
+    let window = pane(&connected, &profile, 500, cx);
+
+    run(&window, "select id from entries", cx);
+    assert!(!handle.has_uncommitted(), "a read opened a transaction");
+    run(&window, "insert into entries values (1)", cx);
+    assert!(handle.has_uncommitted());
+    run(&window, "commit", cx);
+    assert!(!handle.has_uncommitted(), "a typed COMMIT left it open");
+    run(&window, "insert into entries values (2)", cx);
+    assert!(handle.has_uncommitted());
+
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    click("query-rollback", &mut cx);
+    assert!(
+        !handle.has_uncommitted(),
+        "the rollback button left it open"
+    );
+    assert_eq!(server_rows(&connected, "select id from entries"), vec!["1"]);
+    connected.close().expect("close");
+}
+
+#[gpui::test]
+fn writes_under_autocommit_open_nothing(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-autocommit", &["create table entries (id int)"]);
+    assert!(profile.auto_commit);
+    let handle = connected.handle();
+    let window = pane(&connected, &profile, 500, cx);
+    run(&window, "insert into entries values (1)", cx);
+    assert!(!handle.has_uncommitted());
+    connected.close().expect("close");
+}
+
+#[gpui::test]
 fn format_sql_formats_the_selection_or_the_script_as_one_undo_step(cx: &mut TestAppContext) {
     let (connected, profile) = h2("toolbar-format", &[]);
     let window = pane(&connected, &profile, 500, cx);

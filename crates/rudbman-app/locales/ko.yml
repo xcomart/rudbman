@@ -387,6 +387,7 @@ query:
   rolled_back: "트랜잭션을 롤백했습니다."
   rollback_failed: "롤백 실패: %{message}"
   rollback_auto: "롤백 (자동 커밋이 켜져 있습니다)"
+  uncommitted_pending: "이 연결에 쿼리 편집기에서 실행한 커밋되지 않은 변경이 있습니다. 먼저 쿼리 탭에서 커밋하거나 롤백하세요."
   commit: "커밋"
   committing: "커밋 중…"
   committed: "트랜잭션을 커밋했습니다."

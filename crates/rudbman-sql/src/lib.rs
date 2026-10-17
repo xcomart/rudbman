@@ -153,7 +153,7 @@ pub mod statement;
 
 mod keywords;
 
-pub use access::{StatementAccess, statement_access};
+pub use access::{StatementAccess, ends_transaction, statement_access};
 pub use ddl::{
     ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, DdlError, TableAlter, TableConstraint,
     TableCreate, Unsupported, plan_alter, plan_create,

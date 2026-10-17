@@ -98,7 +98,7 @@ use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
-use rudbman_sql::{Dialect, StatementAccess, split_statements, statement_access};
+use rudbman_sql::{Dialect, StatementAccess, ends_transaction, split_statements, statement_access};
 use rugpui::{Button, ButtonVariant, ContextMenu, ResizeHandle, Theme, theme};
 use rugpui_editor::editor::{
     Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
