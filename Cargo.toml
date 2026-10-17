@@ -74,31 +74,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 directories = "6"
 keyring = "4"
 parking_lot = "0.12"
-smallvec = "1"
-unicode-segmentation = "1"
 unicode-width = "0.2"
-
-# --- text buffer: the SQL editor's document ---
-# A rope, because the editor has to hold a 100MB extracted script and stay
-# responsive: an insert is O(log n) rather than the memmove a `String` would do,
-# and line lookups are O(log n) rather than a scan. Two of its indexes are load
-# bearing beyond that — `byte_to_line`/`line_to_byte` are what let the syntax
-# cache address the buffer by line, and `char_to_utf16_cu`/`utf16_cu_to_char`
-# are what make the IME's UTF-16 offsets convertible in O(log n) instead of the
-# whole-string walk a flat buffer needs on every composition step. Default
-# features are off so that a line break is `\n` or `\r\n` and nothing else: with
-# `unicode_lines` a `\u{2028}` inside a string literal would split a line in the
-# rope that the SQL lexer does not split, and the two views of the buffer have
-# to agree.
-ropey = { version = "1.6", default-features = false, features = [
-    "cr_lines",
-    "simd",
-] }
 futures = "0.3"
 async-trait = "0.1"
-bitflags = "2"
 tempfile = "3"
-libc = "0.2"
 
 # --- HTTP: the driver downloader, and the shell's update check ---
 # Maven Central and the GitHub releases API are the only hosts rudbman ever
@@ -117,14 +96,6 @@ ureq = { version = "3", default-features = false, features = [
     "_ring",
     "gzip",
 ] }
-
-# --- SHA-256, for `rugpui-shell`'s self-updater.  The GitHub releases API
-# publishes a `digest` field for every asset, and an updater that overwrites its
-# own installation should check it.  No crate of this workspace names `ring`
-# any more — the shell does — but it is already in the tree twice over as the
-# crypto backend both `russh` and `ureq`'s `rustls` resolve to, so this entry
-# only pins the version they and the shell share. ---
-ring = "0.17"
 
 # --- localization ---
 # `rust-i18n` compiles `crates/rudbman-app/locales/*.yml` into the binary, so
@@ -153,27 +124,20 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fd82517a
     "x11",
 ] }
 
-# --- platform window chrome, and one platform registry ---
-# All four are used by `rudbman-app` alone, and every one of them only under a
-# `[target.'cfg(...)']` section, so a build for another platform never sees
-# them.
-#
+# --- the Windows executable's icon ---
 # `winresource` embeds `assets/icon.ico` into the Windows executable at
 # resource ID 1, which is the id gpui's Windows backend loads for the window
-# class icon, and it is the one of the four `rudbman-app` still names itself.
+# class icon. `rudbman-app` names it under a `[target.'cfg(windows)']` build
+# dependency, so a build for another platform never sees it.
 #
-# The other three are `rugpui-shell`'s: `windows` is what its caption code pins
-# the DWM title bar to the app theme with, `raw-window-handle` is how gpui hands
-# out the `HWND` that needs, and `windows-registry` is what corrects the
-# `DisplayVersion` of the "Apps & features" entry after a self-update. All three
-# are pinned here to the versions gpui already links, so they cost an edge in
-# the dependency graph rather than a crate in the build — which is also why
-# `windows-registry` is picked over `winreg`, whose own `windows-sys` would be a
-# second registry binding in the linked binary.
+# The DWM caption colour, the window handle it needs and the "Apps & features"
+# registry entry the self-updater corrects are `rugpui-shell`'s, and so are the
+# `windows`, `raw-window-handle` and `windows-registry` crates they take: the
+# shell declares them itself and they resolve through this workspace's lock
+# like any other transitive dependency. No entry here is needed to pin them —
+# an unused `[workspace.dependencies]` entry takes no part in resolution — so
+# none is kept.
 winresource = "0.1"
-windows = { version = "0.61", features = ["Win32_Graphics_Dwm"] }
-windows-registry = "0.5"
-raw-window-handle = "0.6"
 
 # --- async runtime (SSH tunnel only) ---
 # The tunnel is the only thing here that speaks a network protocol of its own.
