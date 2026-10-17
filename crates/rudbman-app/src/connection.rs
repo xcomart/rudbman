@@ -556,29 +556,82 @@ pub(crate) fn start_jvm(settings: &AppSettings) -> Result<&'static Jvm, ConnectE
 
 /// Identity of a tunnel, for the purpose of sharing one.
 ///
-/// The bastion and the target, exactly as §9.3 puts it. The authentication
-/// method is deliberately *not* part of it: two profiles reaching one database
-/// through one bastion are the same tunnel even when one of them authenticates
-/// with a key and the other with the agent — whichever got there first is the
-/// one that is up. The requested local port is, though: a profile that pins a
-/// port is asking for that port and must not be handed somebody else's.
+/// The bastion and the target, exactly as §9.3 puts it — and also *how* the
+/// bastion was asked to let the user in. Sharing a tunnel is sharing the
+/// authentication that opened it, so a key that left the authentication out
+/// would hand a profile whose password is wrong, or whose key file is someone
+/// else's, a tunnel it could never have opened itself, and its "connect" would
+/// succeed on another profile's credentials. Two profiles that authenticate
+/// the same way with the same secret still share one tunnel. The requested
+/// local port is part of it too: a profile that pins a port is asking for that
+/// port and must not be handed somebody else's.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct TunnelKey {
     host: String,
     port: u16,
     username: String,
+    auth: TunnelAuthKey,
     remote_host: String,
     remote_port: u16,
     local_port: u16,
 }
 
+/// The authentication half of a [`TunnelKey`].
+///
+/// [`TunnelAuth`](rudbman_core::TunnelAuth) itself does not hash, and could not
+/// tell two passwords apart if it did: no variant carries the secret. The
+/// secret is therefore taken in as a [`secret_fingerprint`] — never as itself,
+/// so the pool's keys, and anything that ever prints one, hold nothing a
+/// password could be read back out of.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum TunnelAuthKey {
+    /// The agent: the secret, if a stale one was stored, is not what it uses.
+    Agent,
+    /// A key file, and the fingerprint of the passphrase it was unlocked with.
+    Key {
+        path: std::path::PathBuf,
+        passphrase: Option<u64>,
+    },
+    /// A password, by fingerprint.
+    Password(Option<u64>),
+}
+
+/// A one-way stand-in for a tunnel secret, comparable within this process.
+///
+/// SipHash under a key drawn at random once per process, which is what
+/// [`RandomState`](std::hash::RandomState) is: nothing is written anywhere, the
+/// key dies with the process, and without it the 64 bits are no help in
+/// guessing the password. Equal secrets give equal fingerprints, and that is
+/// all a pool lookup needs. A collision would only ever share a tunnel between
+/// two secrets that the bastion has already accepted one of — the same outcome
+/// the key had for every secret before it carried one at all.
+fn secret_fingerprint(secret: Option<&str>) -> Option<u64> {
+    use std::hash::BuildHasher;
+    static KEY: std::sync::OnceLock<std::hash::RandomState> = std::sync::OnceLock::new();
+    secret.map(|secret| {
+        KEY.get_or_init(std::hash::RandomState::new)
+            .hash_one(secret)
+    })
+}
+
 impl TunnelKey {
-    /// The key of one profile's tunnel block.
-    fn of(config: &TunnelConfig) -> Self {
+    /// The key of one profile's tunnel block, opened with `secret`.
+    fn of(config: &TunnelConfig, secret: Option<&str>) -> Self {
+        let auth = match &config.auth {
+            rudbman_core::TunnelAuth::Agent => TunnelAuthKey::Agent,
+            rudbman_core::TunnelAuth::Key { path } => TunnelAuthKey::Key {
+                path: path.clone(),
+                passphrase: secret_fingerprint(secret),
+            },
+            rudbman_core::TunnelAuth::Password => {
+                TunnelAuthKey::Password(secret_fingerprint(secret))
+            }
+        };
         TunnelKey {
             host: config.host.clone(),
             port: config.port,
             username: config.username.clone(),
+            auth,
             remote_host: config.remote_host.clone(),
             remote_port: config.remote_port,
             local_port: config.local_port,
@@ -666,7 +719,7 @@ impl Drop for Shared {
 
 /// Takes a lease on the tunnel `config` describes, opening one if none is up.
 fn open_tunnel(config: &TunnelConfig, secret: Option<String>) -> Result<TunnelLease, ConnectError> {
-    let key = TunnelKey::of(config);
+    let key = TunnelKey::of(config, secret.as_deref());
 
     let shared = TUNNELS.acquire(
         key.clone(),
@@ -1184,14 +1237,11 @@ mod tests {
             remote_port: 5432,
             ..TunnelConfig::default()
         };
-        // Same bastion, same target, different auth: one tunnel.
-        let with_key = TunnelConfig {
-            auth: rudbman_core::TunnelAuth::Key {
-                path: "/home/me/.ssh/id".into(),
-            },
-            ..base.clone()
-        };
-        assert_eq!(TunnelKey::of(&base), TunnelKey::of(&with_key));
+        // Same bastion, same target, same way in: one tunnel.
+        assert_eq!(
+            TunnelKey::of(&base, None),
+            TunnelKey::of(&base.clone(), None)
+        );
 
         // A different target is a different tunnel, and so is a pinned local
         // port: a profile that asks for one is asking for that one.
@@ -1199,12 +1249,67 @@ mod tests {
             remote_port: 5433,
             ..base.clone()
         };
-        assert_ne!(TunnelKey::of(&base), TunnelKey::of(&other_target));
+        assert_ne!(
+            TunnelKey::of(&base, None),
+            TunnelKey::of(&other_target, None)
+        );
         let pinned = TunnelConfig {
             local_port: 15432,
             ..base.clone()
         };
-        assert_ne!(TunnelKey::of(&base), TunnelKey::of(&pinned));
+        assert_ne!(TunnelKey::of(&base, None), TunnelKey::of(&pinned, None));
+    }
+
+    #[test]
+    fn a_tunnel_is_shared_only_with_the_same_credentials() {
+        let agent = TunnelConfig {
+            host: "bastion".into(),
+            username: "ops".into(),
+            remote_host: "db.internal".into(),
+            remote_port: 5432,
+            ..TunnelConfig::default()
+        };
+        let key = |path: &str| TunnelConfig {
+            auth: rudbman_core::TunnelAuth::Key { path: path.into() },
+            ..agent.clone()
+        };
+        let password = TunnelConfig {
+            auth: rudbman_core::TunnelAuth::Password,
+            ..agent.clone()
+        };
+
+        // Another method is another tunnel: an agent's tunnel must not carry a
+        // profile whose own key the bastion has never seen.
+        assert_ne!(TunnelKey::of(&agent, None), TunnelKey::of(&key("/k"), None));
+        assert_ne!(TunnelKey::of(&agent, None), TunnelKey::of(&password, None));
+        // So is another key file, or the same one under another passphrase.
+        assert_ne!(
+            TunnelKey::of(&key("/a"), None),
+            TunnelKey::of(&key("/b"), None)
+        );
+        assert_ne!(
+            TunnelKey::of(&key("/a"), Some("one")),
+            TunnelKey::of(&key("/a"), Some("two"))
+        );
+        // A wrong password is not let through on a right one's tunnel, while
+        // the same password is the same tunnel.
+        assert_ne!(
+            TunnelKey::of(&password, Some("right")),
+            TunnelKey::of(&password, Some("wrong"))
+        );
+        assert_eq!(
+            TunnelKey::of(&password, Some("right")),
+            TunnelKey::of(&password, Some("right"))
+        );
+        // The agent ignores a stale secret, so it does not split its tunnel.
+        assert_eq!(
+            TunnelKey::of(&agent, Some("stale")),
+            TunnelKey::of(&agent, None)
+        );
+
+        // And the secret itself is nowhere in the key.
+        let printed = format!("{:?}", TunnelKey::of(&password, Some("hunter2")));
+        assert!(!printed.contains("hunter2"), "{printed}");
     }
 
     #[test]

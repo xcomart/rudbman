@@ -1528,8 +1528,10 @@ disconnect → CLOSE_SESSION → tear the tunnel down
 - **The tunnel stands up first and lies down last.** If the tunnel closes while
   a JDBC session is still alive, the driver sees nothing but an unexplained
   socket error
-- Several sessions share one tunnel (same bastion, same target). It is
-  reference counted and torn down when the last session closes
+- Several sessions share one tunnel (same bastion, same target, same
+  authentication — method, key file and secret, the last compared only by an
+  in-process fingerprint). It is reference counted and torn down when the last
+  session closes
 - If the tunnel drops mid-flight, a `kind: "io"` error is propagated to every
   JDBC session over it and those sessions are marked dead. It never silently
   reconnects — there may have been a transaction in flight, and the user needs
