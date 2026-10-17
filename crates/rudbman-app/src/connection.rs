@@ -112,14 +112,19 @@ pub enum ConnectError {
     JvmStart(String),
     /// The tunnel could not be established.
     Tunnel(String),
-    /// The bastion presented a host key that is not the one on record.
+    /// The bastion presented a host key that is not the one on record — another
+    /// fingerprint, or a key of another algorithm than the one it is known by.
     HostKeyMismatch {
         /// The bastion, as the profile names it.
         host: String,
         /// The fingerprint that arrived.
         presented: String,
+        /// The algorithm of the key that arrived.
+        algorithm: String,
         /// The fingerprint `known_hosts` holds.
         stored: String,
+        /// The algorithm of the key `known_hosts` holds.
+        stored_algorithm: String,
     },
     /// The bastion presented a host key nothing has ever trusted.
     HostKeyUnknown {
@@ -187,9 +192,12 @@ impl ConnectError {
             ConnectError::HostKeyMismatch {
                 host,
                 presented,
+                algorithm,
                 stored,
+                stored_algorithm,
             } => format!(
-                "the host key of {host} has changed: {presented} was presented, {stored} is on record"
+                "the host key of {host} has changed: {algorithm} {presented} was presented, \
+                 {stored_algorithm} {stored} is on record"
             ),
             ConnectError::HostKeyUnknown {
                 host,
@@ -756,13 +764,16 @@ impl StoredHostKeys {
         match KnownHosts::load()
             .map(|hosts| hosts.status(&self.host, self.port, &algorithm, &fingerprint))
         {
-            Ok(rudbman_core::HostKeyStatus::Mismatch { stored_fingerprint }) => {
-                ConnectError::HostKeyMismatch {
-                    host: self.host.clone(),
-                    presented: fingerprint,
-                    stored: stored_fingerprint,
-                }
-            }
+            Ok(rudbman_core::HostKeyStatus::Mismatch {
+                stored_algorithm,
+                stored_fingerprint,
+            }) => ConnectError::HostKeyMismatch {
+                host: self.host.clone(),
+                presented: fingerprint,
+                algorithm,
+                stored: stored_fingerprint,
+                stored_algorithm,
+            },
             _ => ConnectError::HostKeyUnknown {
                 host: self.host.clone(),
                 fingerprint,
