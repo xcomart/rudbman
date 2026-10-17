@@ -56,9 +56,7 @@ use rudbman_jdbc::{
 };
 use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
-pub use rudbkit_core::url::{
-    CATALOGUE_PLACEHOLDERS, placeholders_of, redirect_authority, substitute,
-};
+pub use rudbkit_core::url::{CATALOGUE_PLACEHOLDERS, placeholders_of, redirect_url, substitute};
 
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
@@ -505,9 +503,17 @@ fn connect_once(
         None => None,
     };
 
-    // 3. The URL, pointed at the local end of the tunnel when there is one.
+    // 3. The URL, pointed at the local end of the tunnel when there is one. A
+    //    URL the tunnel cannot be put into is refused rather than sent as it
+    //    stands: that would connect straight past the tunnel.
     let url = match &lease {
-        Some(lease) => redirect_authority(&profile.url, "127.0.0.1", lease.local_port()),
+        Some(lease) => redirect_url(
+            &profile.url,
+            &driver.url_template,
+            "127.0.0.1",
+            lease.local_port(),
+        )
+        .map_err(|error| ConnectError::Tunnel(error.to_string()))?,
         None => profile.url.clone(),
     };
 
@@ -1013,38 +1019,42 @@ mod tests {
     }
 
     #[test]
-    fn a_tunnel_moves_only_the_authority_of_a_url() {
+    fn a_tunnel_redirects_the_url_or_refuses_it() {
+        let to_tunnel = |url: &str, template: &str| redirect_url(url, template, "127.0.0.1", 41234);
         assert_eq!(
-            redirect_authority("jdbc:postgresql://db.internal:5432/app", "127.0.0.1", 41234),
+            to_tunnel(
+                "jdbc:postgresql://db.internal:5432/app",
+                "jdbc:postgresql://{host}:{port}/{database}"
+            )
+            .unwrap(),
             "jdbc:postgresql://127.0.0.1:41234/app"
         );
-        // The semicolon grammar: the authority ends at the first `;`.
+        // A hand-edited URL the template no longer fits keeps its own grammar:
+        // the authority ends at the first `;` or `?`.
         assert_eq!(
-            redirect_authority(
+            to_tunnel(
                 "jdbc:sqlserver://db.internal:1433;databaseName=app",
-                "127.0.0.1",
-                41234
-            ),
+                "jdbc:sqlserver://{host}:{port}/{database}"
+            )
+            .unwrap(),
             "jdbc:sqlserver://127.0.0.1:41234;databaseName=app"
         );
-        // A query string.
         assert_eq!(
-            redirect_authority(
-                "jdbc:mysql://db.internal:3306/app?useSSL=false",
-                "127.0.0.1",
-                1
-            ),
-            "jdbc:mysql://127.0.0.1:1/app?useSSL=false"
+            to_tunnel("jdbc:mysql://db.internal:3306/app?useSSL=false", "jdbc:x").unwrap(),
+            "jdbc:mysql://127.0.0.1:41234/app?useSSL=false"
         );
-        // A URL with no authority at all has no server to redirect.
+        // No `//` at all: only the template's holes can take the tunnel.
         assert_eq!(
-            redirect_authority("jdbc:h2:mem:test", "127.0.0.1", 41234),
-            "jdbc:h2:mem:test"
+            to_tunnel(
+                "jdbc:cubrid:db.internal:33000:app:::",
+                "jdbc:cubrid:{host}:{port}:{database}:::"
+            )
+            .unwrap(),
+            "jdbc:cubrid:127.0.0.1:41234:app:::"
         );
-        assert_eq!(
-            redirect_authority("jdbc:sqlite:/var/db/app.sqlite", "127.0.0.1", 1),
-            "jdbc:sqlite:/var/db/app.sqlite"
-        );
+        // Nothing to redirect is refused, never connected around the tunnel.
+        assert!(to_tunnel("jdbc:h2:mem:test", "jdbc:h2:mem:{database}").is_err());
+        assert!(to_tunnel("jdbc:sqlite:/var/db/app.sqlite", "jdbc:sqlite:{file}").is_err());
     }
 
     #[test]
