@@ -530,6 +530,9 @@ pub struct QueryPane {
     /// read of the pane, from the autosave that a running query's clock alone
     /// keeps waking. See [`QueryPane::workspace_sql`].
     saved_draft: RefCell<Option<SavedDraft>>,
+    /// A "Format SQL" being worked out off the UI thread; see
+    /// [`QueryPane::format_sql`]. Dropping it abandons that format.
+    format_task: Option<gpui::Task<()>>,
     _completion_blur: Subscription,
     _editor_events: Subscription,
 }
@@ -715,6 +718,7 @@ impl QueryPane {
             lob_events: None,
             edits: 0,
             saved_draft: RefCell::new(None),
+            format_task: None,
             _completion_blur: completion_blur,
             _editor_events: editor_events,
         }

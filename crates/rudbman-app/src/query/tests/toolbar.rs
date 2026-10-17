@@ -336,3 +336,32 @@ fn format_sql_formats_the_selection_or_the_script_as_one_undo_step(cx: &mut Test
     assert_eq!(text(&mut cx), script);
     connected.close().expect("close");
 }
+
+/// The format is worked out off the UI thread, so the buffer can change
+/// before it comes back; a layout of text that is no longer there is dropped.
+#[gpui::test]
+fn a_format_of_text_edited_meanwhile_is_dropped(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-format-stale", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    window
+        .update(cx, |pane, _, cx| {
+            pane.editor
+                .update(cx, |editor, cx| editor.set_text("select a from t", cx));
+        })
+        .unwrap();
+    window
+        .update(cx, |pane, _, cx| {
+            pane.format_sql(cx);
+            pane.editor
+                .update(cx, |editor, cx| editor.insert_at_caret("-- ", cx));
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, _, cx| {
+            assert_eq!(pane.editor_text(cx), "-- select a from t");
+            assert!(pane.format_task.is_none());
+        })
+        .unwrap();
+    connected.close().expect("close");
+}

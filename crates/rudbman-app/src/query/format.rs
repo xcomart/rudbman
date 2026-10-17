@@ -38,30 +38,55 @@ impl QueryPane {
     /// A formatted selection stays selected. Without one the caret keeps its
     /// place in the SQL: formatting changes only whitespace and letter case, so
     /// the count of other characters before it identifies the same spot.
+    ///
+    /// The layout is worked out on the background executor — it is a pass over
+    /// the whole script, which can be large — and applied only if the editor
+    /// has not changed since it was read, as [`QueryPane::edits`] tells. A
+    /// format that comes back to an edited buffer is dropped rather than laid
+    /// over text it was not computed from; asking again replaces one still
+    /// being worked out.
     pub(super) fn format_sql(&mut self, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        if editor.is_read_only() {
+            return;
+        }
+        let selection = editor.selection();
+        let whole = selection.is_empty();
+        let source = if whole {
+            editor.text()
+        } else {
+            editor.text_in(selection.clone())
+        };
+        let edits = self.edits;
         let dialect = self.dialect;
-        self.editor.update(cx, |editor, cx| {
-            if editor.is_read_only() {
-                return;
-            }
-            let selection = editor.selection();
-            if selection.is_empty() {
-                let source = editor.text();
-                let formatted = rudbman_sql::format_sql(&source, &dialect);
-                if formatted != source {
-                    let caret = same_spot(&source, &formatted, editor.caret());
-                    editor.replace_range(0..source.len(), &formatted, cx);
-                    editor.move_to(caret, cx);
+        self.format_task = Some(cx.spawn(async move |pane, cx| {
+            let (source, formatted) = cx
+                .background_spawn(async move {
+                    let formatted = rudbman_sql::format_sql(&source, &dialect);
+                    (source, formatted)
+                })
+                .await;
+            pane.update(cx, |pane, cx| {
+                pane.format_task = None;
+                if pane.edits != edits || formatted == source {
+                    return;
                 }
-            } else {
-                let source = editor.text_in(selection.clone());
-                let formatted = rudbman_sql::format_sql(&source, &dialect);
-                if formatted != source {
-                    editor.replace_range(selection.clone(), &formatted, cx);
-                    editor.select_range(selection.start..selection.start + formatted.len(), cx);
-                }
-            }
-        });
+                pane.editor.update(cx, |editor, cx| {
+                    if editor.is_read_only() {
+                        return;
+                    }
+                    if whole {
+                        let caret = same_spot(&source, &formatted, editor.caret());
+                        editor.replace_range(0..source.len(), &formatted, cx);
+                        editor.move_to(caret, cx);
+                    } else {
+                        editor.replace_range(selection.clone(), &formatted, cx);
+                        editor.select_range(selection.start..selection.start + formatted.len(), cx);
+                    }
+                });
+            })
+            .ok();
+        }));
     }
 }
 
