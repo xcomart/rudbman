@@ -687,6 +687,7 @@ impl ErdPane {
             .child({
                 let this = this.clone();
                 Button::new("erd-arrange", ts!("erd.auto_arrange"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(!ready)
                     .on_click(move |_, _window, cx| {
@@ -696,6 +697,7 @@ impl ErdPane {
             .child({
                 let this = this.clone();
                 Button::new("erd-export", ts!("erd.export_svg"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(!ready)
                     .on_click(move |_, _window, cx| {
@@ -704,6 +706,7 @@ impl ErdPane {
             })
             .child(
                 Button::new("erd-refresh", ts!("erd.refresh"))
+                    .compact()
                     .variant(ButtonVariant::Secondary)
                     .disabled(loading)
                     .on_click(move |_, _window, cx| {

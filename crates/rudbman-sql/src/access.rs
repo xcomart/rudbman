@@ -35,6 +35,35 @@ pub fn statement_access(sql: &str, dialect: &Dialect) -> StatementAccess {
     classify(sql, &tokens, 0)
 }
 
+/// Whether `sql` ends the session's transaction: a `COMMIT`, or a `ROLLBACK`
+/// that is not to a savepoint.
+///
+/// What tells a workbench that the writes an editor left open were closed from
+/// the editor itself rather than from its own commit and rollback buttons.
+/// Anything it cannot place — several statements, a savepoint rollback, a
+/// vendor's own spelling — is not one, which keeps the open transaction on the
+/// books: the cautious mistake.
+pub fn ends_transaction(sql: &str, dialect: &Dialect) -> bool {
+    if split_statements(sql, dialect).len() != 1 {
+        return false;
+    }
+    let tokens: Vec<_> = lex(sql, dialect)
+        .into_iter()
+        .filter(|token| !token.kind.is_trivia())
+        .collect();
+    let Some(first) = tokens.first() else {
+        return false;
+    };
+    let word = first.text(sql);
+    if word.eq_ignore_ascii_case("COMMIT") {
+        return true;
+    }
+    word.eq_ignore_ascii_case("ROLLBACK")
+        && !tokens[1..]
+            .iter()
+            .any(|token| token.text(sql).eq_ignore_ascii_case("TO"))
+}
+
 fn classify(sql: &str, tokens: &[Token], nesting: usize) -> StatementAccess {
     if nesting > 64 {
         return StatementAccess::Unknown;
@@ -212,6 +241,36 @@ fn punct_at(sql: &str, tokens: &[Token], i: usize, punct: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_and_a_full_rollback_end_the_transaction() {
+        for dialect in [
+            Dialect::POSTGRES,
+            Dialect::MYSQL,
+            Dialect::MSSQL,
+            Dialect::H2,
+        ] {
+            for sql in [
+                "COMMIT",
+                "commit;",
+                "COMMIT WORK",
+                "  -- done\nROLLBACK",
+                "rollback work;",
+            ] {
+                assert!(ends_transaction(sql, &dialect), "{sql}");
+            }
+            for sql in [
+                "ROLLBACK TO SAVEPOINT s1",
+                "ROLLBACK WORK TO s1",
+                "COMMIT; DELETE FROM t",
+                "SELECT 'commit'",
+                "-- COMMIT",
+                "",
+            ] {
+                assert!(!ends_transaction(sql, &dialect), "{sql}");
+            }
+        }
+    }
 
     #[test]
     fn protects_structural_write_bypasses() {

@@ -2,6 +2,70 @@
 
 use super::*;
 
+impl Workspace {
+    /// Notes where a dragged tab would land while it is over `strip`.
+    ///
+    /// `strip` names the strip reporting — a pane id for a pane's strip, and
+    /// [`CONNECTION_STRIP_TAG`] for the connection strip — and `index` the
+    /// insertion gap the pointer is over, or `None` once it has left the
+    /// strip. A `None` clears only when it names this strip's own bar, so the
+    /// strips a drag is not over never wipe the one it is; a `Some` is kept
+    /// only from a source this strip accepts, so a pane never bars a
+    /// connection drag and the connection strip never bars a pane one.
+    pub(super) fn drag_over_tab(
+        &mut self,
+        strip: u64,
+        dragged: DraggedTab,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = index else {
+            if self.tab_drop.is_some_and(|(tag, _)| tag == strip) {
+                self.tab_drop = None;
+                cx.notify();
+            }
+            return;
+        };
+        let acceptable = if strip == CONNECTION_STRIP_TAG {
+            dragged.source == CONNECTION_STRIP_TAG
+        } else {
+            self.work_area()
+                .is_some_and(|area| area.panes.contains(PaneId::from_u64(dragged.source)))
+        };
+        if !acceptable {
+            return;
+        }
+        let next = Some((strip, index));
+        if self.tab_drop != next {
+            self.tab_drop = next;
+            cx.notify();
+        }
+    }
+
+    /// The index a drop on `strip` lands at: the bar the pointer last named
+    /// for this strip, or `fallback` — the static drop position — when the
+    /// bar belongs to another strip or to no drag at all.
+    ///
+    /// Takes the bar in any case: a drop ends the gesture, wherever it lands.
+    pub(super) fn resolve_tab_drop(&mut self, strip: u64, fallback: usize) -> usize {
+        match self.tab_drop.take() {
+            Some((tag, index)) if tag == strip => index,
+            _ => fallback,
+        }
+    }
+
+    /// Takes down the drop bar, if one is up.
+    ///
+    /// A drag cancelled with a release outside any drop target never reaches a
+    /// drop handler, so the root's own release clears whatever is left; a
+    /// drop already took it, which makes this a no-op.
+    pub(super) fn clear_tab_drop(&mut self, cx: &mut Context<Self>) {
+        if self.tab_drop.take().is_some() {
+            cx.notify();
+        }
+    }
+}
+
 /// Renders one pane's tab strip.
 ///
 /// The same widget as the connection strip at the top of the window, minus the
@@ -23,14 +87,16 @@ pub(super) fn render_tab_strip(
     let tabs: Vec<TabItem> = pane
         .items()
         .iter()
-        .enumerate()
-        .map(|(index, item)| {
+        .map(|item| {
             let title = chrome
                 .tab_names
                 .get(&item.entity_id())
                 .map(|name| SharedString::from(name.clone()))
                 .unwrap_or_else(|| item.title(cx));
-            let tab = TabItem::new(("pane-tab", index), title);
+            // Stable while the tab lives: an index id would name a different
+            // tab after every reorder, shuffling whatever gpui keeps per
+            // element — including the drag the reorder itself started.
+            let tab = TabItem::new(("pane-tab", item.entity_id()), title);
             match chrome.colors.get(&item.connection(cx)) {
                 Some(color) => tab.dot(*color),
                 None => tab,
@@ -45,6 +111,39 @@ pub(super) fn render_tab_strip(
         // Only the third slot can ever be read: this strip carries neither the
         // dropdown nor the "+" the first two label.
         .tooltips("", "", ts!("tab.close"))
+        .drag_source(id.as_u64())
+        .drop_indicator(
+            chrome
+                .drop
+                .and_then(|(tag, index)| (tag == id.as_u64()).then_some(index)),
+        )
+        .on_drag_over({
+            let this = this.clone();
+            move |dragged, index, _window, cx| {
+                this.update(cx, |workspace, cx| {
+                    workspace.drag_over_tab(id.as_u64(), dragged, index, cx);
+                });
+            }
+        })
+        .on_reorder({
+            let this = this.clone();
+            move |dragged, to, window, cx| {
+                this.update(cx, |workspace, cx| {
+                    let at = workspace.resolve_tab_drop(id.as_u64(), to);
+                    workspace.move_tab(
+                        PaneId::from_u64(dragged.source),
+                        dragged.index,
+                        id,
+                        at,
+                        window,
+                        cx,
+                    );
+                    // The bar is already taken, but a refused move notifies
+                    // nothing — the strip still has to lose the bar it drew.
+                    cx.notify();
+                });
+            }
+        })
         .on_select({
             let this = this.clone();
             move |index, window, cx| {
@@ -114,8 +213,10 @@ pub(super) fn render_pane(
 ) -> AnyElement {
     match node {
         PaneNode::Leaf { id, payload } => {
+            let id = *id;
+            let this = cx.entity();
             let theme = &chrome.theme;
-            let border = if *id == chrome.active {
+            let border = if id == chrome.active {
                 theme.accent
             } else {
                 theme.border
@@ -144,6 +245,34 @@ pub(super) fn render_pane(
             };
             div()
                 .id(("pane", id.as_u64()))
+                .capture_any_mouse_down(cx.listener(move |workspace, _, _, cx| {
+                    if workspace.mark_pane(id) {
+                        cx.notify();
+                    }
+                }))
+                // A tab dropped on the body lands after the last one. Drops
+                // on a tab or on the strip's empty stretch stop at those
+                // targets first, so this answers for the body alone.
+                .on_drop::<DraggedTab>({
+                    let this = this.clone();
+                    move |dragged, window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            let at = workspace.resolve_tab_drop(id.as_u64(), usize::MAX);
+                            workspace.move_tab(
+                                PaneId::from_u64(dragged.source),
+                                dragged.index,
+                                id,
+                                at,
+                                window,
+                                cx,
+                            );
+                            // The bar is already taken, but a refused move
+                            // notifies nothing — the strip still has to lose
+                            // the bar it drew.
+                            cx.notify();
+                        });
+                    }
+                })
                 .flex()
                 .flex_col()
                 .size_full()
@@ -158,7 +287,7 @@ pub(super) fn render_pane(
                         .flex()
                         .flex_none()
                         .w_full()
-                        .child(render_tab_strip(*id, payload, chrome, cx))
+                        .child(render_tab_strip(id, payload, chrome, cx))
                 }))
                 .child(div().flex().flex_1().min_w_0().min_h_0().child(body))
                 .into_any_element()
@@ -382,6 +511,10 @@ impl Render for Workspace {
                 cx.listener(|workspace, _: &MouseUpEvent, _window, cx| {
                     workspace.release_scrollbars(cx);
                     workspace.release_explorer(cx);
+                    // A drag cancelled outside any drop target never reaches a
+                    // drop handler; a drop already took the bar, making this a
+                    // no-op.
+                    workspace.clear_tab_drop(cx);
                 }),
             )
             .on_mouse_up_out(
@@ -389,6 +522,7 @@ impl Render for Workspace {
                 cx.listener(|workspace, _: &MouseUpEvent, _window, cx| {
                     workspace.release_scrollbars(cx);
                     workspace.release_explorer(cx);
+                    workspace.clear_tab_drop(cx);
                 }),
             )
             .on_action(cx.listener(Self::new_connection_action))
@@ -723,20 +857,56 @@ impl Workspace {
         let tabs: Vec<TabItem> = self
             .connections
             .iter()
-            .enumerate()
-            .map(|(index, connection)| {
+            .map(|connection| {
                 let title = if connection.profile.name.trim().is_empty() {
                     ts!("connect.unnamed")
                 } else {
                     SharedString::from(connection.profile.name.clone())
                 };
-                TabItem::new(("connection", index), title).status(connection.state.tab_status())
+                // Stable while the tab lives: an index id would name a
+                // different tab after every reorder, shuffling whatever gpui
+                // keeps per element — including the drag the reorder itself
+                // started.
+                TabItem::new(("connection", connection.id.0), title)
+                    .status(connection.state.tab_status())
             })
             .collect();
 
         TabBar::new("connection-tabs")
             .tabs(tabs)
             .active(self.active_connection)
+            .drag_source(CONNECTION_STRIP_TAG)
+            .drop_indicator(
+                self.tab_drop
+                    .and_then(|(tag, index)| (tag == CONNECTION_STRIP_TAG).then_some(index)),
+            )
+            .on_drag_over({
+                let this = this.clone();
+                move |dragged, index, _window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.drag_over_tab(CONNECTION_STRIP_TAG, dragged, index, cx);
+                    });
+                }
+            })
+            .on_reorder({
+                let this = this.clone();
+                move |dragged, to, _window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        // A pane tab dropped here is not a connection: the
+                        // bar never shows for it, and the move refuses it.
+                        if dragged.source != CONNECTION_STRIP_TAG {
+                            workspace.clear_tab_drop(cx);
+                            return;
+                        }
+                        let at = workspace.resolve_tab_drop(CONNECTION_STRIP_TAG, to);
+                        workspace.move_connection(dragged.index, at, cx);
+                        // The bar is already taken, but a refused move
+                        // notifies nothing — the strip still has to lose the
+                        // bar it drew.
+                        cx.notify();
+                    });
+                }
+            })
             .on_select({
                 let this = this.clone();
                 move |index, window, cx| {
@@ -799,6 +969,7 @@ impl Workspace {
                         Some((open.id, color))
                     })
                     .collect(),
+                drop: self.tab_drop,
             };
             (area.panes.root(), chrome)
         });

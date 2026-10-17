@@ -193,6 +193,94 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Moves the tab `src_index` of `src_pane` to before `dst_index` of
+    /// `dst_pane`.
+    ///
+    /// A move within one pane reorders its strip; a move across panes carries
+    /// the tab over and brings it to the top there. `dst_index` past the end
+    /// clamps to the end, so a drop over a strip's empty stretch or a pane
+    /// body names `usize::MAX` for "after the last tab". A move that would
+    /// change nothing is a no-op.
+    ///
+    /// Unlike a close this destroys no work, so the dirty-tab guard stays out
+    /// of it — and `tab_names` rides along untouched, being keyed by the view
+    /// rather than by any index. An emptied source collapses exactly as a
+    /// closed last tab leaves it: away while a neighbour grows into its space,
+    /// standing while it is the only pane of the area. The keyboard follows
+    /// the moved tab when it had it, and the marker follows the tab to its
+    /// new pane either way.
+    pub(super) fn move_tab(
+        &mut self,
+        src_pane: PaneId,
+        src_index: usize,
+        dst_pane: PaneId,
+        dst_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.work_area().is_none() {
+            return;
+        }
+        let in_tree = self
+            .work_area()
+            .is_some_and(|area| area.panes.contains(src_pane) && area.panes.contains(dst_pane));
+        if !in_tree {
+            return;
+        }
+        // Only the tab on top is rendered, so only it can be holding the
+        // keyboard; the move rewrites which tab that is, hence asked before
+        // anything moves.
+        let moved_active = self.work_area().is_some_and(|area| {
+            area.panes
+                .get(src_pane)
+                .is_some_and(|pane| pane.active_index() == src_index)
+        });
+        let held = moved_active && self.pane_holds_focus(src_pane, window, cx);
+        if src_pane == dst_pane {
+            let moved = self
+                .work_area_mut()
+                .and_then(|area| area.panes.get_mut(src_pane))
+                .is_some_and(|pane| {
+                    let len = pane.items().len();
+                    pane.relocate(src_index, dst_index.min(len))
+                });
+            if !moved {
+                return;
+            }
+            if let Some(area) = self.work_area_mut() {
+                area.active_pane = dst_pane;
+            }
+            if held {
+                self.focus_active_tab(dst_pane, window, cx);
+            }
+            cx.notify();
+            return;
+        }
+        let Some(item) = self
+            .work_area_mut()
+            .and_then(|area| area.panes.get_mut(src_pane))
+            .and_then(|pane| pane.close(src_index))
+        else {
+            return;
+        };
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
+        let Some(dst) = area.panes.get_mut(dst_pane) else {
+            return;
+        };
+        dst.insert(dst_index.min(dst.items().len()), item);
+        area.active_pane = dst_pane;
+        let empty = area.panes.get(src_pane).is_some_and(Pane::is_empty);
+        if empty && area.panes.leaf_count() > 1 {
+            area.panes.remove(src_pane);
+        }
+        if held {
+            self.focus_active_tab(dst_pane, window, cx);
+        }
+        cx.notify();
+    }
+
     /// Collapse an emptied pane while preserving the last leaf and the focus
     /// of a different pane when its tab was closed from a context menu.
     fn finish_tab_close(

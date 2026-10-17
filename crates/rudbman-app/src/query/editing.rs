@@ -130,6 +130,18 @@ impl QueryPane {
         if self.read_only || self.applying || self.transaction.is_some() || self.preview.is_some() {
             return;
         }
+        // The batch ends with a commit or a rollback, or for an `ALTER` with an
+        // autocommit flip, and on a session every pane shares that would end a
+        // query editor's open transaction along with it.
+        if self
+            .session
+            .as_ref()
+            .is_some_and(SessionHandle::has_uncommitted)
+        {
+            self.notice = Some(ts!("query.uncommitted_pending"));
+            cx.notify();
+            return;
+        }
         // One modal at a time: the two are irreversible in opposite directions
         // and stacking them would leave the user answering the wrong one.
         self.confirm_discard = false;
@@ -183,6 +195,17 @@ impl QueryPane {
     /// other pane on this session could safely be allowed to find.
     pub(super) fn confirm_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.transaction.is_some() {
+            return;
+        }
+        // Asked again, since a statement may have run in the meantime; the
+        // preview stays up so the apply can be confirmed once that is settled.
+        if self
+            .session
+            .as_ref()
+            .is_some_and(SessionHandle::has_uncommitted)
+        {
+            self.notice = Some(ts!("query.uncommitted_pending"));
+            cx.notify();
             return;
         }
         let Some(ApplyPreview { tab, statements }) = self.preview.take() else {

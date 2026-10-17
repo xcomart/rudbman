@@ -32,7 +32,7 @@ common:
 # An ellipsis marks a row that asks something before it acts, which is every
 # row here except "About" and "Quit".
 menu:
-  new_connection: New connection…
+  new_connection: Manage connections…
   settings: Settings…
   # Shows and hides the explorer sidebar.
   toggle_explorer: Explorer
@@ -84,7 +84,7 @@ menu:
   # opens rather than described, the way the tab strip's own buttons are.
   tip_menu: Menu
   mac:
-    new_connection: New Connection…
+    new_connection: Manage Connections…
     quit: Quit rudbman
 
 # The tab strip in the title bar. One tab per open connection.
@@ -104,10 +104,10 @@ welcome:
   # has saved nothing at all reads `empty.hint` there instead: no habit of the
   # chord exists yet, and the words say what a connection is for.
   # `%{shortcut}` is "Cmd+N" or "Ctrl+N"; neither is translated.
-  hint: Press %{shortcut} to open a new connection.
+  hint: Press %{shortcut} to manage connections.
   # The button. Takes the ellipsis for the same reason the menu row does: it
   # asks before it acts.
-  new_connection: New connection…
+  new_connection: Manage connections…
   # Heading of the saved list.
   saved: Saved connections
 
@@ -159,6 +159,7 @@ settings:
   # the same whether or not its list is open.
   system_default: Use the system setting
   save_failed: "The settings could not be saved: %{error}"
+  load_failed: "Settings cannot be saved, because the settings file could not be read when rudbman started: %{error}. Fix or move that file and restart rudbman."
 
   section:
     appearance: Appearance
@@ -369,7 +370,7 @@ connect:
   name_required: Give the connection a name.
   url_required: The connection has no URL.
   no_driver: "No driver definition named “%{driver}”."
-  load_failed: "The saved connections could not be read: %{error}"
+  load_failed: "The saved connections could not be read, so nothing can be saved or deleted until that file is fixed or moved: %{error}"
   save_failed: "The connections could not be saved: %{error}"
   keychain_failed: "The password could not be saved to the keychain: %{error}"
 
@@ -565,6 +566,7 @@ query:
   rolled_back: "Transaction rolled back."
   rollback_failed: "Rollback failed: %{message}"
   rollback_auto: "Rollback (automatic commit is enabled)"
+  uncommitted_pending: "This connection has uncommitted changes from a query editor. Commit or roll them back there first."
   commit: "Commit"
   committing: "Committing…"
   committed: "Transaction committed."
@@ -601,6 +603,8 @@ query:
   busy: A statement is already running in this pane.
   # Nothing to send — an empty buffer, or one holding only comments.
   no_statement: There is no statement to run.
+  # The workspace keeps SQL drafts across a restart only up to a size.
+  draft_too_large: "This draft is larger than %{limit} MB, so it will not be kept when the app closes. Save it to a file to keep it."
   # The profile is marked read-only, so a write is refused rather than asked
   # about: asking would offer something the connection will not do.
   read_only: This connection is read-only; the statement was not sent.
@@ -836,10 +840,11 @@ extract:
   counters: "%{rows} rows, %{bytes}"
   # The cancel has been issued and the job has not stopped yet.
   cancelling: Cancelling…
-  # The three endings. A cancelled job leaves its partial file on disk on
-  # purpose, so the message says where it is.
+  # The three endings. A cancelled job writes nothing to the path: the bridge
+  # writes beside it and only renames on success, so whatever was there before
+  # — an earlier extract — is left as it was. The message says so.
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
-  cancelled: "Cancelled. The partial file was left at %{path}."
+  cancelled: "Cancelled. Nothing was written to %{path}."
   failed: "The extraction failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The extraction failed for a reason the bridge did not give.
@@ -919,7 +924,7 @@ backup:
   counters: "%{rows} rows, %{bytes}"
   cancelling: Cancelling…
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
-  cancelled: "Cancelled. The partial file was left at %{path}."
+  cancelled: "Cancelled. Nothing was written to %{path}."
   failed: "The backup failed: %{error}"
   failed_unknown: The backup failed for a reason the bridge did not give.
 
@@ -1038,6 +1043,7 @@ context:
   undo: Undo
   redo: Redo
   toggle_comment: Toggle comment
+  format_sql: Format SQL
   run_statement: Run statement
   run_selection: Run selection
   run_all: Run all

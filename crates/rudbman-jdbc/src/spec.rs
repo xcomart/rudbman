@@ -1079,8 +1079,9 @@ pub enum OnError {
 /// one file: CSV has no table boundary in it, and a template means something
 /// different per table. That job is [`ExtractSpec`]'s.
 ///
-/// Phases, cancellation and the partial file left behind by a cancel are an
-/// extraction's exactly.
+/// Phases, cancellation and the output path left as it was by a cancel or a
+/// failure are an extraction's exactly — which is what keeps a cancelled backup
+/// from destroying the previous one.
 ///
 /// ```
 /// use rudbman_jdbc::{BackupDataOptions, BackupSpec, Compression, DdlOptions};

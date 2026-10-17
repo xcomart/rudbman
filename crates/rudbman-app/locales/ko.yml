@@ -10,7 +10,7 @@ common:
   close: 닫기
 
 menu:
-  new_connection: 새 연결…
+  new_connection: 연결 관리…
   settings: 설정…
   toggle_explorer: 탐색기
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: 보기
   tip_menu: 메뉴
   mac:
-    new_connection: 새 연결…
+    new_connection: 연결 관리…
     quit: rudbman 종료
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "새 연결 (%{shortcut})"
 
 welcome:
-  hint: "%{shortcut} 키를 누르면 새 연결을 열 수 있습니다."
-  new_connection: 새 연결…
+  hint: "%{shortcut} 키를 누르면 연결 관리를 열 수 있습니다."
+  new_connection: 연결 관리…
   saved: 저장된 연결
 
 empty:
@@ -78,6 +78,7 @@ settings:
   title: 설정
   system_default: 시스템 설정 따름
   save_failed: "설정을 저장하지 못했습니다: %{error}"
+  load_failed: "rudbman 시작 시 설정 파일을 읽지 못해 설정을 저장할 수 없습니다: %{error}. 그 파일을 고치거나 옮긴 뒤 rudbman을 다시 시작하세요."
 
   section:
     appearance: 모양
@@ -252,7 +253,7 @@ connect:
   name_required: 연결 이름을 입력하세요.
   url_required: 연결 URL이 비어 있습니다.
   no_driver: "“%{driver}”이라는 드라이버 정의가 없습니다."
-  load_failed: "저장된 연결을 읽지 못했습니다: %{error}"
+  load_failed: "저장된 연결을 읽지 못해, 그 파일을 고치거나 옮기기 전까지는 저장하거나 삭제할 수 없습니다: %{error}"
   save_failed: "연결을 저장하지 못했습니다: %{error}"
   keychain_failed: "비밀번호를 키체인에 저장하지 못했습니다: %{error}"
 
@@ -387,6 +388,7 @@ query:
   rolled_back: "트랜잭션을 롤백했습니다."
   rollback_failed: "롤백 실패: %{message}"
   rollback_auto: "롤백 (자동 커밋이 켜져 있습니다)"
+  uncommitted_pending: "이 연결에 쿼리 편집기에서 실행한 커밋되지 않은 변경이 있습니다. 먼저 쿼리 탭에서 커밋하거나 롤백하세요."
   commit: "커밋"
   committing: "커밋 중…"
   committed: "트랜잭션을 커밋했습니다."
@@ -406,6 +408,7 @@ query:
   elapsed: "%{seconds}초"
   busy: 이 창에서 이미 문장이 실행 중입니다.
   no_statement: 실행할 문장이 없습니다.
+  draft_too_large: "이 초안은 %{limit} MB보다 커서 앱을 닫을 때 보관되지 않습니다. 보관하려면 파일로 저장하세요."
   read_only: 읽기 전용 접속이라 문장을 보내지 않았습니다.
   confirm_title: 이 문장을 실행할까요?
   confirm_body: "데이터를 변경하는 문장: %{count}개"
@@ -519,7 +522,7 @@ extract:
   counters: "%{rows}행, %{bytes}"
   cancelling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
-  cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
+  cancelled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
   failed: "추출에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 추출에 실패했습니다.
 
@@ -566,7 +569,7 @@ backup:
   counters: "%{rows}행, %{bytes}"
   cancelling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
-  cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
+  cancelled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
   failed: "백업에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 백업에 실패했습니다.
 
@@ -632,6 +635,7 @@ context:
   undo: 실행 취소
   redo: 다시 실행
   toggle_comment: 주석 토글
+  format_sql: SQL 서식 정리
   run_statement: 문장 실행
   run_selection: 선택 영역 실행
   run_all: 전체 실행

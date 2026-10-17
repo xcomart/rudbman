@@ -10,7 +10,7 @@ common:
   close: 閉じる
 
 menu:
-  new_connection: 新規接続…
+  new_connection: 接続管理…
   settings: 設定…
   toggle_explorer: エクスプローラー
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: 表示
   tip_menu: メニュー
   mac:
-    new_connection: 新規接続…
+    new_connection: 接続管理…
     quit: rudbman を終了
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "新規接続 (%{shortcut})"
 
 welcome:
-  hint: "%{shortcut} で新しい接続を開きます。"
-  new_connection: 新規接続…
+  hint: "%{shortcut} で接続を管理します。"
+  new_connection: 接続管理…
   saved: 保存した接続
 
 empty:
@@ -78,6 +78,7 @@ settings:
   title: 設定
   system_default: システムの設定に従う
   save_failed: "設定を保存できませんでした: %{error}"
+  load_failed: "rudbman の起動時に設定ファイルを読み込めなかったため、設定を保存できません: %{error}。そのファイルを修正するか移動してから、rudbman を再起動してください。"
 
   section:
     appearance: 外観
@@ -252,7 +253,7 @@ connect:
   name_required: 接続の名前を入力してください。
   url_required: 接続の URL が空です。
   no_driver: "「%{driver}」というドライバー定義がありません。"
-  load_failed: "保存された接続を読み込めませんでした: %{error}"
+  load_failed: "保存された接続を読み込めなかったため、そのファイルを修正するか移動するまで保存も削除もできません: %{error}"
   save_failed: "接続を保存できませんでした: %{error}"
   keychain_failed: "パスワードをキーチェーンに保存できませんでした: %{error}"
 
@@ -387,6 +388,7 @@ query:
   rolled_back: "トランザクションをロールバックしました。"
   rollback_failed: "ロールバックに失敗しました: %{message}"
   rollback_auto: "ロールバック（自動コミットが有効です）"
+  uncommitted_pending: "この接続にはクエリエディタで実行した未コミットの変更があります。先にクエリタブでコミットまたはロールバックしてください。"
   commit: "コミット"
   committing: "コミット中…"
   committed: "トランザクションをコミットしました。"
@@ -406,6 +408,7 @@ query:
   elapsed: "%{seconds} 秒"
   busy: このペインでは既に文が実行中です。
   no_statement: 実行する文がありません。
+  draft_too_large: "この下書きは %{limit} MB を超えるため、アプリを閉じると保持されません。残すにはファイルに保存してください。"
   read_only: 読み取り専用の接続のため、文は送信されませんでした。
   confirm_title: この文を実行しますか?
   confirm_body: "データを変更する文: %{count} 件"
@@ -519,7 +522,7 @@ extract:
   counters: "%{rows} 行、%{bytes}"
   cancelling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
+  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
 
@@ -566,7 +569,7 @@ backup:
   counters: "%{rows} 行、%{bytes}"
   cancelling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
+  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
 
@@ -632,6 +635,7 @@ context:
   undo: 元に戻す
   redo: やり直し
   toggle_comment: コメントの切り替え
+  format_sql: SQL を整形
   run_statement: ステートメントを実行
   run_selection: 選択範囲を実行
   run_all: すべて実行

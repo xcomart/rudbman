@@ -251,3 +251,117 @@ fn toolbar_rollback_reverts_only_uncommitted_changes(cx: &mut TestAppContext) {
     assert_eq!(server_rows(&connected, "select id from entries"), vec!["0"]);
     connected.close().expect("close");
 }
+
+#[gpui::test]
+fn the_books_follow_writes_commits_and_rollbacks_under_manual_commit(cx: &mut TestAppContext) {
+    let (connected, mut profile) = h2("toolbar-uncommitted", &["create table entries (id int)"]);
+    profile.auto_commit = false;
+    connected.session().set_auto_commit(false).unwrap();
+    let handle = connected.handle();
+    let window = pane(&connected, &profile, 500, cx);
+
+    run(&window, "select id from entries", cx);
+    assert!(!handle.has_uncommitted(), "a read opened a transaction");
+    run(&window, "insert into entries values (1)", cx);
+    assert!(handle.has_uncommitted());
+    run(&window, "commit", cx);
+    assert!(!handle.has_uncommitted(), "a typed COMMIT left it open");
+    run(&window, "insert into entries values (2)", cx);
+    assert!(handle.has_uncommitted());
+
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    click("query-rollback", &mut cx);
+    assert!(
+        !handle.has_uncommitted(),
+        "the rollback button left it open"
+    );
+    assert_eq!(server_rows(&connected, "select id from entries"), vec!["1"]);
+    connected.close().expect("close");
+}
+
+#[gpui::test]
+fn writes_under_autocommit_open_nothing(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-autocommit", &["create table entries (id int)"]);
+    assert!(profile.auto_commit);
+    let handle = connected.handle();
+    let window = pane(&connected, &profile, 500, cx);
+    run(&window, "insert into entries values (1)", cx);
+    assert!(!handle.has_uncommitted());
+    connected.close().expect("close");
+}
+
+#[gpui::test]
+fn format_sql_formats_the_selection_or_the_script_as_one_undo_step(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-format", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let text = |cx: &mut gpui::VisualTestContext| {
+        window
+            .update(cx, |pane, _, cx| pane.editor_text(cx))
+            .unwrap()
+    };
+    let script = "select 1;\nselect a, 'x  y' from t where a = 1 and b = 2;";
+    window
+        .update(&mut cx, |pane, window, cx| {
+            pane.editor.update(cx, |editor, cx| {
+                editor.set_text(script, cx);
+                editor.select_range(10..script.len(), cx);
+            });
+            pane.focus_editor(window, cx);
+        })
+        .unwrap();
+
+    // The selection alone, which stays selected.
+    click("query-format", &mut cx);
+    let formatted = "SELECT a,\n       'x  y'\n  FROM t\n WHERE a = 1\n   AND b = 2;";
+    assert_eq!(text(&mut cx), format!("select 1;\n{formatted}"));
+    window
+        .update(&mut cx, |pane, _, cx| {
+            assert_eq!(pane.editor.read(cx).selection(), 10..10 + formatted.len());
+        })
+        .unwrap();
+    click("query-undo", &mut cx);
+    assert_eq!(text(&mut cx), script);
+
+    // Nothing selected: the whole script, through the keyboard chord.
+    window
+        .update(&mut cx, |pane, _, cx| {
+            pane.editor.update(cx, |editor, cx| editor.move_to(0, cx));
+        })
+        .unwrap();
+    cx.dispatch_action(super::super::format::FormatSql);
+    cx.run_until_parked();
+    assert_eq!(text(&mut cx), format!("SELECT 1;\n\n{formatted}"));
+    click("query-undo", &mut cx);
+    assert_eq!(text(&mut cx), script);
+    connected.close().expect("close");
+}
+
+/// The format is worked out off the UI thread, so the buffer can change
+/// before it comes back; a layout of text that is no longer there is dropped.
+#[gpui::test]
+fn a_format_of_text_edited_meanwhile_is_dropped(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-format-stale", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    window
+        .update(cx, |pane, _, cx| {
+            pane.editor
+                .update(cx, |editor, cx| editor.set_text("select a from t", cx));
+        })
+        .unwrap();
+    window
+        .update(cx, |pane, _, cx| {
+            pane.format_sql(cx);
+            pane.editor
+                .update(cx, |editor, cx| editor.insert_at_caret("-- ", cx));
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, _, cx| {
+            assert_eq!(pane.editor_text(cx), "-- select a from t");
+            assert!(pane.format_task.is_none());
+        })
+        .unwrap();
+    connected.close().expect("close");
+}

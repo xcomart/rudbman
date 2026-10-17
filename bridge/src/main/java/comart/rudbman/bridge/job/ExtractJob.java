@@ -98,6 +98,8 @@ public final class ExtractJob extends Jobs.Job {
 
     private final List<Obj> objects = new ArrayList<>();
     private final Path path;
+    /** Where the worker writes; set by {@link #run()}, on the worker thread. */
+    private OutputFile file;
     private final Charset charset;
     private final String newline;
 
@@ -213,11 +215,8 @@ public final class ExtractJob extends Jobs.Job {
 
     @Override
     protected void run() throws Exception {
-        Path parent = path.toAbsolutePath().getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        try (ScriptOut out = new ScriptOut(Files.newOutputStream(path), charset, newline, false)) {
+        file = OutputFile.create(path);
+        try (ScriptOut out = new ScriptOut(file.open(), charset, newline, false)) {
             try {
                 if (ddlInclude) {
                     writeDdl(out);
@@ -226,8 +225,8 @@ public final class ExtractJob extends Jobs.Job {
                     writeData(out);
                 }
             } finally {
-                // A cancelled or failed job still reports how much of the file it
-                // managed to write, because the file is still there.
+                // A cancelled or failed job still reports how much it managed to
+                // write before it stopped, even though that file is discarded.
                 try {
                     out.flush();
                 } catch (IOException ignored) {
@@ -235,6 +234,25 @@ public final class ExtractJob extends Jobs.Job {
                 }
                 syncBytes(out);
             }
+        }
+    }
+
+    @Override
+    protected void commit() throws Exception {
+        if (shouldStop()) {
+            // No cancel was requested, so the session was closed or poisoned
+            // underneath the job. That stops the writers at the next row just as
+            // a cancel would, and what they left is not the whole script.
+            throw new BridgeException("driver",
+                    "the session was closed before the extraction finished");
+        }
+        file.commit();
+    }
+
+    @Override
+    protected void discard() {
+        if (file != null) {
+            file.discard();
         }
     }
 

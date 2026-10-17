@@ -10,7 +10,7 @@ common:
   close: Fermer
 
 menu:
-  new_connection: Nouvelle connexion…
+  new_connection: Gérer les connexions…
   settings: Préférences…
   toggle_explorer: Explorateur
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: Affichage
   tip_menu: Menu
   mac:
-    new_connection: Nouvelle connexion…
+    new_connection: Gérer les connexions…
     quit: Quitter rudbman
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "Nouvelle connexion (%{shortcut})"
 
 welcome:
-  hint: Appuyez sur %{shortcut} pour ouvrir une nouvelle connexion.
-  new_connection: Nouvelle connexion…
+  hint: Appuyez sur %{shortcut} pour gérer les connexions.
+  new_connection: Gérer les connexions…
   saved: Connexions enregistrées
 
 empty:
@@ -78,6 +78,7 @@ settings:
   title: Réglages
   system_default: Suivre le réglage du système
   save_failed: "Les réglages n’ont pas pu être enregistrés : %{error}"
+  load_failed: "Les paramètres ne peuvent pas être enregistrés, car le fichier de paramètres n'a pas pu être lu au démarrage de rudbman : %{error}. Réparez ou déplacez ce fichier, puis redémarrez rudbman."
 
   section:
     appearance: Apparence
@@ -252,7 +253,7 @@ connect:
   name_required: Donnez un nom à la connexion.
   url_required: La connexion n'a pas d'URL.
   no_driver: "Aucune définition de pilote nommée « %{driver} »."
-  load_failed: "Les connexions enregistrées n'ont pas pu être lues : %{error}"
+  load_failed: "Les connexions enregistrées n'ont pas pu être lues ; rien ne peut être enregistré ni supprimé tant que ce fichier n'est pas réparé ou déplacé : %{error}"
   save_failed: "Les connexions n'ont pas pu être enregistrées : %{error}"
   keychain_failed: "Le mot de passe n'a pas pu être enregistré dans le trousseau : %{error}"
 
@@ -387,6 +388,7 @@ query:
   rolled_back: "Transaction annulée."
   rollback_failed: "Échec de l’annulation : %{message}"
   rollback_auto: "Annuler (la validation automatique est activée)"
+  uncommitted_pending: "Cette connexion contient des modifications non validées d'un éditeur de requêtes. Validez-les ou annulez-les d'abord dans celui-ci."
   commit: "Valider la transaction"
   committing: "Validation en cours…"
   committed: "Transaction validée."
@@ -406,6 +408,7 @@ query:
   elapsed: "%{seconds} s"
   busy: Une instruction est déjà en cours dans ce panneau.
   no_statement: Il n'y a aucune instruction à exécuter.
+  draft_too_large: "Ce brouillon dépasse %{limit} Mo et ne sera pas conservé à la fermeture de l'application. Enregistrez-le dans un fichier pour le garder."
   read_only: Cette connexion est en lecture seule ; l'instruction n'a pas été envoyée.
   confirm_title: Exécuter cette instruction ?
   confirm_body: "Instructions qui modifient des données : %{count}"
@@ -519,7 +522,7 @@ extract:
   counters: "%{rows} lignes, %{bytes}"
   cancelling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
-  cancelled: "Annulé. Le fichier partiel est resté dans %{path}."
+  cancelled: "Annulé. Rien n'a été écrit dans %{path}."
   failed: "L'extraction a échoué : %{error}"
   failed_unknown: L'extraction a échoué sans que le pont en donne la raison.
 
@@ -566,7 +569,7 @@ backup:
   counters: "%{rows} lignes, %{bytes}"
   cancelling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
-  cancelled: "Annulé. Le fichier partiel est resté dans %{path}."
+  cancelled: "Annulé. Rien n'a été écrit dans %{path}."
   failed: "La sauvegarde a échoué : %{error}"
   failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
 
@@ -632,6 +635,7 @@ context:
   undo: Annuler
   redo: Rétablir
   toggle_comment: Commenter ou décommenter
+  format_sql: Mettre en forme le SQL
   run_statement: Exécuter l'instruction
   run_selection: Exécuter la sélection
   run_all: Tout exécuter

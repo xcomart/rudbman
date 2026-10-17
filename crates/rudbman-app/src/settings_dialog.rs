@@ -634,7 +634,8 @@ impl SettingsDialog {
         let settings = app_settings::current(cx);
         self.fonts = installed_fonts(cx);
         self.fill_form(&settings, cx);
-        self.status = None;
+        self.status =
+            app_settings::load_error(cx).map(|error| ts!("settings.load_failed", error = error));
         // Fresh rows rather than reset ones: a delete waiting to be confirmed,
         // and whatever the last action had to report, both belong to the
         // session of the dialog that raised them.
@@ -888,7 +889,16 @@ impl SettingsDialog {
     ///
     /// A failed write leaves the dialog open with the message showing, so the
     /// user never believes a setting took effect when it did not.
+    ///
+    /// Refuses while `settings.json` could not be read at start-up: the form
+    /// was filled from defaults then, and applying it would replace the file
+    /// with them (see [`app_settings::load_error`]).
     fn save(&mut self, cx: &mut Context<Self>) {
+        if let Some(error) = app_settings::load_error(cx) {
+            self.status = Some(ts!("settings.load_failed", error = error));
+            cx.notify();
+            return;
+        }
         let mut settings = self.collect(cx);
         settings.sanitize();
 
@@ -1836,6 +1846,32 @@ mod tests {
         cx.update(|cx| assert!(!dialog.read(cx).editor_word_wrap));
     }
 
+    /// The form over settings that could not be read is a form over defaults,
+    /// and applying it would write them over the user's file.
+    #[gpui::test]
+    fn settings_that_could_not_be_read_are_not_applied(cx: &mut gpui::TestAppContext) {
+        let dialog = cx.update(|cx| {
+            app_settings::install(Err(anyhow::anyhow!("expected value at line 1")), cx);
+            cx.new(SettingsDialog::new)
+        });
+
+        cx.update(|cx| {
+            dialog.update(cx, |dialog, cx| {
+                dialog.fill_form(&AppSettings::default(), cx);
+                dialog.select(Catalog::UiTheme, "dracula", cx);
+                // Returns before `settings.json` is touched.
+                dialog.save(cx);
+                assert!(dialog.status.is_some(), "the reason is on screen");
+            });
+        });
+        cx.update(|cx| {
+            assert_eq!(
+                app_settings::current(cx).theme,
+                AppSettings::default().theme
+            );
+        });
+    }
+
     /// Nothing typed into the form may reach the disk on its own, and closing
     /// the dialog has to leave the window drawn from the saved settings again.
     #[gpui::test]
@@ -1985,6 +2021,7 @@ mod tests {
             ts!("settings.manage.import_bad_color"),
             ts!("settings.manage.import_unreadable", error = "e"),
             ts!("settings.save_failed", error = "e"),
+            ts!("settings.load_failed", error = "e"),
         ] {
             translated(label);
         }

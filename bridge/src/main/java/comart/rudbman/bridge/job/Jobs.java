@@ -48,8 +48,10 @@ import java.util.logging.Logger;
  * whatever statement is in flight, exactly as {@code CANCEL} does for a cursor,
  * and for the same reason it takes no lock: the thread being cancelled is
  * holding it. The worker notices the flag at the next row or phase boundary and
- * finishes in state {@code cancelled}, leaving a partial output file behind
- * rather than deleting work the user may still want.
+ * finishes in state {@code cancelled}. A job that writes a file writes it beside
+ * the target and only moves it into place on success (see {@link OutputFile}),
+ * so a cancelled or failed job leaves whatever was at the target - an earlier
+ * backup, say - exactly as it was, and no partial file behind.
  *
  * <h2>Handle lifetime</h2>
  *
@@ -301,6 +303,29 @@ public final class Jobs {
         protected abstract void run() throws Exception;
 
         /**
+         * Makes the job's output final, once {@link #run()} has returned normally
+         * and no cancel was requested.
+         *
+         * <p>Runs before the job is reported {@code done}, so a client that sees
+         * {@code done} sees the finished output. Throwing fails the job, and
+         * {@link #discard()} follows. The default does nothing.
+         *
+         * @throws Exception if the output cannot be made final
+         */
+        protected void commit() throws Exception {
+        }
+
+        /**
+         * Throws away the output of a job that is not ending {@code done}.
+         *
+         * <p>Runs before the terminal state is reported, so a client that sees
+         * {@code failed} or {@code cancelled} never sees the leftovers. It must
+         * not throw. The default does nothing.
+         */
+        protected void discard() {
+        }
+
+        /**
          * Allocates the handle and starts the worker thread.
          *
          * <p>Split from the constructor so that a subclass is fully built before
@@ -322,28 +347,40 @@ public final class Jobs {
         }
 
         private void body() {
+            String end;
+            JsonObject error = null;
             try {
                 run();
-                synchronized (this) {
-                    state = cancelRequested ? CANCELLED : DONE;
-                    if (DONE.equals(state)) {
-                        phase = "done";
-                    }
+                // One reading of the flag decides both what happens to the output
+                // and what is reported. A cancel that lands after it is too late:
+                // the job is reported done, and its output is there to match.
+                if (cancelRequested) {
+                    end = CANCELLED;
+                } else {
+                    commit();
+                    end = DONE;
                 }
             } catch (Throwable t) {
-                synchronized (this) {
-                    if (cancelRequested) {
-                        // The driver threw because the statement was cancelled.
-                        // That is the cancel working, not a failure, but the
-                        // detail is kept so a confused user has something to read.
-                        state = CANCELLED;
-                        errors.add(Envelope.describe(t));
-                    } else {
-                        state = FAILED;
-                        errors.add(Envelope.describe(t));
-                    }
-                }
+                // With a cancel requested, the driver threw because the statement
+                // was cancelled. That is the cancel working, not a failure, but
+                // the detail is kept so a confused user has something to read.
+                end = cancelRequested ? CANCELLED : FAILED;
+                error = Envelope.describe(t);
                 LOG.log(Level.FINE, "job " + handle + " ended abnormally", t);
+            }
+            try {
+                if (!DONE.equals(end)) {
+                    discard();
+                }
+                synchronized (this) {
+                    if (error != null) {
+                        errors.add(error);
+                    }
+                    if (DONE.equals(end)) {
+                        phase = "done";
+                    }
+                    state = end;
+                }
             } finally {
                 for (int i = 0; i < SLOTS; i++) {
                     inFlight.set(i, null);

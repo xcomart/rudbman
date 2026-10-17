@@ -11,7 +11,6 @@ import comart.rudbman.bridge.meta.Ident;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
@@ -99,6 +98,8 @@ public final class BackupJob extends Jobs.Job {
     private final String scopeSchema;
 
     private final Path path;
+    /** Where the worker writes; set by {@link #run()}, on the worker thread. */
+    private OutputFile file;
     private final Charset charset;
     private final String newline;
     private final boolean gzip;
@@ -184,11 +185,8 @@ public final class BackupJob extends Jobs.Job {
 
     @Override
     protected void run() throws Exception {
-        Path parent = path.toAbsolutePath().getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        ScriptOut out = new ScriptOut(Files.newOutputStream(path), charset, newline, gzip);
+        file = OutputFile.create(path);
+        ScriptOut out = new ScriptOut(file.open(), charset, newline, gzip);
         boolean closed = false;
         try {
             List<Obj> tables = runLocked(this::listTables);
@@ -208,13 +206,32 @@ public final class BackupJob extends Jobs.Job {
                 try {
                     out.close();
                 } catch (IOException ignored) {
-                    // The interesting failure is the one already propagating; a
-                    // cancelled or failed job still keeps its partial file.
+                    // The interesting failure is the one already propagating, and
+                    // the unfinished file is about to be discarded anyway.
                 }
             }
             // After the close, not before: a compressed stream only knows its
             // final size once the trailer is out.
             addBytes(out.unreported());
+        }
+    }
+
+    @Override
+    protected void commit() throws Exception {
+        if (shouldStop()) {
+            // No cancel was requested, so the session was closed or poisoned
+            // underneath the job. That stops the writers at the next row just as
+            // a cancel would, and what they left is not the whole script.
+            throw new BridgeException("driver",
+                    "the session was closed before the backup finished");
+        }
+        file.commit();
+    }
+
+    @Override
+    protected void discard() {
+        if (file != null) {
+            file.discard();
         }
     }
 

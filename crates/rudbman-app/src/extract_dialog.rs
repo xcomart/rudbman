@@ -40,8 +40,8 @@
 //! dialog and pressing `Escape` all safe: none of them can leak a job that goes
 //! on writing to a file nobody is watching. `Escape` while a job runs is
 //! deliberately *not* a close — it is the cancel button, and the card stays up
-//! until the job reports a terminal state, because a partial file the user does
-//! not know about is worse than one more click.
+//! until the job reports a terminal state, because a job the user does not
+//! know the outcome of is worse than one more click.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -319,7 +319,7 @@ enum Ended {
     },
     /// The job failed. The message is the first error's, as the bridge wrote it.
     Failed(SharedString),
-    /// The job was cancelled. The partial file is left where it is.
+    /// The job was cancelled. The file at the path is left as it was.
     Cancelled,
 }
 
@@ -452,8 +452,8 @@ impl ExtractDialog {
     /// **A job still running is cancelled**, by the drop chain the module
     /// documentation describes: the stage goes back to [`Stage::Form`] and the
     /// polling task is dropped, which leaves nobody holding the `Job` and its
-    /// `Drop` asks the bridge to stop. The partial file stays on disk, which is
-    /// what the bridge promises and what a user who chose that path expects.
+    /// `Drop` asks the bridge to stop. The file at the path is left as it was,
+    /// which is what the bridge promises.
     pub fn close(&mut self, cx: &mut Context<Self>) {
         self.open = false;
         self.pending_focus = false;
@@ -1578,8 +1578,8 @@ mod tests {
         );
     }
 
-    /// Cancelling ends the job as cancelled, leaves the partial file where it
-    /// is, and hands the session back in one piece.
+    /// Cancelling ends the job as cancelled, leaves the file at the path as it
+    /// was, and hands the session back in one piece.
     #[gpui::test]
     fn cancelling_stops_the_job_and_leaves_the_session_usable(cx: &mut TestAppContext) {
         // Not a big table but a slow one. A big table only loses the race on a
@@ -1598,6 +1598,8 @@ mod tests {
         );
         let dir = tempfile::tempdir().expect("a temporary directory");
         let path = dir.path().join("big.sql");
+        // An earlier extract at the same path, which a cancel must not destroy.
+        std::fs::write(&path, "-- previous extract\n").expect("the previous file is written");
         let window = dialog(&connected, "BIG", &path, cx);
 
         window
@@ -1630,15 +1632,19 @@ mod tests {
             })
             .expect("the window is open");
 
-        // The partial output is left on disk on purpose — it is work the user
-        // may still want — and it is partial: four hundred thousand rows do
-        // not fit in what a job cancelled after milliseconds managed to write.
-        let written = std::fs::metadata(&path)
-            .expect("the partial file is left where it is")
-            .len();
-        assert!(
-            written < 400_000 * 20,
-            "the job wrote {written} bytes, which is not a cancelled extraction"
+        // The bridge writes beside the target and renames only on success, so
+        // the earlier extract is still there, untouched, and nothing unfinished
+        // is left next to it.
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("the previous file is still there"),
+            "-- previous extract\n"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path())
+                .expect("the directory lists")
+                .count(),
+            1,
+            "no unfinished output is left behind"
         );
 
         // And the session is not left holding the connection lock. Counting a

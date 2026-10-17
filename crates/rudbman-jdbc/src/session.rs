@@ -273,7 +273,8 @@ impl Session {
     /// An extraction with no object list: the bridge enumerates the scope's
     /// `TABLE`-typed tables by name and writes them through the same core. The
     /// locking, phases and cancellation are [`start_job`](Session::start_job)'s
-    /// exactly — including that a cancel leaves the partial file where it is.
+    /// exactly — including that a cancel or a failure leaves the output path as
+    /// it was.
     ///
     /// # Errors
     ///
@@ -662,8 +663,9 @@ impl Job {
     /// The cancel sets a flag and interrupts the statement in flight; the job
     /// notices at the next row or phase boundary and ends as
     /// [`JobState::Cancelled`](crate::JobState::Cancelled) — which a
-    /// [`poll`](Job::poll) still has to read. **The partial output file is left
-    /// where it is**, on purpose.
+    /// [`poll`](Job::poll) still has to read. **The output path is left as it
+    /// was**: the bridge writes beside it, renames only on success, and deletes
+    /// the unfinished file before it reports the cancel.
     ///
     /// `false` once a terminal reading has been taken, without a call: a cancel
     /// button clicked in the same instant the job finished is a race, not a

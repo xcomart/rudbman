@@ -21,6 +21,14 @@
 //! free: dropping the override is the revert, and a window closed mid-dialog
 //! still saves the settings the user last committed to.
 //!
+//! # A file that could not be read
+//!
+//! The app starts on defaults when `settings.json` cannot be read, but it never
+//! writes them: they are not the user's settings, and saving them at shutdown
+//! would replace a file the user may still be able to repair with nothing they
+//! chose. [`load_error`] says why, the settings dialog shows it, and every
+//! write refuses until a restart reads the file again.
+//!
 //! # What is not here
 //!
 //! The globals and the two snapshots are rudbman's, because the settings type
@@ -30,7 +38,8 @@
 //! from [`rugpui_shell::settings`] and is re-exported here so that the call sites
 //! go on reading as one module.
 
-use gpui::{App, Global};
+use anyhow::Result;
+use gpui::{App, Global, SharedString};
 use rudbman_core::{AppSettings, WindowState};
 pub use rugpui_shell::settings::{WindowGeometry, monospace_family, window_tint};
 
@@ -38,6 +47,11 @@ pub use rugpui_shell::settings::{WindowGeometry, monospace_family, window_tint};
 pub struct CurrentSettings(pub AppSettings);
 
 impl Global for CurrentSettings {}
+
+/// Why `settings.json` could not be read at start-up; see [`load_error`].
+struct UnreadableSettings(SharedString);
+
+impl Global for UnreadableSettings {}
 
 /// Global wrapper holding unsaved settings the window is drawn from.
 ///
@@ -82,13 +96,37 @@ pub fn saved_geometry(state: &WindowState) -> Option<WindowGeometry> {
 /// Install the settings global from disk. Call once at start-up.
 ///
 /// A file that cannot be read falls back to defaults; the app must start
-/// regardless of what is on disk.
+/// regardless of what is on disk. Those defaults are never written over it:
+/// see [`load_error`].
 pub fn init(cx: &mut App) {
-    let settings = AppSettings::load().unwrap_or_else(|err| {
-        log::warn!("starting with default settings: {err:#}");
-        AppSettings::default()
-    });
-    cx.set_global(CurrentSettings(settings));
+    install(AppSettings::load(), cx);
+}
+
+/// Installs what reading the settings file came to.
+pub(crate) fn install(loaded: Result<AppSettings>, cx: &mut App) {
+    match loaded {
+        Ok(settings) => {
+            cx.set_global(CurrentSettings(settings));
+            if cx.has_global::<UnreadableSettings>() {
+                cx.remove_global::<UnreadableSettings>();
+            }
+        }
+        Err(err) => {
+            log::warn!("starting with default settings: {err:#}");
+            cx.set_global(CurrentSettings(AppSettings::default()));
+            cx.set_global(UnreadableSettings(format!("{err:#}").into()));
+        }
+    }
+}
+
+/// Why `settings.json` could not be read at start-up, if it could not.
+///
+/// While this answers, the settings are defaults standing in for a file that
+/// is still there, and nothing writes them: [`save`] skips the write and the
+/// settings dialog refuses to apply, showing this instead.
+pub fn load_error(cx: &App) -> Option<SharedString> {
+    cx.try_global::<UnreadableSettings>()
+        .map(|unreadable| unreadable.0.clone())
 }
 
 /// A snapshot of the current settings.
@@ -156,11 +194,20 @@ pub fn record_window_geometry(geometry: WindowGeometry, cx: &mut App) {
 ///
 /// Reports rather than propagates: the callers are shutdown paths, where there
 /// is no longer a window to show a failure in and nothing useful to do about one
-/// either.
+/// either. Writes nothing while [`load_error`] answers.
 pub fn save(cx: &App) {
-    if let Err(error) = current(cx).save() {
+    if let Err(error) = write(cx, AppSettings::save) {
         log::warn!("could not save the settings: {error:#}");
     }
+}
+
+/// Hands the settings global to `save`, unless it stands in for a file that
+/// could not be read.
+fn write(cx: &App, save: impl FnOnce(&AppSettings) -> Result<()>) -> Result<()> {
+    if let Some(error) = load_error(cx) {
+        anyhow::bail!("settings.json could not be read at start-up and is left as it is: {error}");
+    }
+    save(&current(cx))
 }
 
 #[cfg(test)]
@@ -179,6 +226,34 @@ mod tests {
             height: 1000,
             maximized: true,
         }
+    }
+
+    #[gpui::test]
+    fn settings_that_could_not_be_read_are_not_saved_over(cx: &mut gpui::TestAppContext) {
+        // Saving the defaults the app started on — at shutdown, with the
+        // window's placement in them — would replace every setting the user
+        // has with nothing they chose.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        let damaged = b"{ \"theme\": \"dracula\", ";
+        std::fs::write(&path, damaged).unwrap();
+
+        cx.update(|cx| {
+            install(AppSettings::load_from(&path), cx);
+            assert!(load_error(cx).is_some());
+            record_window_geometry(geometry(), cx);
+            assert!(write(cx, |settings| settings.save_to(&path)).is_err());
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), damaged);
+
+        // A file that reads — here, none at all — is written as it always was.
+        std::fs::remove_file(&path).unwrap();
+        cx.update(|cx| {
+            install(AppSettings::load_from(&path), cx);
+            assert!(load_error(cx).is_none());
+            write(cx, |settings| settings.save_to(&path)).expect("the file is written");
+        });
+        assert!(path.exists());
     }
 
     #[test]

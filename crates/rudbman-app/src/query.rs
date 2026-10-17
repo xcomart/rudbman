@@ -76,6 +76,7 @@
 mod completion;
 mod editing;
 mod execution;
+mod format;
 mod menus;
 mod render;
 use render::{elapsed_label, preview};
@@ -85,6 +86,7 @@ mod statements;
 mod toolbar;
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -97,7 +99,7 @@ use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
-use rudbman_sql::{Dialect, StatementAccess, split_statements, statement_access};
+use rudbman_sql::{Dialect, StatementAccess, ends_transaction, split_statements, statement_access};
 use rugpui::{Button, ButtonVariant, ContextMenu, ResizeHandle, Theme, theme};
 use rugpui_editor::editor::{
     Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
@@ -514,8 +516,49 @@ pub struct QueryPane {
     completion: completion::CompletionState,
     lob_dialog: Option<Entity<crate::lob_dialog::LobDialog>>,
     lob_events: Option<Subscription>,
+    /// How many times the editor has said [`EditorEvent::Changed`].
+    ///
+    /// The editor keeps no revision of its own, so the pane counts one: it is
+    /// what lets [`QueryPane::workspace_sql`] tell an unchanged draft from an
+    /// edited one without copying the buffer to compare it. The count moves in
+    /// the event handler, which gpui runs when the update that made the edit
+    /// ends — before any frame, timer or close that could ask for the draft.
+    edits: u64,
+    /// The draft as the workspace last took it, and the edit it was taken at.
+    ///
+    /// Behind a `RefCell` because the workspace takes it through a shared
+    /// read of the pane, from the autosave that a running query's clock alone
+    /// keeps waking. See [`QueryPane::workspace_sql`].
+    saved_draft: RefCell<Option<SavedDraft>>,
+    /// A "Format SQL" being worked out off the UI thread; see
+    /// [`QueryPane::format_sql`]. Dropping it abandons that format.
+    format_task: Option<gpui::Task<()>>,
     _completion_blur: Subscription,
     _editor_events: Subscription,
+}
+
+/// The largest SQL draft the workspace keeps across a restart, in bytes.
+///
+/// Past it the draft is saved empty rather than copied and written out again
+/// after every pause in typing, and the pane says so once (see
+/// [`QueryPane::warn_oversized_draft`]). A script that size is a file the user
+/// has somewhere already; the workspace is for drafts.
+pub(crate) const DRAFT_LIMIT: usize = 4 * 1024 * 1024;
+
+/// One copy of the editor's text, as [`QueryPane::workspace_sql`] keeps it.
+struct SavedDraft {
+    /// [`QueryPane::edits`] when the copy was taken.
+    edits: u64,
+    /// What the workspace saves: the text, or nothing past [`DRAFT_LIMIT`].
+    ///
+    /// Shared rather than owned so that every autosave snapshot of an
+    /// unchanged editor holds this same allocation, and comparing two of them
+    /// is a pointer comparison instead of a pass over the whole draft.
+    sql: Arc<str>,
+    /// Whether the text was over [`DRAFT_LIMIT`].
+    oversized: bool,
+    /// Whether the pane has said so since the draft grew past it.
+    warned: bool,
 }
 
 /// One planned batch, and the result tab it was planned against.
@@ -568,6 +611,7 @@ impl QueryPane {
         cx: &mut Context<Self>,
     ) -> Self {
         completion::init(cx);
+        format::init(cx);
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
             let mut editor = EditorView::new(cx)
@@ -619,6 +663,7 @@ impl QueryPane {
                     // The toolbar belongs to the pane, so editor changes must
                     // also redraw its selection and undo/redo availability.
                     EditorEvent::Changed => {
+                        pane.edits += 1;
                         pane.refresh_completion(false, window, cx);
                         cx.notify();
                     }
@@ -671,6 +716,9 @@ impl QueryPane {
             completion: completion::CompletionState::default(),
             lob_dialog: None,
             lob_events: None,
+            edits: 0,
+            saved_draft: RefCell::new(None),
+            format_task: None,
             _completion_blur: completion_blur,
             _editor_events: editor_events,
         }
@@ -740,9 +788,65 @@ impl QueryPane {
         self.session.is_some()
     }
 
-    /// The SQL draft saved with this connection's workspace.
+    /// The whole text of the editor.
     pub fn editor_text(&self, cx: &App) -> String {
         self.editor.read(cx).text()
+    }
+
+    /// The SQL draft saved with this connection's workspace.
+    ///
+    /// The workspace asks for it on every autosave, and an autosave follows
+    /// every redraw of the window — a running query's clock is enough — for
+    /// every tab of every connection. So the buffer is copied out only when it
+    /// has changed since the last ask, and an unchanged draft hands back the
+    /// same shared allocation as before, which is what keeps the snapshot
+    /// comparison in the workspace a pointer comparison. A draft over
+    /// [`DRAFT_LIMIT`] is saved empty.
+    pub(crate) fn workspace_sql(&self, cx: &App) -> Arc<str> {
+        let mut saved = self.saved_draft.borrow_mut();
+        if let Some(draft) = saved.as_ref().filter(|draft| draft.edits == self.edits) {
+            return draft.sql.clone();
+        }
+        let text = self.editor_text(cx);
+        let oversized = text.len() > DRAFT_LIMIT;
+        let sql: Arc<str> = if oversized { "".into() } else { text.into() };
+        // Said once per crossing: a draft that stays too large is not warned
+        // about again on every edit, and one that shrinks and grows again is.
+        let warned = oversized && saved.as_ref().is_some_and(|draft| draft.warned);
+        *saved = Some(SavedDraft {
+            edits: self.edits,
+            sql: sql.clone(),
+            oversized,
+            warned,
+        });
+        sql
+    }
+
+    /// Whether [`QueryPane::warn_oversized_draft`] has something to say.
+    pub(crate) fn owes_draft_warning(&self) -> bool {
+        self.saved_draft
+            .borrow()
+            .as_ref()
+            .is_some_and(|draft| draft.oversized && !draft.warned)
+    }
+
+    /// Says that the draft is too large to be kept across a restart.
+    ///
+    /// Called by the workspace after an autosave found it so, rather than
+    /// from [`QueryPane::workspace_sql`], which only has a shared read of the
+    /// pane and so cannot redraw it.
+    pub(crate) fn warn_oversized_draft(&mut self, cx: &mut Context<Self>) {
+        if let Some(draft) = self.saved_draft.get_mut().as_mut()
+            && draft.oversized
+            && !draft.warned
+        {
+            draft.warned = true;
+            self.notice = Some(ts!(
+                "query.draft_too_large",
+                limit = DRAFT_LIMIT / (1024 * 1024)
+            ));
+            cx.notify();
+        }
     }
 
     pub(crate) fn workspace_selection(&self, cx: &App) -> std::ops::Range<usize> {

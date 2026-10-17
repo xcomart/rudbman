@@ -118,6 +118,8 @@
 //!
 //! * [`mod@dialect`] — [`Dialect`], [`DialectId`], and the [`Syntax`] record of
 //!   what the vendors disagree about.
+//! * [`mod@format`] — [`format_sql`], the editor's "Format SQL": whitespace
+//!   between tokens re-laid out, every literal and comment copied unchanged.
 //! * [`mod@ident`] — [`Dialect::quote_ident`] and [`Dialect::qualify`], for the
 //!   callers that write SQL rather than read it.
 //! * [`mod@ddl`] — [`plan_alter`], [`TableAlter`], [`ColumnDef`],
@@ -143,6 +145,7 @@ pub mod completion;
 pub mod ddl;
 pub mod dialect;
 pub mod dml;
+pub mod format;
 pub mod ident;
 pub mod lexer;
 pub mod state;
@@ -150,7 +153,7 @@ pub mod statement;
 
 mod keywords;
 
-pub use access::{StatementAccess, statement_access};
+pub use access::{StatementAccess, ends_transaction, statement_access};
 pub use ddl::{
     ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, DdlError, TableAlter, TableConstraint,
     TableCreate, Unsupported, plan_alter, plan_create,
@@ -159,6 +162,7 @@ pub use dialect::{Dialect, DialectId, Syntax};
 pub use dml::{
     DmlError, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
+pub use format::format_sql;
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
 pub use state::LineStateCodec;
 pub use statement::{StatementSpan, split_statements, statement_at};

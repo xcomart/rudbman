@@ -56,9 +56,7 @@ use rudbman_jdbc::{
 };
 use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
-pub use rudbkit_core::url::{
-    CATALOGUE_PLACEHOLDERS, placeholders_of, redirect_authority, substitute,
-};
+pub use rudbkit_core::url::{CATALOGUE_PLACEHOLDERS, placeholders_of, redirect_url, substitute};
 
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
@@ -112,14 +110,19 @@ pub enum ConnectError {
     JvmStart(String),
     /// The tunnel could not be established.
     Tunnel(String),
-    /// The bastion presented a host key that is not the one on record.
+    /// The bastion presented a host key that is not the one on record — another
+    /// fingerprint, or a key of another algorithm than the one it is known by.
     HostKeyMismatch {
         /// The bastion, as the profile names it.
         host: String,
         /// The fingerprint that arrived.
         presented: String,
+        /// The algorithm of the key that arrived.
+        algorithm: String,
         /// The fingerprint `known_hosts` holds.
         stored: String,
+        /// The algorithm of the key `known_hosts` holds.
+        stored_algorithm: String,
     },
     /// The bastion presented a host key nothing has ever trusted.
     HostKeyUnknown {
@@ -187,9 +190,12 @@ impl ConnectError {
             ConnectError::HostKeyMismatch {
                 host,
                 presented,
+                algorithm,
                 stored,
+                stored_algorithm,
             } => format!(
-                "the host key of {host} has changed: {presented} was presented, {stored} is on record"
+                "the host key of {host} has changed: {algorithm} {presented} was presented, \
+                 {stored_algorithm} {stored} is on record"
             ),
             ConnectError::HostKeyUnknown {
                 host,
@@ -237,6 +243,9 @@ impl From<JdbcError> for ConnectError {
 struct Live {
     /// The JDBC session. Declared first, so it is closed first.
     session: Session,
+    /// Whether a query editor has sent writes under manual commit that nothing
+    /// has committed or rolled back yet; see [`SessionHandle::has_uncommitted`].
+    uncommitted: AtomicBool,
     /// The tunnel underneath, if any. Declared last, so it lies down last.
     lease: Option<TunnelLease>,
 }
@@ -255,6 +264,33 @@ impl SessionHandle {
     /// The session, for the blocking calls that make up a fetch.
     pub fn session(&self) -> &Session {
         &self.0.session
+    }
+
+    /// Whether this session holds writes a query editor sent under manual
+    /// commit and nobody has committed or rolled back yet.
+    ///
+    /// Every pane of a connection shares the one session, and with it the one
+    /// transaction. A grid apply, an `ALTER` batch or a transfer ends that
+    /// transaction on its way out — with a commit, a rollback, or an autocommit
+    /// flip that JDBC defines as a commit — so running one of them now would
+    /// commit or discard the editor's work behind the user's back. They ask
+    /// this first and refuse while it is `true`.
+    pub fn has_uncommitted(&self) -> bool {
+        self.0.uncommitted.load(Ordering::Acquire)
+    }
+
+    /// Records that a write went out under manual commit.
+    ///
+    /// Called *before* the statement is sent: a write that fails half way may
+    /// still have changed rows, and an open transaction reported where there is
+    /// none costs a click, where the reverse costs the user's work.
+    pub fn mark_uncommitted(&self) {
+        self.0.uncommitted.store(true, Ordering::Release);
+    }
+
+    /// Records that the session's transaction was committed or rolled back.
+    pub fn clear_uncommitted(&self) {
+        self.0.uncommitted.store(false, Ordering::Release);
     }
 }
 
@@ -325,7 +361,7 @@ impl Connected {
     /// thread's task on a query nobody is going to read.
     pub fn close(self) -> Result<(), JdbcError> {
         match Arc::try_unwrap(self.live) {
-            Ok(Live { session, lease }) => {
+            Ok(Live { session, lease, .. }) => {
                 let result = session.close();
                 drop(lease);
                 result
@@ -467,9 +503,17 @@ fn connect_once(
         None => None,
     };
 
-    // 3. The URL, pointed at the local end of the tunnel when there is one.
+    // 3. The URL, pointed at the local end of the tunnel when there is one. A
+    //    URL the tunnel cannot be put into is refused rather than sent as it
+    //    stands: that would connect straight past the tunnel.
     let url = match &lease {
-        Some(lease) => redirect_authority(&profile.url, "127.0.0.1", lease.local_port()),
+        Some(lease) => redirect_url(
+            &profile.url,
+            &driver.url_template,
+            "127.0.0.1",
+            lease.local_port(),
+        )
+        .map_err(|error| ConnectError::Tunnel(error.to_string()))?,
         None => profile.url.clone(),
     };
 
@@ -480,7 +524,11 @@ fn connect_once(
     let info = session.info().map_err(ConnectError::from)?;
 
     Ok(Connected {
-        live: Arc::new(Live { session, lease }),
+        live: Arc::new(Live {
+            session,
+            uncommitted: AtomicBool::new(false),
+            lease,
+        }),
         info,
     })
 }
@@ -756,13 +804,16 @@ impl StoredHostKeys {
         match KnownHosts::load()
             .map(|hosts| hosts.status(&self.host, self.port, &algorithm, &fingerprint))
         {
-            Ok(rudbman_core::HostKeyStatus::Mismatch { stored_fingerprint }) => {
-                ConnectError::HostKeyMismatch {
-                    host: self.host.clone(),
-                    presented: fingerprint,
-                    stored: stored_fingerprint,
-                }
-            }
+            Ok(rudbman_core::HostKeyStatus::Mismatch {
+                stored_algorithm,
+                stored_fingerprint,
+            }) => ConnectError::HostKeyMismatch {
+                host: self.host.clone(),
+                presented: fingerprint,
+                algorithm,
+                stored: stored_fingerprint,
+                stored_algorithm,
+            },
             _ => ConnectError::HostKeyUnknown {
                 host: self.host.clone(),
                 fingerprint,
@@ -968,38 +1019,42 @@ mod tests {
     }
 
     #[test]
-    fn a_tunnel_moves_only_the_authority_of_a_url() {
+    fn a_tunnel_redirects_the_url_or_refuses_it() {
+        let to_tunnel = |url: &str, template: &str| redirect_url(url, template, "127.0.0.1", 41234);
         assert_eq!(
-            redirect_authority("jdbc:postgresql://db.internal:5432/app", "127.0.0.1", 41234),
+            to_tunnel(
+                "jdbc:postgresql://db.internal:5432/app",
+                "jdbc:postgresql://{host}:{port}/{database}"
+            )
+            .unwrap(),
             "jdbc:postgresql://127.0.0.1:41234/app"
         );
-        // The semicolon grammar: the authority ends at the first `;`.
+        // A hand-edited URL the template no longer fits keeps its own grammar:
+        // the authority ends at the first `;` or `?`.
         assert_eq!(
-            redirect_authority(
+            to_tunnel(
                 "jdbc:sqlserver://db.internal:1433;databaseName=app",
-                "127.0.0.1",
-                41234
-            ),
+                "jdbc:sqlserver://{host}:{port}/{database}"
+            )
+            .unwrap(),
             "jdbc:sqlserver://127.0.0.1:41234;databaseName=app"
         );
-        // A query string.
         assert_eq!(
-            redirect_authority(
-                "jdbc:mysql://db.internal:3306/app?useSSL=false",
-                "127.0.0.1",
-                1
-            ),
-            "jdbc:mysql://127.0.0.1:1/app?useSSL=false"
+            to_tunnel("jdbc:mysql://db.internal:3306/app?useSSL=false", "jdbc:x").unwrap(),
+            "jdbc:mysql://127.0.0.1:41234/app?useSSL=false"
         );
-        // A URL with no authority at all has no server to redirect.
+        // No `//` at all: only the template's holes can take the tunnel.
         assert_eq!(
-            redirect_authority("jdbc:h2:mem:test", "127.0.0.1", 41234),
-            "jdbc:h2:mem:test"
+            to_tunnel(
+                "jdbc:cubrid:db.internal:33000:app:::",
+                "jdbc:cubrid:{host}:{port}:{database}:::"
+            )
+            .unwrap(),
+            "jdbc:cubrid:127.0.0.1:41234:app:::"
         );
-        assert_eq!(
-            redirect_authority("jdbc:sqlite:/var/db/app.sqlite", "127.0.0.1", 1),
-            "jdbc:sqlite:/var/db/app.sqlite"
-        );
+        // Nothing to redirect is refused, never connected around the tunnel.
+        assert!(to_tunnel("jdbc:h2:mem:test", "jdbc:h2:mem:{database}").is_err());
+        assert!(to_tunnel("jdbc:sqlite:/var/db/app.sqlite", "jdbc:sqlite:{file}").is_err());
     }
 
     #[test]

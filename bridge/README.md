@@ -372,8 +372,12 @@ a table on another).
 - Cancellation sets a flag and calls `Statement.cancel()` on every statement the
   job has in flight — two of them for a transfer. Each poll re-delivers the
   cancel until the worker acknowledges it, because a cancel that lands in the
-  sliver before the driver enters execution cancels nothing. A cancelled job
-  keeps its partial output file.
+  sliver before the driver enters execution cancels nothing.
+- An extract or a backup writes to a hidden sibling of `output.path` and only
+  renames it over the target once the job is `done`. A `failed` or `cancelled`
+  job deletes the sibling before it reports, so whatever was at the target —
+  an earlier backup, say — is left exactly as it was, and no partial file
+  remains.
 - `CLOSE_SESSION` cancels and unregisters the jobs that use that session, **in
   either direction** — a transfer holds the target's connection lock too, and
   closing it would otherwise wait on a lock only a cancel releases.

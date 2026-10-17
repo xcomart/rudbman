@@ -64,10 +64,10 @@ use rudbman_core::{
     AppSettings, ConnectionProfile, ConnectionStore, DriverStore, TitlebarStyle, WindowState,
 };
 use rugpui::{
-    Button, ButtonVariant, DraggedThumb, EditorThemeEntry, EditorThemeRegistry, MenuButton,
-    MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter, TabBar, TabItem,
-    TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal, scroll_to, scrolled,
-    set_editor_theme, set_theme, set_window_tint, theme, theme_store,
+    Button, ButtonVariant, DraggedTab, DraggedThumb, EditorThemeEntry, EditorThemeRegistry,
+    MenuButton, MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter,
+    TabBar, TabItem, TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal, scroll_to,
+    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use rugpui_shell::chrome::{
     SHADOW_BAND, client_tiling, draws_own_titlebar, render_client_frame, titlebar_gestures,
@@ -264,6 +264,12 @@ const MIN_EXPLORER_WIDTH: f32 = 140.;
 
 /// Widest the explorer may be dragged.
 const MAX_EXPLORER_WIDTH: f32 = 720.;
+
+/// Tag identifying the connection strip as a drag source.
+///
+/// Pane strips use the pane id behind them, which comes from a process-wide
+/// counter starting at 1; the maximum `u64` can never collide with one.
+pub(super) const CONNECTION_STRIP_TAG: u64 = u64::MAX;
 
 /// Mints an id no connection tab has ever had.
 ///
@@ -608,6 +614,12 @@ struct Workspace {
     /// Held here rather than in the pane because a modal centres itself in its
     /// nearest positioned ancestor, and inside a pane that is the wrong box.
     confirm: Option<PendingConfirm>,
+    /// Where a dragged tab would land, while a drag is over a strip.
+    ///
+    /// The tag names the strip — a pane id for a pane's strip, and
+    /// [`CONNECTION_STRIP_TAG`] for the connection strip — and the index the
+    /// insertion gap the pointer is over. `None` draws no bar anywhere.
+    tab_drop: Option<(u64, usize)>,
     /// Title bar style currently *on the window*.
     ///
     /// Starts as the style the window was created with. Not read from the
@@ -734,6 +746,7 @@ impl Workspace {
             menu_open: false,
             context_menu: None,
             confirm: None,
+            tab_drop: None,
             titlebar,
             _about_events: about_events,
             _connect_events: connect_events,
@@ -768,6 +781,11 @@ struct PaneChrome {
     /// A profile with no colour is simply absent, and its tabs draw no dot: an
     /// invented colour would read as a tag the user chose.
     colors: HashMap<ConnectionId, Hsla>,
+    /// Where a dragged tab would land, while a drag is over a strip.
+    ///
+    /// Copied from [`Workspace::tab_drop`] for the frame: each strip draws its
+    /// own bar only when the tag names it.
+    drop: Option<(u64, usize)>,
 }
 
 #[cfg(test)]

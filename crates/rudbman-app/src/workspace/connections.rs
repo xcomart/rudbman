@@ -391,6 +391,42 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Moves the connection tab at `from` to before the tab at `to`.
+    ///
+    /// A drag along the connection strip reorders it; `to` is in the
+    /// coordinates of the strip as drawn — the tab the dragged one is dropped
+    /// on — so a `to` past the tab `from` stood on is one lower once `from`
+    /// is out. `to == len` appends, which is what a drop over the strip's
+    /// empty stretch asks for. Anything naming no tab refuses silently, as
+    /// does a move that would leave the strip as it was.
+    ///
+    /// The tab on top follows the moved tab when it was the one moved, and
+    /// otherwise stays on the tab it was on: a reorder of background tabs
+    /// must not switch the work area out from under the keyboard. The same
+    /// meaning [`Pane::relocate`] has, written out for connections.
+    pub(super) fn move_connection(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let len = self.connections.len();
+        if from >= len || to > len {
+            return;
+        }
+        if from == to || from + 1 == to {
+            return;
+        }
+        let followed = self.active_connection == from;
+        let connection = self.connections.remove(from);
+        if !followed && from < self.active_connection {
+            self.active_connection -= 1;
+        }
+        let insert = if from < to { to - 1 } else { to }.min(self.connections.len());
+        self.connections.insert(insert, connection);
+        if followed {
+            self.active_connection = insert;
+        } else if insert <= self.active_connection {
+            self.active_connection += 1;
+        }
+        cx.notify();
+    }
+
     /// Whether the work area on screen is holding the keyboard.
     ///
     /// Asked *before* a switch, because it reads the last drawn frame — the one

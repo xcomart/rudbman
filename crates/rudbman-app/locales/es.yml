@@ -10,7 +10,7 @@ common:
   close: Cerrar
 
 menu:
-  new_connection: Nueva conexión…
+  new_connection: Gestionar conexiones…
   settings: Ajustes…
   toggle_explorer: Explorador
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: Ver
   tip_menu: Menú
   mac:
-    new_connection: Nueva conexión…
+    new_connection: Gestionar conexiones…
     quit: Salir de rudbman
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "Nueva conexión (%{shortcut})"
 
 welcome:
-  hint: Pulsa %{shortcut} para abrir una nueva conexión.
-  new_connection: Nueva conexión…
+  hint: Pulsa %{shortcut} para gestionar las conexiones.
+  new_connection: Gestionar conexiones…
   saved: Conexiones guardadas
 
 empty:
@@ -78,6 +78,7 @@ settings:
   title: Ajustes
   system_default: Usar el ajuste del sistema
   save_failed: "No se pudieron guardar los ajustes: %{error}"
+  load_failed: "No se pueden guardar los ajustes porque no se pudo leer el archivo de ajustes al iniciar rudbman: %{error}. Repare o mueva ese archivo y reinicie rudbman."
 
   section:
     appearance: Apariencia
@@ -252,7 +253,7 @@ connect:
   name_required: Dale un nombre a la conexión.
   url_required: La conexión no tiene URL.
   no_driver: "No hay ninguna definición de controlador llamada «%{driver}»."
-  load_failed: "No se pudieron leer las conexiones guardadas: %{error}"
+  load_failed: "No se pudieron leer las conexiones guardadas; no se puede guardar ni eliminar nada hasta que se repare o se mueva ese archivo: %{error}"
   save_failed: "No se pudieron guardar las conexiones: %{error}"
   keychain_failed: "No se pudo guardar la contraseña en el llavero: %{error}"
 
@@ -387,6 +388,7 @@ query:
   rolled_back: "Transacción revertida."
   rollback_failed: "Error al revertir: %{message}"
   rollback_auto: "Revertir (la confirmación automática está activada)"
+  uncommitted_pending: "Esta conexión tiene cambios sin confirmar de un editor de consultas. Confírmelos o reviértalos allí primero."
   commit: "Confirmar transacción"
   committing: "Confirmando…"
   committed: "Transacción confirmada."
@@ -406,6 +408,7 @@ query:
   elapsed: "%{seconds} s"
   busy: Ya hay una sentencia ejecutándose en este panel.
   no_statement: No hay ninguna sentencia que ejecutar.
+  draft_too_large: "Este borrador supera los %{limit} MB, por lo que no se conservará al cerrar la aplicación. Guárdelo en un archivo para conservarlo."
   read_only: Esta conexión es de solo lectura; la sentencia no se envió.
   confirm_title: "¿Ejecutar esta sentencia?"
   confirm_body: "Sentencias que modifican datos: %{count}"
@@ -519,7 +522,7 @@ extract:
   counters: "%{rows} filas, %{bytes}"
   cancelling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
-  cancelled: "Cancelado. El archivo parcial quedó en %{path}."
+  cancelled: "Cancelado. No se escribió nada en %{path}."
   failed: "La extracción falló: %{error}"
   failed_unknown: La extracción falló y el puente no dijo por qué.
 
@@ -566,7 +569,7 @@ backup:
   counters: "%{rows} filas, %{bytes}"
   cancelling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
-  cancelled: "Cancelado. El archivo parcial quedó en %{path}."
+  cancelled: "Cancelado. No se escribió nada en %{path}."
   failed: "La copia falló: %{error}"
   failed_unknown: La copia falló y el puente no dijo por qué.
 
@@ -632,6 +635,7 @@ context:
   undo: Deshacer
   redo: Rehacer
   toggle_comment: Comentar o descomentar
+  format_sql: Dar formato al SQL
   run_statement: Ejecutar la sentencia
   run_selection: Ejecutar la selección
   run_all: Ejecutar todo

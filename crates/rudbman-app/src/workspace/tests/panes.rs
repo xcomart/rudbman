@@ -596,3 +596,173 @@ fn closing_a_background_panes_last_tab_collapses_only_that_pane(cx: &mut gpui::T
         })
         .unwrap();
 }
+
+/// A drag along the strip reorders it: the dropped tab tucks in before the
+/// one it landed on, the tab on top stays the tab on top unless it was the
+/// one moved, and a drop that would change nothing is a no-op.
+#[gpui::test]
+fn moving_a_tab_within_its_strip_reorders_it(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("move-reorder", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("select 1", window, cx);
+            workspace.open_query("select 2", window, cx);
+            workspace.open_query("select 3", window, cx);
+            let pane = active_pane(workspace);
+            assert_eq!(
+                tab_titles(workspace, pane, cx),
+                ["Query 1", "Query 2", "Query 3"]
+            );
+            assert_eq!(active_tab(workspace, pane), 2);
+
+            // The first tab dropped on the third lands between second and third.
+            workspace.move_tab(pane, 0, pane, 2, window, cx);
+            assert_eq!(
+                tab_titles(workspace, pane, cx),
+                ["Query 2", "Query 1", "Query 3"]
+            );
+            assert_eq!(
+                active_tab(workspace, pane),
+                2,
+                "the top tab did not move, so it stays on top"
+            );
+            assert_eq!(active_pane(workspace), pane);
+
+            // Onto itself, and before its own neighbour, both change nothing.
+            workspace.move_tab(pane, 1, pane, 1, window, cx);
+            workspace.move_tab(pane, 1, pane, 2, window, cx);
+            assert_eq!(
+                tab_titles(workspace, pane, cx),
+                ["Query 2", "Query 1", "Query 3"]
+            );
+
+            // The tab on top follows when it is the one moved.
+            workspace.move_tab(pane, 2, pane, 0, window, cx);
+            assert_eq!(
+                tab_titles(workspace, pane, cx),
+                ["Query 3", "Query 2", "Query 1"]
+            );
+            assert_eq!(active_tab(workspace, pane), 0);
+
+            // Past the end appends; an unknown pane or tab is refused.
+            workspace.move_tab(pane, 0, pane, usize::MAX, window, cx);
+            assert_eq!(
+                tab_titles(workspace, pane, cx),
+                ["Query 2", "Query 1", "Query 3"]
+            );
+            let stale = PaneTree::single(Pane::new()).first_leaf().0;
+            workspace.move_tab(stale, 0, pane, 0, window, cx);
+            workspace.move_tab(pane, 0, stale, 0, window, cx);
+            workspace.move_tab(pane, 9, pane, 0, window, cx);
+            assert_eq!(
+                tab_titles(workspace, pane, cx),
+                ["Query 2", "Query 1", "Query 3"]
+            );
+        })
+        .unwrap();
+    cx.run_until_parked();
+}
+
+/// A drag across to another pane carries the tab over: it lands where it was
+/// dropped and comes to the top there, the marker follows it, and an emptied
+/// source collapses exactly as a closed last tab leaves it.
+#[gpui::test]
+fn moving_a_tab_to_another_pane_carries_it_over(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("move-cross-pane", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("select 1", window, cx);
+            let first = active_pane(workspace);
+            workspace.split_active(Axis::Horizontal, window, cx);
+            let second = active_pane(workspace);
+            assert_ne!(first, second);
+            // The split duplicated the showing tab into the new pane.
+            assert_eq!(tab_titles(workspace, first, cx), ["Query 1"]);
+            assert_eq!(tab_titles(workspace, second, cx), ["Query 2"]);
+
+            // To the front of the other strip, as a drop on its first tab asks.
+            workspace.move_tab(first, 0, second, 0, window, cx);
+            assert_eq!(tab_titles(workspace, second, cx), ["Query 1", "Query 2"]);
+            assert_eq!(active_tab(workspace, second), 0);
+            assert_eq!(active_pane(workspace), second);
+            // The source held nothing else, so it collapsed away.
+            assert_eq!(
+                area(workspace).panes.leaf_ids(),
+                vec![second],
+                "the emptied source pane was not removed"
+            );
+
+            // And over the empty stretch — past the end — appends. The split
+            // duplicated the showing tab into the new pane under a fresh
+            // number, so the moved tab lands behind that copy.
+            workspace.split_active(Axis::Horizontal, window, cx);
+            let third = active_pane(workspace);
+            assert_eq!(tab_titles(workspace, third, cx), ["Query 3"]);
+            workspace.move_tab(second, 0, third, usize::MAX, window, cx);
+            assert_eq!(tab_titles(workspace, third, cx), ["Query 3", "Query 1"]);
+            assert_eq!(active_tab(workspace, third), 1);
+            assert_eq!(active_pane(workspace), third);
+            assert_eq!(
+                tab_titles(workspace, second, cx),
+                ["Query 2"],
+                "only the moved tab left the source"
+            );
+        })
+        .unwrap();
+    cx.run_until_parked();
+}
+
+/// The keyboard follows the moved tab when it had it, and stays where it is
+/// when a background tab is the one that moved.
+#[gpui::test]
+fn moving_a_tab_carries_only_the_focus_it_held(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("move-focus", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("select 1", window, cx);
+            workspace.open_query("select 2", window, cx);
+            let first = active_pane(workspace);
+            workspace.split_active(Axis::Horizontal, window, cx);
+            let second = active_pane(workspace);
+            // Back to the first pane without taking the keyboard along: the
+            // split left it on the copy.
+            workspace.activate_tab(first, 1, window, cx);
+            workspace.focus_active_tab(first, window, cx);
+            let moved = match area(workspace)
+                .panes
+                .get(first)
+                .expect("the pane is in the tree")
+                .get(1)
+            {
+                Some(PaneItem::Query { pane, .. }) => pane.clone(),
+                other => panic!("the second tab is a query: {other:?}"),
+            };
+            assert!(
+                moved.read(cx).focus_handle(cx).is_focused(window),
+                "the setup did not put the keyboard on the tab to be moved"
+            );
+
+            // The focused tab moves panes, and the keyboard moves with it.
+            workspace.move_tab(first, 1, second, usize::MAX, window, cx);
+            assert_eq!(active_pane(workspace), second);
+            assert_eq!(active_tab(workspace, second), 1);
+            assert!(
+                moved.read(cx).focus_handle(cx).is_focused(window),
+                "the keyboard did not follow the moved tab"
+            );
+
+            // A background tab moving out from under a focused one leaves the
+            // keyboard where it was.
+            workspace.move_tab(first, 0, second, 0, window, cx);
+            assert!(
+                moved.read(cx).focus_handle(cx).is_focused(window),
+                "moving a background tab stole the keyboard"
+            );
+            assert_eq!(active_pane(workspace), second);
+        })
+        .unwrap();
+    cx.run_until_parked();
+}

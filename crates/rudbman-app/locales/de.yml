@@ -10,7 +10,7 @@ common:
   close: Schließen
 
 menu:
-  new_connection: Neue Verbindung…
+  new_connection: Verbindungen verwalten…
   settings: Einstellungen…
   toggle_explorer: Explorer
   # Opens an empty query pane on the connection whose tab is showing.
@@ -39,7 +39,7 @@ menu:
   view: Ansicht
   tip_menu: Menü
   mac:
-    new_connection: Neue Verbindung…
+    new_connection: Verbindungen verwalten…
     quit: rudbman beenden
 
 tab:
@@ -48,8 +48,8 @@ tab:
   tip_new: "Neue Verbindung (%{shortcut})"
 
 welcome:
-  hint: Drücken Sie %{shortcut}, um eine neue Verbindung zu öffnen.
-  new_connection: Neue Verbindung…
+  hint: Drücke %{shortcut}, um Verbindungen zu verwalten.
+  new_connection: Verbindungen verwalten…
   saved: Gespeicherte Verbindungen
 
 empty:
@@ -78,6 +78,7 @@ settings:
   title: Einstellungen
   system_default: Systemeinstellung verwenden
   save_failed: "Die Einstellungen konnten nicht gespeichert werden: %{error}"
+  load_failed: "Die Einstellungen können nicht gespeichert werden, weil die Einstellungsdatei beim Start von rudbman nicht gelesen werden konnte: %{error}. Reparieren oder verschieben Sie die Datei und starten Sie rudbman neu."
 
   section:
     appearance: Darstellung
@@ -252,7 +253,7 @@ connect:
   name_required: Der Verbindung einen Namen geben.
   url_required: Die Verbindung hat keine URL.
   no_driver: "Keine Treiberdefinition namens „%{driver}“."
-  load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden: %{error}"
+  load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden; bis die Datei repariert oder verschoben ist, kann nichts gespeichert oder gelöscht werden: %{error}"
   save_failed: "Die Verbindungen konnten nicht gespeichert werden: %{error}"
   keychain_failed: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden: %{error}"
 
@@ -387,6 +388,7 @@ query:
   rolled_back: "Transaktion zurückgesetzt."
   rollback_failed: "Rollback fehlgeschlagen: %{message}"
   rollback_auto: "Rollback (automatisches Commit ist aktiviert)"
+  uncommitted_pending: "Diese Verbindung hat nicht festgeschriebene Änderungen aus einem Abfrageeditor. Führen Sie dort zuerst Commit oder Rollback aus."
   commit: "Commit"
   committing: "Commit läuft…"
   committed: "Transaktion bestätigt."
@@ -406,6 +408,7 @@ query:
   elapsed: "%{seconds} s"
   busy: In diesem Bereich läuft bereits eine Anweisung.
   no_statement: Es gibt keine Anweisung zum Ausführen.
+  draft_too_large: "Dieser Entwurf ist größer als %{limit} MB und wird beim Schließen der App nicht aufbewahrt. Speichern Sie ihn in einer Datei, um ihn zu behalten."
   read_only: Diese Verbindung ist schreibgeschützt; die Anweisung wurde nicht gesendet.
   confirm_title: Diese Anweisung ausführen?
   confirm_body: "Anweisungen, die Daten ändern: %{count}"
@@ -519,7 +522,7 @@ extract:
   counters: "%{rows} Zeilen, %{bytes}"
   cancelling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. Die unvollständige Datei liegt unter %{path}."
+  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Extraktion schlug fehl: %{error}"
   failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.
 
@@ -566,7 +569,7 @@ backup:
   counters: "%{rows} Zeilen, %{bytes}"
   cancelling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. Die unvollständige Datei liegt unter %{path}."
+  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
 
@@ -632,6 +635,7 @@ context:
   undo: Rückgängig
   redo: Wiederholen
   toggle_comment: Kommentar umschalten
+  format_sql: SQL formatieren
   run_statement: Anweisung ausführen
   run_selection: Auswahl ausführen
   run_all: Alles ausführen

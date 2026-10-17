@@ -179,6 +179,9 @@ impl Render for QueryPane {
                             pane.trigger_completion(window, cx);
                         },
                     ))
+                    .on_action(cx.listener(|pane, _: &super::format::FormatSql, _, cx| {
+                        pane.format_sql(cx);
+                    }))
                     .flex()
                     .flex_col()
                     .flex_basis(relative(share))
@@ -345,6 +348,7 @@ impl QueryPane {
         let apply = writable.then(|| {
             let this = this.clone();
             Button::new("query-apply", ts!("data.apply"))
+                .compact()
                 .variant(ButtonVariant::Primary)
                 .disabled(!staged || running || self.applying || self.transaction.is_some())
                 .on_click(move |_, window, cx| {
@@ -354,6 +358,7 @@ impl QueryPane {
         let discard = writable.then(|| {
             let this = this.clone();
             Button::new("query-discard", ts!("data.discard"))
+                .compact()
                 .variant(ButtonVariant::Secondary)
                 .disabled(!staged || running || self.applying)
                 .on_click(move |_, _window, cx| {
