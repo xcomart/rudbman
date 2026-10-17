@@ -46,7 +46,7 @@ What gets copied (paths relative to `crates/logman-app/src/`):
 | `icons.rs` | same | Database icons added |
 | `about_dialog.rs` | same | Strings replaced |
 | all of `logman-core/` | `crates/rudbman-core/` | `settings`/`profile`/`secrets`/`paths`. Only the profile schema is replaced |
-| `logman-ssh/` | `crates/rudbman-ssh/` | M1. Only transport, auth and host keys are inherited; shell and SFTP dropped, forwarding added (§9) |
+| `logman-ssh/` | `rudbkit-ssh` in [rudbkit](https://github.com/xcomart/rudbkit), re-exported by `crates/rudbman-ssh/` | M1. Only transport, auth and host keys are inherited; shell and SFTP dropped, forwarding added (§9). Written here first, then moved to rudbkit with the profile's tunnel block and the JVM bootstrap (§3.3) |
 | `known_hosts.rs`, `verifier.rs` | `rudbman-core` / `rudbman-app` | Host key storage and the confirmation dialog |
 | `vendor/gpui/`, `vendor/gpui_linux/`, `vendor/gpui_macos/`, `vendor/gpui_windows/` | same | **Leave the `RULOGMAN PATCH` comments exactly where they are** — the two vendored trees stay byte-identical so they can be synced with `diff`. Do not remove them before upstream grows its own answer |
 
@@ -104,9 +104,11 @@ rudbman/
 ├── assets/                     icons
 ├── packaging/                  linux/macos/windows packaging
 └── crates/
-    ├── rudbman-core/           settings, profiles, secrets, paths, known_hosts
-    ├── rudbman-ssh/            SSH local port forwarding (M1)
-    ├── rudbman-jdbc/           JNI. JVM bootstrap, session workers, wire codec
+    ├── rudbman-core/           settings, profiles, secrets, paths, known_hosts;
+    │                            the tunnel block re-exported from rudbkit-core
+    ├── rudbman-ssh/            one `pub use rudbkit_ssh::*` and its tests
+    ├── rudbman-jdbc/           JNI. Session workers, wire codec, LOBs; the JVM
+    │                            bootstrap is rudbkit-jdbc's, under rudbman's name
     ├── rudbman-sql/            SQL lexer, dialects, formatter, completion index
     ├── rudbman-erd/            ERD model, layout, canvas, SVG export
     └── rudbman-app/            the binary
@@ -127,6 +129,18 @@ rugpui/                           github.com/xcomart/rugpui
                                 palette catalogue + editor, form pieces
 ```
 
+and the database half of the same idea:
+
+```
+rudbkit/                          github.com/xcomart/rudbkit
+└── crates/
+    ├── rudbkit-core/             TunnelConfig/TunnelAuth, URL helpers, the
+    │                            validate-then-save order of a connection dialog
+    ├── rudbkit-ssh/              SSH local port forwarding: transport, auth,
+    │                            host key verification, the lease pool
+    └── rudbkit-jdbc/             JVM discovery and start-up, the bridge JAR path
+```
+
 ### 3.1 Crate dependency direction
 
 ```
@@ -136,12 +150,17 @@ rudbman-app
  ├─→ rugpui-editor  ┼─→ rugpui ─→ gpui
  ├─→ rugpui-shell ──┘
  ├─→ rudbman-sql
- ├─→ rudbman-jdbc ─→ rudbman-core
- ├─→ rudbman-ssh  ─→ rudbman-core
- └─→ rudbman-core
+ ├─→ rudbman-jdbc ─┬→ rudbkit-jdbc
+ │                 └→ rudbman-core
+ ├─→ rudbman-ssh  ──→ rudbkit-ssh ─→ rudbkit-core
+ └─→ rudbman-core ──→ rudbkit-core
 ```
 
-`rudbman-ssh` and `rudbman-jdbc` **know nothing about each other.** The tunnel
+`rudbman-app` also names `rudbkit-core` directly, for the save order its
+connection dialog shares with the other applications' (`rudbkit_core::save`).
+
+`rudbman-ssh` and `rudbman-jdbc` **know nothing about each other**, and nor
+do `rudbkit-ssh` and `rudbkit-jdbc` beneath them. The tunnel
 only opens a local port, and a JDBC session is an ordinary connection aimed at
 that port. What ties them together is the session orchestration in
 `rudbman-app` (§9.3).
@@ -226,6 +245,34 @@ The four patched gpui crates went to rugpui with the widgets, and rudbman's
 Keeping one gpui in the binary is not a tidiness question: two would put two
 copies of every `Global` in the process, and the ones the widgets install would
 be invisible to the application.
+
+### 3.3 The database plumbing is a repository of its own too
+
+What rugpui did for the widgets, [rudbkit](https://github.com/xcomart/rudbkit)
+does for the parts of a database client that are not about this one: the SSH
+tunnel (`rudbkit-ssh`), the profile's tunnel block and the order a connection
+dialog validates and saves in (`rudbkit-core`), and finding and starting a JVM
+with a bridge JAR on its class path (`rudbkit-jdbc`). All three are pinned to
+one revision in the root `Cargo.toml` and bumped together.
+
+The rudbman crates in front of them are deliberately thin, so that nothing above
+them had to change its imports:
+
+- `rudbman-ssh` is a single `pub use rudbkit_ssh::*`. It keeps the tunnel's
+  integration tests: `tests/tunnel.rs` for the paths that fail before a
+  handshake, `tests/e2e.rs` for the ones that need a bastion, which it stands
+  up in-process with russh's server side. Both go through `rudbman_ssh`, and
+  `tunnel.rs` builds its specs from `rudbman-core`'s profile types, so they
+  also pin the re-exports. §9 describes
+  what the crate does; the code is in rudbkit.
+- `rudbman-core` re-exports `TunnelConfig` and `TunnelAuth` from `rudbkit-core`
+  in `profile.rs` and keeps everything rudbman persists: settings, profiles,
+  drivers, the keychain slots and `known_hosts`.
+- `rudbman-jdbc` wraps `rudbkit_jdbc::Jvm` and `JvmConfig` with rudbman's
+  `RuntimeIdentity` (`src/jvm.rs`) — its name, the bridge's entry class and
+  the `RUDBMAN_JAVA_HOME`/`RUDBMAN_BRIDGE_JAR` overrides — and owns everything
+  above the VM: the session workers, the
+  wire codec, LOB files and the bridge protocol.
 
 ---
 
@@ -1466,10 +1513,15 @@ generator and paging syntax (`ROWNUM` vs `LIMIT` vs `FETCH FIRST`).
 
 ---
 
-## 9. SSH tunnels (`rudbman-ssh`)
+## 9. SSH tunnels (`rudbkit-ssh`, via `rudbman-ssh`)
 
 Production databases usually sit behind a bastion host. A connection profile
 optionally carries a tunnel, and JDBC attaches to the local port that results.
+
+The implementation lives in `rudbkit-ssh` (§3.3); `rudbman-ssh` re-exports it
+whole. What stays in this repository is the orchestration in
+`crates/rudbman-app/src/connection.rs` (§9.3) and the host key store in
+`rudbman-core`.
 
 ### 9.1 What is inherited from logman-ssh and what is written fresh
 
