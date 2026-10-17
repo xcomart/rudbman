@@ -78,6 +78,7 @@ settings:
   title: Einstellungen
   system_default: Systemeinstellung verwenden
   save_failed: "Die Einstellungen konnten nicht gespeichert werden: %{error}"
+  load_failed: "Die Einstellungen können nicht gespeichert werden, weil die Einstellungsdatei beim Start von rudbman nicht gelesen werden konnte: %{error}. Reparieren oder verschieben Sie die Datei und starten Sie rudbman neu."
 
   section:
     appearance: Darstellung
@@ -252,7 +253,7 @@ connect:
   name_required: Der Verbindung einen Namen geben.
   url_required: Die Verbindung hat keine URL.
   no_driver: "Keine Treiberdefinition namens „%{driver}“."
-  load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden: %{error}"
+  load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden; bis die Datei repariert oder verschoben ist, kann nichts gespeichert oder gelöscht werden: %{error}"
   save_failed: "Die Verbindungen konnten nicht gespeichert werden: %{error}"
   keychain_failed: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden: %{error}"
 

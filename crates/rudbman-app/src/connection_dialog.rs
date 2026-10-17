@@ -39,6 +39,7 @@
 use rugpui::SmoothScrollExt;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use anyhow::Context as _;
 use gpui::{
     App, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, Render, ScrollHandle, SharedString,
@@ -261,7 +262,21 @@ pub struct ConnectionDialog {
     /// Whether the dialog is visible.
     open: bool,
     /// The profiles on disk, plus unsaved edits to the selected one.
+    ///
+    /// What the list shows, never what a save writes over the file: see
+    /// [`write_changes`].
     store: ConnectionStore,
+    /// The profiles in [`Self::store`] that differ from `connections.json`:
+    /// edits left behind by selecting another profile, and added or duplicated
+    /// profiles not saved yet. A save writes them along with the selected one.
+    edited: HashSet<Uuid>,
+    /// Why `connections.json` could not be read when the dialog opened, while
+    /// that still stands.
+    ///
+    /// Shown under the form whenever no newer message is. A save or delete
+    /// still re-reads the file first, so it refuses for as long as the file
+    /// stays unreadable and goes through, and clears this, once it is fixed.
+    load_error: Option<SharedString>,
     /// The drivers, re-read whenever the manager reports a change.
     drivers: DriverStore,
     /// Id of the profile being edited.
@@ -371,6 +386,8 @@ impl ConnectionDialog {
         Self {
             open: false,
             store: ConnectionStore::default(),
+            edited: HashSet::new(),
+            load_error: None,
             drivers: DriverStore::default(),
             selected: None,
             collapsed_folders: HashSet::new(),
@@ -476,15 +493,22 @@ impl ConnectionDialog {
     }
 
     /// Re-reads `connections.json` and `drivers.json`.
+    ///
+    /// A connections file that cannot be read shows as an empty list with the
+    /// reason under the form. The empty list is only ever *shown*: every write
+    /// re-reads the file (see [`write_changes`]), so it is never what gets saved
+    /// over the one that could not be read.
     fn reload(&mut self, cx: &mut Context<Self>) {
+        self.edited.clear();
         match ConnectionStore::load() {
-            Ok(store) => self.store = store,
+            Ok(store) => {
+                self.store = store;
+                self.load_error = None;
+            }
             Err(error) => {
                 log::error!("could not read connections.json: {error:#}");
-                self.status = Some((
-                    Level::Error,
-                    ts!("connect.load_failed", error = format!("{error:#}")),
-                ));
+                self.store = ConnectionStore::default();
+                self.load_error = Some(ts!("connect.load_failed", error = format!("{error:#}")));
             }
         }
         match DriverStore::load() {
@@ -769,8 +793,19 @@ impl ConnectionDialog {
             &profile.name,
             &profile.url,
             || {
-                self.store.upsert(profile.clone());
-                self.store.save()
+                let changes = changes_to_save(&self.store, &self.edited, &profile);
+                let written = write_changes(
+                    || ConnectionStore::load().context(Unreadable),
+                    ConnectionStore::save,
+                    changes,
+                    None,
+                )?;
+                // Every unsaved profile went with this one, so the file now
+                // holds all of them — and whatever another window added.
+                self.store = written;
+                self.edited.clear();
+                self.load_error = None;
+                Ok(())
             },
             || {
                 write_secret(profile.id, SecretSlot::Connection, &password)?;
@@ -803,9 +838,7 @@ impl ConnectionDialog {
                 let message = match error {
                     SaveError::Name => ts!("connect.name_required"),
                     SaveError::Url => ts!("connect.url_required"),
-                    SaveError::Store(error) => {
-                        ts!("connect.save_failed", error = format!("{error:#}"))
-                    }
+                    SaveError::Store(error) => store_failed(&error),
                     SaveError::Secret(error) => {
                         ts!("connect.keychain_failed", error = format!("{error:#}"))
                     }
@@ -930,6 +963,9 @@ impl ConnectionDialog {
         // not discard a half-typed one; only `save` writes the file.
         let edited = self.collect(cx);
         if !edited.name.trim().is_empty() {
+            if self.store.get(edited.id) != Some(&edited) {
+                self.edited.insert(edited.id);
+            }
             self.store.upsert(edited);
         }
         self.selected = Some(id);
@@ -956,6 +992,7 @@ impl ConnectionDialog {
         profile.confirm_writes = settings.confirm_writes_default;
         let id = profile.id;
         self.store.upsert(profile);
+        self.edited.insert(id);
         self.selected = Some(id);
         self.confirming = false;
         self.status = None;
@@ -976,6 +1013,7 @@ impl ConnectionDialog {
         profile.name = ts!("connect.copy_name", name = profile.name).to_string();
         let id = profile.id;
         self.store.upsert(profile);
+        self.edited.insert(id);
         self.selected = Some(id);
         self.confirming = false;
         self.status = None;
@@ -984,23 +1022,35 @@ impl ConnectionDialog {
     }
 
     /// Removes the selected profile and both of its keychain entries.
+    ///
+    /// Removed from `connections.json` as it is now, not by saving the list
+    /// without it: see [`write_changes`]. When the file cannot be read or
+    /// written the profile stays, in the list and in the keychain.
     fn delete_profile(&mut self, cx: &mut Context<Self>) {
         self.confirming = false;
         let Some(id) = self.selected else {
             return;
         };
-        self.store.remove(id);
+        let written = write_changes(
+            || ConnectionStore::load().context(Unreadable),
+            ConnectionStore::save,
+            Vec::new(),
+            Some(id),
+        );
+        let written = match written {
+            Ok(written) => written,
+            Err(error) => {
+                log::error!("connections.json was not changed: {error:#}");
+                self.report(Level::Error, store_failed(&error), cx);
+                return;
+            }
+        };
         if let Err(error) = SecretStore::delete_all(id) {
             log::warn!("could not remove the secrets of {id}: {error:#}");
         }
-        if let Err(error) = self.store.save() {
-            log::error!("could not write connections.json: {error:#}");
-            self.report(
-                Level::Error,
-                ts!("connect.save_failed", error = format!("{error:#}")),
-                cx,
-            );
-        }
+        self.edited.remove(&id);
+        self.store = keep_unsaved(written, &self.store, &self.edited);
+        self.load_error = None;
         self.selected = self.store.connections().first().map(|profile| profile.id);
         if self.selected.is_none() {
             self.add_profile(cx);
@@ -1376,6 +1426,7 @@ impl ConnectionDialog {
                 .and_then(|driver| driver.default_port)
                 .is_some_and(|port| previous_port == port.to_string());
         profile.driver_id = id;
+        self.edited.insert(profile.id);
         self.store.upsert(profile);
         self.driver_list_open = false;
         self.rebuild_url_parts(cx);
@@ -1776,16 +1827,24 @@ impl ConnectionDialog {
         let this = cx.entity();
         let testing = self.test.is_some();
 
-        let status = self.status.clone().map(|(level, message)| {
-            div()
-                .text_size(px(11.))
-                .text_color(match level {
-                    Level::Ok => chrome.success,
-                    Level::Error => chrome.danger,
-                    Level::Busy => chrome.text_muted,
-                })
-                .child(message)
-        });
+        let status = self
+            .status
+            .clone()
+            .or_else(|| {
+                self.load_error
+                    .clone()
+                    .map(|message| (Level::Error, message))
+            })
+            .map(|(level, message)| {
+                div()
+                    .text_size(px(11.))
+                    .text_color(match level {
+                        Level::Ok => chrome.success,
+                        Level::Error => chrome.danger,
+                        Level::Busy => chrome.text_muted,
+                    })
+                    .child(message)
+            });
 
         let confirm = self.confirming.then(|| {
             let name = self
@@ -2436,6 +2495,101 @@ fn parse_or<T: std::str::FromStr>(input: &Entity<TextInput>, default: T, cx: &Ap
 
 type SaveError = rudbkit_core::save::SaveError<anyhow::Error>;
 
+/// Marks a change that stopped because `connections.json` could not be read.
+///
+/// Put on the read's error as context, so [`store_failed`] can tell it from a
+/// failed write.
+#[derive(Debug)]
+struct Unreadable;
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("connections.json could not be read")
+    }
+}
+
+/// What the form says about a change to `connections.json` that failed.
+fn store_failed(error: &anyhow::Error) -> SharedString {
+    if error.downcast_ref::<Unreadable>().is_some() {
+        // The marker's own words are the log's; the message has its own.
+        let cause: Vec<String> = error.chain().skip(1).map(ToString::to_string).collect();
+        ts!("connect.load_failed", error = cause.join(": "))
+    } else {
+        ts!("connect.save_failed", error = format!("{error:#}"))
+    }
+}
+
+/// Re-reads the connections file, applies this dialog's changes to that copy,
+/// and writes it back.
+///
+/// The dialog's list was read when it opened, and another window may have
+/// written the file since; saving the list would undo that, and saving it
+/// after the read failed would replace every connection with the ones on
+/// screen. So only what the dialog changed —
+/// `changes` upserted, `removed` dropped — is applied, to the file as it is now.
+///
+/// # Errors
+///
+/// A file that cannot be read is left exactly as it is: nothing is applied and
+/// nothing is written. A failed write is the other error.
+fn write_changes(
+    load: impl FnOnce() -> anyhow::Result<ConnectionStore>,
+    save: impl FnOnce(&ConnectionStore) -> anyhow::Result<()>,
+    changes: Vec<ConnectionProfile>,
+    removed: Option<Uuid>,
+) -> anyhow::Result<ConnectionStore> {
+    let mut store = load()?;
+    for profile in changes {
+        store.upsert(profile);
+    }
+    if let Some(id) = removed {
+        store.remove(id);
+    }
+    save(&store)?;
+    Ok(store)
+}
+
+/// What a save of `selected` writes: it and every other profile in `store`
+/// that `edited` names, in list order.
+fn changes_to_save(
+    store: &ConnectionStore,
+    edited: &HashSet<Uuid>,
+    selected: &ConnectionProfile,
+) -> Vec<ConnectionProfile> {
+    let mut changes: Vec<ConnectionProfile> = store
+        .connections()
+        .iter()
+        .filter(|profile| profile.id == selected.id || edited.contains(&profile.id))
+        .map(|profile| {
+            if profile.id == selected.id {
+                selected.clone()
+            } else {
+                profile.clone()
+            }
+        })
+        .collect();
+    if store.get(selected.id).is_none() {
+        changes.push(selected.clone());
+    }
+    changes
+}
+
+/// The list to show after a write that left some edits unsaved: `written`,
+/// with the profiles `edited` names put back as `shown` has them.
+fn keep_unsaved(
+    written: ConnectionStore,
+    shown: &ConnectionStore,
+    edited: &HashSet<Uuid>,
+) -> ConnectionStore {
+    let mut store = written;
+    for profile in shown.connections() {
+        if edited.contains(&profile.id) {
+            store.upsert(profile.clone());
+        }
+    }
+    store
+}
+
 fn write_secret(id: Uuid, slot: SecretSlot, secret: &str) -> anyhow::Result<()> {
     if secret.is_empty() {
         SecretStore::delete(id, slot)
@@ -2505,6 +2659,135 @@ mod tests {
     use gpui::VisualTestContext;
 
     use super::*;
+
+    /// The names in `store`, in list order.
+    fn names(store: &ConnectionStore) -> Vec<&str> {
+        store
+            .connections()
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_connections_file_that_cannot_be_read_is_not_saved_over() {
+        // The dialog shows an empty list in its place; saving or deleting from
+        // that list would replace every connection with the one on screen.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("connections.json");
+        let damaged = b"{ \"connections\": [ not json";
+        std::fs::write(&path, damaged).unwrap();
+        let load = || ConnectionStore::load_from(&path).context(Unreadable);
+        let save = |store: &ConnectionStore| store.save_to(&path);
+        let mine = ConnectionProfile::new("mine", "h2", "jdbc:h2:mem:a", "sa");
+
+        let saved = write_changes(load, save, vec![mine.clone()], None);
+        let error = saved.expect_err("a save over an unreadable file must refuse");
+        assert!(error.downcast_ref::<Unreadable>().is_some());
+        let deleted = write_changes(load, save, Vec::new(), Some(mine.id));
+        assert!(deleted.is_err(), "a delete must refuse as well");
+
+        assert_eq!(std::fs::read(&path).unwrap(), damaged);
+    }
+
+    #[test]
+    fn a_save_starts_from_the_file_rather_than_the_list_read_at_open() {
+        // The dialog opened over an empty list; the import wizard has written
+        // a connection since. Saving one of the dialog's own must keep it.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("connections.json");
+        let mut meanwhile = ConnectionStore::default();
+        meanwhile.upsert(ConnectionProfile::new(
+            "imported",
+            "h2",
+            "jdbc:h2:mem:i",
+            "sa",
+        ));
+        meanwhile.save_to(&path).unwrap();
+
+        let mine = ConnectionProfile::new("mine", "h2", "jdbc:h2:mem:a", "sa");
+        let mut shown = ConnectionStore::default();
+        shown.upsert(mine.clone());
+        let edited = HashSet::from([mine.id]);
+
+        let written = write_changes(
+            || ConnectionStore::load_from(&path),
+            |store| store.save_to(&path),
+            changes_to_save(&shown, &edited, &mine),
+            None,
+        )
+        .expect("the file reads and writes");
+
+        assert_eq!(names(&written), ["imported", "mine"]);
+        assert_eq!(
+            names(&ConnectionStore::load_from(&path).unwrap()),
+            ["imported", "mine"]
+        );
+    }
+
+    #[test]
+    fn a_save_takes_the_edits_left_on_other_profiles_and_nothing_else() {
+        let mut shown = ConnectionStore::default();
+        let mut left = ConnectionProfile::new("left", "h2", "jdbc:h2:mem:a", "sa");
+        let untouched = ConnectionProfile::new("untouched", "h2", "jdbc:h2:mem:b", "sa");
+        let selected = ConnectionProfile::new("selected", "h2", "jdbc:h2:mem:c", "sa");
+        left.name = "left, renamed".to_owned();
+        shown.upsert(left.clone());
+        shown.upsert(untouched);
+        shown.upsert(selected.clone());
+        let edited = HashSet::from([left.id]);
+
+        let mut form = selected.clone();
+        form.username = "app".to_owned();
+        let changes = changes_to_save(&shown, &edited, &form);
+
+        // A stale copy of a profile the user never touched is not written: it
+        // would undo whatever another window changed in it.
+        assert_eq!(changes, [left, form]);
+    }
+
+    #[test]
+    fn a_delete_removes_only_that_profile_and_keeps_unsaved_edits_on_screen() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("connections.json");
+        let doomed = ConnectionProfile::new("doomed", "h2", "jdbc:h2:mem:a", "sa");
+        let kept = ConnectionProfile::new("kept", "h2", "jdbc:h2:mem:b", "sa");
+        let elsewhere = ConnectionProfile::new("elsewhere", "h2", "jdbc:h2:mem:c", "sa");
+        let mut on_disk = ConnectionStore::default();
+        on_disk.upsert(doomed.clone());
+        on_disk.upsert(kept.clone());
+        on_disk.upsert(elsewhere);
+        on_disk.save_to(&path).unwrap();
+
+        // Opened before `elsewhere` was written, with `kept` renamed and a new
+        // profile added, neither of them saved.
+        let mut renamed = kept.clone();
+        renamed.name = "kept, renamed".to_owned();
+        let added = ConnectionProfile::new("added", "h2", "jdbc:h2:mem:d", "sa");
+        let mut shown = ConnectionStore::default();
+        shown.upsert(doomed.clone());
+        shown.upsert(renamed);
+        shown.upsert(added);
+        let mut edited = HashSet::from([shown.connections()[1].id, shown.connections()[2].id]);
+
+        let written = write_changes(
+            || ConnectionStore::load_from(&path),
+            |store| store.save_to(&path),
+            Vec::new(),
+            Some(doomed.id),
+        )
+        .expect("the file reads and writes");
+        edited.remove(&doomed.id);
+
+        assert_eq!(
+            names(&ConnectionStore::load_from(&path).unwrap()),
+            ["kept", "elsewhere"]
+        );
+        assert_eq!(
+            names(&keep_unsaved(written, &shown, &edited)),
+            ["kept, renamed", "elsewhere", "added"]
+        );
+    }
 
     #[test]
     fn a_dialog_opens_over_the_profile_it_was_asked_for() {

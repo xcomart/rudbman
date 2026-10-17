@@ -78,6 +78,7 @@ settings:
   title: 설정
   system_default: 시스템 설정 따름
   save_failed: "설정을 저장하지 못했습니다: %{error}"
+  load_failed: "rudbman 시작 시 설정 파일을 읽지 못해 설정을 저장할 수 없습니다: %{error}. 그 파일을 고치거나 옮긴 뒤 rudbman을 다시 시작하세요."
 
   section:
     appearance: 모양
@@ -252,7 +253,7 @@ connect:
   name_required: 연결 이름을 입력하세요.
   url_required: 연결 URL이 비어 있습니다.
   no_driver: "“%{driver}”이라는 드라이버 정의가 없습니다."
-  load_failed: "저장된 연결을 읽지 못했습니다: %{error}"
+  load_failed: "저장된 연결을 읽지 못해, 그 파일을 고치거나 옮기기 전까지는 저장하거나 삭제할 수 없습니다: %{error}"
   save_failed: "연결을 저장하지 못했습니다: %{error}"
   keychain_failed: "비밀번호를 키체인에 저장하지 못했습니다: %{error}"
 

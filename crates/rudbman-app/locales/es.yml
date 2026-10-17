@@ -78,6 +78,7 @@ settings:
   title: Ajustes
   system_default: Usar el ajuste del sistema
   save_failed: "No se pudieron guardar los ajustes: %{error}"
+  load_failed: "No se pueden guardar los ajustes porque no se pudo leer el archivo de ajustes al iniciar rudbman: %{error}. Repare o mueva ese archivo y reinicie rudbman."
 
   section:
     appearance: Apariencia
@@ -252,7 +253,7 @@ connect:
   name_required: Dale un nombre a la conexión.
   url_required: La conexión no tiene URL.
   no_driver: "No hay ninguna definición de controlador llamada «%{driver}»."
-  load_failed: "No se pudieron leer las conexiones guardadas: %{error}"
+  load_failed: "No se pudieron leer las conexiones guardadas; no se puede guardar ni eliminar nada hasta que se repare o se mueva ese archivo: %{error}"
   save_failed: "No se pudieron guardar las conexiones: %{error}"
   keychain_failed: "No se pudo guardar la contraseña en el llavero: %{error}"
 

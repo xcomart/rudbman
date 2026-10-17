@@ -159,6 +159,7 @@ settings:
   # the same whether or not its list is open.
   system_default: Use the system setting
   save_failed: "The settings could not be saved: %{error}"
+  load_failed: "Settings cannot be saved, because the settings file could not be read when rudbman started: %{error}. Fix or move that file and restart rudbman."
 
   section:
     appearance: Appearance
@@ -369,7 +370,7 @@ connect:
   name_required: Give the connection a name.
   url_required: The connection has no URL.
   no_driver: "No driver definition named “%{driver}”."
-  load_failed: "The saved connections could not be read: %{error}"
+  load_failed: "The saved connections could not be read, so nothing can be saved or deleted until that file is fixed or moved: %{error}"
   save_failed: "The connections could not be saved: %{error}"
   keychain_failed: "The password could not be saved to the keychain: %{error}"
 
