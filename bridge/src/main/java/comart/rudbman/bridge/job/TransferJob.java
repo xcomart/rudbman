@@ -280,6 +280,7 @@ public final class TransferJob extends Jobs.Job {
             conn.setAutoCommit(false);
         }
         boolean pending = true;
+        Throwable failure = null;
         try {
             if ("truncate_insert".equals(mode)) {
                 emptyTarget(conn, qualified);
@@ -296,11 +297,24 @@ public final class TransferJob extends Jobs.Job {
                 conn.commit();
                 pending = false;
             }
+        } catch (Throwable t) {
+            failure = t;
+            throw t;
         } finally {
             // Order matters: setAutoCommit(true) commits the open transaction on
             // most drivers, so the tail has to be rolled back before it.
             if (pending) {
-                rollbackTail(conn, target, autoCommit);
+                try {
+                    rollbackTail(conn, target, autoCommit);
+                } catch (SQLException e) {
+                    // The write that failed is the job's failure; a rollback that
+                    // failed after it rides along rather than replacing it. The
+                    // target is marked unusable either way.
+                    if (failure == null) {
+                        throw e;
+                    }
+                    failure.addSuppressed(e);
+                }
             } else if (autoCommit) {
                 quietly(() -> conn.setAutoCommit(true), "cannot restore auto-commit");
             }
