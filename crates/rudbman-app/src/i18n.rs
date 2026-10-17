@@ -203,6 +203,33 @@ mod tests {
     }
 
     #[test]
+    fn no_go_ahead_button_reads_like_the_cancel_beside_it() {
+        // Each key here labels the button that carries out what a confirmation
+        // asks about, drawn next to `common.cancel`. A translation that words it
+        // as "cancel" too — the Korean "취소" once did for discarding changes —
+        // leaves two identical buttons that do opposite things.
+        const GO_AHEAD: [&str; 7] = [
+            "data.discard",
+            "struct.discard",
+            "data.apply",
+            "query.confirm_run",
+            "connect.delete",
+            "driver.delete",
+            "common.save",
+        ];
+        for (tag, _) in supported() {
+            let cancel = t!("common.cancel", locale = tag);
+            for key in GO_AHEAD {
+                assert_ne!(
+                    t!(key, locale = tag),
+                    cancel,
+                    "{key} reads like common.cancel in {tag}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_supported_tag_is_found_by_its_own_name() {
         for (tag, name) in supported() {
             assert_eq!(display_name(tag), Some(name.as_str()), "name of {tag}");

@@ -429,17 +429,17 @@ data:
   row_count: "%{count}행"
   no_primary_key: 이 테이블에는 기본 키가 없어 행을 읽을 수만 있습니다.
   read_only: 읽기 전용 접속이라 행을 읽을 수만 있습니다.
-  discard_first: 변경 사항을 먼저 적용하거나 취소하세요.
+  discard_first: 변경 사항을 먼저 적용하거나 버리세요.
   pending: "변경 %{changed} · 추가 %{inserted} · 삭제 %{deleted}"
   apply: 적용
-  discard: 취소
-  discard_title: 변경 사항 취소
+  discard: 변경 사항 버리기
+  discard_title: 변경 사항 버리기
   discard_body: "변경한 %{changed}행, 추가한 %{inserted}행, 삭제 표시한 %{deleted}행을 모두 버립니다. 되돌릴 수 없습니다."
   set_null: NULL로 지정
   insert_row: 행 추가
   delete_row: 행 삭제
   undelete_row: 행 삭제 취소
-  discard_row: 이 행의 변경 사항 취소
+  discard_row: 이 행의 변경 사항 버리기
   apply_title: "%{count}개 문장 적용"
   apply_no_rollback: 이 데이터베이스는 트랜잭션을 지원하지 않아 도중에 실패해도 되돌릴 수 없습니다.
   applying: 적용하는 중…
@@ -455,8 +455,8 @@ data:
 struct:
   loading: 불러오는 중…
   refresh: 새로 고침
-  discard: 취소
-  discard_first: 변경 사항을 먼저 취소하세요.
+  discard: 변경 사항 버리기
+  discard_first: 변경 사항을 먼저 버리세요.
   read_only: 읽기 전용 접속이라 이 테이블의 구조를 읽을 수만 있습니다.
   pending: "대기 중인 변경 %{count}건"
   columns: 열
