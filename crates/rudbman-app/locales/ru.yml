@@ -522,7 +522,7 @@ extract:
   counters: "%{rows} строк, %{bytes}"
   cancelling: Отмена…
   done: "%{rows} строк (%{bytes}) записано в %{path}."
-  cancelled: "Отменено. Частично записанный файл остался в %{path}."
+  cancelled: "Отменено. В %{path} ничего не записано."
   failed: "Извлечение не удалось: %{error}"
   failed_unknown: Извлечение не удалось, но мост не сообщил причину.
 
@@ -569,7 +569,7 @@ backup:
   counters: "%{rows} строк, %{bytes}"
   cancelling: Отмена…
   done: "%{rows} строк (%{bytes}) записано в %{path}."
-  cancelled: "Отменено. Частично записанный файл остался в %{path}."
+  cancelled: "Отменено. В %{path} ничего не записано."
   failed: "Резервное копирование не удалось: %{error}"
   failed_unknown: Резервное копирование не удалось, но мост не сообщил причину.
 

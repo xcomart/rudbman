@@ -1096,13 +1096,17 @@ fn create_big_table(session: &Session) {
     );
 }
 
+/// What an earlier, good file at a job's output path holds.
+const PREVIOUS: &[u8] = b"-- previous extract\n";
+
 #[test]
-fn cancelling_a_job_mid_flight_keeps_the_partial_file_and_the_session() {
+fn cancelling_a_job_mid_flight_keeps_the_previous_file_and_the_session() {
     let session = session();
     create_big_table(&session);
 
     let dir = tempfile::tempdir().expect("a temp directory");
     let path = dir.path().join("cancelled.sql");
+    std::fs::write(&path, PREVIOUS).expect("the previous file is written");
     let mut job = session
         .start_job(
             &ExtractSpec::new(&path)
@@ -1141,14 +1145,22 @@ fn cancelling_a_job_mid_flight_keeps_the_partial_file_and_the_session() {
         end.rows_done < BIG_ROWS,
         "a cancel that only landed after the last row proves nothing: {end:?}"
     );
-    // Partial output is kept rather than deleted: it is work the user may still
-    // want, and deleting it is a decision this layer does not get to make.
-    let written = std::fs::metadata(&path)
-        .expect("the partial file is there")
-        .len();
-    assert!(
-        written > 0,
-        "the file should hold what was written before the cancel"
+    // The bridge writes beside the target and only renames on success, so the
+    // file that was there before the job — an earlier extract, a backup — is
+    // untouched, and the unfinished output is gone by the time the state is
+    // reported.
+    assert_eq!(
+        std::fs::read(&path).expect("the previous file is still there"),
+        PREVIOUS
+    );
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("the directory lists")
+        .map(|entry| entry.expect("an entry").file_name())
+        .collect();
+    assert_eq!(
+        left,
+        ["cancelled.sql"],
+        "no unfinished output is left behind"
     );
 
     // And the session survived having a statement cancelled underneath it.

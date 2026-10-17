@@ -522,7 +522,7 @@ extract:
   counters: "%{rows}행, %{bytes}"
   cancelling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
-  cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
+  cancelled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
   failed: "추출에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 추출에 실패했습니다.
 
@@ -569,7 +569,7 @@ backup:
   counters: "%{rows}행, %{bytes}"
   cancelling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
-  cancelled: "취소했습니다. 쓰다 만 파일은 %{path}에 남아 있습니다."
+  cancelled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
   failed: "백업에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 백업에 실패했습니다.
 

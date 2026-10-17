@@ -522,7 +522,7 @@ extract:
   counters: "%{rows} 行、%{bytes}"
   cancelling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
+  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
 
@@ -569,7 +569,7 @@ backup:
   counters: "%{rows} 行、%{bytes}"
   cancelling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。途中まで書いたファイルは %{path} に残っています。"
+  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
 

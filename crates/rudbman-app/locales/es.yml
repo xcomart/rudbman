@@ -522,7 +522,7 @@ extract:
   counters: "%{rows} filas, %{bytes}"
   cancelling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
-  cancelled: "Cancelado. El archivo parcial quedó en %{path}."
+  cancelled: "Cancelado. No se escribió nada en %{path}."
   failed: "La extracción falló: %{error}"
   failed_unknown: La extracción falló y el puente no dijo por qué.
 
@@ -569,7 +569,7 @@ backup:
   counters: "%{rows} filas, %{bytes}"
   cancelling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
-  cancelled: "Cancelado. El archivo parcial quedó en %{path}."
+  cancelled: "Cancelado. No se escribió nada en %{path}."
   failed: "La copia falló: %{error}"
   failed_unknown: La copia falló y el puente no dijo por qué.
 

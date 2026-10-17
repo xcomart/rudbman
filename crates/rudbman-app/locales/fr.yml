@@ -522,7 +522,7 @@ extract:
   counters: "%{rows} lignes, %{bytes}"
   cancelling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
-  cancelled: "Annulé. Le fichier partiel est resté dans %{path}."
+  cancelled: "Annulé. Rien n'a été écrit dans %{path}."
   failed: "L'extraction a échoué : %{error}"
   failed_unknown: L'extraction a échoué sans que le pont en donne la raison.
 
@@ -569,7 +569,7 @@ backup:
   counters: "%{rows} lignes, %{bytes}"
   cancelling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
-  cancelled: "Annulé. Le fichier partiel est resté dans %{path}."
+  cancelled: "Annulé. Rien n'a été écrit dans %{path}."
   failed: "La sauvegarde a échoué : %{error}"
   failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
 

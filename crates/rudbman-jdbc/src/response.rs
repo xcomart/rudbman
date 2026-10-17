@@ -440,8 +440,9 @@ pub enum JobState {
     Done,
     /// Stopped by a failure. [`JobProgress::errors`] says which.
     Failed,
-    /// Stopped by a cancel. The partial output file is left where it is, on
-    /// purpose: it is work the user may still want.
+    /// Stopped by a cancel. Nothing was written to the output path: the bridge
+    /// writes beside it and only renames on success, so whatever was there
+    /// before the job is left as it was.
     Cancelled,
 }
 

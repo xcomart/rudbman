@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -153,10 +154,11 @@ class ExtractJobTest {
     // -------------------------------------------------------- cancel, progress
 
     @Test
-    void cancellingMidFlightLeavesAPartialFileAndAUsableSession() throws Exception {
+    void cancellingMidFlightKeepsThePreviousFileAndAUsableSession() throws Exception {
         generateBigTable();
 
         Path out = tmp.resolve("cancelled.sql");
+        Files.write(out, PREVIOUS);
         long job = start(spec(out, objects(obj("PUBLIC", "BIG")), null,
                 data(true, "insert", 1, null, null)));
 
@@ -171,12 +173,42 @@ class ExtractJobTest {
         assertTrue(end.get("rows_done").getAsLong() < BIG_ROWS,
                 "a cancel that only arrived after the last row proves nothing: " + end);
 
-        // The file is there and is short: partial output is kept, not deleted.
-        assertTrue(Files.exists(out));
-        assertTrue(countLines(out) < BIG_ROWS, "expected a partial file");
+        // The file that was there before the job is untouched, and the
+        // unfinished output is gone by the time the state is reported.
+        assertArrayEquals(PREVIOUS, Files.readAllBytes(out));
+        assertEquals(List.of(out), listing(tmp));
 
         // And the session survived having a statement cancelled underneath it.
         assertEquals(String.valueOf(BIG_ROWS), one(session, "select count(*) from big"));
+    }
+
+    @Test
+    void aFinishedJobReplacesTheFileThatWasThere() throws Exception {
+        H2.exec(session, "create table t (id int)");
+        Path out = tmp.resolve("replaced.sql");
+        Files.write(out, PREVIOUS);
+        JsonObject end = await(start(spec(out, objects(obj("PUBLIC", "T")),
+                ddl(true, false, "alter"), null)));
+        assertEquals("done", end.get("state").getAsString(), end.toString());
+        String script = read(out);
+        assertTrue(script.contains("CREATE TABLE"), script);
+        assertFalse(script.contains("previous"), script);
+        assertEquals(List.of(out), listing(tmp));
+    }
+
+    @Test
+    void aFailedJobKeepsThePreviousFile() throws Exception {
+        H2.exec(session, "create table t (id int)");
+        Path out = tmp.resolve("failed.sql");
+        Files.write(out, PREVIOUS);
+        // The first object writes its DDL; the second does not exist, so the job
+        // fails with part of a script already written.
+        JsonObject end = await(start(spec(out,
+                objects(obj("PUBLIC", "T"), obj("PUBLIC", "NO_SUCH_TABLE")),
+                ddl(true, false, "alter"), null)));
+        assertEquals("failed", end.get("state").getAsString(), end.toString());
+        assertArrayEquals(PREVIOUS, Files.readAllBytes(out));
+        assertEquals(List.of(out), listing(tmp));
     }
 
     @Test
@@ -381,7 +413,12 @@ class ExtractJobTest {
         // The handle is gone with the session, which is what keeps an abandoned
         // job from outliving the connection it was reading through.
         assertFalse(H2.call(Ops.JOB_POLL, job, 0, null).ok);
-        awaitFileReleased(out);
+        awaitWorker("extract", job);
+        // A job that lost the race finished and moved its file into place; one
+        // that was cancelled left nothing at all. Either way no unfinished
+        // sibling survives the worker.
+        List<Path> left = listing(tmp);
+        assertTrue(left.isEmpty() || left.equals(List.of(out)), left.toString());
     }
 
     // --------------------------------------------------------------- helpers
@@ -426,35 +463,39 @@ class ExtractJobTest {
         throw new AssertionError("job " + job + " produced no rows");
     }
 
+    /** Bytes standing in for an earlier, good file at the target path. */
+    private static final byte[] PREVIOUS =
+            "-- previous extract\n".getBytes(StandardCharsets.UTF_8);
+
     /**
-     * Waits for the worker to let go of an output file, by deleting it.
+     * Waits for a job's worker thread to end.
      *
-     * <p>Closing a session cancels its jobs without joining their threads, so the
-     * worker only closes the file some time after the call that cancelled it has
-     * returned. Windows will not delete a file that is still open, and
-     * {@code @TempDir} cleanup runs the moment the test method ends, so a test
-     * that walks away from a live worker fails in teardown instead of in an
-     * assertion. Deleting the file is both the wait and the proof it is over:
-     * it only succeeds once the handle is gone.
+     * <p>Closing a session cancels its jobs without joining their threads, and
+     * the handle is unregistered with them, so nothing can be polled. The thread
+     * itself is the only thing left to wait on - and it has to be waited on:
+     * {@code @TempDir} cleanup runs the moment the test method ends, and on
+     * Windows a file the worker still holds open cannot be deleted.
      *
-     * @param out the file the job was writing
+     * @param kind the job kind, as it appears in the thread name
+     * @param job  the job handle
      */
-    private static void awaitFileReleased(Path out) throws Exception {
-        for (int i = 0; i < 1200; i++) {
-            try {
-                if (Files.deleteIfExists(out)) {
-                    return;
+    static void awaitWorker(String kind, long job) throws Exception {
+        String name = "rudbman-job-" + kind + "-" + job;
+        for (Thread t : Thread.getAllStackTraces().keySet()) {
+            if (name.equals(t.getName())) {
+                t.join(30_000);
+                if (t.isAlive()) {
+                    throw new AssertionError("worker " + name + " never finished");
                 }
-                // Nothing to delete yet. The worker opens the file before it ever
-                // looks at the cancel flag, so an absent file means it has not
-                // got that far and there is still a handle coming.
-            } catch (IOException stillOpen) {
-                // Windows, refusing to unlink an open file. Give the worker the
-                // moment it needs to reach the end of its try-with-resources.
             }
-            Thread.sleep(25);
         }
-        throw new AssertionError("worker never released " + out);
+    }
+
+    /** @return the entries of {@code dir}, hidden ones included, sorted */
+    static List<Path> listing(Path dir) throws IOException {
+        try (var entries = Files.list(dir)) {
+            return entries.sorted().toList();
+        }
     }
 
     private static JsonObject obj(String schema, String name) {
@@ -517,11 +558,6 @@ class ExtractJobTest {
         return new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
     }
 
-    private static long countLines(Path p) throws Exception {
-        try (var lines = Files.lines(p, StandardCharsets.UTF_8)) {
-            return lines.count();
-        }
-    }
 
     /**
      * Runs a generated script statement by statement.

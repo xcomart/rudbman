@@ -522,7 +522,7 @@ extract:
   counters: "%{rows} Zeilen, %{bytes}"
   cancelling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. Die unvollständige Datei liegt unter %{path}."
+  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Extraktion schlug fehl: %{error}"
   failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.
 
@@ -569,7 +569,7 @@ backup:
   counters: "%{rows} Zeilen, %{bytes}"
   cancelling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. Die unvollständige Datei liegt unter %{path}."
+  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
 

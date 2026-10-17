@@ -840,10 +840,11 @@ extract:
   counters: "%{rows} rows, %{bytes}"
   # The cancel has been issued and the job has not stopped yet.
   cancelling: Cancelling…
-  # The three endings. A cancelled job leaves its partial file on disk on
-  # purpose, so the message says where it is.
+  # The three endings. A cancelled job writes nothing to the path: the bridge
+  # writes beside it and only renames on success, so whatever was there before
+  # — an earlier extract — is left as it was. The message says so.
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
-  cancelled: "Cancelled. The partial file was left at %{path}."
+  cancelled: "Cancelled. Nothing was written to %{path}."
   failed: "The extraction failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The extraction failed for a reason the bridge did not give.
@@ -923,7 +924,7 @@ backup:
   counters: "%{rows} rows, %{bytes}"
   cancelling: Cancelling…
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
-  cancelled: "Cancelled. The partial file was left at %{path}."
+  cancelled: "Cancelled. Nothing was written to %{path}."
   failed: "The backup failed: %{error}"
   failed_unknown: The backup failed for a reason the bridge did not give.
 

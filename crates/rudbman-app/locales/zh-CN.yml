@@ -522,7 +522,7 @@ extract:
   counters: "%{rows} 行，%{bytes}"
   cancelling: 正在取消…
   done: "已将 %{rows} 行（%{bytes}）写入 %{path}。"
-  cancelled: "已取消。写了一半的文件保留在 %{path}。"
+  cancelled: "已取消。没有向 %{path} 写入任何内容。"
   failed: "提取失败：%{error}"
   failed_unknown: 提取失败，桥接层没有给出原因。
 
@@ -569,7 +569,7 @@ backup:
   counters: "%{rows} 行，%{bytes}"
   cancelling: 正在取消…
   done: "已将 %{rows} 行（%{bytes}）写入 %{path}。"
-  cancelled: "已取消。写了一半的文件保留在 %{path}。"
+  cancelled: "已取消。没有向 %{path} 写入任何内容。"
   failed: "备份失败：%{error}"
   failed_unknown: 备份失败，桥接层没有给出原因。
 

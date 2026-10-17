@@ -14,8 +14,10 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.zip.GZIPInputStream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -140,6 +142,31 @@ class BackupJobTest {
         assertEquals(0, Files.size(out));
     }
 
+    @Test
+    void aCancelledBackupLeavesThePreviousBackupInPlace() throws Exception {
+        H2.exec(session, "create schema bg");
+        H2.exec(session, "create table bg.big (id int, v varchar(80))");
+        H2.exec(session, "insert into bg.big select x, 'row number ' || x"
+                + " from system_range(1, 200000)");
+
+        // The case the rule exists for: last night's backup is at the path, and
+        // tonight's is cancelled half way. Truncating up front would have lost
+        // both.
+        Path out = tmp.resolve("nightly.sql.gz");
+        byte[] previous = "-- last night's backup\n".getBytes(StandardCharsets.UTF_8);
+        Files.write(out, previous);
+        long job = start(spec(out, "BG", "gzip", true, false, true));
+        awaitRows(job);
+
+        H2.call(Ops.JOB_CANCEL, job, 0, null);
+        JsonObject end = await(job);
+        assertEquals("cancelled", end.get("state").getAsString(), end.toString());
+        assertTrue(end.get("rows_done").getAsLong() < 200000, end.toString());
+
+        assertArrayEquals(previous, Files.readAllBytes(out));
+        assertEquals(List.of(out), ExtractJobTest.listing(tmp));
+    }
+
     // ------------------------------------------------------- protocol errors
 
     @Test
@@ -208,6 +235,21 @@ class BackupJobTest {
             Thread.sleep(25);
         }
         throw new AssertionError("job " + job + " never finished");
+    }
+
+    /** Polls until the job has written at least one row. */
+    private void awaitRows(long job) throws Exception {
+        for (int i = 0; i < 1200; i++) {
+            JsonObject p = H2.call(Ops.JOB_POLL, job, 0, null).json();
+            if (p.get("rows_done").getAsLong() > 0) {
+                return;
+            }
+            if (!"running".equals(p.get("state").getAsString())) {
+                throw new AssertionError("job finished before producing rows: " + p);
+            }
+            Thread.sleep(2);
+        }
+        throw new AssertionError("job " + job + " produced no rows");
     }
 
     private static String read(Path p) throws Exception {

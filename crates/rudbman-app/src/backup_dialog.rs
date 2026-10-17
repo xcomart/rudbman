@@ -214,7 +214,7 @@ enum Ended {
     },
     /// The job failed. The message is the first error's, as the bridge wrote it.
     Failed(SharedString),
-    /// The job was cancelled. The partial file is left where it is.
+    /// The job was cancelled. The file at the path is left as it was.
     Cancelled,
 }
 
@@ -322,9 +322,8 @@ impl BackupDialog {
     /// Hides the dialog without emitting an event.
     ///
     /// **A job still running is cancelled**, by the drop chain
-    /// [`crate::extract_dialog`] documents. The partial file stays on disk,
-    /// which is what the bridge promises and what a user who chose that path
-    /// expects.
+    /// [`crate::extract_dialog`] documents. The file at the path is left as it
+    /// was, which is what the bridge promises.
     pub fn close(&mut self, cx: &mut Context<Self>) {
         self.open = false;
         self.pending_focus = false;
