@@ -66,8 +66,8 @@ use rudbman_core::{
 use rugpui::{
     Button, ButtonVariant, DraggedTab, DraggedThumb, EditorThemeEntry, EditorThemeRegistry,
     MenuButton, MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter,
-    TabBar, TabItem, TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal, scroll_to,
-    scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
+    TabBar, TabDropState, TabItem, TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal,
+    scroll_to, scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use rugpui_shell::chrome::{
     SHADOW_BAND, client_tiling, draws_own_titlebar, render_client_frame, titlebar_gestures,
@@ -616,10 +616,10 @@ struct Workspace {
     confirm: Option<PendingConfirm>,
     /// Where a dragged tab would land, while a drag is over a strip.
     ///
-    /// The tag names the strip — a pane id for a pane's strip, and
-    /// [`CONNECTION_STRIP_TAG`] for the connection strip — and the index the
-    /// insertion gap the pointer is over. `None` draws no bar anywhere.
-    tab_drop: Option<(u64, usize)>,
+    /// Strips are tagged with a pane id for a pane's strip, and
+    /// [`CONNECTION_STRIP_TAG`] for the connection strip; at most one of them
+    /// shows a bar at a time.
+    tab_drop: TabDropState,
     /// Title bar style currently *on the window*.
     ///
     /// Starts as the style the window was created with. Not read from the
@@ -746,7 +746,7 @@ impl Workspace {
             menu_open: false,
             context_menu: None,
             confirm: None,
-            tab_drop: None,
+            tab_drop: TabDropState::new(),
             titlebar,
             _about_events: about_events,
             _connect_events: connect_events,
@@ -785,7 +785,7 @@ struct PaneChrome {
     ///
     /// Copied from [`Workspace::tab_drop`] for the frame: each strip draws its
     /// own bar only when the tag names it.
-    drop: Option<(u64, usize)>,
+    drop: TabDropState,
 }
 
 #[cfg(test)]

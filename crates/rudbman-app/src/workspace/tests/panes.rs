@@ -597,6 +597,62 @@ fn closing_a_background_panes_last_tab_collapses_only_that_pane(cx: &mut gpui::T
         .unwrap();
 }
 
+/// The drop bar follows a drag only over a strip that would take the tab:
+/// a pane's strip refuses a connection tab, the connection strip refuses a
+/// pane's, and a strip the pointer is not over never takes down the bar of
+/// the one it is.
+#[gpui::test]
+fn the_drop_bar_shows_only_where_the_dragged_tab_would_be_taken(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("drop-bar", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("select 1", window, cx);
+            let pane = active_pane(workspace);
+            let strip = pane.as_u64();
+            let from_pane = DraggedTab {
+                source: strip,
+                index: 0,
+            };
+            let from_connections = DraggedTab {
+                source: CONNECTION_STRIP_TAG,
+                index: 0,
+            };
+
+            workspace.drag_over_tab(strip, from_pane, Some(1), cx);
+            assert_eq!(workspace.tab_drop.indicator(strip), Some(1));
+            // Another strip reporting the pointer gone leaves this bar up…
+            workspace.drag_over_tab(CONNECTION_STRIP_TAG, from_pane, None, cx);
+            assert_eq!(workspace.tab_drop.indicator(strip), Some(1));
+            // …and refuses the pane's tab outright.
+            workspace.drag_over_tab(CONNECTION_STRIP_TAG, from_pane, Some(0), cx);
+            assert_eq!(workspace.tab_drop.current(), Some((strip, 1)));
+            // The pane's own `None` takes it down.
+            workspace.drag_over_tab(strip, from_pane, None, cx);
+            assert_eq!(workspace.tab_drop.current(), None);
+
+            // A connection tab raises no bar over a pane…
+            workspace.drag_over_tab(strip, from_connections, Some(0), cx);
+            assert_eq!(workspace.tab_drop.current(), None);
+            // …and does over its own strip, until the drag is let go.
+            workspace.drag_over_tab(CONNECTION_STRIP_TAG, from_connections, Some(0), cx);
+            assert_eq!(workspace.tab_drop.indicator(CONNECTION_STRIP_TAG), Some(0));
+            workspace.clear_tab_drop(cx);
+            assert_eq!(workspace.tab_drop.current(), None);
+
+            // A pane of no work area on screen is no source a pane takes from.
+            let stale = PaneTree::single(Pane::new()).first_leaf().0;
+            let from_stale = DraggedTab {
+                source: stale.as_u64(),
+                index: 0,
+            };
+            workspace.drag_over_tab(strip, from_stale, Some(0), cx);
+            assert_eq!(workspace.tab_drop.current(), None);
+        })
+        .unwrap();
+    cx.run_until_parked();
+}
+
 /// A drag along the strip reorders it: the dropped tab tucks in before the
 /// one it landed on, the tab on top stays the tab on top unless it was the
 /// one moved, and a drop that would change nothing is a no-op.
