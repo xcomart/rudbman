@@ -45,7 +45,9 @@ struct SavedTab {
 enum SavedContent {
     Query {
         number: u64,
-        sql: String,
+        /// Shared with the pane's own copy; see [`QueryPane::workspace_sql`].
+        /// Serialized as the plain string it always was.
+        sql: Arc<str>,
         selection: std::ops::Range<usize>,
         editor_share: f32,
     },
@@ -146,7 +148,7 @@ impl WorkArea {
                     let query = pane.read(cx);
                     SavedContent::Query {
                         number: *number,
-                        sql: query.editor_text(cx),
+                        sql: query.workspace_sql(cx),
                         selection: query.workspace_selection(cx),
                         editor_share: query.workspace_editor_share(),
                     }
@@ -176,9 +178,15 @@ impl WorkArea {
 
 /// Disk writes are serialized. A final close waits for any in-flight autosave
 /// before writing the newest snapshot, so an old write cannot win a race.
+///
+/// The queue and the writer are two locks. A write takes what is queued and
+/// lets go of the queue before it serializes anything, so the UI thread queuing
+/// the next snapshot never waits behind a file being written; the writer lock
+/// is what keeps two writes in the order their snapshots were taken.
 pub(super) struct SessionStorage {
     directory: Option<PathBuf>,
     pending: Arc<Mutex<HashMap<Uuid, SavedWorkspace>>>,
+    writer: Arc<Mutex<()>>,
     blocked: HashSet<Uuid>,
 }
 
@@ -195,6 +203,7 @@ impl Default for SessionStorage {
         Self {
             directory,
             pending: Arc::default(),
+            writer: Arc::default(),
             blocked: HashSet::new(),
         }
     }
@@ -202,6 +211,9 @@ impl Default for SessionStorage {
 
 impl SessionStorage {
     fn load(&mut self, profile: Uuid) -> Option<SavedWorkspace> {
+        // A snapshot taken off the queue by a write still in flight is in
+        // neither place until that write lands.
+        let _writing = self.writer.lock();
         if let Some(state) = self.pending.lock().get(&profile) {
             return Some(state.clone());
         }
@@ -240,25 +252,30 @@ impl SessionStorage {
 
     fn flush(&self) {
         if let Some(directory) = &self.directory {
-            write_pending(directory, &self.pending);
+            write_pending(directory, &self.pending, &self.writer);
         }
     }
 }
 
-fn write_pending(directory: &std::path::Path, pending: &Mutex<HashMap<Uuid, SavedWorkspace>>) {
-    let mut pending = pending.lock();
-    pending.retain(|profile, state| {
+fn write_pending(
+    directory: &std::path::Path,
+    pending: &Mutex<HashMap<Uuid, SavedWorkspace>>,
+    writer: &Mutex<()>,
+) {
+    let _writing = writer.lock();
+    let states = std::mem::take(&mut *pending.lock());
+    for (profile, state) in states {
         let path = directory.join(format!("{profile}.json"));
-        let result = serde_json::to_vec_pretty(state)
+        let result = serde_json::to_vec_pretty(&state)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| rudbman_core::paths::write_atomic(&path, &bytes));
         if let Err(error) = result {
             log::error!("could not save workspace {}: {error:#}", path.display());
-            true // retry on the next save, including the final close
-        } else {
-            false
+            // Retry on the next save, including the final close — unless a
+            // newer snapshot was queued meanwhile, which that save writes instead.
+            pending.lock().entry(profile).or_insert(state);
         }
-    });
+    }
 }
 
 impl Workspace {
@@ -318,11 +335,15 @@ impl Workspace {
                 .await;
             this.update(cx, |workspace, cx| {
                 workspace.checkpoint_workspaces(cx);
+                workspace.warn_oversized_drafts(cx);
                 let directory = workspace.sessions.directory.clone();
                 let pending = workspace.sessions.pending.clone();
+                let writer = workspace.sessions.writer.clone();
+                // Serializing a snapshot is a pass over every draft in it, so
+                // it happens here, off the UI thread, with the file write.
                 cx.background_spawn(async move {
                     if let Some(directory) = directory {
-                        write_pending(&directory, &pending);
+                        write_pending(&directory, &pending, &writer);
                     }
                 })
                 .detach();
@@ -330,6 +351,18 @@ impl Workspace {
             })
             .ok();
         }));
+    }
+
+    /// Lets each query pane whose draft the last checkpoint found too large to
+    /// keep say so; see [`QueryPane::warn_oversized_draft`].
+    fn warn_oversized_drafts(&mut self, cx: &mut Context<Self>) {
+        for open in &self.connections {
+            for pane in open.work.queries() {
+                if pane.read(cx).owes_draft_warning() {
+                    pane.update(cx, |pane, cx| pane.warn_oversized_draft(cx));
+                }
+            }
+        }
     }
 
     pub(super) fn duplicate_tab_into(
@@ -793,7 +826,7 @@ mod tests {
             .load(profile)
             .expect("the autosave ran");
         assert!(
-            matches!(&before.layout, SavedNode::Pane { tabs, .. } if matches!(&tabs[0].content, SavedContent::Query { sql, .. } if sql == "select 1"))
+            matches!(&before.layout, SavedNode::Pane { tabs, .. } if matches!(&tabs[0].content, SavedContent::Query { sql, .. } if &**sql == "select 1"))
         );
         cx.simulate_input(window.into(), "-- last edit\n");
         let expected = window

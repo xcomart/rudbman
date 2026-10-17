@@ -408,6 +408,7 @@ query:
   elapsed: "%{seconds} s"
   busy: In diesem Bereich läuft bereits eine Anweisung.
   no_statement: Es gibt keine Anweisung zum Ausführen.
+  draft_too_large: "Dieser Entwurf ist größer als %{limit} MB und wird beim Schließen der App nicht aufbewahrt. Speichern Sie ihn in einer Datei, um ihn zu behalten."
   read_only: Diese Verbindung ist schreibgeschützt; die Anweisung wurde nicht gesendet.
   confirm_title: Diese Anweisung ausführen?
   confirm_body: "Anweisungen, die Daten ändern: %{count}"

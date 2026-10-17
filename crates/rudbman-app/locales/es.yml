@@ -408,6 +408,7 @@ query:
   elapsed: "%{seconds} s"
   busy: Ya hay una sentencia ejecutándose en este panel.
   no_statement: No hay ninguna sentencia que ejecutar.
+  draft_too_large: "Este borrador supera los %{limit} MB, por lo que no se conservará al cerrar la aplicación. Guárdelo en un archivo para conservarlo."
   read_only: Esta conexión es de solo lectura; la sentencia no se envió.
   confirm_title: "¿Ejecutar esta sentencia?"
   confirm_body: "Sentencias que modifican datos: %{count}"

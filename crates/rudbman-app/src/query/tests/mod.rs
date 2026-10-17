@@ -346,6 +346,7 @@ fn server_rows(connected: &Connected, sql: &str) -> Vec<String> {
         .collect()
 }
 
+mod draft;
 mod editing;
 mod execution;
 mod lob;

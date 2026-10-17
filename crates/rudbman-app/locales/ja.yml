@@ -408,6 +408,7 @@ query:
   elapsed: "%{seconds} 秒"
   busy: このペインでは既に文が実行中です。
   no_statement: 実行する文がありません。
+  draft_too_large: "この下書きは %{limit} MB を超えるため、アプリを閉じると保持されません。残すにはファイルに保存してください。"
   read_only: 読み取り専用の接続のため、文は送信されませんでした。
   confirm_title: この文を実行しますか?
   confirm_body: "データを変更する文: %{count} 件"

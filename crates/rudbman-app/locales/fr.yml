@@ -408,6 +408,7 @@ query:
   elapsed: "%{seconds} s"
   busy: Une instruction est déjà en cours dans ce panneau.
   no_statement: Il n'y a aucune instruction à exécuter.
+  draft_too_large: "Ce brouillon dépasse %{limit} Mo et ne sera pas conservé à la fermeture de l'application. Enregistrez-le dans un fichier pour le garder."
   read_only: Cette connexion est en lecture seule ; l'instruction n'a pas été envoyée.
   confirm_title: Exécuter cette instruction ?
   confirm_body: "Instructions qui modifient des données : %{count}"
