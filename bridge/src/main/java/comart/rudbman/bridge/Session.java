@@ -11,6 +11,7 @@ import java.sql.Statement;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -407,14 +408,58 @@ public final class Session implements AutoCloseable {
         try {
             connLock.lock();
             try {
-                conn.close();
-            } catch (SQLException e) {
-                LOG.log(Level.WARNING, "cannot close connection", e);
+                shutDown(conn, unusableReason != null);
             } finally {
                 connLock.unlock();
             }
         } finally {
             lease.release();
+        }
+    }
+
+    /** Runs a driver's abort work on a thread of its own, which nothing waits for. */
+    private static final Executor ABORT_EXECUTOR = task -> {
+        Thread t = new Thread(task, "rudbman-abort");
+        t.setDaemon(true);
+        t.start();
+    };
+
+    /**
+     * Ends {@code conn} without letting the driver decide what becomes of an open
+     * transaction.
+     *
+     * <p>JDBC leaves a transaction still open at {@link Connection#close()} to the
+     * driver, and Oracle's commits it. So a connection with auto-commit off is
+     * rolled back first - quietly, because a close is not the place to report
+     * work that was never committed. A connection marked unusable is one whose
+     * rollback already failed, so whatever it holds is of uncertain outcome:
+     * it is {@linkplain Connection#abort aborted}, which ends it without a
+     * commit, and only closed after one more rollback if the driver cannot abort
+     * (a pre-JDBC 4.1 driver, or one that refuses).
+     *
+     * @param conn     the connection to end; the caller holds the connection lock
+     * @param unusable whether the session was marked unusable
+     */
+    static void shutDown(Connection conn, boolean unusable) {
+        if (unusable) {
+            try {
+                conn.abort(ABORT_EXECUTOR);
+                return;
+            } catch (SQLException | RuntimeException | AbstractMethodError e) {
+                LOG.log(Level.WARNING, "cannot abort connection; closing it instead", e);
+            }
+        }
+        try {
+            if (!conn.getAutoCommit()) {
+                conn.rollback();
+            }
+        } catch (SQLException | RuntimeException e) {
+            LOG.log(Level.WARNING, "cannot roll back before closing the connection", e);
+        }
+        try {
+            conn.close();
+        } catch (SQLException e) {
+            LOG.log(Level.WARNING, "cannot close connection", e);
         }
     }
 
