@@ -275,7 +275,7 @@ fn format_sql_formats_the_selection_or_the_script_as_one_undo_step(cx: &mut Test
 
     // The selection alone, which stays selected.
     click("query-format", &mut cx);
-    let formatted = "SELECT a,\n    'x  y'\nFROM t\nWHERE a = 1\n    AND b = 2;";
+    let formatted = "SELECT a,\n       'x  y'\n  FROM t\n WHERE a = 1\n   AND b = 2;";
     assert_eq!(text(&mut cx), format!("select 1;\n{formatted}"));
     window
         .update(&mut cx, |pane, _, cx| {
