@@ -1,6 +1,7 @@
 //! Statements.
 
 use super::*;
+use rudbman_sql::lexer::TokenKind;
 
 /// Whether `sql` is a statement `confirm_writes` should ask about.
 ///
@@ -39,8 +40,13 @@ pub(super) fn quote_identifier(name: &str, dialect: &Dialect) -> String {
 /// the driver's own refusal is shown rather than swallowed. Sorting is offered
 /// only for reading statements, so nothing is ever re-executed for its side
 /// effects.
+///
+/// What goes inside the parentheses is the statement with its tail of
+/// whitespace, comments and `;` cut off by [`statement_body`] — not just the
+/// `;`, because a trailing `-- note` would otherwise run to the end of the
+/// line and take the closing parenthesis and the `ORDER BY` with it.
 pub fn order_by(sql: &str, column: &str, direction: SortDirection, dialect: &Dialect) -> String {
-    let inner = sql.trim().trim_end_matches(';').trim_end();
+    let inner = statement_body(sql, dialect);
     let order = match direction {
         SortDirection::Ascending => "ASC",
         SortDirection::Descending => "DESC",
@@ -49,6 +55,34 @@ pub fn order_by(sql: &str, column: &str, direction: SortDirection, dialect: &Dia
         "SELECT * FROM ({inner}) {SORT_ALIAS} ORDER BY {} {order}",
         quote_identifier(column, dialect)
     )
+}
+
+/// `sql` without its leading whitespace and without the trailing run of
+/// whitespace, comments and statement terminators.
+///
+/// Read with the dialect's own lexer, so that a `--` inside a string literal is
+/// left alone, MySQL's `#` is a comment only where MySQL says so, and a `;`
+/// *after* a comment (`select 1 -- note` on one line, `;` on the next) is
+/// stripped as readily as one before it. MySQL's executable comments
+/// (`/*! … */`, `/*M! … */`) are the one kind kept: the server runs what is in
+/// them, so they are part of the statement and not its trivia — and, being
+/// closed, they cannot swallow the parenthesis that follows. An unterminated
+/// block comment is stripped with the rest; the statement was broken anyway.
+pub(super) fn statement_body<'a>(sql: &'a str, dialect: &Dialect) -> &'a str {
+    let mut end = 0;
+    for token in rudbman_sql::lexer::lex(sql, dialect) {
+        let text = token.text(sql);
+        let trivia = match token.kind {
+            TokenKind::Whitespace => true,
+            TokenKind::Comment => !(text.starts_with("/*!") || text.starts_with("/*M!")),
+            TokenKind::Punctuation => text == ";",
+            _ => false,
+        };
+        if !trivia {
+            end = token.end;
+        }
+    }
+    sql[..end].trim_start()
 }
 
 /// One name part of a column's source, or `None` where the driver would not

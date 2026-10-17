@@ -135,6 +135,58 @@ fn sorting_wraps_the_statement_rather_than_appending_to_it() {
     );
 }
 
+#[test]
+fn sorting_strips_a_trailing_comment_rather_than_wrapping_it() {
+    // A line comment left inside the parentheses would run to the end of the
+    // line and take the `)` and the `ORDER BY` with it.
+    let expected = r#"SELECT * FROM (select id from t) rudbman_sort ORDER BY "id" ASC"#;
+    for sql in [
+        "select id from t -- note",
+        "select id from t; -- note",
+        "select id from t -- note\n;",
+        "select id from t /* note */",
+        "select id from t /* note */ ;",
+        "  select id from t\n-- one\n/* two */\n;\n",
+    ] {
+        assert_eq!(
+            order_by(sql, "id", SortDirection::Ascending, &Dialect::H2),
+            expected,
+            "{sql:?}"
+        );
+    }
+
+    // A comment marker inside a literal is the literal's, not a comment.
+    assert_eq!(
+        order_by(
+            "select '-- not a comment' as id",
+            "id",
+            SortDirection::Ascending,
+            &Dialect::H2
+        ),
+        r#"SELECT * FROM (select '-- not a comment' as id) rudbman_sort ORDER BY "id" ASC"#
+    );
+    // MySQL's `#` is a line comment too.
+    assert_eq!(
+        order_by(
+            "select 1 as id # note",
+            "id",
+            SortDirection::Ascending,
+            &Dialect::MYSQL
+        ),
+        "SELECT * FROM (select 1 as id) rudbman_sort ORDER BY `id` ASC"
+    );
+    // An executable comment is part of the statement, and stays.
+    assert_eq!(
+        order_by(
+            "select 1 as id /*!50000 */",
+            "id",
+            SortDirection::Ascending,
+            &Dialect::MYSQL
+        ),
+        "SELECT * FROM (select 1 as id /*!50000 */) rudbman_sort ORDER BY `id` ASC"
+    );
+}
+
 /// The whole of infinite scrolling, against ten thousand real rows: the
 /// first batch arrives on its own, the source says there are more, and each
 /// page appends until the driver runs out and says so.
