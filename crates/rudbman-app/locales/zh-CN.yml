@@ -409,6 +409,7 @@ query:
   busy: 此窗格中已有语句在执行。
   no_statement: 没有可执行的语句。
   draft_too_large: "此草稿超过 %{limit} MB，关闭应用时不会保留。如需保留，请将其保存到文件。"
+  row_limit: "此网格最多显示 %{limit} 行，结果中还有更多行。请缩小语句范围以查看其余行。"
   read_only: 此连接为只读，语句未发送。
   confirm_title: 执行这条语句吗？
   confirm_body: "会修改数据的语句：%{count} 条"

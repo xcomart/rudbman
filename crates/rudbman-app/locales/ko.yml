@@ -409,6 +409,7 @@ query:
   busy: 이 창에서 이미 문장이 실행 중입니다.
   no_statement: 실행할 문장이 없습니다.
   draft_too_large: "이 초안은 %{limit} MB보다 커서 앱을 닫을 때 보관되지 않습니다. 보관하려면 파일로 저장하세요."
+  row_limit: "이 그리드는 최대 %{limit}행까지 표시하며, 결과에는 더 많은 행이 있습니다. 나머지를 보려면 문장의 조건을 좁히세요."
   read_only: 읽기 전용 접속이라 문장을 보내지 않았습니다.
   confirm_title: 이 문장을 실행할까요?
   confirm_body: "데이터를 변경하는 문장: %{count}개"

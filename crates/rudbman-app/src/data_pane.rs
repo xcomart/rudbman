@@ -76,7 +76,7 @@ use crate::data_edit::{EditableSource, PlannedStatement, RowRef, StagedCell, pla
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::{QueryError, note, render_error};
-use crate::query_source::{Paged, RenderedBatch, ResultSource, Step, advance, page};
+use crate::query_source::{Paged, ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, page};
 use crate::row_apply::{
     ApplyFailure, ApplyProblem, ApplyStop, apply_batch, plan_message, primary_key,
     render_apply_error, render_apply_preview, render_discard_confirm,
@@ -712,20 +712,18 @@ impl DataPane {
                 // `Paged::steps` may carry are a stored procedure's, and a
                 // `SELECT` over one table has none.
                 rows.cursor = (!paged.complete).then_some(cursor);
-                let state = if paged.complete {
-                    GridSourceState::Complete
-                } else {
-                    GridSourceState::HasMore
-                };
                 let grid = rows.grid.clone();
-                grid.update(cx, |grid, cx| {
-                    let source = grid.source_mut(cx);
+                let limited = grid.update(cx, |grid, cx| {
                     // Into the rows the server sent, under the overlay: the
                     // staged edits are keyed to base row indices, and appending
                     // moves none of them.
-                    source.base_mut().push(paged.batch);
-                    source.set_state(state);
+                    grid.source_mut(cx)
+                        .base_mut()
+                        .push_page(paged.batch, paged.complete)
                 });
+                if limited {
+                    failure = Some(ts!("query.row_limit", limit = ROW_LIMIT));
+                }
             }
             Err(error) => {
                 rows.cursor = None;

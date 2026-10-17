@@ -469,6 +469,19 @@ struct SourceColumn {
     primary_key: bool,
 }
 
+/// The most rows one result grid pages in before it stops asking for more.
+///
+/// Paging is driven by scrolling, and each page is kept: a grid that was held
+/// at the bottom of a hundred-million-row table would otherwise go on fetching
+/// and rendering until the process ran out of memory, with nothing on screen
+/// to say why it slowed. Two hundred thousand rows is far past anything read by
+/// eye — the rows of a `transfer` or a narrower `WHERE` are the tools for more
+/// — and, at the few hundred bytes a typical rendered row costs, a bound that
+/// keeps one grid in the tens of megabytes. Counted in whole batches, so a
+/// grid can end up to one fetch past it; the batch that crosses it is shown
+/// rather than cut.
+pub const ROW_LIMIT: usize = 200_000;
+
 /// The rows of one result, batch by batch.
 ///
 /// Grows rather than being rebuilt: a fetch appends a [`RenderedBatch`] and the
@@ -512,6 +525,26 @@ impl ResultSource {
         }
         self.starts.push(self.row_count() + batch.rows);
         self.batches.push(batch);
+    }
+
+    /// Appends one page fetched by scrolling, and says whether the source has
+    /// now reached [`ROW_LIMIT`] with rows still left on the server.
+    ///
+    /// The state follows: [`GridSourceState::Complete`] once the driver ran
+    /// out, and also once the limit is reached — the grid then raises no
+    /// further `NearEnd`, so the limit holds however long the scroll goes on —
+    /// and [`GridSourceState::HasMore`] otherwise. The caller keeps its cursor
+    /// either way, so a limit changes nothing about later results of the same
+    /// statement; it only has to say, on `true`, why the rows stop.
+    pub fn push_page(&mut self, batch: RenderedBatch, complete: bool) -> bool {
+        self.push(batch);
+        let limited = !complete && self.row_count() >= ROW_LIMIT;
+        self.state = if complete || limited {
+            GridSourceState::Complete
+        } else {
+            GridSourceState::HasMore
+        };
+        limited
     }
 
     /// The immutable body of a fetched LOB, also available after disconnection.
@@ -785,6 +818,36 @@ pub(crate) mod tests {
         // that a re-run took away between the layout and the paint.
         assert_eq!(source.cell(6, 0), GridCell::Null);
         assert_eq!(source.cell(0, 9), GridCell::Null);
+    }
+
+    #[test]
+    fn paging_stops_asking_once_the_row_limit_is_reached() {
+        let columns = vec![info(1, "T", 12, 0)];
+        let page = |rows: usize| {
+            let nulls = vec![None; rows];
+            render_batch(&batch(&[&nulls]), &columns)
+        };
+        let mut source = ResultSource::new(&columns);
+
+        // Short of the limit, a page that did not end the result asks for more…
+        let step = ROW_LIMIT / 4;
+        for _ in 0..3 {
+            assert!(!source.push_page(page(step), false));
+            assert_eq!(source.state(), GridSourceState::HasMore);
+        }
+        // …and the page that reaches it says so and asks for nothing.
+        assert!(source.push_page(page(step), false));
+        assert_eq!(source.row_count(), ROW_LIMIT);
+        assert_eq!(source.state(), GridSourceState::Complete);
+
+        // A result that ended exactly there is complete, not limited.
+        let mut ended = ResultSource::new(&columns);
+        assert!(!ended.push_page(page(ROW_LIMIT), true));
+        assert_eq!(ended.state(), GridSourceState::Complete);
+        // And a page that ends a short result is plainly complete.
+        let mut short = ResultSource::new(&columns);
+        assert!(!short.push_page(page(3), true));
+        assert_eq!(short.state(), GridSourceState::Complete);
     }
 
     #[test]

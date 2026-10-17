@@ -323,20 +323,16 @@ impl QueryPane {
                     // A completed result set is behind the cursor now: the walk
                     // in `page` has already moved past it.
                     tab.cursor = if complete { None } else { cursor.take() };
-                    let state = if complete {
-                        GridSourceState::Complete
-                    } else {
-                        GridSourceState::HasMore
-                    };
                     let grid = tab.grid.clone();
-                    grid.update(cx, |grid, cx| {
-                        let source = grid.source_mut(cx);
+                    let limited = grid.update(cx, |grid, cx| {
                         // Into the rows the server sent, under the overlay: the
                         // staged edits are keyed to base row indices, and
                         // appending moves none of them.
-                        source.base_mut().push(batch);
-                        source.set_state(state);
+                        grid.source_mut(cx).base_mut().push_page(batch, complete)
                     });
+                    if limited {
+                        self.notice = Some(ts!("query.row_limit", limit = ROW_LIMIT));
+                    }
                 }
 
                 // Results the `MORE_RESULTS` walk picked up once this one ended.
