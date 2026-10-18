@@ -12,10 +12,9 @@ members = ["crates/*"]
 # dependency would make two checkouts of this repository build different
 # applications.
 #
-# Zed has no answer of its own for five things rudbman needs — moving an open
+# Zed has no answer of its own for four things rudbman needs — moving an open
 # window between the platform's caption and the application's own
-# (`set_titlebar_transparent`), the X11 backend running its close callbacks with
-# the client `RefCell` borrowed, X11's `is_transparent` ignoring client-side
+# (`set_titlebar_transparent`), X11's `is_transparent` ignoring client-side
 # decorations, X11 having no counterpart to Wayland's `org_kde_kwin_blur`, and
 # macOS 26 blurring nothing behind a window whose `NSVisualEffectView` Liquid
 # Glass rebuilt — so four crates of the monorepo are carried patched. rudbman
@@ -44,10 +43,10 @@ members = ["crates/*"]
 # `rugpui-shell` and `vendor/gpui*` siblings) to `.cargo/config.toml`, which is
 # not committed.
 [patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
-gpui_linux = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
-gpui_macos = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
-gpui_windows = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
+gpui = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
+gpui_linux = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
+gpui_macos = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
+gpui_windows = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
 
 [workspace.package]
 version = "0.2.12"
@@ -117,8 +116,8 @@ sys-locale = "0.3"
 # features are empty by default and the backend inherits them, so the two
 # display servers Linux might be running under have to be asked for by name;
 # `font-kit` is macOS's text stack and is inert elsewhere.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf", features = [
+gpui = { git = "https://github.com/zed-industries/zed", rev = "56934ec0560bce8929025497411de7f5322fb6ca" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "56934ec0560bce8929025497411de7f5322fb6ca", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -181,10 +180,10 @@ jni = { version = "0.22", features = ["invocation"] }
 #
 # The same `rev` of `https://github.com/xcomart/rugpui` as the patch table at
 # the top of this file, which is what keeps one gpui in the binary.
-rugpui = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
-rugpui-grid = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
-rugpui-editor = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
-rugpui-shell = { git = "https://github.com/xcomart/rugpui", rev = "79963597d03abb9974b3e40ac513ece8d4ac94bf" }
+rugpui = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
+rugpui-grid = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
+rugpui-editor = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
+rugpui-shell = { git = "https://github.com/xcomart/rugpui", rev = "d14f6d46cd9a323efca6817ce653118af5de0027" }
 
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }

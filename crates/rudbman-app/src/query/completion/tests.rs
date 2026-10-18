@@ -143,9 +143,9 @@ fn completion_reads_real_table_and_alias_columns_and_stays_closed_after_blur(
     source(&handle, "SELECT p.| FROM PEOPLE p", &mut cx);
     cx.simulate_keystrokes("ctrl-space");
     handle
-        .update(&mut cx, |pane, window, _cx| {
+        .update(&mut cx, |pane, window, cx| {
             assert!(pane.completion.popup.is_some());
-            window.blur();
+            window.blur(cx);
         })
         .unwrap();
     cx.run_until_parked();
