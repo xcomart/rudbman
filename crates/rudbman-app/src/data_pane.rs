@@ -1174,17 +1174,14 @@ impl DataPane {
         cx.notify();
     }
 
-    /// Puts the grid's right-click menu away, and says whether there was one.
+    /// Puts the grid's right-click menu away.
     ///
-    /// What `Escape` reaches through the workspace, which closes the menu on
-    /// top of everything before it closes anything else (architecture document,
-    /// §7.8). The answer is what tells the workspace the key was spent here.
-    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        let had = self.context_menu.take().is_some();
-        if had {
+    /// What the workspace runs before it opens another overlay, so that only
+    /// one full-window backdrop is ever down at a time.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
             cx.notify();
         }
-        had
     }
 
     /// The grid's right-click menu: the cell menu, or the heading one.

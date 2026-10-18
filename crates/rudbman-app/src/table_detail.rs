@@ -711,18 +711,14 @@ impl TableDetail {
             .into_any_element()
     }
 
-    /// Puts the DDL editor's right-click menu away, and says whether there was
-    /// one.
+    /// Puts the DDL editor's right-click menu away.
     ///
-    /// What `Escape` reaches through the workspace, which closes the menu on
-    /// top of everything before it closes anything else (architecture document,
-    /// §7.8).
-    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        let had = self.ddl_menu.take().is_some();
-        if had {
+    /// What the workspace runs before it opens another overlay, so that only
+    /// one full-window backdrop is ever down at a time.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.ddl_menu.take().is_some() {
             cx.notify();
         }
-        had
     }
 
     /// The DDL editor's context menu: only what a read-only buffer can do.

@@ -574,12 +574,11 @@ impl BuilderPane {
         handle.focus(window, cx);
     }
 
-    /// Puts the canvas's right-click menu away, and says whether there was one.
+    /// Puts the canvas's right-click menu away.
     ///
-    /// What `Escape` reaches through the workspace, which closes the menu on
-    /// top of everything before it closes anything else (architecture document,
-    /// §7.8). The answer is what tells the workspace the key was spent here.
-    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
+    /// What the workspace runs before it opens another overlay, so that only
+    /// one full-window backdrop is ever down at a time.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
         close_canvas_menu(&mut self.context_menu, cx)
     }
 
@@ -1514,8 +1513,8 @@ mod tests {
             .expect("the window is open");
     }
 
-    /// The canvas asks for a menu, the panel keeps it, and `Escape` — which
-    /// reaches here through the workspace — puts it away and says it did.
+    /// The canvas asks for a menu, the panel keeps it, and the workspace can
+    /// put it away.
     #[gpui::test]
     fn a_right_click_on_the_canvas_leaves_a_menu_the_workspace_can_close(cx: &mut TestAppContext) {
         let window = open(cx);
@@ -1524,10 +1523,6 @@ mod tests {
         window
             .update(&mut vcx, |pane, _window, cx| {
                 pane.add_table(&target("PERSON"), columns(&["ID", "NAME"]), cx);
-                assert!(
-                    !pane.close_context_menu(cx),
-                    "a panel with no menu open claimed the key"
-                );
                 pane.context_menu = Some(CanvasMenu {
                     hit: Some((0, Some(1))),
                     position: point(px(40.), px(40.)),
@@ -1540,7 +1535,7 @@ mod tests {
 
         window
             .update(&mut vcx, |pane, _window, cx| {
-                assert!(pane.close_context_menu(cx), "the key was not taken");
+                pane.close_context_menu(cx);
                 assert!(pane.context_menu.is_none());
             })
             .expect("the window is open");

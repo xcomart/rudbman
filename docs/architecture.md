@@ -1100,9 +1100,10 @@ list. The discipline:
   the click lands inside the existing selection), while tab strips leave the
   selection alone (the menu differs for active and inactive tabs — a decision
   documented on TabBar).
-- `Escape` (DismissDialog) closes an open context menu **first of all** — ahead
-  even of the app dropdown. Context menus and the app dropdown are mutually
-  exclusive.
+- `Escape` closes an open context menu or the app dropdown **first of all**.
+  `rugpui`'s menus take the key themselves, ahead of every binding, so
+  `DismissDialog` never sees it while a menu is open. Context menus and the app
+  dropdown are mutually exclusive.
 - The menu items are everything that surface can do: what already exists as an
   action or a public API (the four copy formats, sorting, column hide and
   auto-fit, edit and execute, zoom/arrange/export, the explorer's five actions)

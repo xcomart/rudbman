@@ -250,23 +250,16 @@ impl Workspace {
     }
 
     /// Closes whatever overlay is on top, in the order they are stacked.
+    ///
+    /// Context menus and the application dropdown are not among them: an open
+    /// one takes `Escape` itself, ahead of every binding, and this never sees
+    /// the key (architecture document, §7.8).
     pub(super) fn dismiss_dialog_action(
         &mut self,
         _: &DismissDialog,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // A context menu paints above even the dropdown, and is the most
-        // transient thing on screen, so it goes first of all — the shell's own
-        // and the panes' alike (architecture document, §7.8).
-        if self.close_context_menus(cx) {
-            return;
-        }
-        // The dropdown menu paints above everything else, so it goes next.
-        if self.menu_open {
-            self.set_menu_open(false, cx);
-            return;
-        }
         if self.rename_tab.is_some() {
             self.finish_tab_name(false, window, cx);
             return;
