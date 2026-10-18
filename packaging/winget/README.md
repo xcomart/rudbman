@@ -30,9 +30,9 @@ The filenames are not decorative. winget-pkgs requires that they be
 into a fork verbatim.
 
 The installer manifest also declares a dependency on
-`Microsoft.VCRedist.2015+.x64`. `rudbman.exe` links the MSVC runtime
+`Microsoft.VCRedist.2015+.x64`. `rudbman.exe` used to link the MSVC runtime
 dynamically, and neither the installer nor the zip carries it, so a machine
-without that redistributable already installed fails to launch it at all —
+without that redistributable already installed failed to launch it at all —
 which is what happened on the winget-pkgs validation VM before the release
 build started statically linking the CRT (see `.github/workflows/release.yml`).
 The dependency stays declared as a safety net even so, since it costs nothing
