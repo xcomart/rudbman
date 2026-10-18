@@ -125,6 +125,7 @@ impl Workspace {
         let mut diagrams = Vec::new();
         let mut builders = Vec::new();
         let mut data = Vec::new();
+        let mut details = Vec::new();
         for (_, pane) in area.panes.leaves() {
             for item in pane.items() {
                 match item {
@@ -132,10 +133,10 @@ impl Workspace {
                     PaneItem::Erd(panel) => diagrams.push(panel.clone()),
                     PaneItem::QueryBuilder { pane, .. } => builders.push(pane.clone()),
                     PaneItem::TableData(panel) => data.push(panel.clone()),
-                    // The two surfaces with nothing to act on: the detail panel
-                    // is four tabs of read-only presentation, and the structure
-                    // pane's commands are all buttons of its own.
-                    PaneItem::TableDetail(_) | PaneItem::TableStruct(_) => {}
+                    // The detail panel's only menu is its DDL editor's.
+                    PaneItem::TableDetail(panel) => details.push(panel.clone()),
+                    // The structure pane's commands are all buttons of its own.
+                    PaneItem::TableStruct(_) => {}
                 }
             }
         }
@@ -151,6 +152,9 @@ impl Workspace {
             closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         for panel in data {
+            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+        }
+        for panel in details {
             closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         closed

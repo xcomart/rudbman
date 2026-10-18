@@ -210,7 +210,15 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let panel = cx.new(|cx| TableDetail::new(target, cx));
+        let dialect = self
+            .connections
+            .iter()
+            .find(|open| open.id == target.connection)
+            .map_or_else(
+                || "generic".to_string(),
+                |open| Self::dialect_of(&open.profile),
+            );
+        let panel = cx.new(|cx| TableDetail::new(target, &dialect, cx));
         // Subscribe first, *then* ask. A panel that requested its own metadata
         // from its constructor would emit into an empty room and sit at
         // "loading…" for ever; see `TableDetail::new`.
