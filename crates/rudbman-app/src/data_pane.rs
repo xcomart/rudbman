@@ -77,7 +77,7 @@ use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::{QueryError, note, render_error};
 use crate::query_source::{
-    ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, page, render_fetched_batch,
+    ROW_LIMIT, ReadPage, RenderedBatch, ResultSource, Step, advance, page, read_page,
 };
 use crate::row_apply::{
     ApplyFailure, ApplyProblem, ApplyStop, apply_batch, plan_message, primary_key,
@@ -1739,8 +1739,12 @@ fn open(session: &Session, target: &ObjectTarget, select: Select) -> Result<Open
 
     if select.pages_by_offset() {
         let limit = select.limit();
-        return Ok(match query_page(session, &sql, limit)? {
-            Some((columns, batch, rows)) => {
+        return Ok(match read_page(session, &sql, limit)? {
+            Some(ReadPage {
+                columns,
+                batch,
+                rows,
+            }) => {
                 let complete = rows < limit as usize;
                 Opened {
                     keys,
@@ -1816,8 +1820,8 @@ fn next_page(
 ) -> Result<Page, JdbcError> {
     let limit = select.limit();
     let sql = select.statement(keys, offset);
-    Ok(match query_page(session, &sql, limit)? {
-        Some((_, batch, rows)) => {
+    Ok(match read_page(session, &sql, limit)? {
+        Some(ReadPage { batch, rows, .. }) => {
             let complete = rows < limit as usize;
             Page {
                 batch,
@@ -1834,44 +1838,6 @@ fn next_page(
             more: None,
         },
     })
-}
-
-/// Runs one page's statement, reads all of it, and closes it.
-///
-/// Answers the result's columns, its rows rendered, and how many rows there
-/// were — fewer than `limit` is how the caller knows the table has run out,
-/// since a batch that fills its limit says nothing about what follows. `None`
-/// for a statement that produced no result set.
-///
-/// No fetch size, on purpose: the `LIMIT` already bounds the result, so the
-/// driver may as well buffer it whole at `EXECUTE`. A streaming result set,
-/// however short, would sit open on the shared connection between the
-/// statement and its fetch, and a command from another pane landing in that
-/// gap is exactly what makes MariaDB's driver drain it (see [`Select`]).
-fn query_page(
-    session: &Session,
-    sql: &str,
-    limit: u32,
-) -> Result<Option<(Vec<ColumnInfo>, RenderedBatch, usize)>, JdbcError> {
-    let cursor = session.execute(&StatementSpec::new(sql.to_string()))?;
-    if !cursor.result().has_result_set {
-        return Ok(None);
-    }
-    let columns = cursor.columns().to_vec();
-    let raw = cursor.fetch(limit)?;
-    // Rendered before the cursor goes: a LOB in the page is copied out through
-    // it, and its locator dies with the result set.
-    let batch = render_fetched_batch(&cursor, &raw, &columns)?;
-    let rows = raw.rows();
-    // Closed now rather than whenever the caller lets go, which is the point
-    // of the whole exercise: nothing of this page outlives it. A close that
-    // fails is not the page failing — its rows are already here — and a
-    // connection that has really gone says so on the next statement anyway.
-    let handle = cursor.handle();
-    if let Err(error) = cursor.close() {
-        log::debug!("closing page cursor {handle} failed: {error}");
-    }
-    Ok(Some((columns, batch, rows)))
 }
 
 #[cfg(test)]

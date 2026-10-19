@@ -291,7 +291,7 @@ pub fn render_batch(batch: &Batch, columns: &[ColumnInfo]) -> RenderedBatch {
 
 /// Fetch-time rendering retains LOB bodies independently of JDBC locators.
 /// The copies use bounded buffers and live only as long as the result or edits.
-pub(crate) fn render_fetched_batch(
+fn render_fetched_batch(
     cursor: &Cursor,
     batch: &Batch,
     columns: &[ColumnInfo],
