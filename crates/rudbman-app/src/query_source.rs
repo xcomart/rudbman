@@ -209,7 +209,9 @@ enum RenderedColumn {
 const LOB_SIZE_UNKNOWN: u64 = u64::MAX;
 
 /// One fetched batch, rendered.
-#[derive(Clone, Debug)]
+///
+/// The default is a batch of no rows, which [`ResultSource::push`] drops.
+#[derive(Clone, Debug, Default)]
 pub struct RenderedBatch {
     rows: usize,
     columns: Vec<RenderedColumn>,
@@ -287,7 +289,7 @@ pub fn render_batch(batch: &Batch, columns: &[ColumnInfo]) -> RenderedBatch {
 
 /// Fetch-time rendering retains LOB bodies independently of JDBC locators.
 /// The copies use bounded buffers and live only as long as the result or edits.
-fn render_fetched_batch(
+pub(crate) fn render_fetched_batch(
     cursor: &Cursor,
     batch: &Batch,
     columns: &[ColumnInfo],

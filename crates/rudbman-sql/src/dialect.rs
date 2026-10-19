@@ -400,6 +400,27 @@ impl Dialect {
     pub fn completion_words(self) -> impl Iterator<Item = &'static str> {
         self.words.completions()
     }
+
+    /// The clause that cuts one page out of an ordered `SELECT`: `limit` rows,
+    /// after skipping `offset`.
+    ///
+    /// Appended after any `ORDER BY`, as the last clause of the statement.
+    /// `None` where this crate will not write one, which is a refusal rather
+    /// than an oversight: Oracle has `OFFSET … FETCH` only from 12c on and
+    /// `ROWNUM` before it, SQL Server's `OFFSET … FETCH` is an error without an
+    /// `ORDER BY` and absent before 2012, and plain SQL has no clause every
+    /// product accepts. A caller that gets `None` has to page some other way —
+    /// the data pane keeps the statement's cursor open and fetches from it.
+    pub fn page_clause(self, limit: u64, offset: u64) -> Option<String> {
+        match self.id {
+            DialectId::H2
+            | DialectId::Postgres
+            | DialectId::MySql
+            | DialectId::MariaDb
+            | DialectId::Sqlite => Some(format!("LIMIT {limit} OFFSET {offset}")),
+            DialectId::Generic | DialectId::Oracle | DialectId::MsSql => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -469,6 +490,35 @@ mod tests {
         for d in [Dialect::GENERIC, Dialect::ORACLE, Dialect::MSSQL] {
             assert!(d.is_keyword("select"));
             assert!(d.is_type("varchar"));
+        }
+    }
+
+    /// `LIMIT … OFFSET …` where every supported version takes it, and nothing
+    /// at all where the spelling depends on a version or an `ORDER BY`.
+    #[test]
+    fn page_clauses() {
+        for d in [
+            Dialect::H2,
+            Dialect::POSTGRES,
+            Dialect::MYSQL,
+            Dialect::MARIADB,
+            Dialect::SQLITE,
+        ] {
+            assert_eq!(
+                d.page_clause(500, 0).as_deref(),
+                Some("LIMIT 500 OFFSET 0"),
+                "{}",
+                d.name()
+            );
+            assert_eq!(
+                d.page_clause(100, 2_500).as_deref(),
+                Some("LIMIT 100 OFFSET 2500"),
+                "{}",
+                d.name()
+            );
+        }
+        for d in [Dialect::GENERIC, Dialect::ORACLE, Dialect::MSSQL] {
+            assert_eq!(d.page_clause(500, 0), None, "{}", d.name());
         }
     }
 }
