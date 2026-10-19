@@ -57,6 +57,81 @@ pub fn order_by(sql: &str, column: &str, direction: SortDirection, dialect: &Dia
     )
 }
 
+/// Words that, at the top level of a statement, mean a page clause cannot
+/// simply be appended to it.
+///
+/// The statement already cuts its own rows (`LIMIT`, `OFFSET`, `FETCH`,
+/// `TOP`), or ends in a clause that has to stay last or that a page clause
+/// cannot follow (`FOR UPDATE`, `FOR SHARE`, MariaDB's `FOR SYSTEM_TIME`,
+/// `LOCK IN SHARE MODE`, `PROCEDURE ANALYSE`, `INTO`). Matched at depth zero
+/// only, so the same words inside a subquery or a function's parentheses are
+/// left alone; a column that happens to be called `offset` costs nothing but
+/// the old way of reading.
+const UNPAGEABLE_WORDS: &[&str] = &[
+    "LIMIT",
+    "OFFSET",
+    "FETCH",
+    "TOP",
+    "FOR",
+    "LOCK",
+    "PROCEDURE",
+    "INTO",
+];
+
+/// The statement every page's clause is appended to, when `sql` is one that
+/// can be read a page at a time; `None` when it has to be read through its
+/// own cursor instead.
+///
+/// One reading statement — `SELECT`, or `WITH` ending in one — that does not
+/// already cut its own rows or end in a clause a page clause cannot follow
+/// ([`UNPAGEABLE_WORDS`]), on a dialect that writes a page clause at all. The
+/// answer is [`statement_body`]: the clause goes on the end, so a trailing
+/// `-- note` or `;` must not be there to swallow it.
+///
+/// Appended rather than wrapped in a derived table, unlike [`order_by`]. A
+/// wrapper would cost three things a page must not: MariaDB drops an
+/// `ORDER BY` inside a derived table that has no `LIMIT`, so the user's own
+/// ordering would quietly vanish; MySQL, MariaDB and H2 refuse a derived table
+/// with two columns of one name, which every `SELECT *` over a join has; and a
+/// driver may report the wrapper's alias as each column's table, which would
+/// shut the editing gate. A clause on the end changes none of that — the
+/// statement is the user's, with fewer rows.
+pub(super) fn pageable_body<'a>(sql: &'a str, dialect: &Dialect) -> Option<&'a str> {
+    dialect.page_clause(1, 0)?;
+    if !matches!(statement_access(sql, dialect), StatementAccess::Read) {
+        return None;
+    }
+    let body = statement_body(sql, dialect);
+    let tokens = rudbman_sql::lexer::lex(body, dialect);
+    let mut tokens = tokens.iter().filter(|token| !token.kind.is_trivia());
+
+    // `SHOW`, `DESCRIBE` and `EXPLAIN` are reads, but not ones a page clause
+    // belongs on; and a statement that opens with `(` — `(SELECT …) UNION …`
+    // — is left to its cursor rather than reasoned about.
+    let first = tokens.next()?.text(body);
+    if !(first.eq_ignore_ascii_case("SELECT") || first.eq_ignore_ascii_case("WITH")) {
+        return None;
+    }
+    let mut depth = 0usize;
+    for token in tokens {
+        let text = token.text(body);
+        match token.kind {
+            TokenKind::Punctuation if text == "(" => depth += 1,
+            TokenKind::Punctuation if text == ")" => depth = depth.saturating_sub(1),
+            TokenKind::Keyword | TokenKind::Identifier | TokenKind::Function | TokenKind::Type
+                if depth == 0
+                    && UNPAGEABLE_WORDS
+                        .iter()
+                        .any(|word| text.eq_ignore_ascii_case(word)) =>
+            {
+                return None;
+            }
+            _ => {}
+        }
+    }
+    Some(body)
+}
+
 /// `sql` without its leading whitespace and without the trailing run of
 /// whitespace, comments and statement terminators.
 ///

@@ -138,7 +138,7 @@ impl QueryPane {
         //
         // [`SessionHandle::has_uncommitted`]: crate::connection::SessionHandle::has_uncommitted
         let manual = self.transactional && !self.restore_auto_commit;
-        let statements: Vec<(String, Effect)> = statements
+        let statements: Vec<(String, Effect, Option<Pager>)> = statements
             .into_iter()
             .map(|sql| {
                 let effect = if !manual {
@@ -150,7 +150,12 @@ impl QueryPane {
                 } else {
                     Effect::None
                 };
-                (sql, effect)
+                // Decided here, beside the dialect, for the same reason: and
+                // whether a statement is read a page at a time or through its
+                // own cursor is settled for the life of its result (see
+                // [`More`]).
+                let pager = Pager::new(&sql, &self.dialect, fetch_rows);
+                (sql, effect, pager)
             })
             .collect();
 
@@ -159,30 +164,11 @@ impl QueryPane {
         // [`GridView::begin_edit`] means putting the keyboard in a field and
         // there is no window to be had inside a plain `cx.subscribe` (§7.9).
         cx.spawn_in(window, async move |pane, cx| {
-            for (sql, effect) in statements {
+            for (sql, effect, pager) in statements {
                 let outcome = cx
                     .background_spawn({
                         let session = session.clone();
-                        async move {
-                            let spec = StatementSpec::new(sql.clone()).with_fetch_size(fetch_rows);
-                            let started = Instant::now();
-                            if effect == Effect::Opens {
-                                session.mark_uncommitted();
-                            }
-                            let mut cursor = session.session().execute(&spec)?;
-                            if effect == Effect::Ends {
-                                session.clear_uncommitted();
-                            }
-                            let mut steps = Vec::new();
-                            let pageable = advance(&mut cursor, true, fetch_rows, &mut steps)?;
-                            Ok::<Executed, JdbcError>(Executed {
-                                sql,
-                                cursor,
-                                steps,
-                                elapsed: started.elapsed(),
-                                pageable,
-                            })
-                        }
+                        async move { execute(&session, sql, effect, pager, fetch_rows) }
                     })
                     .await;
 
@@ -243,14 +229,11 @@ impl QueryPane {
             Ok(executed) => {
                 let Executed {
                     sql,
-                    cursor,
                     steps,
                     elapsed,
-                    pageable,
+                    more,
                 } = executed;
-                // A cursor that cannot be paged is dropped here, which closes
-                // it; `then_some` is what does the dropping.
-                self.append(&sql, steps, elapsed, pageable.then_some(cursor), window, cx);
+                self.append(&sql, steps, elapsed, more, window, cx);
                 self.recount(cx);
                 cx.notify();
                 true
@@ -265,19 +248,21 @@ impl QueryPane {
 
     /// Turns one statement's results into tabs.
     ///
-    /// `cursor` is the open cursor when the walk stopped on a result set with
-    /// rows still to come; it goes to the last grid tab, which is the only one
-    /// `MORE_RESULTS` has not already closed.
+    /// `more` is how to read on when the last result set still has rows to
+    /// come: an open cursor when the walk stopped on one, which only the last
+    /// grid tab can have since `MORE_RESULTS` has closed the others, or the
+    /// next page of a statement read a page at a time, which has only the one
+    /// result.
     pub(super) fn append(
         &mut self,
         sql: &str,
         steps: Vec<Step>,
         elapsed: Duration,
-        cursor: Option<Cursor>,
+        more: Option<More>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut cursor = cursor;
+        let mut more = more;
         // A run the sort round trip started executes a wrapper; the statement
         // the *next* sort has to wrap is the one underneath it.
         let base = self.sort_base.clone().unwrap_or_else(|| sql.to_string());
@@ -293,7 +278,7 @@ impl QueryPane {
                     complete,
                 } => {
                     self.append_log(sql, ts!("query.executed"), elapsed);
-                    let carried = (Some(index) == last_rows).then(|| cursor.take()).flatten();
+                    let carried = (Some(index) == last_rows).then(|| more.take()).flatten();
                     let state = if complete && carried.is_none() {
                         GridSourceState::Complete
                     } else {
@@ -388,6 +373,50 @@ impl QueryPane {
         .detach();
         cx.notify();
     }
+}
+
+/// Runs one statement of a run and reads its first page. **Blocks**; only
+/// ever called from a background thread.
+///
+/// A statement with a [`Pager`] is read as its first page and closed; any other
+/// is executed with a fetch size and walked by [`advance`] to the first result
+/// that still has rows, whose cursor stays open for the grid to page.
+fn execute(
+    session: &SessionHandle,
+    sql: String,
+    effect: Effect,
+    pager: Option<Pager>,
+    fetch_rows: u32,
+) -> Result<Executed, JdbcError> {
+    let started = Instant::now();
+    if effect == Effect::Opens {
+        session.mark_uncommitted();
+    }
+    let (steps, more) = match pager {
+        Some(pager) => match pager.read(session.session(), 0)? {
+            Some((step, more)) => (vec![step], more),
+            // No result set from a `SELECT`: nothing to show but that it ran.
+            None => (vec![Step::Message { update_count: 0 }], None),
+        },
+        None => {
+            let spec = StatementSpec::new(sql.clone()).with_fetch_size(fetch_rows);
+            let mut cursor = session.session().execute(&spec)?;
+            if effect == Effect::Ends {
+                session.clear_uncommitted();
+            }
+            let mut steps = Vec::new();
+            let pageable = advance(&mut cursor, true, fetch_rows, &mut steps)?;
+            // A cursor that cannot be paged is dropped here, which closes it;
+            // `then_some` is what does the dropping.
+            (steps, pageable.then_some(More::Cursor(cursor)))
+        }
+    };
+    Ok(Executed {
+        sql,
+        steps,
+        elapsed: started.elapsed(),
+        more,
+    })
 }
 
 /// What one statement of a run does to the transaction its session keeps

@@ -121,6 +121,7 @@ use crate::explorer::ConnectionId;
 use crate::i18n::ts;
 use crate::query_source::{
     Paged, ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, column_name, key_index, page,
+    read_page,
 };
 use crate::row_apply::{
     ApplyFailure, ApplyProblem, ApplyStop, apply_batch, plan_message, primary_key,
@@ -245,14 +246,150 @@ impl QueryError {
 struct Executed {
     /// The SQL, kept for the sort round trip.
     sql: String,
-    /// The cursor. Still ours to page when `pageable`; closed on drop
-    /// otherwise.
-    cursor: Cursor,
     steps: Vec<Step>,
     /// Execution through the first fetch, excluding later paging.
     elapsed: Duration,
-    /// Whether the cursor is parked on a result set that can still be paged.
-    pageable: bool,
+    /// How the last result set of `steps` goes on, while it has more to give.
+    more: Option<More>,
+}
+
+/// How the rows after the ones a result grid holds are to be had.
+///
+/// # Why a page is a statement of its own where it can be
+///
+/// Every pane, the explorer and the metadata lookups share one JDBC
+/// connection, and an open streaming result set is a poor neighbour on it.
+/// MariaDB's Connector/J answers *any* other command sent while one is open by
+/// reading the rest of it into the heap first (`fetchRemaining`) — and this
+/// pane sends one itself, the primary key lookup that decides whether a result
+/// is editable, straight after the first batch. Closing one reads the rest off
+/// the network to throw it away (`skipRemaining`), so a re-run stalled for as
+/// long as the table took to stream. pgjdbc does not stream at all under
+/// autocommit and reads everything at `EXECUTE`. So a statement
+/// [`statements::pageable_body`] accepts is read as `… LIMIT n OFFSET m`, a
+/// page at a time, each page read whole and closed at once: nothing stays open
+/// between one scroll and the next.
+///
+/// What that costs, and why it is still the better side of the trade:
+///
+/// * Each page runs the statement again. An expensive aggregate pays again per
+///   page — but only once it has more rows than a page, and only when somebody
+///   scrolls; and a function with side effects in the select list runs again
+///   for the rows of each page, which is why only reads are paged.
+/// * Pages are separate statements, so under autocommit each one sees the
+///   table as it is then: a row inserted before the scroll position shifts the
+///   rest by one. Under manual commit they share the user's transaction and
+///   its snapshot, where the isolation level gives one.
+/// * Without an `ORDER BY` the server owes no stable order between two runs
+///   of the same statement, and in principle a page could repeat or skip a
+///   row. In practice a plain scan comes back in the same order each time;
+///   the user who needs a guarantee has the `ORDER BY` to write, and the sort
+///   round trip writes one.
+///
+/// Everything else — `SHOW`, a statement with its own `LIMIT`, `FOR UPDATE`,
+/// a stored procedure, a dialect with no page clause — keeps its cursor, which
+/// is no worse than it was.
+enum More {
+    /// The statement's own cursor, still open and paged by `FETCH`. Dropping it
+    /// closes it.
+    Cursor(Cursor),
+    /// The statement to repeat, and where its next page starts: every row read
+    /// so far.
+    Offset {
+        /// Writes each page's statement.
+        pager: Pager,
+        /// Rows already read.
+        next: u64,
+    },
+}
+
+/// A statement read a page at a time; see [`More`].
+#[derive(Clone, Debug)]
+struct Pager {
+    /// The user's statement without its trailing trivia, which each page's
+    /// clause is appended to.
+    body: String,
+    /// Writes the page clause.
+    dialect: Dialect,
+    /// Rows per page. Never zero: `LIMIT 0` would page forever and never get
+    /// anywhere.
+    limit: u32,
+}
+
+impl Pager {
+    /// A pager for `sql`, when it is a statement that can be read a page at a
+    /// time.
+    fn new(sql: &str, dialect: &Dialect, fetch_rows: u32) -> Option<Self> {
+        Some(Self {
+            body: statements::pageable_body(sql, dialect)?.to_string(),
+            dialect: *dialect,
+            limit: fetch_rows.max(1),
+        })
+    }
+
+    /// The statement for the page that starts `offset` rows in.
+    fn statement(&self, offset: u64) -> String {
+        match self.dialect.page_clause(u64::from(self.limit), offset) {
+            Some(clause) => format!("{} {clause}", self.body),
+            // `pageable_body` refuses a dialect without one.
+            None => self.body.clone(),
+        }
+    }
+
+    /// Reads the page that starts `offset` rows in. **Blocks.**
+    ///
+    /// Answers the page as a [`Step::Rows`] — `None` for a statement that,
+    /// against expectation, produced no result set — and how to read on.
+    fn read(
+        self,
+        session: &rudbman_jdbc::Session,
+        offset: u64,
+    ) -> Result<Option<(Step, Option<More>)>, JdbcError> {
+        let Some(page) = read_page(session, &self.statement(offset), self.limit)? else {
+            return Ok(None);
+        };
+        let complete = page.rows < self.limit as usize;
+        let next = offset + page.rows as u64;
+        let more = (!complete).then_some(More::Offset { pager: self, next });
+        Ok(Some((
+            Step::Rows {
+                columns: page.columns,
+                batch: page.batch,
+                complete,
+            },
+            more,
+        )))
+    }
+
+    /// Reads a later page, the one that starts `offset` rows in, as the grid's
+    /// paging wants it. **Blocks.**
+    ///
+    /// Never any further results: a statement read a page at a time has the
+    /// one.
+    fn next(
+        self,
+        session: &rudbman_jdbc::Session,
+        offset: u64,
+    ) -> Result<(Paged, Option<More>), JdbcError> {
+        let (batch, complete, more) = match self.read(session, offset)? {
+            Some((
+                Step::Rows {
+                    batch, complete, ..
+                },
+                more,
+            )) => (batch, complete, more),
+            // A statement whose first page had a result set and whose later
+            // one has none: there is nothing to read on from.
+            _ => (RenderedBatch::default(), true, None),
+        };
+        let paged = Paged {
+            batch,
+            complete,
+            steps: Vec::new(),
+            pageable: false,
+        };
+        Ok((paged, more))
+    }
 }
 
 /// A result set or the shared execution log, as a tab of the result area.
@@ -337,10 +474,10 @@ struct RowsTab {
     /// anybody, since a lookup in flight lasts one round trip and says nothing
     /// either way.
     read_only: Option<SharedString>,
-    /// The cursor, while this result is still ours to page. `None` once the
-    /// rows ran out, and while a fetch has it.
-    cursor: Option<Cursor>,
-    /// Whether the cursor is out with a background fetch.
+    /// How to read on, while this result is still ours to page. `None` once
+    /// the rows ran out, and while a fetch has it.
+    more: Option<More>,
+    /// Whether a page is out with a background fetch.
     fetching: bool,
     /// Keeps the grid's subscription alive for as long as the tab.
     _events: Subscription,
@@ -763,10 +900,11 @@ impl QueryPane {
         // A confirmation still on screen would run nothing if it were answered.
         self.pending = None;
         // The cursors of the results are answered by a session that is being
-        // closed; dropping them is what stops a scroll asking it for a page.
+        // closed; dropping every way on is what stops a scroll asking it for a
+        // page.
         for tab in &mut self.results {
             if let ResultBody::Rows(rows) = &mut tab.body {
-                rows.cursor = None;
+                rows.more = None;
             }
         }
         cx.notify();

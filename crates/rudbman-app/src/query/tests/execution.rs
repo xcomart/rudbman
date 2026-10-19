@@ -675,3 +675,260 @@ fn a_detached_pane_keeps_its_rows_and_refuses_to_run(cx: &mut TestAppContext) {
     assert_eq!(column_zero(&window, 0, cx), ["1", "2", "3"]);
     connected.close().expect("close");
 }
+
+/// How result `index` would read on, as the assertions below need it: the
+/// offset of its next page, `Err(())` for a cursor left open, `Ok(None)` for
+/// none.
+fn way_on(
+    window: &WindowHandle<QueryPane>,
+    index: usize,
+    cx: &mut TestAppContext,
+) -> Result<Option<u64>, ()> {
+    window
+        .update(cx, |pane, _window, _cx| {
+            let ResultBody::Rows(rows) = &pane.row_result(index).body else {
+                panic!("result {index} is the execution log");
+            };
+            assert!(!rows.fetching, "a page is still out while idle");
+            match &rows.more {
+                None => Ok(None),
+                Some(More::Offset { next, .. }) => Ok(Some(*next)),
+                Some(More::Cursor(_)) => Err(()),
+            }
+        })
+        .expect("the window is open")
+}
+
+/// Scrolls result 0 to its end the way `GridEvent::NearEnd` would.
+///
+/// Between pages — whenever the pane is idle — nothing may be held open: the
+/// way on is the offset of the next page, and that offset is exactly the rows
+/// already on screen. A cursor there would be a result set left standing on
+/// the shared connection, which is what reading a page at a time exists to
+/// avoid.
+fn scroll_paged_to_end(window: &WindowHandle<QueryPane>, cx: &mut TestAppContext) {
+    let id = window
+        .update(cx, |pane, _window, _cx| pane.row_result(0).id)
+        .expect("the window is open");
+    let mut pages = 0;
+    loop {
+        let rows = window
+            .update(cx, |pane, _window, cx| {
+                assert!(pane.error.is_none(), "{:?}", pane.error);
+                pane.grid_at(0).read(cx).source().row_count() as u64
+            })
+            .expect("the window is open");
+        match way_on(window, 0, cx) {
+            Ok(Some(next)) => assert_eq!(next, rows, "the next page skips or repeats"),
+            Ok(None) => break,
+            Err(()) => panic!("a cursor was left open between pages"),
+        }
+        window
+            .update(cx, |pane, window, cx| pane.fetch_more(id, window, cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+        pages += 1;
+        assert!(pages < 100, "the source never reached the end");
+    }
+    assert_eq!(state(window, 0, cx), GridSourceState::Complete);
+}
+
+/// Asserts that result 0 is being read a page at a time and is not at its
+/// end yet: some whole pages of `limit` rows on screen, and the next page due
+/// right after them.
+///
+/// Some, not one: the window's own first frames lay the grid out and may ask
+/// for a page or two before the test looks.
+fn assert_part_paged(window: &WindowHandle<QueryPane>, limit: u64, cx: &mut TestAppContext) {
+    let rows = window
+        .update(cx, |pane, _window, cx| {
+            assert!(pane.error.is_none(), "{:?}", pane.error);
+            pane.grid_at(0).read(cx).source().row_count() as u64
+        })
+        .expect("the window is open");
+    assert!(rows > 0 && rows.is_multiple_of(limit), "{rows} rows");
+    assert_eq!(way_on(window, 0, cx), Ok(Some(rows)), "not read by page");
+}
+
+/// A `SELECT` is read a page at a time, each page a statement of its own:
+/// nothing is left open between pages, the pages line up end to end, and the
+/// execution log still names the statement once.
+#[gpui::test]
+fn a_select_is_read_a_page_at_a_time_with_nothing_left_open(cx: &mut TestAppContext) {
+    let (connected, profile) = h2(
+        "paged-select",
+        &[
+            "create table BIG (ID int primary key, NAME varchar(20))",
+            // Inserted out of key order, so the order on screen is the
+            // statement's and not an accident of how the rows were stored.
+            "insert into BIG select 2501 - X, 'row' || X from system_range(1, 2500)",
+        ],
+    );
+    let window = pane(&connected, &profile, 100, cx);
+    run(
+        &window,
+        "select ID, NAME from BIG order by ID desc; -- newest first",
+        cx,
+    );
+
+    assert_part_paged(&window, 100, cx);
+
+    // The primary key lookup that decides editability went out on the same
+    // session right after the first page — the very command that made
+    // MariaDB's driver drain an open result — and the result is editable.
+    assert!(writable(&window, 0, cx), "the edit gate did not open");
+
+    scroll_paged_to_end(&window, cx);
+    let rows = column_zero(&window, 0, cx);
+    let expected: Vec<String> = (1..=2_500).rev().map(|id| id.to_string()).collect();
+    assert_eq!(rows, expected);
+    window
+        .update(cx, |pane, _window, _cx| {
+            assert_eq!(pane.log_at(0).len(), 1, "paging logged the statement again");
+        })
+        .expect("the window is open");
+    connected.close().expect("close");
+}
+
+/// A result an exact number of pages long ends on an empty page rather than
+/// asking forever.
+#[gpui::test]
+fn a_result_of_whole_pages_ends(cx: &mut TestAppContext) {
+    let (connected, profile) = h2(
+        "paged-whole",
+        &[
+            "create table EVEN (ID int primary key)",
+            "insert into EVEN select X from system_range(1, 300)",
+        ],
+    );
+    let window = pane(&connected, &profile, 100, cx);
+    run(&window, "select ID from EVEN order by ID", cx);
+    scroll_paged_to_end(&window, cx);
+    let rows = column_zero(&window, 0, cx);
+    assert_eq!(rows.len(), 300);
+    assert_eq!(rows.last().map(String::as_str), Some("300"));
+
+    // And one shorter than a page is complete at once, with no way on.
+    run(&window, "select ID from EVEN where ID <= 42", cx);
+    assert_eq!(way_on(&window, 0, cx), Ok(None));
+    assert_eq!(state(&window, 0, cx), GridSourceState::Complete);
+    assert_eq!(column_zero(&window, 0, cx).len(), 42);
+    connected.close().expect("close");
+}
+
+/// The page clause goes on the end of the user's statement rather than round
+/// it, so a join with two columns of one name — which a derived table refuses
+/// — pages like anything else.
+#[gpui::test]
+fn a_join_with_repeated_column_names_pages(cx: &mut TestAppContext) {
+    let (connected, profile) = h2(
+        "paged-join",
+        &[
+            "create table A (ID int primary key, V int)",
+            "create table B (ID int primary key, V int)",
+            "insert into A select X, X from system_range(1, 250)",
+            "insert into B select X, -X from system_range(1, 250)",
+        ],
+    );
+    let window = pane(&connected, &profile, 100, cx);
+    run(
+        &window,
+        "select * from A join B on A.ID = B.ID order by A.ID",
+        cx,
+    );
+    assert_part_paged(&window, 100, cx);
+    scroll_paged_to_end(&window, cx);
+    let rows = column_zero(&window, 0, cx);
+    assert_eq!(rows.len(), 250);
+    assert_eq!(rows[249], "250");
+    connected.close().expect("close");
+}
+
+/// A sort round trip pages too: its wrapper is a plain read, and the order it
+/// asks for holds across every page.
+#[gpui::test]
+fn a_sorted_result_pages_in_the_new_order(cx: &mut TestAppContext) {
+    let (connected, profile) = h2(
+        "paged-sort",
+        &[
+            "create table S (ID int primary key)",
+            "insert into S select X from system_range(1, 250)",
+        ],
+    );
+    let window = pane(&connected, &profile, 100, cx);
+    run(&window, "select ID from S order by ID", cx);
+    let id = window
+        .update(cx, |pane, _window, _cx| pane.row_result(0).id)
+        .expect("the window is open");
+    window
+        .update(cx, |pane, sorted, cx| {
+            pane.reorder(id, 0, Some(SortDirection::Descending), sorted, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    assert_part_paged(&window, 100, cx);
+    scroll_paged_to_end(&window, cx);
+    let expected: Vec<String> = (1..=250).rev().map(|id| id.to_string()).collect();
+    assert_eq!(column_zero(&window, 0, cx), expected);
+    connected.close().expect("close");
+}
+
+/// A statement that cuts its own rows is the user's to cut: it keeps its own
+/// cursor, which pages by `FETCH` exactly as before, and its `LIMIT` holds.
+#[gpui::test]
+fn a_statement_with_its_own_limit_keeps_its_cursor(cx: &mut TestAppContext) {
+    let (connected, profile) = h2(
+        "cursor-limit",
+        &[
+            "create table L (ID int primary key)",
+            "insert into L select X from system_range(1, 1000)",
+        ],
+    );
+    let window = pane(&connected, &profile, 100, cx);
+    run(&window, "select ID from L order by ID limit 250", cx);
+    assert_eq!(way_on(&window, 0, cx), Err(()), "expected the cursor");
+
+    let id = window
+        .update(cx, |pane, _window, _cx| pane.row_result(0).id)
+        .expect("the window is open");
+    let mut pages = 0;
+    while state(&window, 0, cx) != GridSourceState::Complete {
+        window
+            .update(cx, |pane, window, cx| pane.fetch_more(id, window, cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+        pages += 1;
+        assert!(pages < 20, "the source never reached the end");
+    }
+    let rows = column_zero(&window, 0, cx);
+    assert_eq!(rows.len(), 250);
+    assert_eq!(rows[249], "250");
+    assert_eq!(way_on(&window, 0, cx), Ok(None));
+    connected.close().expect("close");
+}
+
+/// Under manual commit the pages share the user's transaction: a row the
+/// transaction inserted and has not committed is on the page that reaches it.
+#[gpui::test]
+fn pages_read_inside_the_users_transaction(cx: &mut TestAppContext) {
+    let (connected, profile) = h2(
+        "paged-transaction",
+        &[
+            "create table TX (ID int primary key)",
+            "insert into TX select X from system_range(1, 150)",
+        ],
+    );
+    connected
+        .session()
+        .set_auto_commit(false)
+        .expect("manual commit");
+    let window = pane(&connected, &profile, 100, cx);
+    run(&window, "insert into TX values (151)", cx);
+    run(&window, "select ID from TX order by ID", cx);
+    scroll_paged_to_end(&window, cx);
+    let rows = column_zero(&window, 0, cx);
+    assert_eq!(rows.len(), 151);
+    assert_eq!(rows[150], "151");
+    connected.session().rollback().expect("rollback");
+    connected.close().expect("close");
+}
