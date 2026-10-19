@@ -12,10 +12,9 @@ members = ["crates/*"]
 # dependency would make two checkouts of this repository build different
 # applications.
 #
-# Zed has no answer of its own for five things rudbman needs — moving an open
+# Zed has no answer of its own for four things rudbman needs — moving an open
 # window between the platform's caption and the application's own
-# (`set_titlebar_transparent`), the X11 backend running its close callbacks with
-# the client `RefCell` borrowed, X11's `is_transparent` ignoring client-side
+# (`set_titlebar_transparent`), X11's `is_transparent` ignoring client-side
 # decorations, X11 having no counterpart to Wayland's `org_kde_kwin_blur`, and
 # macOS 26 blurring nothing behind a window whose `NSVisualEffectView` Liquid
 # Glass rebuilt — so four crates of the monorepo are carried patched. rudbman
@@ -44,13 +43,13 @@ members = ["crates/*"]
 # `rugpui-shell` and `vendor/gpui*` siblings) to `.cargo/config.toml`, which is
 # not committed.
 [patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
-gpui_linux = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
-gpui_macos = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
-gpui_windows = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
+gpui = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
+gpui_linux = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
+gpui_macos = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
+gpui_windows = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
 
 [workspace.package]
-version = "0.2.12"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 authors = ["rudbman contributors"]
@@ -58,9 +57,9 @@ repository = "https://github.com/xcomart/rudbman"
 
 [workspace.dependencies]
 # Shared database infrastructure; keep all three crates on the same revision.
-rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "434dacb069367b23e55837800fb0a947a314b51b" }
-rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "434dacb069367b23e55837800fb0a947a314b51b" }
-rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "434dacb069367b23e55837800fb0a947a314b51b" }
+rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
+rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
+rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
 
 # --- shared utilities ---
 anyhow = "1"
@@ -74,31 +73,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 directories = "6"
 keyring = "4"
 parking_lot = "0.12"
-smallvec = "1"
-unicode-segmentation = "1"
 unicode-width = "0.2"
-
-# --- text buffer: the SQL editor's document ---
-# A rope, because the editor has to hold a 100MB extracted script and stay
-# responsive: an insert is O(log n) rather than the memmove a `String` would do,
-# and line lookups are O(log n) rather than a scan. Two of its indexes are load
-# bearing beyond that — `byte_to_line`/`line_to_byte` are what let the syntax
-# cache address the buffer by line, and `char_to_utf16_cu`/`utf16_cu_to_char`
-# are what make the IME's UTF-16 offsets convertible in O(log n) instead of the
-# whole-string walk a flat buffer needs on every composition step. Default
-# features are off so that a line break is `\n` or `\r\n` and nothing else: with
-# `unicode_lines` a `\u{2028}` inside a string literal would split a line in the
-# rope that the SQL lexer does not split, and the two views of the buffer have
-# to agree.
-ropey = { version = "1.6", default-features = false, features = [
-    "cr_lines",
-    "simd",
-] }
 futures = "0.3"
 async-trait = "0.1"
-bitflags = "2"
 tempfile = "3"
-libc = "0.2"
 
 # --- HTTP: the driver downloader, and the shell's update check ---
 # Maven Central and the GitHub releases API are the only hosts rudbman ever
@@ -117,14 +95,6 @@ ureq = { version = "3", default-features = false, features = [
     "_ring",
     "gzip",
 ] }
-
-# --- SHA-256, for `rugpui-shell`'s self-updater.  The GitHub releases API
-# publishes a `digest` field for every asset, and an updater that overwrites its
-# own installation should check it.  No crate of this workspace names `ring`
-# any more — the shell does — but it is already in the tree twice over as the
-# crypto backend both `russh` and `ureq`'s `rustls` resolve to, so this entry
-# only pins the version they and the shell share. ---
-ring = "0.17"
 
 # --- localization ---
 # `rust-i18n` compiles `crates/rudbman-app/locales/*.yml` into the binary, so
@@ -146,34 +116,27 @@ sys-locale = "0.3"
 # features are empty by default and the backend inherits them, so the two
 # display servers Linux might be running under have to be asked for by name;
 # `font-kit` is macOS's text stack and is inert elsewhere.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf", features = [
+gpui = { git = "https://github.com/zed-industries/zed", rev = "56934ec0560bce8929025497411de7f5322fb6ca" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "56934ec0560bce8929025497411de7f5322fb6ca", features = [
     "font-kit",
     "wayland",
     "x11",
 ] }
 
-# --- platform window chrome, and one platform registry ---
-# All four are used by `rudbman-app` alone, and every one of them only under a
-# `[target.'cfg(...)']` section, so a build for another platform never sees
-# them.
-#
+# --- the Windows executable's icon ---
 # `winresource` embeds `assets/icon.ico` into the Windows executable at
 # resource ID 1, which is the id gpui's Windows backend loads for the window
-# class icon, and it is the one of the four `rudbman-app` still names itself.
+# class icon. `rudbman-app` names it under a `[target.'cfg(windows)']` build
+# dependency, so a build for another platform never sees it.
 #
-# The other three are `rugpui-shell`'s: `windows` is what its caption code pins
-# the DWM title bar to the app theme with, `raw-window-handle` is how gpui hands
-# out the `HWND` that needs, and `windows-registry` is what corrects the
-# `DisplayVersion` of the "Apps & features" entry after a self-update. All three
-# are pinned here to the versions gpui already links, so they cost an edge in
-# the dependency graph rather than a crate in the build — which is also why
-# `windows-registry` is picked over `winreg`, whose own `windows-sys` would be a
-# second registry binding in the linked binary.
+# The DWM caption colour, the window handle it needs and the "Apps & features"
+# registry entry the self-updater corrects are `rugpui-shell`'s, and so are the
+# `windows`, `raw-window-handle` and `windows-registry` crates they take: the
+# shell declares them itself and they resolve through this workspace's lock
+# like any other transitive dependency. No entry here is needed to pin them —
+# an unused `[workspace.dependencies]` entry takes no part in resolution — so
+# none is kept.
 winresource = "0.1"
-windows = { version = "0.61", features = ["Win32_Graphics_Dwm"] }
-windows-registry = "0.5"
-raw-window-handle = "0.6"
 
 # --- async runtime (SSH tunnel only) ---
 # The tunnel is the only thing here that speaks a network protocol of its own.
@@ -217,10 +180,10 @@ jni = { version = "0.22", features = ["invocation"] }
 #
 # The same `rev` of `https://github.com/xcomart/rugpui` as the patch table at
 # the top of this file, which is what keeps one gpui in the binary.
-rugpui = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
-rugpui-grid = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
-rugpui-editor = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
-rugpui-shell = { git = "https://github.com/xcomart/rugpui", rev = "843ea78156dcb34fb99fc48fa62c9a834c432569" }
+rugpui = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
+rugpui-grid = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
+rugpui-editor = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
+rugpui-shell = { git = "https://github.com/xcomart/rugpui", rev = "b95bcb2c1538fbe031b381923446663ce6ec7a05" }
 
 # --- internal crates ---
 rudbman-core = { path = "crates/rudbman-core" }

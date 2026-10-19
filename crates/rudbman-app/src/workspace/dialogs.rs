@@ -91,21 +91,16 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Puts away every context menu anywhere in the window, and says whether
-    /// there was one.
+    /// Puts away every context menu anywhere in the window.
     ///
     /// Both halves: the shell's own, and the ones the panes draw for their
-    /// editor, grid and canvases. What `Escape` runs first of all, and what the
-    /// application dropdown runs before it opens.
-    pub(super) fn close_context_menus(&mut self, cx: &mut Context<Self>) -> bool {
-        let mine = self.context_menu.take().is_some();
-        if mine {
+    /// editor, grid and canvases. What a dialog and the application dropdown
+    /// run before they open.
+    pub(super) fn close_context_menus(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
             cx.notify();
         }
-        // Both halves, always: `|` rather than `||`, because a pane menu left
-        // open behind a dismissed shell menu is exactly the state this exists
-        // to prevent.
-        self.close_pane_context_menus(cx) | mine
+        self.close_pane_context_menus(cx);
     }
 
     /// Puts away the context menu of every pane of the work area on screen.
@@ -115,9 +110,9 @@ impl Workspace {
     /// a right-click does not move the pane marker, so the pane holding one is
     /// not necessarily the active one, and asking them all costs a walk of a
     /// tree with a handful of leaves in it.
-    pub(super) fn close_pane_context_menus(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(super) fn close_pane_context_menus(&mut self, cx: &mut Context<Self>) {
         let Some(area) = self.work_area() else {
-            return false;
+            return;
         };
         // Gathered before anything is updated: reading the tree borrows the
         // application immutably and closing a menu borrows it mutably.
@@ -125,6 +120,7 @@ impl Workspace {
         let mut diagrams = Vec::new();
         let mut builders = Vec::new();
         let mut data = Vec::new();
+        let mut details = Vec::new();
         for (_, pane) in area.panes.leaves() {
             for item in pane.items() {
                 match item {
@@ -132,28 +128,29 @@ impl Workspace {
                     PaneItem::Erd(panel) => diagrams.push(panel.clone()),
                     PaneItem::QueryBuilder { pane, .. } => builders.push(pane.clone()),
                     PaneItem::TableData(panel) => data.push(panel.clone()),
-                    // The two surfaces with nothing to act on: the detail panel
-                    // is four tabs of read-only presentation, and the structure
-                    // pane's commands are all buttons of its own.
-                    PaneItem::TableDetail(_) | PaneItem::TableStruct(_) => {}
+                    // The detail panel's only menu is its DDL editor's.
+                    PaneItem::TableDetail(panel) => details.push(panel.clone()),
+                    // The structure pane's commands are all buttons of its own.
+                    PaneItem::TableStruct(_) => {}
                 }
             }
         }
 
-        let mut closed = false;
         for pane in queries {
-            closed |= pane.update(cx, |pane, cx| pane.close_context_menu(cx));
+            pane.update(cx, |pane, cx| pane.close_context_menu(cx));
         }
         for panel in diagrams {
-            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+            panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         for panel in builders {
-            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+            panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
         for panel in data {
-            closed |= panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+            panel.update(cx, |panel, cx| panel.close_context_menu(cx));
         }
-        closed
+        for panel in details {
+            panel.update(cx, |panel, cx| panel.close_context_menu(cx));
+        }
     }
 
     /// Opens the about dialog, closing whatever else was showing.

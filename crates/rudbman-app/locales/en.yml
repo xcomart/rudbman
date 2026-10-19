@@ -605,6 +605,9 @@ query:
   no_statement: There is no statement to run.
   # The workspace keeps SQL drafts across a restart only up to a size.
   draft_too_large: "This draft is larger than %{limit} MB, so it will not be kept when the app closes. Save it to a file to keep it."
+  # A result grid stops paging at a fixed number of rows, so a scroll held at
+  # the bottom of a huge table cannot fill memory. `limit` is that number.
+  row_limit: "This grid shows at most %{limit} rows, and the result has more. Narrow the statement to see the rest."
   # The profile is marked read-only, so a write is refused rather than asked
   # about: asking would offer something the connection will not do.
   read_only: This connection is read-only; the statement was not sent.
@@ -1106,6 +1109,9 @@ update:
   # The way out of the error state, and of a release with no build for this
   # platform: the browser, and the user takes it from there.
   open_release: Open the release page
+  # Heading over the release's own notes in an announcement, read from the
+  # GitHub release body. The notes themselves are shown as published.
+  notes: "What's new"
 
 tab_name:
   title: Rename tab

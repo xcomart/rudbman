@@ -3,15 +3,15 @@
 use super::*;
 
 impl Workspace {
-    /// Notes where a dragged tab would land while it is over `strip`.
+    /// Feeds one drag report from `strip` into [`Workspace::tab_drop`],
+    /// notifying when the bar moved.
     ///
     /// `strip` names the strip reporting — a pane id for a pane's strip, and
     /// [`CONNECTION_STRIP_TAG`] for the connection strip — and `index` the
     /// insertion gap the pointer is over, or `None` once it has left the
-    /// strip. A `None` clears only when it names this strip's own bar, so the
-    /// strips a drag is not over never wipe the one it is; a `Some` is kept
-    /// only from a source this strip accepts, so a pane never bars a
-    /// connection drag and the connection strip never bars a pane one.
+    /// strip. The bookkeeping is [`TabDropState::drag_over`]'s; what is
+    /// rudbman's is the verdict on the source: a pane never bars a connection
+    /// drag and the connection strip never bars a pane one.
     pub(super) fn drag_over_tab(
         &mut self,
         strip: u64,
@@ -19,38 +19,14 @@ impl Workspace {
         index: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        let Some(index) = index else {
-            if self.tab_drop.is_some_and(|(tag, _)| tag == strip) {
-                self.tab_drop = None;
-                cx.notify();
-            }
-            return;
-        };
-        let acceptable = if strip == CONNECTION_STRIP_TAG {
+        let accepted = if strip == CONNECTION_STRIP_TAG {
             dragged.source == CONNECTION_STRIP_TAG
         } else {
             self.work_area()
                 .is_some_and(|area| area.panes.contains(PaneId::from_u64(dragged.source)))
         };
-        if !acceptable {
-            return;
-        }
-        let next = Some((strip, index));
-        if self.tab_drop != next {
-            self.tab_drop = next;
+        if self.tab_drop.drag_over(strip, index, accepted) {
             cx.notify();
-        }
-    }
-
-    /// The index a drop on `strip` lands at: the bar the pointer last named
-    /// for this strip, or `fallback` — the static drop position — when the
-    /// bar belongs to another strip or to no drag at all.
-    ///
-    /// Takes the bar in any case: a drop ends the gesture, wherever it lands.
-    pub(super) fn resolve_tab_drop(&mut self, strip: u64, fallback: usize) -> usize {
-        match self.tab_drop.take() {
-            Some((tag, index)) if tag == strip => index,
-            _ => fallback,
         }
     }
 
@@ -60,7 +36,7 @@ impl Workspace {
     /// drop handler, so the root's own release clears whatever is left; a
     /// drop already took it, which makes this a no-op.
     pub(super) fn clear_tab_drop(&mut self, cx: &mut Context<Self>) {
-        if self.tab_drop.take().is_some() {
+        if self.tab_drop.clear() {
             cx.notify();
         }
     }
@@ -112,11 +88,7 @@ pub(super) fn render_tab_strip(
         // dropdown nor the "+" the first two label.
         .tooltips("", "", ts!("tab.close"))
         .drag_source(id.as_u64())
-        .drop_indicator(
-            chrome
-                .drop
-                .and_then(|(tag, index)| (tag == id.as_u64()).then_some(index)),
-        )
+        .drop_indicator(chrome.drop.indicator(id.as_u64()))
         .on_drag_over({
             let this = this.clone();
             move |dragged, index, _window, cx| {
@@ -129,12 +101,14 @@ pub(super) fn render_tab_strip(
             let this = this.clone();
             move |dragged, to, window, cx| {
                 this.update(cx, |workspace, cx| {
-                    let at = workspace.resolve_tab_drop(id.as_u64(), to);
+                    // `to` is already the gap the bar stood in: the bar only
+                    // has to come down.
+                    workspace.tab_drop.clear();
                     workspace.move_tab(
                         PaneId::from_u64(dragged.source),
                         dragged.index,
                         id,
-                        at,
+                        to,
                         window,
                         cx,
                     );
@@ -257,7 +231,7 @@ pub(super) fn render_pane(
                     let this = this.clone();
                     move |dragged, window, cx| {
                         this.update(cx, |workspace, cx| {
-                            let at = workspace.resolve_tab_drop(id.as_u64(), usize::MAX);
+                            let at = workspace.tab_drop.resolve(id.as_u64(), usize::MAX);
                             workspace.move_tab(
                                 PaneId::from_u64(dragged.source),
                                 dragged.index,
@@ -876,10 +850,7 @@ impl Workspace {
             .tabs(tabs)
             .active(self.active_connection)
             .drag_source(CONNECTION_STRIP_TAG)
-            .drop_indicator(
-                self.tab_drop
-                    .and_then(|(tag, index)| (tag == CONNECTION_STRIP_TAG).then_some(index)),
-            )
+            .drop_indicator(self.tab_drop.indicator(CONNECTION_STRIP_TAG))
             .on_drag_over({
                 let this = this.clone();
                 move |dragged, index, _window, cx| {
@@ -898,8 +869,8 @@ impl Workspace {
                             workspace.clear_tab_drop(cx);
                             return;
                         }
-                        let at = workspace.resolve_tab_drop(CONNECTION_STRIP_TAG, to);
-                        workspace.move_connection(dragged.index, at, cx);
+                        workspace.tab_drop.clear();
+                        workspace.move_connection(dragged.index, to, cx);
                         // The bar is already taken, but a refused move
                         // notifies nothing — the strip still has to lose the
                         // bar it drew.

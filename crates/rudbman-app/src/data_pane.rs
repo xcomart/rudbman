@@ -76,7 +76,7 @@ use crate::data_edit::{EditableSource, PlannedStatement, RowRef, StagedCell, pla
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::{QueryError, note, render_error};
-use crate::query_source::{Paged, RenderedBatch, ResultSource, Step, advance, page};
+use crate::query_source::{Paged, ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, page};
 use crate::row_apply::{
     ApplyFailure, ApplyProblem, ApplyStop, apply_batch, plan_message, primary_key,
     render_apply_error, render_apply_preview, render_discard_confirm,
@@ -712,20 +712,18 @@ impl DataPane {
                 // `Paged::steps` may carry are a stored procedure's, and a
                 // `SELECT` over one table has none.
                 rows.cursor = (!paged.complete).then_some(cursor);
-                let state = if paged.complete {
-                    GridSourceState::Complete
-                } else {
-                    GridSourceState::HasMore
-                };
                 let grid = rows.grid.clone();
-                grid.update(cx, |grid, cx| {
-                    let source = grid.source_mut(cx);
+                let limited = grid.update(cx, |grid, cx| {
                     // Into the rows the server sent, under the overlay: the
                     // staged edits are keyed to base row indices, and appending
                     // moves none of them.
-                    source.base_mut().push(paged.batch);
-                    source.set_state(state);
+                    grid.source_mut(cx)
+                        .base_mut()
+                        .push_page(paged.batch, paged.complete)
                 });
+                if limited {
+                    failure = Some(ts!("query.row_limit", limit = ROW_LIMIT));
+                }
             }
             Err(error) => {
                 rows.cursor = None;
@@ -1176,17 +1174,14 @@ impl DataPane {
         cx.notify();
     }
 
-    /// Puts the grid's right-click menu away, and says whether there was one.
+    /// Puts the grid's right-click menu away.
     ///
-    /// What `Escape` reaches through the workspace, which closes the menu on
-    /// top of everything before it closes anything else (architecture document,
-    /// §7.8). The answer is what tells the workspace the key was spent here.
-    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        let had = self.context_menu.take().is_some();
-        if had {
+    /// What the workspace runs before it opens another overlay, so that only
+    /// one full-window backdrop is ever down at a time.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
             cx.notify();
         }
-        had
     }
 
     /// The grid's right-click menu: the cell menu, or the heading one.

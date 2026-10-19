@@ -6,9 +6,10 @@ impl QueryPane {
     /// Whether a menu is open in either half of the pane, for the shell's own
     /// tests.
     ///
-    /// The workspace reaches every pane on `Escape` — a right click moves no
-    /// pane marker, so the pane holding a menu is not necessarily the active
-    /// one — and asserting that it did needs a way through.
+    /// The workspace reaches every pane when it closes the menus — a right
+    /// click moves no pane marker, so the pane holding a menu is not
+    /// necessarily the active one — and asserting that it did needs a way
+    /// through.
     #[cfg(test)]
     pub(crate) fn has_context_menu(&self) -> bool {
         self.context_menu.is_some()
@@ -24,17 +25,14 @@ impl QueryPane {
         cx.notify();
     }
 
-    /// Puts the pane's right-click menu away, and says whether there was one.
+    /// Puts the pane's right-click menu away.
     ///
-    /// What `Escape` reaches through the workspace, which closes the menu on
-    /// top of everything before it closes anything else (architecture document,
-    /// §7.8). The answer is what tells the workspace the key was spent here.
-    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        let had = self.context_menu.take().is_some();
-        if had {
+    /// What the workspace runs before it opens another overlay, so that only
+    /// one full-window backdrop is ever down at a time.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
             cx.notify();
         }
-        had
     }
 
     /// The editor's right-click menu: everything a SQL buffer can be asked to

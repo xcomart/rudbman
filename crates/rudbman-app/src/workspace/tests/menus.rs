@@ -555,8 +555,8 @@ fn the_welcome_menu_opens_the_dialog_over_the_row(cx: &mut gpui::TestAppContext)
 }
 
 /// `Escape` closes the context menu before it closes anything else — the
-/// shell's own and the panes' alike — and leaves the dialog stack exactly
-/// as it was, so the next press finds it.
+/// shell's own and the panes' alike, which take the key themselves — and
+/// leaves the dialog stack exactly as it was, so the next press finds it.
 #[gpui::test]
 fn escape_closes_the_context_menu_before_the_dialog_under_it(cx: &mut gpui::TestAppContext) {
     let (window, connection) = workspace_over_h2("escape-menu", cx);
@@ -586,7 +586,8 @@ fn escape_closes_the_context_menu_before_the_dialog_under_it(cx: &mut gpui::Test
         .expect("the window is open");
     cx.run_until_parked();
 
-    cx.dispatch_action(DismissDialog);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
     window
         .update(&mut cx, |workspace, _window, cx| {
             assert!(workspace.context_menu.is_none(), "the shell menu stayed");
@@ -603,7 +604,8 @@ fn escape_closes_the_context_menu_before_the_dialog_under_it(cx: &mut gpui::Test
 
     // And the next press finds the dialog, which is the whole point of the
     // menu going first rather than instead.
-    cx.dispatch_action(DismissDialog);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
     window
         .update(&mut cx, |workspace, _window, cx| {
             assert!(!workspace.about.read(cx).is_open());

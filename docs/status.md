@@ -130,7 +130,7 @@ active/inactive shadow intensity.
   (the limit is pinned by rudbman-sql tests).
 - A failed file read only reaches the log — the shell has no transient
   message strip. Wire it up once a shared notification UI exists.
-- Mini-tab polish: scrolling the active tab into view, drag to reorder.
+- Mini-tab polish: scrolling the active tab into view.
 - Connection A's write-confirmation modal stays up after switching to
   connection B (it still responds and it is still correct, but it looks
   wrong — low priority).
@@ -148,13 +148,14 @@ active/inactive shadow intensity.
   bridge (Java) and the Rust codec and bindings to fit together even when
   written from the document alone by different hands, and that is how they
   were built.
-- **Commit messages are English prose** that carry the "why". No
-  Co-authored-by.
+- **Commit subjects use `type: summary`** (`feat:`, `fix:`, `docs:` and so on;
+  see [CONTRIBUTING.md](../CONTRIBUTING.md)), in English, with a body that
+  carries the "why". No Co-authored-by.
 - **Merge with a merge commit once CI is green on all three platforms**
   (`gh pr merge --merge`).
-- The four patched gpui crates are rugpui's now, not this repository's, and they
-  stay **byte-identical** with rulogman's vendor tree so patches can be
-  exchanged as diffs. Do not edit them — and do not drop rudbman's
+- The four patched gpui crates are rugpui's now, not this repository's, and
+  rugpui is their **single origin**: rulogman takes the same copy, so a fix
+  is made once there. Do not edit them here — and do not drop rudbman's
   `[patch."https://github.com/zed-industries/zed"]` table, which is what points
   at them: without it two gpui crates end up in one binary and nothing draws.
 - Verification commands: `cargo test --workspace`, `cargo clippy --workspace

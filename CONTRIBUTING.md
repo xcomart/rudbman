@@ -19,10 +19,11 @@ protocol or the workspace UI before implementing them.
 
 ## Set up a development checkout
 
-Use Git, stable Rust with `rustfmt` and `clippy`, a native compiler toolchain,
-and JDK 17 or newer. CI uses JDK 17. Set `JAVA_HOME` and add its `bin` directory
-to `PATH`. Use the included Gradle wrapper. Windows needs MSVC and the Windows
-SDK; macOS needs Xcode command line tools.
+Use Git, stable Rust with `rustfmt` and `clippy` (CI and the release builds pin
+Rust 1.98.0), a native compiler toolchain, and JDK 17 or newer. CI uses JDK 17.
+Set `JAVA_HOME` and add its `bin` directory to `PATH`. Use the included Gradle
+wrapper. Windows needs MSVC and the Windows SDK; macOS needs Xcode command line
+tools.
 
 On Debian or Ubuntu, install the native libraries used by CI:
 
@@ -176,8 +177,8 @@ pull request. Include database/driver versions for integration changes,
 reproduction SQL for fixes and screenshots for visible changes. Review the diff
 for unrelated formatting, credentials, build output and local configuration.
 
-CI runs on pull requests and pushes to `main`; pushing directly to `dev` does
-not trigger it. Run the local checks before pushing. Routine work ends at
+CI runs on pull requests and on pushes to `dev` and `main`. Run the local
+checks before pushing. Routine work ends at
 `origin/dev`. Releases are separate maintainer work: merge the `dev` → `main` PR
 after required checks, fetch `origin/main`, then tag its verified latest commit
 and publish. Do not move an existing release tag.

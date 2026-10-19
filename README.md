@@ -35,8 +35,10 @@ JVM bridge.
   and query builders. Right-click a work tab to rename it; leave its name blank
   to return to the default. Workspaces save automatically and on close. SQL is
   restored without running it; result rows and unapplied database edits are not
-  saved. Splitting copies the selected tab into the new pane. A pane disappears
-  when its last tab closes, with the final pane kept open.
+  saved. Splitting copies the selected tab into the new pane. Drag a work tab to
+  reorder it or move it to another pane, and drag a connection tab to reorder
+  the connections. A pane disappears when its last tab closes, with the final
+  pane kept open.
 - **Connection folders.** Group saved connections by folder in the connection
   dialog. Click a folder heading to collapse or expand it, or focus it with
   <kbd>Tab</kbd> and press <kbd>Space</kbd> or <kbd>Enter</kbd>. Folded folders
@@ -47,13 +49,20 @@ JVM bridge.
   JDBC URLs.
 - **A schema explorer** — catalogs, schemas, tables, views, sequences,
   routines — and a table detail panel with columns, keys, references in both
-  directions, and DDL (the server's own text where the dialect offers it,
-  reconstructed from metadata where it does not).
+  directions, and DDL in a read-only, highlighted editor (the server's own text
+  where the dialect offers it, reconstructed from metadata where it does not).
 - **A SQL workbench**: an editor with incremental dialect-aware highlighting
   and IME support, SQL keyword/function/table/column completion (including table aliases),
   statement splitting, run-one/run-selection/run-all,
-  cancellation, multiple result sets, and a virtualized grid that scrolls a
-  million rows without loading a million rows.
+  cancellation, multiple result sets, and a virtualized grid that fetches rows
+  as you scroll instead of loading the whole result — up to 200,000 rows per
+  grid, with a note when the result has more.
+  **Format SQL** (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>)
+  lays out the selection, or the whole editor, in the sqlstyle.guide river
+  layout. On a connection that does not commit each statement as it runs, the
+  editor's **Commit** and **Rollback** buttons end the transaction; while it
+  is open, grid applies, structure changes and transfers on that connection
+  are refused rather than committing or discarding it.
   Completion opens while typing or with <kbd>Ctrl</kbd>+<kbd>Space</kbd>:
   use ↑/↓ to choose, Enter/Tab to insert, and Esc to dismiss. Names come from
   the current connection, with columns loaded on demand; comments and string
@@ -239,15 +248,15 @@ gpui comes from a pinned revision of Zed's monorepo rather than from crates.io,
 whose newest release (0.2.2) predates the split of the crate into a
 platform-independent core, a `gpui_platform` facade and per-OS backends. Four of
 those crates — `gpui`, `gpui_linux`, `gpui_macos`, `gpui_windows` — are patched
-back over the git source, each change marked `RULOGMAN PATCH`: the live
-title-bar switch, three X11 fixes and a macOS 26 blur fix upstream has no
-answer for. rugpui vendors them and rudbman's
-`[patch."https://github.com/zed-industries/zed"]` table points at that copy,
-which is what keeps one gpui in the binary — two would make the `Global`s the
-widgets install invisible to the application. The trees are
-kept byte-identical with the same four in
-[rulogman](https://github.com/xcomart/rulogman), so a fix moves between the
-projects as a plain diff.
+back over the git source, each change marked `RULOGMAN PATCH`: among them the
+live title-bar switch, three X11 fixes and a macOS 26 blur fix upstream has no
+answer for, all listed in rugpui's root manifest. rugpui vendors them and
+rudbman's `[patch."https://github.com/zed-industries/zed"]` table points at
+that copy, which is what keeps one gpui in the binary — two would make the
+`Global`s the widgets install invisible to the application. rugpui is the
+single origin of those trees:
+[rulogman](https://github.com/xcomart/rulogman) points its patch table at the
+same copy, so a fix made there reaches both projects.
 
 ## Contributing
 

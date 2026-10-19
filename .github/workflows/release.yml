@@ -20,6 +20,14 @@
 # both. Only `publish` can write to the repository. Next to the archives it
 # uploads SHA256SUMS, one `sha256sum` line per asset.
 #
+# A manual run (`gh workflow run release.yml --ref dev`, or "Run workflow" on
+# the Actions tab) builds the same archives and installers from a branch and
+# stops there: `verify` names them after the branch and commit instead of a
+# tag, and `test`, `publish` and `winget` are skipped -- CI already tested the
+# branch, and a branch build is not a release. Fetch the result with
+# `gh run download <run-id>`; each target is an artifact named
+# `release-<target>`.
+#
 # Third-party actions are pinned to a full commit SHA, with the release that
 # SHA belongs to in a trailing comment; bump both together.
 name: Release
@@ -27,6 +35,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 # Read-only by default; the publish job asks for write access on its own.
 permissions:
@@ -45,17 +54,32 @@ jobs:
   # that it was cut from what was merged into `main`, as the release procedure
   # requires -- not from a `dev` commit that never got there.
   verify:
-    name: verify tag
+    name: verify
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      # What the archives and installers are named after -- the tag, or for a
+      # manual run the branch and short commit -- and the bare workspace
+      # version the bundle metadata and the installer's numeric fields carry.
+      label: ${{ steps.meta.outputs.label }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Tag matches the workspace version
+        id: meta
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" != "push" ]; then
+            label="${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}"
+            echo "label=$label" >> "$GITHUB_OUTPUT"
+            echo "manual build of $GITHUB_REF_NAME ($GITHUB_SHA) as $label, version $version; nothing will be published"
+            exit 0
+          fi
+          echo "label=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version (expected v$version)"
             exit 1
@@ -63,6 +87,7 @@ jobs:
           echo "$GITHUB_REF_NAME matches the workspace version"
 
       - name: Tagged commit is on main
+        if: github.event_name == 'push'
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
@@ -78,6 +103,7 @@ jobs:
   test:
     name: test (linux)
     needs: verify
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -267,7 +293,7 @@ jobs:
       - name: Package (macos)
         if: runner.os == 'macOS'
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ needs.verify.outputs.version }}"
           app="rudbman.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/lib" "$app/Contents/Resources"
           cp "target/${{ matrix.target }}/release/rudbman" "$app/Contents/MacOS/"
@@ -278,7 +304,7 @@ jobs:
           plutil -lint "$app/Contents/Info.plist"
           codesign --force --sign - "$app"
           codesign --verify --strict "$app"
-          staging="rudbman-${{ github.ref_name }}-${{ matrix.target }}"
+          staging="rudbman-${{ needs.verify.outputs.label }}-${{ matrix.target }}"
           mkdir "$staging"
           cp -R "$app" README.md "$staging/"
           tar czf "$staging.tar.gz" "$staging"
@@ -290,7 +316,7 @@ jobs:
       - name: Package (linux)
         if: runner.os == 'Linux'
         run: |
-          staging="rudbman-${{ github.ref_name }}-${{ matrix.target }}"
+          staging="rudbman-${{ needs.verify.outputs.label }}-${{ matrix.target }}"
           mkdir -p "$staging/lib" "$staging/icons"
           cp "target/${{ matrix.target }}/release/rudbman" "$staging/"
           cp bridge/build/libs/rudbman-bridge.jar "$staging/lib/"
@@ -345,7 +371,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $staging = "rudbman-${{ github.ref_name }}-${{ matrix.target }}"
+          $staging = "rudbman-${{ needs.verify.outputs.label }}-${{ matrix.target }}"
           New-Item -ItemType Directory "$staging/lib" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/rudbman.exe" $staging
           Copy-Item "bridge/build/libs/rudbman-bridge.jar" "$staging/lib/"
@@ -415,9 +441,10 @@ jobs:
       # Inno Setup 6 comes and goes from the windows-latest image, so neither
       # "it is there" nor "it is not" is safe to assume: look in both Program
       # Files roots first and fall back to Chocolatey, which the image does
-      # carry. `$version` drops the tag's "v" because VersionInfoVersion in the
-      # script is a numeric quad and refuses a prefix, while the output file
-      # name keeps the tag verbatim so it matches the zip beside it.
+      # carry. `$version` is the bare workspace version because VersionInfoVersion
+      # in the script is a numeric quad and refuses a prefix, while the output
+      # file name keeps the label (the tag) verbatim so it matches the zip
+      # beside it.
       - name: Build the installer (windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -441,8 +468,8 @@ jobs:
           if (-not $iscc) { throw "ISCC.exe not found, even after installing Inno Setup" }
           Write-Host "compiling with $iscc"
 
-          $version = "${{ github.ref_name }}" -replace '^v', ''
-          $base = "rudbman-${{ github.ref_name }}-${{ matrix.target }}-setup"
+          $version = "${{ needs.verify.outputs.version }}"
+          $base = "rudbman-${{ needs.verify.outputs.label }}-${{ matrix.target }}-setup"
           # ISCC resolves a relative OutputDir against the script's own
           # directory, which would bury the installer in packaging\windows\.
           # Absolute paths for both ends, so it lands next to the zip.
@@ -527,7 +554,7 @@ jobs:
           $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{E09022E1-1203-4A82-A00E-6385C2594DEF}_is1"
           $arp = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
           if (-not $arp) { throw "the install left no Add/Remove Programs entry at $key" }
-          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $version = "${{ needs.verify.outputs.version }}"
           if ($arp.DisplayVersion -ne $version) {
             throw "Add/Remove Programs says $($arp.DisplayVersion), expected $version"
           }
@@ -554,6 +581,7 @@ jobs:
   publish:
     name: publish
     needs: [build, test]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

@@ -120,7 +120,7 @@ use crate::data_edit::{
 use crate::explorer::ConnectionId;
 use crate::i18n::ts;
 use crate::query_source::{
-    Paged, RenderedBatch, ResultSource, Step, advance, column_name, key_index, page,
+    Paged, ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, column_name, key_index, page,
 };
 use crate::row_apply::{
     ApplyFailure, ApplyProblem, ApplyStop, apply_batch, plan_message, primary_key,

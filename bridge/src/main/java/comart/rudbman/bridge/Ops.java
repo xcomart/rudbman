@@ -29,7 +29,7 @@ public final class Ops {
     public static final int CLOSE_CURSOR = 0x23;
     /** {@code handle} session. Arrives on a thread other than the worker. */
     public static final int CANCEL = 0x24;
-    /** {@code handle} cursor, {@code req} JSON {@code {row, col, offset, len}}. */
+    /** {@code handle} cursor, {@code req} JSON {@code {id, offset, length}}. */
     public static final int LOB_READ = 0x25;
     /** {@code handle} session, {@code arg} 0 or 1. */
     public static final int SET_AUTOCOMMIT = 0x30;

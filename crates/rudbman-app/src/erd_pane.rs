@@ -110,17 +110,11 @@ pub(crate) fn canvas_zoom_rows(canvas: &FocusHandle) -> Vec<MenuRow> {
         .collect()
 }
 
-/// Puts a canvas menu away, and says whether there was one to put away.
-///
-/// Shared by both canvas panels: `Escape` arrives through the workspace, which
-/// has to know whether the key was spent here before it goes on to the dialogs
-/// under it (architecture document, §7.8).
-pub(crate) fn close_canvas_menu<T, V: 'static>(slot: &mut Option<T>, cx: &mut Context<V>) -> bool {
-    let had = slot.take().is_some();
-    if had {
+/// Puts a canvas menu away, for both canvas panels.
+pub(crate) fn close_canvas_menu<T, V: 'static>(slot: &mut Option<T>, cx: &mut Context<V>) {
+    if slot.take().is_some() {
         cx.notify();
     }
-    had
 }
 
 /// The one `TABLE_TYPE` a diagram is drawn from.
@@ -499,12 +493,11 @@ impl ErdPane {
         cx.notify();
     }
 
-    /// Puts the canvas's right-click menu away, and says whether there was one.
+    /// Puts the canvas's right-click menu away.
     ///
-    /// What `Escape` reaches through the workspace, which closes the menu on
-    /// top of everything before it closes anything else (architecture document,
-    /// §7.8). The answer is what tells the workspace the key was spent here.
-    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) -> bool {
+    /// What the workspace runs before it opens another overlay, so that only
+    /// one full-window backdrop is ever down at a time.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
         close_canvas_menu(&mut self.context_menu, cx)
     }
 
@@ -1537,10 +1530,9 @@ mod tests {
         assert_eq!(seen.borrow().as_slice(), ["APP.PERSON".to_string()]);
     }
 
-    /// The canvas asks for a menu, the panel keeps it and draws it, and
-    /// `Escape` — which reaches here through the workspace — puts it away and
-    /// says it did. A refresh drops it too: it names a box of a diagram that is
-    /// being replaced.
+    /// The canvas asks for a menu, the panel keeps it and draws it, and the
+    /// workspace can put it away. A refresh drops it too: it names a box of a
+    /// diagram that is being replaced.
     #[gpui::test]
     fn a_canvas_menu_is_closed_by_the_workspace_and_by_a_refresh(cx: &mut gpui::TestAppContext) {
         let window = loaded(cx);
@@ -1548,10 +1540,6 @@ mod tests {
 
         window
             .update(&mut vcx, |panel, _window, cx| {
-                assert!(
-                    !panel.close_context_menu(cx),
-                    "a panel with no menu open claimed the key"
-                );
                 panel.context_menu = Some(CanvasMenu {
                     table: Some(0),
                     position: gpui::point(px(40.), px(40.)),
@@ -1563,7 +1551,8 @@ mod tests {
 
         window
             .update(&mut vcx, |panel, _window, cx| {
-                assert!(panel.close_context_menu(cx), "the key was not taken");
+                panel.close_context_menu(cx);
+                assert!(panel.context_menu.is_none());
                 panel.context_menu = Some(CanvasMenu {
                     table: Some(0),
                     position: gpui::point(px(40.), px(40.)),

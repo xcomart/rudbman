@@ -46,9 +46,9 @@ What gets copied (paths relative to `crates/logman-app/src/`):
 | `icons.rs` | same | Database icons added |
 | `about_dialog.rs` | same | Strings replaced |
 | all of `logman-core/` | `crates/rudbman-core/` | `settings`/`profile`/`secrets`/`paths`. Only the profile schema is replaced |
-| `logman-ssh/` | `crates/rudbman-ssh/` | M1. Only transport, auth and host keys are inherited; shell and SFTP dropped, forwarding added (§9) |
+| `logman-ssh/` | `rudbkit-ssh` in [rudbkit](https://github.com/xcomart/rudbkit), re-exported by `crates/rudbman-ssh/` | M1. Only transport, auth and host keys are inherited; shell and SFTP dropped, forwarding added (§9). Written here first, then moved to rudbkit with the profile's tunnel block and the JVM bootstrap (§3.3) |
 | `known_hosts.rs`, `verifier.rs` | `rudbman-core` / `rudbman-app` | Host key storage and the confirmation dialog |
-| `vendor/gpui/`, `vendor/gpui_linux/`, `vendor/gpui_macos/`, `vendor/gpui_windows/` | same | **Leave the `RULOGMAN PATCH` comments exactly where they are** — the two vendored trees stay byte-identical so they can be synced with `diff`. Do not remove them before upstream grows its own answer |
+| `vendor/gpui/`, `vendor/gpui_linux/`, `vendor/gpui_macos/`, `vendor/gpui_windows/` | `vendor/` in [rugpui](https://github.com/xcomart/rugpui) (§3.2) | **Leave the `RULOGMAN PATCH` comments exactly where they are** — rugpui's copy is now the single one rulogman and rudbman both take. Do not remove them before upstream grows its own answer |
 
 What is not brought over: `logman-pty`, `logman-term`, `terminal_view.rs`,
 `file_panel.rs`, `connection.rs` (SSH shell only), `files.rs`, and
@@ -104,9 +104,11 @@ rudbman/
 ├── assets/                     icons
 ├── packaging/                  linux/macos/windows packaging
 └── crates/
-    ├── rudbman-core/           settings, profiles, secrets, paths, known_hosts
-    ├── rudbman-ssh/            SSH local port forwarding (M1)
-    ├── rudbman-jdbc/           JNI. JVM bootstrap, session workers, wire codec
+    ├── rudbman-core/           settings, profiles, secrets, paths, known_hosts;
+    │                            the tunnel block re-exported from rudbkit-core
+    ├── rudbman-ssh/            one `pub use rudbkit_ssh::*` and its tests
+    ├── rudbman-jdbc/           JNI. Session workers, wire codec, LOBs; the JVM
+    │                            bootstrap is rudbkit-jdbc's, under rudbman's name
     ├── rudbman-sql/            SQL lexer, dialects, formatter, completion index
     ├── rudbman-erd/            ERD model, layout, canvas, SVG export
     └── rudbman-app/            the binary
@@ -127,6 +129,18 @@ rugpui/                           github.com/xcomart/rugpui
                                 palette catalogue + editor, form pieces
 ```
 
+and the database half of the same idea:
+
+```
+rudbkit/                          github.com/xcomart/rudbkit
+└── crates/
+    ├── rudbkit-core/             TunnelConfig/TunnelAuth, URL helpers, the
+    │                            validate-then-save order of a connection dialog
+    ├── rudbkit-ssh/              SSH local port forwarding: transport, auth,
+    │                            host key verification, the lease pool
+    └── rudbkit-jdbc/             JVM discovery and start-up, the bridge JAR path
+```
+
 ### 3.1 Crate dependency direction
 
 ```
@@ -136,12 +150,18 @@ rudbman-app
  ├─→ rugpui-editor  ┼─→ rugpui ─→ gpui
  ├─→ rugpui-shell ──┘
  ├─→ rudbman-sql
- ├─→ rudbman-jdbc ─→ rudbman-core
- ├─→ rudbman-ssh  ─→ rudbman-core
- └─→ rudbman-core
+ ├─→ rudbman-jdbc ─┬→ rudbkit-jdbc
+ │                 └→ rudbman-core
+ ├─→ rudbman-ssh  ──→ rudbkit-ssh ─→ rudbkit-core
+ └─→ rudbman-core ──→ rudbkit-core
 ```
 
-`rudbman-ssh` and `rudbman-jdbc` **know nothing about each other.** The tunnel
+`rudbman-app` also names `rudbkit-core` directly, for the save order its
+connection dialog shares with the other applications' (`rudbkit_core::save`),
+and for the URL placeholder helpers (`rudbkit_core::url`).
+
+`rudbman-ssh` and `rudbman-jdbc` **know nothing about each other**, and nor
+do `rudbkit-ssh` and `rudbkit-jdbc` beneath them. The tunnel
 only opens a local port, and a JDBC session is an ordinary connection aimed at
 that port. What ties them together is the session orchestration in
 `rudbman-app` (§9.3).
@@ -192,8 +212,10 @@ split panes, an editor for a palette, and the parts a settings form is built out
 of. Every one of them was written here and then copied into the log viewer and
 the generator.
 
-Its whole contract with rudbman is three calls, all in
-`crates/rudbman-app/src/app_identity.rs`:
+Its contract with rudbman is three calls, all in
+`crates/rudbman-app/src/app_identity.rs`, after
+`rugpui_shell::init_process_identity(IDENTITY)`, which `workspace/bootstrap.rs`
+makes before gpui starts:
 
 - `rugpui_shell::init(IDENTITY, cx)` — the constants. The version is deliberately
   the *application's* `env!("CARGO_PKG_VERSION")`; the shell has one of its own
@@ -218,8 +240,9 @@ and the `Workspace` decides that means `cx.restart()`.
 Two spellings of one setting survive the split. `rudbman_core::TitlebarStyle`
 has to stay free of gpui because `rudbman-core` reads and writes
 `settings.json`; `rugpui_shell::TitlebarStyle` cannot, because the chrome around
-it is gpui. `main.rs`'s `chrome_titlebar` is the one line between them, and the
-test beside it asserts that both serialise to the same two `snake_case` words.
+it is gpui. `workspace/bootstrap.rs`'s `chrome_titlebar` is the one line between
+them, and a test in `workspace/tests/settings.rs` asserts that both serialise to
+the same two `snake_case` words.
 
 The four patched gpui crates went to rugpui with the widgets, and rudbman's
 `[patch."https://github.com/zed-industries/zed"]` table points at that copy.
@@ -227,13 +250,42 @@ Keeping one gpui in the binary is not a tidiness question: two would put two
 copies of every `Global` in the process, and the ones the widgets install would
 be invisible to the application.
 
+### 3.3 The database plumbing is a repository of its own too
+
+What rugpui did for the widgets, [rudbkit](https://github.com/xcomart/rudbkit)
+does for the parts of a database client that are not about this one: the SSH
+tunnel (`rudbkit-ssh`), the profile's tunnel block and the order a connection
+dialog validates and saves in (`rudbkit-core`), and finding and starting a JVM
+with a bridge JAR on its class path (`rudbkit-jdbc`). All three are pinned to
+one revision in the root `Cargo.toml` and bumped together.
+
+The rudbman crates in front of them are deliberately thin, so that nothing above
+them had to change its imports:
+
+- `rudbman-ssh` is a single `pub use rudbkit_ssh::*`. It keeps the tunnel's
+  integration tests: `tests/tunnel.rs` for the paths that fail before a
+  handshake, `tests/e2e.rs` for the ones that need a bastion, which it stands
+  up in-process with russh's server side. Both go through `rudbman_ssh`, and
+  `tunnel.rs` builds its specs from `rudbman-core`'s profile types, so they
+  also pin the re-exports. §9 describes
+  what the crate does; the code is in rudbkit.
+- `rudbman-core` re-exports `TunnelConfig` and `TunnelAuth` from `rudbkit-core`
+  in `profile.rs` and keeps everything rudbman persists: settings, profiles,
+  drivers, the keychain slots and `known_hosts`.
+- `rudbman-jdbc` wraps `rudbkit_jdbc::Jvm` and `JvmConfig` with rudbman's
+  `RuntimeIdentity` (`src/jvm.rs`) — its name, the bridge's entry class and
+  the `RUDBMAN_JAVA_HOME`/`RUDBMAN_BRIDGE_JAR` overrides — and owns everything
+  above the VM: the session workers, the
+  wire codec, LOB files and the bridge protocol.
+
 ---
 
 ## 4. The JNI layer (`rudbman-jdbc`)
 
 ### 4.1 JVM lifecycle
 
-- **One** JVM instance per process, held in a `OnceLock<JavaVM>`.
+- **One** JVM instance per process, held in a `OnceLock<Jvm>` in `rudbkit-jdbc`
+  (the `JavaVM` plus the cached method ID).
 - `jni = { version = "0.22", features = ["invocation"] }`.
 - **`DestroyJavaVM` is never called.** It cannot be trusted, and process exit
   cleans up anyway.
@@ -245,7 +297,9 @@ be invisible to the application.
      (`Contents/runtime` inside a macOS `.app`)
   2. The `RUDBMAN_JAVA_HOME` environment variable
   3. `JAVA_HOME`
-  The resolved path is set as `JAVA_HOME` **before** `JavaVM::new()` is called.
+  The resolved runtime's `libjvm` is loaded directly (`JavaVM::with_libjvm`);
+  the process's `JAVA_HOME` is never changed. When no candidate holds a JVM
+  library, `JavaVM::new()` falls back on its own lookup.
 
 JVM options (fixed):
 
@@ -268,7 +322,7 @@ JVM heap first.
 gpui UI thread
     │  Command + oneshot reply channel
     ▼
-Session worker thread  ──  stays attached after AttachCurrentThreadAsDaemon
+Session worker thread  ──  stays attached for its whole life (one attach_current_thread)
     │  Bridge.call(op, handle, arg, req)
     ▼
 Java: session object (one Connection + a child ClassLoader)
@@ -334,8 +388,8 @@ forever.
 | `0x32` | `ROLLBACK` | session | — | — | — |
 | `0x40` | `JOB_START` | session | — | JSON job spec (§6) | JSON `{job}` |
 | `0x41` | `JOB_POLL` | job | — | — | JSON progress |
-| `0x42` | `JOB_CANCEL` | job | — | — | — |
-| `0x50` | `PROBE_DRIVER` | — | — | JSON `{jars[]}` | JSON `{classes[]}` |
+| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{cancelled}` |
+| `0x50` | `PROBE_DRIVER` | — | — | JSON `{jars[]}` | JSON `{classes[], services[]}` |
 
 `DESCRIBE`'s `kind`: `catalogs`, `schemas`, `tables`, `columns`,
 `primary_keys`, `imported_keys`, `exported_keys`, `indexes`, `procedures`,
@@ -384,12 +438,12 @@ A bind parameter takes one of two forms:
 ```json
 "params": [42, "text", true, null,
            {"type": "decimal",   "value": "123456789012.12345678"},
-           {"type": "timestamp", "value": "2026-08-04T09:30:00"},
+           {"type": "timestamp", "value": "2026-08-04 09:30:00"},
            {"type": "bytes",     "value": "<base64>"}]
 ```
 
 Bare JSON scalars are used only for integers, strings, booleans and null.
-`decimal`, `date`, `time`, `timestamp` and `bytes` **must be sent in the typed
+`f64`, `decimal`, `date`, `time`, `timestamp` and `bytes` **must be sent in the typed
 form.** The reason is the same one §4.6 gives for forbidding it in the other
 direction — send a `DECIMAL(20,8)` as a JSON number and it arrives rounded, and
 that cannot be undone.
@@ -538,7 +592,8 @@ to the user as "the driver does not accept this URL" (jdbgen already does this).
 
 Sessions that use the same driver share a loader. Building a new loader per
 session repeats the driver's static initialization and leaks memory. Loaders
-are cached keyed by their set of JAR paths, and closed when the last session
+are cached keyed by their ordered list of canonical JAR paths, and closed when
+the last session
 using them closes.
 
 ---
@@ -564,8 +619,8 @@ comart.rudbman.bridge/
 ```
 
 Dependencies stay minimal. The heavier the bridge JAR gets, the heavier the
-jlink image and the startup time get with it. The only candidate so far is one
-JSON serializer.
+jlink image and the startup time get with it. The only runtime dependency is
+Gson (§12.1), merged into the JAR.
 
 `Session` **keeps** jdbgen `DBMeta`'s connection lock. The Rust worker already
 serializes commands, but the keep-alive timer still runs concurrently.
@@ -587,9 +642,9 @@ JOB_POLL → { state, rows_done, rows_skipped, rows_total, bytes, phase,
              errors[], eta_s }
 ```
 
-Rust calls `JOB_POLL` periodically (around 200ms) and draws the progress bar.
-Cancellation goes through `JOB_CANCEL`, which sets the job thread's interrupt
-flag and calls `Statement.cancel()`.
+Rust calls `JOB_POLL` periodically (around 200ms) and draws the progress card (phase plus row/byte counters).
+Cancellation goes through `JOB_CANCEL`, which sets the job's cancel flag and
+calls `Statement.cancel()`.
 
 The transfer spec (settled in M6 — `JOB_START` is called with the source
 session handle):
@@ -613,8 +668,9 @@ Transfer semantics (settled in M6):
   mid-stream breaks the source ResultSet and the target transaction. The same
   session on both sides (a transfer into itself) is safe through
   `ReentrantLock` re-entrancy. `EXECUTE` on those sessions waits for the
-  duration, so the UI opens a second session under the same rule as
-  extraction. `CLOSE_SESSION` first cancels any job that **uses that session on
+  duration. The UI runs every job on the connection tab's one shared session,
+  so that connection's queries wait until the job ends (a second session would
+  be the way around it, as for extraction). `CLOSE_SESSION` first cancels any job that **uses that session on
   either side** — a job has to answer "do you use this session?" (looking only
   at the source makes closing the target session wait forever).
 - **There are two things to cancel**: the source SELECT statement and the
@@ -624,7 +680,10 @@ Transfer semantics (settled in M6):
   happens every `commit_every` rows, plus once on normal completion. The
   original auto-commit state is restored on exit. On failure or cancellation
   the uncommitted tail is rolled back, and **the rows already committed stay
-  committed** — `rows_done` shows that fact.
+  committed** — `rows_done` shows that fact. If that rollback itself fails,
+  the target session is marked unusable and must be reconnected. The UI also
+  refuses to start a transfer into a session holding a query editor's
+  uncommitted manual-commit writes.
 - **`truncate_insert` empties the table with `DELETE FROM`.** TRUNCATE is a
   minefield of dialect, privilege and transactionality. DELETE means the same
   thing everywhere and rolls back in the same transaction.
@@ -707,10 +766,13 @@ JOB_START { kind: "extract",
 - `mode: "insert"` follows the dialect's identifier quoting and literal
   escaping, and with `insert_batch_rows > 1` it groups rows into multi-VALUES.
   `mode: "template"` runs rows through the `template/` engine inherited from
-  jdbgen — template files come from `templates/` in the config directory (the
-  built-in defaults are bridge resources).
+  jdbgen — the template is a file the user picks in the extract dialog; no
+  templates ship with the bridge.
 - Progress and cancellation are `JOB_POLL`/`JOB_CANCEL`, exactly as for
   transfer.
+- **Output file**: the job writes into a hidden sibling of the target and
+  renames it into place only on success, so a failed or cancelled job leaves an
+  existing file untouched and no partial file behind.
 
 Semantics the implementation settled (M4 — the contract the Rust side codes
 against):
@@ -731,7 +793,7 @@ against):
 - **Progress**: `phase` goes `"starting"` → `"ddl"` →
   `"data:<schema>.<table>"` → `"done"`. `rows_total` and `eta_s` are `null`
   (there is no COUNT). `bytes` lags by up to a buffer (≤64KB) while running and
-  is exact at the end. Elements of `errors[]` are §4.4 error envelope objects.
+  is exact at the end. Elements of `errors[]` are §4.5 error envelope objects.
 - **`ddl.constraints`**: `"alter"` (the default) **forces the metadata
   reconstruction path** — pulling FKs out of native DDL (MySQL's
   `SHOW CREATE`) would require parsing vendor SQL, which is not done.
@@ -763,9 +825,8 @@ opened in the editor, run through `rudbman-sql`'s statement splitting, and
 executed sequentially through the existing `EXECUTE` pipeline; per-statement
 error reporting is already what the query pane's multi-result handling does.
 
-`rows_total` is usually unknown. An up-front `COUNT(*)` is optional (a
-checkbox); the default is an indeterminate progress bar plus a processed-row
-count.
+`rows_total` is usually unknown. No up-front `COUNT(*)` is run; the progress
+card shows the phase and a processed-row count.
 
 ---
 
@@ -801,7 +862,7 @@ per connection**. Every connection tab along the top carries its own
 `WorkArea` (pane tree, split ratios, active pane, query numbering), and
 switching tabs swaps the entire document. Each pane holds not a single piece of
 content but **a list of mini-tabs** (`PaneItem::TableDetail | Query | Erd |
-QueryBuilder`), and activating the same object again moves to the open tab
+TableData | TableStruct | QueryBuilder`), and activating the same object again moves to the open tab
 instead of adding a new one. The explorer keeps tree data for every connection
 but draws only the active connection's roots — switching is a pure filter, so
 there is no round trip. **Closing** a connection tab saves its workspace and tears the live document
@@ -826,7 +887,10 @@ Splitting a pane copies its selected tab into a distinct view in the new pane,
 including its draft and custom name. Object clones bypass the normal navigation
 lookup, and each copy survives a restart. Closing a pane's last tab removes that
 pane and collapses its split, except that the final pane stays empty. Closing a
-background pane does not steal focus from the foreground pane.
+background pane does not steal focus from the foreground pane. Tabs are
+dragged to reorder a strip or to move into another pane (a drop on a pane body
+lands after its last tab, and an emptied source pane collapses), and connection
+tabs are reordered by dragging along the title bar.
 
 Tab names are changed from the tab context menu; a blank name restores the
 default title. Names follow the tab's entity identity while it is open.
@@ -908,7 +972,8 @@ was written fresh, as `rudbman-editor`, and has since moved to `rugpui-editor`
 for.
 
 - Buffer: `ropey`. Editing stays O(log n) even with a 100MB script open
-- Rendering: virtualized on gpui's `uniform_list`. Only the lines on screen get
+- Rendering: a custom gpui element that virtualizes by hand (`uniform_list`
+  cannot place a caret against shaped text). Only the lines on screen get
   shaped
 - Input: implements `EntityInputHandler`. **IME composition follows exactly
   what logman's `text_input.rs` already solved** — byte offset to UTF-16 offset
@@ -917,9 +982,11 @@ for.
   `Highlighter` that `rudbman-app`'s `sql_highlight` module implements — the
   widget knows no dialects, and no SQL. Tree-sitter is not adopted (SQL grammar
   splits per dialect, and what highlighting needs is the token level)
-- Features: line numbers, current-line highlight, bracket matching, multiple
-  cursors, statement-at-cursor execution (detecting the statement under the
-  caret), folding, find and replace, auto-indent, comment toggling
+- Features: line numbers, current-line highlight, bracket matching,
+  statement-at-cursor execution (detecting the statement under the caret), find
+  and replace, auto-indent, comment toggling, and SQL formatting
+  (Ctrl/Cmd+Shift+F, the toolbar or the context menu; the selection or the
+  whole script, as one undo step)
 - Completion: dialect keywords and types, built-in aggregate/scalar functions,
   schemas, tables/views, and columns
   resolved through names and table aliases in the current query block. Typing
@@ -941,7 +1008,8 @@ for.
 
 - `uniform_list` virtualization plus horizontal virtualization (tables with
   hundreds of columns exist)
-- Column resize, pin, hide and reorder; sorting is a server round trip
+- Column resize, auto-fit and hide (pinning and reordering are not implemented
+  yet); sorting is a server round trip
   (re-running with `ORDER BY`)
 - Cell selection, range selection, copy (TSV/CSV/INSERT statements/JSON)
 - NULL and the empty string are visually distinguished. Far too many tools
@@ -959,7 +1027,8 @@ for.
   Replacements are staged using the same per-cell writability/primary-key gates
   and Apply confirmation as ordinary edits. NULL and zero-length LOBs differ.
 - Infinite scroll: hitting the bottom fetches another `FETCH` batch. Default
-  batch size 500 rows
+  batch size 500 rows. Paging stops at 200,000 rows (the batch that crosses it
+  is kept) and the grid says the result has more
 
 ### 7.6 ERD (`rudbman-erd`)
 
@@ -1037,8 +1106,8 @@ The implemented shape (settled in M7):
 
 The right-click menu exists on every major surface: explorer tree rows,
 connection tabs, pane mini-tabs, the result grid (cells and headers
-separately), the SQL editor, the ERD and builder canvases, and the welcome
-list. The discipline:
+separately), the SQL editor, the detail panel's DDL view, the LOB viewer, the ERD and
+builder canvases, and the welcome list. The discipline:
 
 - **Widgets detect the right click and emit an event, nothing more** (window
   coordinates, plus hit information). Rendering the menu, its labels and
@@ -1053,12 +1122,13 @@ list. The discipline:
   the click lands inside the existing selection), while tab strips leave the
   selection alone (the menu differs for active and inactive tabs — a decision
   documented on TabBar).
-- `Escape` (DismissDialog) closes an open context menu **first of all** — ahead
-  even of the app dropdown. Context menus and the app dropdown are mutually
-  exclusive.
+- `Escape` closes an open context menu or the app dropdown **first of all**.
+  `rugpui`'s menus take the key themselves, ahead of every binding, so
+  `DismissDialog` never sees it while a menu is open. Context menus and the app
+  dropdown are mutually exclusive.
 - The menu items are everything that surface can do: what already exists as an
   action or a public API (the four copy formats, sorting, column hide and
-  auto-fit, edit and execute, zoom/arrange/export, the explorer's five actions)
+  auto-fit, edit and execute, zoom/arrange/export, the explorer's object and scope actions)
   is exposed, and what only the menu needs (close other tabs, close tabs to the
   right, remove a builder table, show all columns) is added to that surface's
   API.
@@ -1118,7 +1188,10 @@ underneath for a second one to collide with.
   several products. A product whose `SESSION_INFO` reports no transaction
   support runs the same statements under autocommit with the same count checks:
   what is missing is the undo, and the confirmation says so before the user
-  reaches it. Success clears the staging buffer and re-runs the `SELECT` in full
+  reaches it. Under manual commit, the apply refuses while a query editor on
+  the same connection holds uncommitted writes: every pane shares one session,
+  and the apply's commit or autocommit flip would end that transaction behind
+  the user's back. Success clears the staging buffer and re-runs the `SELECT` in full
   — which is how a generated key and a trigger's work become visible — while a
   failure leaves every staged change exactly where it was.
 - **Every statement is shown before any of them runs**, each over the values its
@@ -1185,7 +1258,7 @@ gate with three clauses, and the machinery underneath is the data pane's own,
   Connector/J 3.5.1, mssql-jdbc 12.8.1, and ojdbc11 23.6):
   * pgjdbc answers `""` for **both** schema and catalog on an ordinary column of
     an ordinary `public` table, so the gate can never lean on the schema, and
-    only MySQL supplies a catalog at all.
+    only the MySQL family (MySQL and MariaDB) supplies a catalog at all.
   * Connector/J does **not** report a table alias where the table was asked
     for — `FROM t b` answers `t`. It only answers `b` under the legacy
     `useOldAliasMetadataBehavior=true`. An earlier draft of this section said
@@ -1328,7 +1401,7 @@ clause, no bind parameters anywhere, and no undo on two of the six.
   column's type, size and scale are folded into `VARCHAR(255)` and its
   nullability into the word `NOT NULL` by the time they are stored, so nothing
   an editor needs survives in it. The structure pane issues its own
-  `DESCRIBE columns` / `primary_keys` / `imported_keys` and keeps what it reads.
+  `DESCRIBE columns` / `primary_keys` / `imported_keys` / `indexes` and keeps what it reads.
   The way in is the detail header and the explorer row, beside "view data".
 - **Success reloads rather than patches.** What a server did with a DDL
   statement is not always what it was asked — a type widened, a default
@@ -1411,14 +1484,16 @@ and the pane opens with nothing staged but its name field focused.
 logman-core's structure is inherited and only the schema changes.
 
 ```
-~/.config/rudbman/            (macOS: ~/Library/Application Support/rudbman)
+~/.config/rudbman/            (macOS: ~/Library/Application Support/rudbman; Windows: %APPDATA%\rudbman\config)
 ├── settings.json             app settings
 ├── connections.json          connection profiles (passwords excluded)
 ├── drivers.json              driver definitions
+├── known_hosts               trusted SSH host keys (§9.3)
 ├── themes/*.json             UI themes
 ├── editor-themes/*.json      editor themes
 ├── snippets/*.sql            user SQL snippets
 ├── erd/<uuid>.json           ERD layout (per connection profile, per scope table positions)
+├── workspaces/<uuid>.json    saved workspace, per connection profile (§7.1)
 ├── history.db                query execution history (SQLite? open, §12)
 └── drivers/                  downloaded driver JARs
 ```
@@ -1441,7 +1516,7 @@ A connection profile:
 ```
 
 Passwords are **never stored in a file.** They go into the `keyring`
-(logman-core's `secrets.rs`) under `rudbman:<profile-id>`.
+(rudbman-core's `secrets.rs`) under service `rudbman`, account `<profile-id>`.
 
 `read_only` and `confirm_writes` guard against accidents on production
 databases. With `read_only`, the session is opened with
@@ -1466,17 +1541,22 @@ generator and paging syntax (`ROWNUM` vs `LIMIT` vs `FETCH FIRST`).
 
 ---
 
-## 9. SSH tunnels (`rudbman-ssh`)
+## 9. SSH tunnels (`rudbkit-ssh`, via `rudbman-ssh`)
 
 Production databases usually sit behind a bastion host. A connection profile
 optionally carries a tunnel, and JDBC attaches to the local port that results.
+
+The implementation lives in `rudbkit-ssh` (§3.3); `rudbman-ssh` re-exports it
+whole. What stays in this repository is the orchestration in
+`crates/rudbman-app/src/connection.rs` (§9.3) and the host key store in
+`rudbman-core`.
 
 ### 9.1 What is inherited from logman-ssh and what is written fresh
 
 **Inherited**: `SshConfig`/`SshAuth` (password, key and agent auth, with
 secrets auto-masked in `Debug`), the dedicated thread plus own Tokio runtime
 structure (the design that lets the GUI thread hold a handle safely), the
-`HostKeyVerifier` trait and `known_hosts` storage, the `SshEvent` stream, and
+`HostKeyVerifier` trait and `known_hosts` storage, the `SshEvent` stream (now `TunnelEvent`), and
 the russh configuration (ring backend, keepalive, connection timeout).
 
 **Written fresh**: logman-ssh only opens shell channels and SFTP through
@@ -1513,7 +1593,7 @@ port collides as soon as two sessions ask for the same one. The port that was
 actually bound is substituted into the `{host}:{port}` slot of the JDBC URL.
 
 The tunnel's password and key passphrase also go into the `keyring`
-(`rudbman:<profile-id>:tunnel`).
+(service `rudbman`, account `<profile-id>:tunnel`).
 
 ### 9.3 Lifetime management
 
@@ -1528,14 +1608,21 @@ disconnect → CLOSE_SESSION → tear the tunnel down
 - **The tunnel stands up first and lies down last.** If the tunnel closes while
   a JDBC session is still alive, the driver sees nothing but an unexplained
   socket error
-- Several sessions share one tunnel (same bastion, same target). It is
-  reference counted and torn down when the last session closes
-- If the tunnel drops mid-flight, a `kind: "io"` error is propagated to every
-  JDBC session over it and those sessions are marked dead. It never silently
+- Several sessions share one tunnel (same bastion and login, same target, same
+  requested local port, same authentication — method, key file and secret, the last compared only by an
+  in-process fingerprint). It is reference counted and torn down when the last
+  session closes
+- If the tunnel drops mid-flight, every lease's `TunnelLease::watch` channel
+  fires with the tunnel's reason, and each connection tab over it goes to
+  `ConnectionState::Dead`, which closes its session. It never silently
   reconnects — there may have been a transaction in flight, and the user needs
   to know
-- If the host key has never been seen before, the fingerprint is shown and
-  confirmation is required. logman's `verifier.rs` dialog is used as is
+- A host key `known_hosts` does not hold is refused during the key exchange,
+  because the verifier cannot block on a dialog. The connection error names the
+  algorithm and fingerprint, and the connection dialog's Test result offers
+  "Trust this key", which writes `known_hosts` and nothing else; the user then
+  tests again. A key that contradicts a stored one, including a new algorithm
+  for a known host, is reported as a mismatch and gets no button
 
 ---
 
@@ -1545,13 +1632,13 @@ disconnect → CLOSE_SESSION → tear the tunnel down
 
 Gradle builds `bridge/` into `bridge/build/libs/rudbman-bridge.jar`.
 
-`cargo build` does not invoke Gradle. `rudbman-jdbc/build.rs` only checks that
-the JAR exists and, if it does not, produces a clear error telling you to run
-`./gradlew :bridge:jar`. Having a JVM start every time you fix a line of Rust
+`cargo build` does not invoke Gradle. `crates/rudbman-jdbc/build.rs` only checks
+that the JAR exists and, if it does not, produces a clear error telling you to
+run `cd bridge && ./gradlew jar`. Having a JVM start every time you fix a line of Rust
 would be intolerable.
 
-The full build is orchestrated in one place, `just`/`xtask`:
-`gradlew :bridge:jar` → `jlink` → `cargo build --release` → packaging.
+The full build is orchestrated in one place, `.github/workflows/release.yml`:
+`./gradlew jar` → `jlink` → `cargo build --release` → packaging (§10.3).
 
 ### 10.2 The jlink runtime
 
@@ -1583,7 +1670,9 @@ arrived in JDK 21 and errors out on the JDK 17 the release pins.
   `java.exe` exits 1, which is flagged as `Validation-Executable-Error`
 
 A missing module only shows up as a `NoClassDefFoundError` at connect time.
-The module list is verified by a smoke test per driver.
+The release build checks that the image's `MODULES` include `jdk.charsets` and
+`jdk.unsupported` (§10.3); the per-driver container tests run on a full JDK 17,
+not on this image.
 
 Target output size: around 50MB per platform.
 
@@ -1650,7 +1739,7 @@ themes and the credential-store entries live outside `{app}` and survive. The
 Shipping twice means the two halves have to agree about what is installed, and
 they would not on their own: the in-app updater replaces files, while winget
 reads the `DisplayVersion` in that uninstall key. So after a successful update
-`update.rs` rewrites that one value, and does it under a guard — only when the
+rugpui-shell's `update.rs` rewrites that one value, and does it under a guard — only when the
 key's `InstallLocation` canonicalises to the directory the running executable is
 in. A copy unpacked from the zip has no key and none is created; an installed
 copy and a portable copy on one machine cannot bump each other's recorded
@@ -1662,8 +1751,14 @@ whole tree** into `~/.local/share/rudbman/`, then creates a `~/.local/bin/rudbma
 symlink. Because `current_exe()` resolves symlinks to their real path, the
 relative search for the runtime and the JAR keeps working.
 
-CI is a three-platform matrix. Each job runs JDK setup → Gradle → jlink →
-cargo, in that order. The release job packages and then smoke-checks the
+CI (`ci.yml`, on pushes to `dev` and `main` and on pull requests) is a
+three-platform matrix: JDK setup → Gradle (`./gradlew build`) → cargo
+fmt/clippy/test on the pinned toolchain (`RUST_TOOLCHAIN`, 1.98.0). Beside it
+run a Linux `containers` job, a non-blocking `latest-stable` clippy and
+`cargo deny` (advisories non-blocking). `release.yml` first runs `verify` (the
+tag must equal `v` + `[workspace.package] version` and be contained in
+`origin/main`) and a Linux `test` job; its build matrix runs JDK setup → Gradle
+→ jlink → cargo, in that order, and each build job packages and then smoke-checks the
 runtime by reading the `MODULES` line of the `release` file jlink writes at
 the runtime root — there is no launcher to run any more (§10.2) — confirming
 it contains `jdk.charsets` and `jdk.unsupported`, and separately checks that
@@ -1677,7 +1772,8 @@ by both so the retry-and-cleanup logic exists once), and then actually run —
 `/VERYSILENT` into a scratch directory — to confirm the three load-bearing
 paths arrived and that the uninstall key really is in the registry with this
 release's version. Everything the installer exists for is a side effect no file
-listing would show. After publishing, a `winget` job hands the installer URL to
+listing would show. After publishing (the archives, the installer and a
+`SHA256SUMS` file), a `winget` job hands the installer URL to
 `wingetcreate`, which opens the pull request against `microsoft/winget-pkgs`;
 it skips silently without a `WINGET_PAT` secret, because the very first
 submission has to be made by hand from the manifests kept in
@@ -1695,19 +1791,17 @@ logman's flow is followed exactly.
 - Before pushing the tag, bump `[workspace.package] version` and `Cargo.lock`
   (`cargo update --workspace`) in a separate `chore:` commit
 - **The release notes are the body of the annotated tag** (`release.yml` reads
-  `%(contents:body)`). The subject is `rudbman vX.Y.Z`; the body is a one-line
+  `%(contents:body)`, and GitHub's generated notes are appended). The subject
+  is `chore: release X.Y.Z`; the body is a one-line
   introduction followed by **one bullet per user-visible change**. Prose
   paragraphs become a wall on the release page. Write from the user's point of
   view, not the implementation's, and wrap at 72 columns
-- Folding a late change into an already-published release: merge to `main` →
-  delete the remote tag → re-create the tag on the new merge commit → push.
-  Note that the release action **replaces only the artifacts of an existing
-  release and leaves the body alone.** After a re-release, the notes have to be
-  pushed by hand with `gh release edit vX.Y.Z --notes-file <file>`, and any
-  leftover draft has to be found and deleted
+- An already-published release tag is never moved or deleted: a late change
+  goes into the next release. If re-issuing one is unavoidable, first check
+  what the published assets and the winget manifests pointing at it would lose
 
 `.github/workflows/ci.yml` and `release.yml` are taken from logman with the
-Gradle and jlink steps added.
+Gradle steps added (and jlink, in `release.yml` only).
 
 ---
 
@@ -1739,8 +1833,11 @@ for "a usable tool".
 - The codec gets round-trip property tests across the Java encoder and the Rust
   decoder
 - Widgets use `gpui/test-support`'s headless platform, as in logman
-- PostgreSQL, MySQL and Oracle get optional container-backed tests locally
-  (excluded from CI by default)
+- PostgreSQL, MySQL, MariaDB, SQL Server and Oracle (plus SQLite, a file) get
+  opt-in container-backed tests (`crates/rudbman-jdbc/tests/containers.rs`,
+  `docker/compose.yml`). They pass by doing nothing unless `RUDBMAN_TEST_*_URL`
+  is set, so a plain `cargo test` skips them, and CI's `containers` job runs
+  them against service containers
 
 ---
 
@@ -1788,8 +1885,9 @@ Things logman and jdbgen already paid for.
   to a live window, closing a window on X11 can panic, and a self-decorated X11
   window loses both its transparent shadow band and its blur. The four trees
   now live in rugpui rather than here; do not delete or rename the
-  `RULOGMAN PATCH` comments in them — they have to stay byte-identical to
-  rulogman's vendored copies so patches can be exchanged with `diff`
+  `RULOGMAN PATCH` comments in them — rugpui's copy is the single origin that
+  rulogman takes too, and the markers are what lets a diff against upstream
+  show the whole of what is carried
 - **Dropping rudbman's `[patch."https://github.com/zed-industries/zed"]`
   table** → this workspace resolves gpui from Zed's monorepo while `rugpui`
   resolves it from the patched copy, two gpui crates end up in one binary, and
@@ -1801,7 +1899,8 @@ Things logman and jdbgen already paid for.
   `rugpui_shell::init_process_identity`** → both read the identity through a
   process-wide slot that call fills, and answer as if there were nothing to do
   rather than panicking without one — silent, not loud, so the mistake is easy
-  to miss. `main` calls `init_process_identity` first, ahead of
+  to miss. `workspace::run` (called from `main`) calls `init_process_identity`
+  first, ahead of
   `gpui_platform::application()`, which is what quietly loads a JVM into the
   process; `apply_pending` and `clean_leftovers` follow it, both still before
   an `App` exists, so the renames they may do never race that load.

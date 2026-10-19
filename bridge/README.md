@@ -12,6 +12,7 @@ the contract; `docs/architecture.md` §4–§6 is the design behind it.
 cd bridge
 ./gradlew build          # compile + test
 ./gradlew jar            # just the artifact
+./gradlew drivers        # fetch JDBC drivers for the Rust container tests
 ```
 
 Output: `bridge/build/libs/rudbman-bridge.jar`.
@@ -27,7 +28,7 @@ child loader whose parent is the bridge loader, so a driver that bundles its own
 Gson will see the bridge's copy. No known JDBC driver does; if one ever does, the
 fix is a shading plugin, not a classpath change.
 
-`cargo build` never runs Gradle. `rudbman-jdbc/build.rs` only checks that the JAR
+`cargo build` never runs Gradle. `crates/rudbman-jdbc/build.rs` only checks that the JAR
 exists.
 
 ## Entry point
@@ -48,8 +49,9 @@ public final class Bridge {
 
 **`call` never throws.** Every failure, `Throwable` included, comes back as an
 ERROR envelope. `NoClassDefFoundError` out of an incomplete driver JAR is a
-message for the user, not a reason to take the process down. This is what lets
-the Rust side drop `ExceptionCheck` from the normal path.
+message for the user, not a reason to take the process down. An exception
+crossing the boundary is therefore a bridge bug; `rudbkit-jdbc` still checks for
+one after every call, clears it and reports it as a JNI error.
 
 ## Operations
 
@@ -74,8 +76,14 @@ the Rust side drop `ExceptionCheck` from the normal path.
 | `0x42` | `JOB_CANCEL` | job | — | — | JSON `{cancelled}` |
 | `0x50` | `PROBE_DRIVER` | — | — | JSON `{jars[]}` | JSON `{classes[], services[]}` |
 
-Unimplemented codes return an ERROR envelope with `kind: "protocol"` and a
-message saying so, rather than an unknown-op error.
+An unknown code returns an ERROR envelope with `kind: "protocol"` and a
+message naming the code.
+
+A `ROLLBACK` that fails marks the session unusable: every later command that
+needs the connection answers a `driver` error asking for a reconnect, while
+`CLOSE_CURSOR` and `CLOSE_SESSION` still work. `CLOSE_SESSION` rolls back an
+open transaction before closing, because JDBC leaves that to the driver and
+Oracle commits it. An unusable session is aborted instead of closed.
 
 ## Response envelope
 
@@ -129,7 +137,9 @@ is JSON `null`, never absent. Rust `Option<T>` fields therefore need no
   "read_only": false,
   "auto_commit": true,
   "login_timeout_s": 10,
-  "keep_alive": { "enabled": true, "interval_s": 300, "query": "select 1" }
+  "keep_alive": { "enabled": true, "interval_s": 300, "query": "select 1" },
+  "table_comments_sql": null,
+  "column_comments_sql": null
 }
 ```
 
@@ -141,6 +151,10 @@ jlink image, or H2 on the test classpath, is reached.
 `java.sql.Driver` has no login timeout of its own, and `DriverManager`'s is
 global mutable state this bridge stays away from. A caller that knows its driver
 should set the real property in `props`.
+
+`table_comments_sql` / `column_comments_sql` are optional driver-definition
+queries that `DESCRIBE tables` / `columns` use to fill in missing comments;
+blank means unset.
 
 ### `EXECUTE`
 
@@ -156,7 +170,8 @@ should set the real property in `props`.
 
 A parameter is either a bare JSON scalar (`null`, boolean, number, string) or an
 object `{"type": …, "value": …}`. Types: `null`, `bool`, `i64`, `f64`,
-`string`, `decimal`, `date`, `time`, `timestamp`, `bytes` (base64).
+`string`, `decimal`, `date`, `time`, `timestamp`, `bytes` (base64), `blob_file`,
+`clob_file` (see LOBs).
 
 The typed form exists because JSON has one numeric type and no date type. A
 `DECIMAL(20,8)` sent as a JSON number arrives rounded — the same mistake the
@@ -211,6 +226,10 @@ asking for a missing one and catching the exception per cell.
 - `indexes` accepts `unique_only` (default false) and `approximate`
   (default **true** — a statistics refresh on a large schema is the difference
   between instant and a minute).
+- `tables` and `columns` fill `remarks` the driver left blank from the vendor
+  catalogue (Oracle, SQL Server, MySQL, MariaDB), or from the session's
+  `table_comments_sql` / `column_comments_sql`, and clear MySQL's `VIEW`
+  placeholder. A failed lookup leaves the driver's answer as it was.
 
 #### `procedures` and `functions`
 
@@ -255,7 +274,7 @@ no such view — lands in the same place. Items are
 cycle, cache, current_value, remarks}`; every value but `cycle` is a string,
 because an Oracle sequence maximum is `NUMBER(28)` and does not fit a `long`.
 
-`schema` and `name` filter exactly, in Java rather than in a `WHERE` clause,
+`catalog`, `schema` and `name` filter exactly, in Java rather than in a `WHERE` clause,
 because the column holding the schema name differs per product.
 
 #### `ddl`
@@ -382,7 +401,8 @@ a table on another).
   either direction** — a transfer holds the target's connection lock too, and
   closing it would otherwise wait on a lock only a cancel releases.
 
-**Extract and backup** write every `CREATE`, then every foreign key as
+**Extract and backup** write every `DROP` in reverse order (with
+`ddl.include_drop`), then every `CREATE`, then every foreign key as
 `ALTER TABLE … ADD CONSTRAINT`, then the data. Foreign keys go last because two
 tables that reference each other cannot be created in any order at all.
 `ddl.constraints: "alter"` (the default) forces the reverse-generated DDL path,
@@ -407,7 +427,9 @@ problem and an exotic vendor type is a known edge that takes the `on_error` path
 The target's auto-commit is turned off and restored at the end; a commit happens
 every `commit_every` rows (`0` = once at the end) and once on success. **A cancel
 or a failure rolls back the uncommitted tail and leaves what was committed**,
-which is what `rows_done` reports.
+which is what `rows_done` reports. If that rollback itself fails, the target
+session is marked unusable and auto-commit is left as it was; the job fails with
+the original error, with the rollback failure attached.
 
 - `truncate_insert` empties the target with `DELETE FROM`. `TRUNCATE` is a
   dialect, privilege and transactionality minefield; `DELETE` means the same
@@ -576,6 +598,7 @@ src/main/java/comart/rudbman/bridge/
 ├── Session.java           Connection + loader lease + keep-alive
 ├── Loaders.java           URLClassLoader cache
 ├── Cursor.java            Statement + ResultSet + batch encoding
+├── LobStore.java          LOB snapshots behind LOB_READ
 ├── Params.java            EXECUTE parameter binding
 ├── DriverProbe.java       PROBE_DRIVER
 ├── codec/                 RDB1 encoder
@@ -586,13 +609,15 @@ src/main/java/comart/rudbman/bridge/
 │   ├── TransferJob.java   kind: "transfer"
 │   ├── Scripts.java       DROP and batched INSERT text, shared by the two writers
 │   ├── Literals.java      value → SQL literal or plain text, per dialect
-│   └── ScriptOut.java     counting, charset-encoding, optionally gzipped output
+│   ├── ScriptOut.java     counting, charset-encoding, optionally gzipped output
+│   └── OutputFile.java    hidden sibling, renamed over the target on done
 ├── template/              the jdbgen template engine, for extract's template mode
 └── meta/
     ├── Describe.java      DESCRIBE dispatch, the DatabaseMetaData kinds
     ├── Routines.java      procedures and functions with their parameters
     ├── Sequences.java     sequences, per-product catalogue queries
     ├── Ddl.java           native DDL, and reverse generation as the fallback
+    ├── Comments.java      comment repair for tables and columns
     ├── Dialect.java       product name → the vendor paths that apply
     ├── Ident.java         identifier quoting, only where it is needed
     ├── Upsert.java        the per-product spelling of "insert or update"
@@ -604,7 +629,7 @@ src/main/java/comart/rudbman/bridge/
 
 ## Inherited code
 
-From [jdbgen](https://github.com/comart/jdbgen) (MIT, Dennis Soungjin Park):
+From [jdbgen](https://github.com/xcomart/jdbgen) (MIT, Dennis Soungjin Park):
 
 - `types/db/DBMeta.java` → `Session.java`, `Loaders.java` — the child class
   loader, the deliberate avoidance of `DriverManager`, the explicit `null` check
@@ -622,7 +647,7 @@ the error envelope and the job layer (extract, backup, transfer).
 ./gradlew test
 ```
 
-H2 in-memory is the reference database. Two of these earn their keep by round
+H2 in-memory is the reference database. These earn their keep by round
 tripping rather than by asserting on strings:
 
 - `FetchRoundTripTest` asserts through `support/Batch.java`, a decoder written

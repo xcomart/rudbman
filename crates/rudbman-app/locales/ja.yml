@@ -409,6 +409,7 @@ query:
   busy: このペインでは既に文が実行中です。
   no_statement: 実行する文がありません。
   draft_too_large: "この下書きは %{limit} MB を超えるため、アプリを閉じると保持されません。残すにはファイルに保存してください。"
+  row_limit: "このグリッドに表示できるのは最大 %{limit} 行で、結果にはまだ行があります。残りを見るにはステートメントを絞り込んでください。"
   read_only: 読み取り専用の接続のため、文は送信されませんでした。
   confirm_title: この文を実行しますか?
   confirm_body: "データを変更する文: %{count} 件"
@@ -429,17 +430,17 @@ data:
   row_count: "%{count} 行"
   no_primary_key: このテーブルには主キーがないため、行の閲覧のみできます。
   read_only: 読み取り専用の接続のため、行の閲覧のみできます。
-  discard_first: 保留中の変更を先に適用するか取り消してください。
+  discard_first: 保留中の変更を先に適用するか破棄してください。
   pending: "変更 %{changed} · 追加 %{inserted} · 削除 %{deleted}"
   apply: 適用
-  discard: 取り消し
-  discard_title: 変更の取り消し
+  discard: 変更を破棄
+  discard_title: 変更の破棄
   discard_body: "変更した %{changed} 行、追加した %{inserted} 行、削除予定の %{deleted} 行をすべて破棄します。元に戻せません。"
   set_null: NULL にする
   insert_row: 行を追加
   delete_row: 行を削除
   undelete_row: 行の削除を取り消す
-  discard_row: この行の変更を取り消す
+  discard_row: この行の変更を破棄
   apply_title: "%{count} 件の文を適用"
   apply_no_rollback: このデータベースはトランザクションに対応していないため、途中で失敗しても取り消せません。
   applying: 適用中…
@@ -455,8 +456,8 @@ data:
 struct:
   loading: 読み込み中…
   refresh: 再読み込み
-  discard: 取り消し
-  discard_first: 保留中の変更を先に取り消してください。
+  discard: 変更を破棄
+  discard_first: 保留中の変更を先に破棄してください。
   read_only: 読み取り専用の接続のため、このテーブルの構造は閲覧のみできます。
   pending: "保留中の変更 %{count} 件"
   columns: 列
@@ -669,6 +670,7 @@ update:
   installing: インストールしています…
   failed: 更新に失敗しました。
   open_release: リリースページを開く
+  notes: 変更内容
 
 tab_name:
   title: タブ名を変更

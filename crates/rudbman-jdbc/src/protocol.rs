@@ -43,7 +43,7 @@ pub enum Op {
     /// The one operation that arrives on a thread other than the session
     /// worker — the worker is blocked inside the statement being cancelled.
     Cancel,
-    /// Read part of a LOB. Handle: cursor. Not implemented by the bridge yet.
+    /// Read part of a LOB. Handle: cursor.
     LobRead,
     /// Set auto-commit. Handle: session. `arg`: 0 or 1.
     SetAutoCommit,

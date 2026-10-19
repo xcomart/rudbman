@@ -27,7 +27,8 @@
 //! [`SecretStore`](rudbman_core::SecretStore) on save, never to
 //! `connections.json`. Deleting a profile deletes both of its keychain slots:
 //! a password left behind under an id nothing references is a leak the user
-//! cannot see, let alone clean up.
+//! cannot see, let alone clean up. Saving a profile whose tunnel was removed,
+//! or moved to the agent, deletes its tunnel slot for the same reason.
 //!
 //! # Nothing here blocks
 //!
@@ -786,20 +787,53 @@ impl ConnectionDialog {
     fn persist(&mut self, cx: &mut Context<Self>) -> Result<ConnectionProfile, SaveError> {
         let profile = self.collect(cx);
         let password = text(&self.password_input, cx);
-        let tunnel_secret = self
-            .tunnel_enabled
-            .then(|| text(&self.tunnel_secret_input, cx));
+        let tunnel_secret = text(&self.tunnel_secret_input, cx);
+        self.persist_with(
+            profile,
+            &password,
+            &tunnel_secret,
+            || ConnectionStore::load().context(Unreadable),
+            ConnectionStore::save,
+            write_secret,
+        )
+    }
+
+    /// The whole of [`Self::persist`] once the form has been read, with the
+    /// file and the keychain handed in so a test can stand in for both.
+    ///
+    /// The dialog's own list is only touched once the file has been written:
+    /// a save that fails — the file unreadable, the disk full — leaves the
+    /// list and its set of unsaved edits exactly as they were, so the next
+    /// attempt, or the next open (which re-reads the file anyway), sees no
+    /// trace of a save that did not happen.
+    ///
+    /// The tunnel's keychain slot follows the profile that was written, not
+    /// the field: a profile whose tunnel was switched off, or switched to the
+    /// agent, needs no tunnel secret any more, and the one stored for it is
+    /// deleted rather than left behind where nothing would ever read or remove
+    /// it short of deleting the profile. Like every other keychain write, a
+    /// failure is reported under the form and the profile stays saved.
+    fn persist_with(
+        &mut self,
+        profile: ConnectionProfile,
+        password: &str,
+        tunnel_secret: &str,
+        load: impl FnOnce() -> anyhow::Result<ConnectionStore>,
+        save: impl FnOnce(&ConnectionStore) -> anyhow::Result<()>,
+        mut write: impl FnMut(Uuid, SecretSlot, &str) -> anyhow::Result<()>,
+    ) -> Result<ConnectionProfile, SaveError> {
+        let tunnel_secret = if needs_tunnel_secret(&profile) {
+            tunnel_secret
+        } else {
+            // Empty is what `write_secret` deletes the slot for.
+            ""
+        };
         rudbkit_core::save::save_connection(
             &profile.name,
             &profile.url,
             || {
                 let changes = changes_to_save(&self.store, &self.edited, &profile);
-                let written = write_changes(
-                    || ConnectionStore::load().context(Unreadable),
-                    ConnectionStore::save,
-                    changes,
-                    None,
-                )?;
+                let written = write_changes(load, save, changes, None)?;
                 // Every unsaved profile went with this one, so the file now
                 // holds all of them — and whatever another window added.
                 self.store = written;
@@ -808,11 +842,8 @@ impl ConnectionDialog {
                 Ok(())
             },
             || {
-                write_secret(profile.id, SecretSlot::Connection, &password)?;
-                if let Some(secret) = tunnel_secret {
-                    write_secret(profile.id, SecretSlot::Tunnel, &secret)?;
-                }
-                Ok(())
+                write(profile.id, SecretSlot::Connection, password)?;
+                write(profile.id, SecretSlot::Tunnel, tunnel_secret)
             },
         )?;
         self.selected = Some(profile.id);
@@ -2590,6 +2621,17 @@ fn keep_unsaved(
     store
 }
 
+/// Whether `profile` reaches its database through a tunnel that authenticates
+/// with something stored in the keychain: a key's passphrase or a password.
+/// The agent keeps its own secrets, and no tunnel needs none at all.
+fn needs_tunnel_secret(profile: &ConnectionProfile) -> bool {
+    profile
+        .tunnel
+        .as_ref()
+        .is_some_and(|tunnel| !matches!(tunnel.auth, TunnelAuth::Agent))
+}
+
+/// Stores `secret` in `slot`, or deletes the slot when it is empty.
 fn write_secret(id: Uuid, slot: SecretSlot, secret: &str) -> anyhow::Result<()> {
     if secret.is_empty() {
         SecretStore::delete(id, slot)
@@ -2787,6 +2829,124 @@ mod tests {
             names(&keep_unsaved(written, &shown, &edited)),
             ["kept, renamed", "elsewhere", "added"]
         );
+    }
+
+    /// A keychain stand-in that records every write, failing on `fail`.
+    type Writes = std::rc::Rc<std::cell::RefCell<Vec<(SecretSlot, String)>>>;
+    fn recorder(
+        writes: &Writes,
+        fail: Option<SecretSlot>,
+    ) -> impl FnMut(Uuid, SecretSlot, &str) -> anyhow::Result<()> + use<> {
+        let writes = writes.clone();
+        move |_, slot, secret| {
+            if fail == Some(slot) {
+                anyhow::bail!("locked");
+            }
+            writes.borrow_mut().push((slot, secret.to_owned()));
+            Ok(())
+        }
+    }
+
+    #[gpui::test]
+    fn a_failed_save_leaves_the_dialog_list_as_it_was(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("connections.json");
+        let saved = ConnectionProfile::new("saved", "h2", "jdbc:h2:mem:a", "sa");
+        let mut on_disk = ConnectionStore::default();
+        on_disk.upsert(saved.clone());
+        on_disk.save_to(&path).unwrap();
+        let added = ConnectionProfile::new("added", "h2", "jdbc:h2:mem:b", "sa");
+        let writes = Writes::default();
+
+        let dialog = cx.new(ConnectionDialog::new);
+        dialog.update(cx, |dialog, _| {
+            dialog.store = on_disk.clone();
+            dialog.store.upsert(added.clone());
+            dialog.edited.insert(added.id);
+            let before = dialog.store.clone();
+
+            let result = dialog.persist_with(
+                added.clone(),
+                "pw",
+                "",
+                || ConnectionStore::load_from(&path),
+                |_| anyhow::bail!("disk full"),
+                recorder(&writes, None),
+            );
+            assert!(matches!(result, Err(SaveError::Store(_))), "{result:?}");
+            // Nothing was written, so nothing the dialog shows may claim it was:
+            // the list and its unsaved edits are untouched, and no secret went
+            // to the keychain for a profile the file does not hold.
+            assert_eq!(dialog.store.connections(), before.connections());
+            assert!(dialog.edited.contains(&added.id));
+            assert!(writes.borrow().is_empty());
+        });
+        assert_eq!(
+            names(&ConnectionStore::load_from(&path).unwrap()),
+            ["saved"]
+        );
+    }
+
+    #[gpui::test]
+    fn a_tunnel_that_no_longer_needs_a_secret_has_it_deleted(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("connections.json");
+        let tunnel = |auth| TunnelConfig {
+            host: "bastion".into(),
+            auth,
+            ..TunnelConfig::default()
+        };
+        // One profile, saved again and again with its tunnel changed.
+        let base = ConnectionProfile::new("p", "h2", "jdbc:h2:mem:a", "sa");
+        let with = |tunnel: Option<TunnelConfig>| ConnectionProfile {
+            tunnel,
+            ..base.clone()
+        };
+
+        let dialog = cx.new(ConnectionDialog::new);
+        let mut save = |profile: ConnectionProfile, fail: Option<SecretSlot>| {
+            let writes = Writes::default();
+            let result = dialog.update(cx, |dialog, _| {
+                dialog.persist_with(
+                    profile,
+                    "pw",
+                    "typed",
+                    || ConnectionStore::load_from(&path),
+                    |store| store.save_to(&path),
+                    recorder(&writes, fail),
+                )
+            });
+            (result, writes.take())
+        };
+        let password = |secret: &str| {
+            vec![
+                (SecretSlot::Connection, "pw".to_owned()),
+                (SecretSlot::Tunnel, secret.to_owned()),
+            ]
+        };
+
+        // A password or a key's passphrase is what the field holds.
+        let (result, writes) = save(with(Some(tunnel(TunnelAuth::Password))), None);
+        assert!(result.is_ok());
+        assert_eq!(writes, password("typed"));
+        let key = TunnelAuth::Key { path: "/id".into() };
+        let (_, writes) = save(with(Some(tunnel(key))), None);
+        assert_eq!(writes, password("typed"));
+
+        // Switched to the agent, or switched off: the slot is emptied, which is
+        // a delete, whatever the hidden field still holds.
+        let (_, writes) = save(with(Some(tunnel(TunnelAuth::Agent))), None);
+        assert_eq!(writes, password(""));
+        let (_, writes) = save(with(None), None);
+        assert_eq!(writes, password(""));
+
+        // A keychain that refuses the delete is reported like any other
+        // keychain failure, with the profile itself already saved.
+        let (result, _) = save(with(None), Some(SecretSlot::Tunnel));
+        assert!(matches!(result, Err(SaveError::Secret(_))), "{result:?}");
+        let on_disk = ConnectionStore::load_from(&path).unwrap();
+        assert_eq!(names(&on_disk), ["p"]);
+        assert!(on_disk.connections()[0].tunnel.is_none());
     }
 
     #[test]

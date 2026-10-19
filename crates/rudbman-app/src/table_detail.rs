@@ -36,19 +36,25 @@
 //! several hundred columns.
 
 use gpui::{
-    App, ClipboardItem, Context, DragMoveEvent, EventEmitter, FocusHandle, Focusable, IntoElement,
-    MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString, Window, div, prelude::*, px,
+    Action, App, ClipboardItem, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, MouseButton, MouseUpEvent, Pixels, Point, Render, ScrollHandle,
+    SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rugpui::{
-    Button, ButtonVariant, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState, Theme,
-    hide_later, hide_now, scroll_to, scrolled, theme,
+    Button, ButtonVariant, ContextMenu, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
+    Theme, hide_later, hide_now, scroll_to, scrolled, theme,
 };
+use rugpui_editor::editor::{Copy, Find, SelectAll};
+use rugpui_editor::{EditorEvent, EditorView};
+use rugpui_shell::menu_rows::{self, MenuRow};
 
 use rudbman_jdbc::{DdlSource, DescribeRequest, Session};
+use rudbman_sql::Dialect;
 
 use crate::explorer::{ObjectTarget, describe_failure};
 use crate::i18n::ts;
 use crate::icons;
+use crate::sql_highlight::DialectHighlighter;
 
 /// Element id of the body's overlay scroll indicator.
 const BODY_SCROLLBAR: &str = "detail-body-scrollbar";
@@ -186,6 +192,14 @@ pub struct TableDetail {
     body_scroll: ScrollHandle,
     /// Whether the body's overlay bar is on screen.
     body_scrollbar: ScrollbarState,
+    /// The DDL tab's statement, in the editor the query pane uses but read-only
+    /// and without the query pane's toolbar: selecting part of a `CREATE`,
+    /// finding a column in it and reading it highlighted are what the panel
+    /// wants, and running or changing it are not.
+    ddl_editor: Entity<EditorView>,
+    /// Where the DDL editor's context menu is open, if it is.
+    ddl_menu: Option<Point<Pixels>>,
+    _ddl_events: Subscription,
 }
 
 impl TableDetail {
@@ -196,7 +210,22 @@ impl TableDetail {
     /// and would be dropped, leaving a panel that says "loading…" for ever.
     /// The host subscribes and then calls [`TableDetail::refresh`], which is
     /// the same path the reload button takes.
-    pub fn new(target: ObjectTarget, cx: &mut Context<Self>) -> Self {
+    ///
+    /// `dialect` is the connection's, and only colours the DDL.
+    pub fn new(target: ObjectTarget, dialect: &str, cx: &mut Context<Self>) -> Self {
+        let ddl_editor = cx.new(|cx| {
+            EditorView::new(cx)
+                .highlighter(DialectHighlighter::shared(Dialect::from_id(dialect)))
+                .read_only(true)
+        });
+        // The editor holds no strings, so its menu is drawn here, as the query
+        // pane and the LOB viewer draw theirs.
+        let ddl_events = cx.subscribe(&ddl_editor, |detail, _editor, event, cx| {
+            if let EditorEvent::ContextMenu { position } = event {
+                detail.ddl_menu = Some(*position);
+                cx.notify();
+            }
+        });
         Self {
             tab: if target.folder.is_relation() {
                 Tab::Columns
@@ -208,6 +237,9 @@ impl TableDetail {
             focus_handle: cx.focus_handle(),
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
+            ddl_editor,
+            ddl_menu: None,
+            _ddl_events: ddl_events,
         }
     }
 
@@ -222,6 +254,17 @@ impl TableDetail {
 
     /// Records what a fetch produced.
     pub fn deliver(&mut self, outcome: Result<Details, SharedString>, cx: &mut Context<Self>) {
+        // Set once per load rather than per frame: `set_text` resets the
+        // selection and the scroll, which a reader in the middle of the
+        // statement would not thank a repaint for.
+        let ddl = outcome
+            .as_ref()
+            .ok()
+            .and_then(|details| details.ddl.as_ref())
+            .map_or("", |ddl| ddl.text.as_ref());
+        self.ddl_editor
+            .update(cx, |editor, cx| editor.set_text(ddl, cx));
+        self.ddl_menu = None;
         self.load = match outcome {
             Ok(details) => Load::Ready(Box::new(details)),
             Err(message) => Load::Failed(message),
@@ -631,6 +674,8 @@ impl TableDetail {
         div()
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h_0()
             .gap(px(8.))
             .children(banner)
             .child(
@@ -644,22 +689,71 @@ impl TableDetail {
                 ),
             )
             .child(
-                // Monospace and preserved whitespace: a `CREATE` statement is
-                // laid out by its own indentation and reflowing it would make it
-                // unreadable.
+                // Monospace and unwrapped: a `CREATE` statement is laid out by
+                // its own indentation and reflowing it would make it
+                // unreadable. The editor scrolls itself, so the tab takes the
+                // body's height rather than growing past it.
                 div()
-                    .w_full()
-                    .p(px(10.))
+                    .id("detail-ddl-editor")
+                    .debug_selector(|| "detail-ddl-editor".into())
+                    .flex()
+                    .flex_1()
+                    .min_h(px(120.))
+                    .min_w_0()
                     .rounded_md()
-                    .bg(chrome.surface)
+                    .overflow_hidden()
                     .border_1()
                     .border_color(chrome.border)
                     .font_family(crate::app_settings::monospace_family(cx))
                     .text_size(px(12.))
-                    .text_color(chrome.text)
-                    .child(ddl.text.clone()),
+                    .child(self.ddl_editor.clone()),
             )
             .into_any_element()
+    }
+
+    /// Puts the DDL editor's right-click menu away.
+    ///
+    /// What the workspace runs before it opens another overlay, so that only
+    /// one full-window backdrop is ever down at a time.
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.ddl_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The DDL editor's context menu: only what a read-only buffer can do.
+    fn render_ddl_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let position = self.ddl_menu?;
+        let editor = self.ddl_editor.read(cx);
+        let focus = editor.focus_handle(cx);
+        let row = |label, action: Box<dyn Action>, enabled| {
+            let focus = focus.clone();
+            MenuRow::new(label)
+                .enabled(enabled)
+                .on_activate(move |window, cx| focus.dispatch_action(action.as_ref(), window, cx))
+        };
+        let rows = vec![
+            row(
+                ts!("input.menu_copy"),
+                Box::new(Copy),
+                editor.has_selection(),
+            ),
+            row(ts!("input.menu_select_all"), Box::new(SelectAll), true),
+            MenuRow::separator(),
+            row(ts!("context.find"), Box::new(Find), true),
+        ];
+        let this = cx.entity();
+        Some(
+            ContextMenu::new("detail-ddl-menu")
+                .position(position)
+                .entries(menu_rows::entries(rows))
+                .on_dismiss(move |_, cx| {
+                    this.update(cx, |detail, cx| {
+                        detail.ddl_menu = None;
+                        cx.notify();
+                    })
+                }),
+        )
     }
 }
 
@@ -678,6 +772,7 @@ impl Render for TableDetail {
         let header = self.render_header(&chrome, cx);
         let tabs = self.render_tabs(&chrome, cx);
         let body = self.render_body(&chrome, cx);
+        let ddl_menu = self.render_ddl_menu(cx);
 
         div()
             .id("table-detail")
@@ -708,6 +803,7 @@ impl Render for TableDetail {
             .child(header)
             .child(tabs)
             .child(body)
+            .children(ddl_menu)
     }
 }
 
@@ -1486,7 +1582,7 @@ mod tests {
 
     #[gpui::test]
     fn opening_a_panel_leaves_it_loading_until_the_host_asks(cx: &mut gpui::TestAppContext) {
-        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), cx));
+        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), "generic", cx));
         cx.update(|cx| {
             let panel = panel.read(cx);
             assert!(panel.is_loading());
@@ -1505,7 +1601,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), cx));
+        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), "generic", cx));
 
         let recorder = std::rc::Rc::clone(&seen);
         let _subscription = cx.update(|cx| {
@@ -1551,7 +1647,7 @@ mod tests {
 
     #[gpui::test]
     fn a_routine_opens_on_the_only_tab_it_has(cx: &mut gpui::TestAppContext) {
-        let panel = cx.new(|cx| TableDetail::new(target(Folder::Procedures), cx));
+        let panel = cx.new(|cx| TableDetail::new(target(Folder::Procedures), "generic", cx));
         cx.update(|cx| {
             assert_eq!(panel.read(cx).tab(), Tab::Properties);
             assert_eq!(panel.read(cx).tabs(), &Tab::ROUTINE);
@@ -1562,7 +1658,7 @@ mod tests {
     fn a_failed_load_is_reported_and_not_mistaken_for_an_empty_table(
         cx: &mut gpui::TestAppContext,
     ) {
-        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), cx));
+        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), "generic", cx));
         cx.update(|cx| {
             panel.update(cx, |panel, cx| {
                 panel.deliver(Err("permission denied".into()), cx);
@@ -1579,9 +1675,81 @@ mod tests {
         });
     }
 
+    /// The DDL lands in a read-only editor, set once per load, and a failed
+    /// reload empties it rather than leaving the last table's statement up.
+    #[gpui::test]
+    fn the_ddl_is_shown_in_a_read_only_editor(cx: &mut gpui::TestAppContext) {
+        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), "generic", cx));
+        cx.update(|cx| {
+            panel.update(cx, |panel, cx| {
+                panel.deliver(
+                    Ok(Details {
+                        ddl: Some(Ddl {
+                            text: "CREATE TABLE PERSON (ID INTEGER)".into(),
+                            reconstructed: false,
+                        }),
+                        ..Details::default()
+                    }),
+                    cx,
+                );
+            });
+        });
+        cx.update(|cx| {
+            let editor = panel.read(cx).ddl_editor.read(cx);
+            assert_eq!(editor.text(), "CREATE TABLE PERSON (ID INTEGER)");
+            assert!(editor.is_read_only());
+            assert!(!editor.is_dirty());
+        });
+
+        cx.update(|cx| {
+            panel.update(cx, |panel, cx| {
+                panel.deliver(Err("permission denied".into()), cx);
+            });
+        });
+        cx.update(|cx| assert_eq!(panel.read(cx).ddl_editor.read(cx).text(), ""));
+    }
+
+    /// The editor scrolls itself, so the DDL tab hands it the body's height:
+    /// a short statement does not leave a sliver of editor, and a long one does
+    /// not push the tab past the bottom of the pane.
+    #[gpui::test]
+    fn the_ddl_editor_fills_the_tab_body(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_window(|_, cx| {
+            let mut panel = TableDetail::new(target(Folder::Tables), "generic", cx);
+            panel.deliver(
+                Ok(Details {
+                    ddl: Some(Ddl {
+                        text: "CREATE TABLE PERSON (ID INTEGER)".into(),
+                        reconstructed: false,
+                    }),
+                    ..Details::default()
+                }),
+                cx,
+            );
+            panel.select_tab(Tab::Ddl, cx);
+            panel
+        });
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+
+        let viewport = cx.update(|window, _| window.viewport_size());
+        let editor = cx
+            .debug_bounds("detail-ddl-editor")
+            .expect("the DDL tab draws its editor");
+        assert!(
+            editor.size.height > viewport.height / 2.,
+            "editor {editor:?} in a viewport of {viewport:?}"
+        );
+        assert!(
+            editor.bottom() <= viewport.height,
+            "editor {editor:?} in a viewport of {viewport:?}"
+        );
+    }
+
     #[gpui::test]
     fn switching_tabs_costs_no_round_trip(cx: &mut gpui::TestAppContext) {
-        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), cx));
+        let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), "generic", cx));
         cx.update(|cx| {
             panel.update(cx, |panel, cx| {
                 panel.deliver(
