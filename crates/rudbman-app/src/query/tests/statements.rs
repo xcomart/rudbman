@@ -125,3 +125,52 @@ fn a_plain_read_is_paged_and_anything_that_cuts_its_own_rows_is_not() {
         );
     }
 }
+
+/// Which statements SQL Server reads through a server cursor: plain reads,
+/// including the ones it would not page, but nothing with a top-level `FOR`,
+/// which SQL Server refuses in a cursor.
+#[test]
+fn sql_server_reads_plain_selects_through_a_server_cursor() {
+    use crate::query::statements::server_cursor_read;
+
+    let mssql = Dialect::MSSQL;
+    for sql in [
+        "select * from t",
+        "SELECT TOP 10 * FROM t ORDER BY id",
+        "select id from t order by id offset 0 rows fetch next 5 rows only",
+        "with r as (select id from t) select * from r",
+        "select a, (select b from u for xml path('')) as x from t",
+        "  select * from t; -- trailing note\n",
+    ] {
+        assert!(server_cursor_read(sql, &mssql), "{sql}");
+    }
+    for sql in [
+        "select id from t for json path",
+        "SELECT id FROM t FOR XML AUTO",
+        "select * from t for system_time all",
+        "update t set a = 1",
+        "select * into u from t",
+        "exec sp_who",
+        "select 1; select 2",
+        "",
+    ] {
+        assert!(!server_cursor_read(sql, &mssql), "{sql}");
+    }
+
+    // Every other dialect keeps the driver's default result set.
+    for dialect in [
+        Dialect::GENERIC,
+        Dialect::H2,
+        Dialect::POSTGRES,
+        Dialect::MYSQL,
+        Dialect::MARIADB,
+        Dialect::SQLITE,
+        Dialect::ORACLE,
+    ] {
+        assert!(
+            !server_cursor_read("select * from t", &dialect),
+            "{}",
+            dialect.name()
+        );
+    }
+}

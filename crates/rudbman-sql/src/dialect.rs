@@ -421,6 +421,18 @@ impl Dialect {
             DialectId::Generic | DialectId::Oracle | DialectId::MsSql => None,
         }
     }
+
+    /// Whether a grid that has no [`Self::page_clause`] reads its rows through
+    /// a server-side cursor rather than the driver's default result set.
+    ///
+    /// SQL Server only. Its driver streams a default result set until anything
+    /// else runs on the connection, then reads the rest of it into memory; a
+    /// server cursor fetches one batch per round trip and holds no locks
+    /// between fetches. Oracle's cursors are server-side already, and the
+    /// others page by statement.
+    pub fn reads_by_server_cursor(self) -> bool {
+        self.id == DialectId::MsSql
+    }
 }
 
 #[cfg(test)]
@@ -520,5 +532,23 @@ mod tests {
         for d in [Dialect::GENERIC, Dialect::ORACLE, Dialect::MSSQL] {
             assert_eq!(d.page_clause(500, 0), None, "{}", d.name());
         }
+    }
+
+    /// Only SQL Server asks for a server cursor; every other dialect either
+    /// pages by statement or already has cursors on the server.
+    #[test]
+    fn only_sql_server_reads_by_server_cursor() {
+        for d in [
+            Dialect::GENERIC,
+            Dialect::H2,
+            Dialect::POSTGRES,
+            Dialect::MYSQL,
+            Dialect::MARIADB,
+            Dialect::SQLITE,
+            Dialect::ORACLE,
+        ] {
+            assert!(!d.reads_by_server_cursor(), "{}", d.name());
+        }
+        assert!(Dialect::MSSQL.reads_by_server_cursor());
     }
 }

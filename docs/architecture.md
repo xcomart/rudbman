@@ -377,7 +377,7 @@ forever.
 | `0x03` | `PING` | session | — | — | JSON `{ok, elapsed_ms}` |
 | `0x04` | `SESSION_INFO` | session | — | — | JSON DB product, version, feature flags |
 | `0x10` | `DESCRIBE` | session | — | JSON `{kind, …}` | JSON |
-| `0x20` | `EXECUTE` | session | — | JSON `{sql, params, fetch_size, max_rows, timeout_s}` | JSON `{cursor, columns[], update_count, has_result_set, has_more}` |
+| `0x20` | `EXECUTE` | session | — | JSON `{sql, params, fetch_size, max_rows, timeout_s, server_cursor}` | JSON `{cursor, columns[], update_count, has_result_set, has_more}` |
 | `0x21` | `FETCH` | cursor | max rows | — | **binary batch** (§4.6) |
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |

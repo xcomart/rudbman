@@ -98,6 +98,25 @@ const UNPAGEABLE_WORDS: &[&str] = &[
 /// statement is the user's, with fewer rows.
 pub(super) fn pageable_body<'a>(sql: &'a str, dialect: &Dialect) -> Option<&'a str> {
     dialect.page_clause(1, 0)?;
+    plain_read(sql, dialect, UNPAGEABLE_WORDS)
+}
+
+/// Whether `sql` is read through a server-side cursor
+/// ([`StatementSpec::server_cursor`](rudbman_jdbc::StatementSpec::server_cursor))
+/// when it keeps its own cursor open.
+///
+/// Only on a dialect that reads that way — SQL Server — and only for one
+/// reading statement with no top-level `FOR`. SQL Server refuses `FOR XML`,
+/// `FOR JSON` and `FOR BROWSE` in a cursor ("The FOR JSON clause is not
+/// allowed in a CURSOR statement"), so such a statement, like anything that is
+/// not one plain read, keeps the default result set it always had.
+pub(super) fn server_cursor_read(sql: &str, dialect: &Dialect) -> bool {
+    dialect.reads_by_server_cursor() && plain_read(sql, dialect, &["FOR"]).is_some()
+}
+
+/// `sql`'s [`statement_body`], when it is one reading statement — `SELECT`, or
+/// `WITH` ending in one — with none of `refused` outside parentheses.
+fn plain_read<'a>(sql: &'a str, dialect: &Dialect, refused: &[&str]) -> Option<&'a str> {
     if !matches!(statement_access(sql, dialect), StatementAccess::Read) {
         return None;
     }
@@ -119,10 +138,7 @@ pub(super) fn pageable_body<'a>(sql: &'a str, dialect: &Dialect) -> Option<&'a s
             TokenKind::Punctuation if text == "(" => depth += 1,
             TokenKind::Punctuation if text == ")" => depth = depth.saturating_sub(1),
             TokenKind::Keyword | TokenKind::Identifier | TokenKind::Function | TokenKind::Type
-                if depth == 0
-                    && UNPAGEABLE_WORDS
-                        .iter()
-                        .any(|word| text.eq_ignore_ascii_case(word)) =>
+                if depth == 0 && refused.iter().any(|word| text.eq_ignore_ascii_case(word)) =>
             {
                 return None;
             }

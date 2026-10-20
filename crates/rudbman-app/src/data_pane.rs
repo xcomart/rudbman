@@ -1766,8 +1766,15 @@ fn open(session: &Session, target: &ObjectTarget, select: Select) -> Result<Open
         });
     }
 
+    // The cursor stays open between scrolls on the session every pane shares,
+    // so on SQL Server it has to be a server cursor: a default result set
+    // there is read whole into the bridge heap as soon as anything else runs.
+    // This statement is the plain `SELECT` written above, which a cursor
+    // always accepts.
     let fetch_rows = select.fetch_rows;
-    let spec = StatementSpec::new(sql).with_fetch_size(fetch_rows);
+    let spec = StatementSpec::new(sql)
+        .with_fetch_size(fetch_rows)
+        .with_server_cursor(select.dialect.reads_by_server_cursor());
     let mut cursor = session.execute(&spec)?;
     let mut steps = Vec::new();
     let pageable = advance(&mut cursor, true, fetch_rows, &mut steps)?;

@@ -138,7 +138,7 @@ impl QueryPane {
         //
         // [`SessionHandle::has_uncommitted`]: crate::connection::SessionHandle::has_uncommitted
         let manual = self.transactional && !self.restore_auto_commit;
-        let statements: Vec<(String, Effect, Option<Pager>)> = statements
+        let statements: Vec<(String, Effect, Option<Pager>, bool)> = statements
             .into_iter()
             .map(|sql| {
                 let effect = if !manual {
@@ -155,7 +155,8 @@ impl QueryPane {
                 // own cursor is settled for the life of its result (see
                 // [`More`]).
                 let pager = Pager::new(&sql, &self.dialect, fetch_rows);
-                (sql, effect, pager)
+                let server_cursor = statements::server_cursor_read(&sql, &self.dialect);
+                (sql, effect, pager, server_cursor)
             })
             .collect();
 
@@ -164,11 +165,13 @@ impl QueryPane {
         // [`GridView::begin_edit`] means putting the keyboard in a field and
         // there is no window to be had inside a plain `cx.subscribe` (§7.9).
         cx.spawn_in(window, async move |pane, cx| {
-            for (sql, effect, pager) in statements {
+            for (sql, effect, pager, server_cursor) in statements {
                 let outcome = cx
                     .background_spawn({
                         let session = session.clone();
-                        async move { execute(&session, sql, effect, pager, fetch_rows) }
+                        async move {
+                            execute(&session, sql, effect, pager, server_cursor, fetch_rows)
+                        }
                     })
                     .await;
 
@@ -380,12 +383,16 @@ impl QueryPane {
 ///
 /// A statement with a [`Pager`] is read as its first page and closed; any other
 /// is executed with a fetch size and walked by [`advance`] to the first result
-/// that still has rows, whose cursor stays open for the grid to page.
+/// that still has rows, whose cursor stays open for the grid to page — through
+/// a server cursor when `server_cursor` says it is one
+/// ([`statements::server_cursor_read`]), since that cursor shares the session
+/// with everything else.
 fn execute(
     session: &SessionHandle,
     sql: String,
     effect: Effect,
     pager: Option<Pager>,
+    server_cursor: bool,
     fetch_rows: u32,
 ) -> Result<Executed, JdbcError> {
     let started = Instant::now();
@@ -399,7 +406,9 @@ fn execute(
             None => (vec![Step::Message { update_count: 0 }], None),
         },
         None => {
-            let spec = StatementSpec::new(sql.clone()).with_fetch_size(fetch_rows);
+            let spec = StatementSpec::new(sql.clone())
+                .with_fetch_size(fetch_rows)
+                .with_server_cursor(server_cursor);
             let mut cursor = session.session().execute(&spec)?;
             if effect == Effect::Ends {
                 session.clear_uncommitted();

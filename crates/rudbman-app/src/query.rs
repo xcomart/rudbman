@@ -288,7 +288,10 @@ struct Executed {
 ///
 /// Everything else — `SHOW`, a statement with its own `LIMIT`, `FOR UPDATE`,
 /// a stored procedure, a dialect with no page clause — keeps its cursor, which
-/// is no worse than it was.
+/// is no worse than it was. On SQL Server, whose driver buffers a default
+/// result set the same way MariaDB's does, a plain read keeps a *server*
+/// cursor instead ([`statements::server_cursor_read`]); Oracle's cursors are
+/// server-side already.
 enum More {
     /// The statement's own cursor, still open and paged by `FETCH`. Dropping it
     /// closes it.
