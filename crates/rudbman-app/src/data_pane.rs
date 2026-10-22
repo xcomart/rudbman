@@ -8,9 +8,9 @@
 //! # Why a pane and not a fifth detail tab
 //!
 //! The detail panel is one load of presentation and holds nothing of the
-//! session; this holds a cursor, a generation counter and a staging buffer, and
-//! a re-sort throws its whole result away. Those are different lifetimes, and
-//! §7.9 keeps them in different tabs.
+//! session; this holds a way to read on, a generation counter and a staging
+//! buffer, and a re-sort throws its whole result away. Those are different
+//! lifetimes, and §7.9 keeps them in different tabs.
 //!
 //! # What it borrows and what it owns
 //!
@@ -76,7 +76,9 @@ use crate::data_edit::{EditableSource, PlannedStatement, RowRef, StagedCell, pla
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::query::{QueryError, note, render_error};
-use crate::query_source::{Paged, ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, page};
+use crate::query_source::{
+    ROW_LIMIT, ReadPage, RenderedBatch, ResultSource, Step, advance, page, read_page,
+};
 use crate::row_apply::{
     ApplyFailure, ApplyProblem, ApplyStop, apply_batch, plan_message, primary_key,
     render_apply_error, render_apply_preview, render_discard_confirm,
@@ -95,8 +97,136 @@ struct Opened {
     batch: Option<RenderedBatch>,
     /// Whether the driver had run out of rows.
     complete: bool,
-    /// The cursor, while there is more to page. Closed on drop otherwise.
-    cursor: Option<Cursor>,
+    /// How to read on, while there is more to page.
+    more: Option<More>,
+    /// The statement this load ran, kept so that every later page is cut
+    /// from the same ordering as the first.
+    select: Select,
+}
+
+/// How the rows after the ones on screen are to be had.
+///
+/// Two ways, and the dialect picks one for the life of a load (see
+/// [`Select`]). The cursor is the way that works everywhere and costs the most:
+/// the statement's result set stays open on the connection between one scroll
+/// and the next. The offset is the way that leaves nothing open — each page is
+/// a statement of its own, read to its end and closed before the page is
+/// handed over.
+enum More {
+    /// The statement's own cursor, still open on the server and paged by
+    /// `FETCH`. Dropping it closes it.
+    Cursor(Cursor),
+    /// Where the next page's statement starts: every row of the table fetched
+    /// so far.
+    Offset(u64),
+}
+
+/// One more page, as the background task hands it over.
+struct Page {
+    /// The rows that came back, already rendered.
+    batch: RenderedBatch,
+    /// Whether that was the last of them.
+    complete: bool,
+    /// How to read on from here, while there is more.
+    more: Option<More>,
+}
+
+/// The statement a load runs, and what is needed to write each page of it.
+///
+/// Built on this thread and handed to the background, because the primary key
+/// it may order by is only read there, inside [`open`].
+///
+/// # Why a page is a statement of its own
+///
+/// Every pane, the explorer and the metadata lookups share one JDBC connection,
+/// and an open streaming result set is a poor neighbour on it. MariaDB's
+/// Connector/J answers *any* other command sent while one is open by reading
+/// the rest of it into the heap first (`fetchRemaining`), so the explorer
+/// expanding a folder beside a huge table took the whole table into the
+/// bridge's memory; and closing one reads the rest off the network to throw it
+/// away (`skipRemaining`), so a sort or a closed tab stalled for as long as the
+/// table took to stream. pgjdbc does not stream at all under autocommit and
+/// reads everything at `EXECUTE`. So where the dialect has a
+/// [`Dialect::page_clause`], each page is `… LIMIT n OFFSET m`, read whole and
+/// closed at once, and nothing stays open between one page and the next. The
+/// dialects without one keep the cursor, which is no worse than it was.
+///
+/// Pages cut by offset only line up if the order is total, so a paged
+/// statement orders by the primary key — after the user's column, as a tie
+/// breaker, when one was asked for. A table with no key has nothing to make
+/// the order total with and is read in whatever order the server keeps; the
+/// cursor never promised more than that either.
+#[derive(Clone, Debug)]
+struct Select {
+    /// Writes the identifiers and decides the paging.
+    dialect: Dialect,
+    /// The table, qualified and quoted.
+    table: String,
+    /// The column the user ordered by, spelled as [`Order::name`] has it, and
+    /// which way.
+    order: Option<(String, SortDirection)>,
+    /// Rows per page, and per `FETCH`.
+    fetch_rows: u32,
+}
+
+impl Select {
+    /// Rows per page. Never zero: `LIMIT 0` would page forever and never get
+    /// anywhere, and the settings already refuse it — this is only the floor
+    /// under that.
+    fn limit(&self) -> u32 {
+        self.fetch_rows.max(1)
+    }
+
+    /// Whether pages are statements of their own, rather than fetches from one
+    /// open cursor.
+    fn pages_by_offset(&self) -> bool {
+        self.dialect.page_clause(1, 0).is_some()
+    }
+
+    /// The statement for the page that starts `offset` rows in.
+    ///
+    /// Where the dialect has no page clause there are no pages to write, only
+    /// the one statement the cursor is opened on, and `keys` and `offset` are
+    /// not used: the cursor's statement is exactly what it always was.
+    fn statement(&self, keys: &[String], offset: u64) -> String {
+        match self.dialect.page_clause(u64::from(self.limit()), offset) {
+            Some(clause) => format!("{} {clause}", self.ordered(keys)),
+            None => self.ordered(&[]),
+        }
+    }
+
+    /// Every column, in the user's order and then the key's.
+    ///
+    /// An appended `ORDER BY` rather than the derived table the query pane
+    /// wraps its statement in. That wrapper exists because the user's own SQL
+    /// may already carry an ordering and two of them do not compose; this
+    /// statement is written here, one clause at a time, so there is nothing
+    /// underneath to collide with.
+    ///
+    /// A key column that is also the user's is not repeated. The comparison is
+    /// exact, which on a mismatch of case costs a redundant term and nothing
+    /// else, where a case-blind one could drop a different column.
+    fn ordered(&self, keys: &[String]) -> String {
+        let mut terms = Vec::new();
+        if let Some((name, direction)) = &self.order {
+            let direction = match direction {
+                SortDirection::Ascending => "ASC",
+                SortDirection::Descending => "DESC",
+            };
+            terms.push(format!("{} {direction}", self.dialect.quote_ident(name)));
+        }
+        let sorted = self.order.as_ref().map(|(name, _)| name.as_str());
+        for key in keys.iter().filter(|key| Some(key.as_str()) != sorted) {
+            terms.push(format!("{} ASC", self.dialect.quote_ident(key)));
+        }
+
+        let mut sql = format!("SELECT * FROM {}", self.table);
+        if !terms.is_empty() {
+            sql.push_str(" ORDER BY ");
+            sql.push_str(&terms.join(", "));
+        }
+        sql
+    }
 }
 
 /// The ordering the rows were asked for.
@@ -127,10 +257,16 @@ struct Rows {
     grid: Entity<GridView<EditableSource>>,
     /// The result's logical column types, for rendering later batches.
     columns: Arc<Vec<ColumnInfo>>,
-    /// The cursor, while this result is still ours to page. `None` once the
-    /// rows ran out, and while a fetch has it.
-    cursor: Option<Cursor>,
-    /// Whether the cursor is out with a background fetch.
+    /// The statement these rows came from, which every later page repeats.
+    ///
+    /// Held here rather than rebuilt from the pane: a heading click records
+    /// its order before the reload it asks for, and a reload can be refused,
+    /// so the pane's order is not necessarily the one these rows are in.
+    select: Select,
+    /// How to read on, while this result is still ours to page. `None` once
+    /// the rows ran out, and while a fetch has it.
+    more: Option<More>,
+    /// Whether a page is out with a background fetch.
     fetching: bool,
     /// Keeps the grid's subscription alive for as long as the rows.
     _events: Subscription,
@@ -339,10 +475,11 @@ impl DataPane {
             dialog.update(cx, |dialog, cx| dialog.detach(cx));
         }
         self.session = None;
-        // Dropping the cursor closes it, and is what stops a scroll asking a
-        // session that is being closed for another page.
+        // Dropping the way on closes a cursor, if that is what it was, and is
+        // what stops a scroll asking a session that is being closed for
+        // another page.
         if let Load::Ready(rows) = &mut self.load {
-            rows.cursor = None;
+            rows.more = None;
         }
         cx.notify();
     }
@@ -456,26 +593,17 @@ impl DataPane {
     }
 
     /// The statement the pane runs: every column, in whatever order was asked
-    /// for.
-    ///
-    /// An appended `ORDER BY` rather than the derived table the query pane
-    /// wraps its statement in. That wrapper exists because the user's own SQL
-    /// may already carry an ordering and two of them do not compose; this
-    /// statement is written here, one clause at a time, so there is nothing
-    /// underneath to collide with.
-    fn select_sql(&self) -> String {
-        let mut sql = format!("SELECT * FROM {}", self.qualified());
-        if let Some(order) = &self.order {
-            let direction = match order.direction {
-                SortDirection::Ascending => "ASC",
-                SortDirection::Descending => "DESC",
-            };
-            sql.push_str(" ORDER BY ");
-            sql.push_str(&self.dialect.quote_ident(&order.name));
-            sql.push(' ');
-            sql.push_str(direction);
+    /// for. [`Select`] writes it, once the key it pages by is known.
+    fn select(&self) -> Select {
+        Select {
+            dialect: self.dialect,
+            table: self.qualified(),
+            order: self
+                .order
+                .as_ref()
+                .map(|order| (order.name.clone(), order.direction)),
+            fetch_rows: self.fetch_rows,
         }
-        sql
     }
 
     /// Reads the key and the first batch again, from scratch.
@@ -513,8 +641,7 @@ impl DataPane {
         self.apply_error = None;
 
         let target = self.target.clone();
-        let sql = self.select_sql();
-        let fetch_rows = self.fetch_rows;
+        let select = self.select();
 
         // `spawn_in` rather than `spawn`: the grid this load ends in is
         // subscribed to with a window, because answering a double click with
@@ -522,7 +649,7 @@ impl DataPane {
         // there is no window to be had inside a plain `cx.subscribe`.
         cx.spawn_in(window, async move |pane, cx| {
             let outcome = cx
-                .background_spawn(async move { open(session.session(), &target, &sql, fetch_rows) })
+                .background_spawn(async move { open(session.session(), &target, select) })
                 .await;
             pane.update_in(cx, |pane, window, cx| {
                 pane.deliver(generation, outcome, window, cx);
@@ -542,7 +669,8 @@ impl DataPane {
         cx: &mut Context<Self>,
     ) {
         if generation != self.generation {
-            // A superseded load's answer. Dropping it closes its cursor.
+            // A superseded load's answer. Dropping it closes its cursor, if it
+            // kept one open.
             return;
         }
         match outcome {
@@ -552,7 +680,8 @@ impl DataPane {
                     columns,
                     batch,
                     complete,
-                    cursor,
+                    more,
+                    select,
                 } = opened;
                 self.keys = keys;
                 self.keys_read = true;
@@ -562,7 +691,7 @@ impl DataPane {
                 if let Some(batch) = batch {
                     source.push(batch);
                 }
-                source.set_state(if complete && cursor.is_none() {
+                source.set_state(if complete && more.is_none() {
                     GridSourceState::Complete
                 } else {
                     GridSourceState::HasMore
@@ -630,7 +759,8 @@ impl DataPane {
                 self.load = Load::Ready(Box::new(Rows {
                     grid,
                     columns: Arc::new(columns),
-                    cursor,
+                    select,
+                    more,
                     fetching: false,
                     _events: events,
                 }));
@@ -642,27 +772,31 @@ impl DataPane {
 
     /// The grid has come within sight of the last row it holds.
     fn fetch_more(&mut self, cx: &mut Context<Self>) {
-        if self.session.is_none() {
-            // `detach` has already dropped the cursor, so this is only reached
+        let Some(session) = self.session.clone() else {
+            // `detach` has already dropped the way on, so this is only reached
             // by a scroll that was already in flight; saying why the rows stop
             // is better than a grid that quietly ends early.
             self.notice = Some(ts!("explorer.disconnected"));
             cx.notify();
             return;
-        }
+        };
         let generation = self.generation;
         let fetch_rows = self.fetch_rows;
+        // The key the first page was ordered by: it was read by the same load
+        // that built these rows, and only a later load replaces it.
+        let keys = self.keys.clone();
         let Load::Ready(rows) = &mut self.load else {
             return;
         };
         if rows.fetching {
             return;
         }
-        let Some(mut cursor) = rows.cursor.take() else {
+        let Some(more) = rows.more.take() else {
             return;
         };
         rows.fetching = true;
         let columns = Arc::clone(&rows.columns);
+        let select = rows.select.clone();
         let grid = rows.grid.clone();
         // While a batch is on its way the source says so, which is what keeps a
         // fast scroll from asking once per frame.
@@ -673,9 +807,22 @@ impl DataPane {
         cx.spawn(async move |pane, cx| {
             let outcome = cx
                 .background_spawn(async move {
-                    match page(&mut cursor, &columns, fetch_rows) {
-                        Ok(paged) => Ok((cursor, paged)),
-                        Err(error) => Err(error),
+                    match more {
+                        More::Cursor(mut cursor) => {
+                            page(&mut cursor, &columns, fetch_rows).map(|paged| Page {
+                                // A completed result set is behind the cursor
+                                // now: the walk in `page` has already moved
+                                // past it. The further results `Paged::steps`
+                                // may carry are a stored procedure's, and a
+                                // `SELECT` over one table has none.
+                                more: (!paged.complete).then_some(More::Cursor(cursor)),
+                                batch: paged.batch,
+                                complete: paged.complete,
+                            })
+                        }
+                        More::Offset(offset) => {
+                            next_page(session.session(), &select, &keys, offset)
+                        }
                     }
                 })
                 .await;
@@ -686,15 +833,11 @@ impl DataPane {
     }
 
     /// Records a page.
-    fn paged(
-        &mut self,
-        generation: u64,
-        outcome: Result<(Cursor, Paged), JdbcError>,
-        cx: &mut Context<Self>,
-    ) {
+    fn paged(&mut self, generation: u64, outcome: Result<Page, JdbcError>, cx: &mut Context<Self>) {
         if generation != self.generation {
             // The load this belonged to has been superseded. Dropping the
-            // outcome closes its cursor, and the rows never reach a grid.
+            // outcome closes its cursor, if it held one, and the rows never
+            // reach a grid.
             return;
         }
         // What the failure arm wants to say, kept until the borrow of the rows
@@ -706,12 +849,8 @@ impl DataPane {
         rows.fetching = false;
 
         match outcome {
-            Ok((cursor, paged)) => {
-                // A completed result set is behind the cursor now: the walk in
-                // `page` has already moved past it. The further results
-                // `Paged::steps` may carry are a stored procedure's, and a
-                // `SELECT` over one table has none.
-                rows.cursor = (!paged.complete).then_some(cursor);
+            Ok(paged) => {
+                rows.more = paged.more;
                 let grid = rows.grid.clone();
                 let limited = grid.update(cx, |grid, cx| {
                     // Into the rows the server sent, under the overlay: the
@@ -726,7 +865,7 @@ impl DataPane {
                 }
             }
             Err(error) => {
-                rows.cursor = None;
+                rows.more = None;
                 let grid = rows.grid.clone();
                 grid.update(cx, |grid, cx| {
                     grid.source_mut(cx).set_state(GridSourceState::Complete);
@@ -1586,22 +1725,56 @@ impl Render for DataPane {
 /// so they queue behind whatever else that connection is doing rather than
 /// racing it.
 ///
-/// The key first, because the grid marks its columns and the source has to be
-/// told before it is built.
-fn open(
-    session: &Session,
-    target: &ObjectTarget,
-    sql: &str,
-    fetch_rows: u32,
-) -> Result<Opened, JdbcError> {
+/// The key first, for two reasons: the grid marks its columns and the source
+/// has to be told before it is built, and a statement paged by offset orders
+/// by it, so it is part of what the first page's statement says.
+fn open(session: &Session, target: &ObjectTarget, select: Select) -> Result<Opened, JdbcError> {
     let keys = primary_key(
         session,
         target.catalog.as_deref(),
         target.schema.as_deref(),
         &target.name,
     )?;
+    let sql = select.statement(&keys, 0);
 
-    let spec = StatementSpec::new(sql.to_string()).with_fetch_size(fetch_rows);
+    if select.pages_by_offset() {
+        let limit = select.limit();
+        return Ok(match read_page(session, &sql, limit)? {
+            Some(ReadPage {
+                columns,
+                batch,
+                rows,
+            }) => {
+                let complete = rows < limit as usize;
+                Opened {
+                    keys,
+                    columns,
+                    batch: Some(batch),
+                    complete,
+                    more: (!complete).then_some(More::Offset(rows as u64)),
+                    select,
+                }
+            }
+            None => Opened {
+                keys,
+                columns: Vec::new(),
+                batch: None,
+                complete: true,
+                more: None,
+                select,
+            },
+        });
+    }
+
+    // The cursor stays open between scrolls on the session every pane shares,
+    // so on SQL Server it has to be a server cursor: a default result set
+    // there is read whole into the bridge heap as soon as anything else runs.
+    // This statement is the plain `SELECT` written above, which a cursor
+    // always accepts.
+    let fetch_rows = select.fetch_rows;
+    let spec = StatementSpec::new(sql)
+        .with_fetch_size(fetch_rows)
+        .with_server_cursor(select.dialect.reads_by_server_cursor());
     let mut cursor = session.execute(&spec)?;
     let mut steps = Vec::new();
     let pageable = advance(&mut cursor, true, fetch_rows, &mut steps)?;
@@ -1626,14 +1799,50 @@ fn open(
             complete,
             // `then_some` is what drops — and so closes — a cursor that is
             // parked on nothing pageable.
-            cursor: pageable.then_some(cursor),
+            more: pageable.then_some(More::Cursor(cursor)),
+            select,
         },
         None => Opened {
             keys,
             columns: Vec::new(),
             batch: None,
             complete: true,
-            cursor: None,
+            more: None,
+            select,
+        },
+    })
+}
+
+/// Reads the page of a [`Select`] that starts `offset` rows in.
+///
+/// **Blocks**, like [`open`], and for the same reason runs on a background
+/// task. The statement is a new one, written with the key the first page was
+/// ordered by, so the rows it returns are the ones that follow the rows
+/// already on screen.
+fn next_page(
+    session: &Session,
+    select: &Select,
+    keys: &[String],
+    offset: u64,
+) -> Result<Page, JdbcError> {
+    let limit = select.limit();
+    let sql = select.statement(keys, offset);
+    Ok(match read_page(session, &sql, limit)? {
+        Some(ReadPage { batch, rows, .. }) => {
+            let complete = rows < limit as usize;
+            Page {
+                batch,
+                complete,
+                more: (!complete).then_some(More::Offset(offset + rows as u64)),
+            }
+        }
+        // A `SELECT` that answered with no result set at all, which the first
+        // page of the same statement did not do. There is nothing to read on
+        // from.
+        None => Page {
+            batch: RenderedBatch::default(),
+            complete: true,
+            more: None,
         },
     })
 }
@@ -1768,7 +1977,8 @@ mod tests {
     }
 
     /// The statement is assembled, not typed: the name is qualified and quoted
-    /// by the dialect, and the ordering is a clause of the pane's own.
+    /// by the dialect, and the ordering is a clause of the pane's own — with
+    /// the key behind it and a page clause after it, since H2 pages by offset.
     #[gpui::test]
     fn the_statement_names_the_table_the_way_the_dialect_spells_it(cx: &mut TestAppContext) {
         let (connected, profile) = h2(
@@ -1786,19 +1996,81 @@ mod tests {
             .update(cx, |pane, _window, _cx| {
                 // `ORDER` is a keyword, so it is quoted — which is the whole
                 // reason nothing here formats an identifier by hand.
-                assert_eq!(pane.select_sql(), "SELECT * FROM APP.\"ORDER\"");
+                assert_eq!(
+                    pane.select().statement(&pane.keys, 0),
+                    "SELECT * FROM APP.\"ORDER\" ORDER BY ID ASC LIMIT 500 OFFSET 0"
+                );
                 pane.order = Some(Order {
                     column: 0,
                     name: "ID".to_string(),
                     direction: SortDirection::Descending,
                 });
+                // The user's column is the key, so the key is not said twice.
                 assert_eq!(
-                    pane.select_sql(),
-                    "SELECT * FROM APP.\"ORDER\" ORDER BY ID DESC"
+                    pane.select().statement(&pane.keys, 1_000),
+                    "SELECT * FROM APP.\"ORDER\" ORDER BY ID DESC LIMIT 500 OFFSET 1000"
                 );
             })
             .expect("the window is open");
         connected.close().expect("close");
+    }
+
+    /// The order a paged statement is written in: the user's column first, the
+    /// key behind it as a tie breaker, and nothing at all for a keyless table
+    /// nobody sorted.
+    #[test]
+    fn a_paged_statement_is_ordered_by_the_key_behind_the_users_column() {
+        let select = |order: Option<(&str, SortDirection)>| Select {
+            dialect: Dialect::H2,
+            table: "APP.T".to_string(),
+            order: order.map(|(name, direction)| (name.to_string(), direction)),
+            fetch_rows: 100,
+        };
+        let keys = ["A".to_string(), "B".to_string()];
+
+        assert_eq!(
+            select(None).statement(&keys, 0),
+            "SELECT * FROM APP.T ORDER BY A ASC, B ASC LIMIT 100 OFFSET 0"
+        );
+        assert_eq!(
+            select(Some(("PRICE", SortDirection::Descending))).statement(&keys, 200),
+            "SELECT * FROM APP.T ORDER BY PRICE DESC, A ASC, B ASC LIMIT 100 OFFSET 200"
+        );
+        assert_eq!(
+            select(Some(("B", SortDirection::Descending))).statement(&keys, 0),
+            "SELECT * FROM APP.T ORDER BY B DESC, A ASC LIMIT 100 OFFSET 0",
+            "a key column the user sorted by is not repeated"
+        );
+        assert_eq!(
+            select(None).statement(&[], 300),
+            "SELECT * FROM APP.T LIMIT 100 OFFSET 300"
+        );
+        assert_eq!(
+            select(Some(("PRICE", SortDirection::Ascending))).statement(&[], 0),
+            "SELECT * FROM APP.T ORDER BY PRICE ASC LIMIT 100 OFFSET 0"
+        );
+        assert!(select(None).pages_by_offset());
+    }
+
+    /// A dialect with no page clause keeps the one statement the cursor is
+    /// opened on, exactly as it was written before pages were statements.
+    #[test]
+    fn a_dialect_without_a_page_clause_keeps_its_cursor_statement() {
+        for dialect in [Dialect::ORACLE, Dialect::MSSQL, Dialect::GENERIC] {
+            let select = Select {
+                dialect,
+                table: "T".to_string(),
+                order: Some(("PRICE".to_string(), SortDirection::Descending)),
+                fetch_rows: 100,
+            };
+            assert!(!select.pages_by_offset(), "{}", dialect.name());
+            assert_eq!(
+                select.statement(&["ID".to_string()], 500),
+                "SELECT * FROM T ORDER BY PRICE DESC",
+                "{}",
+                dialect.name()
+            );
+        }
     }
 
     /// The pane opens, draws the rows, and marks the key column.
@@ -1953,6 +2225,185 @@ mod tests {
             })
             .expect("the window is open");
         assert_eq!(column(&window, 0, cx)[0], "2500");
+        connected.close().expect("close");
+    }
+
+    /// Scrolls to the end the way `GridEvent::NearEnd` would, a page at a
+    /// time, and answers the first column of every row.
+    ///
+    /// Between pages — whenever the pane is idle — nothing may be held open:
+    /// the way on is the offset of the next page, and that offset is exactly
+    /// the rows already fetched. A cursor there would be a result set left
+    /// standing on the shared connection, which is what paging by statement
+    /// exists to avoid.
+    fn scroll_to_end(window: &WindowHandle<DataPane>, cx: &mut TestAppContext) -> Vec<String> {
+        let mut pages = 0;
+        loop {
+            let complete = window
+                .update(cx, |pane, _window, cx| {
+                    let Load::Ready(rows) = &pane.load else {
+                        panic!("the pane holds no rows: {:?}", pane.failure());
+                    };
+                    assert!(!rows.fetching, "a page is still out while idle");
+                    let fetched = rows.grid.read(cx).source().base_rows() as u64;
+                    match &rows.more {
+                        Some(More::Offset(next)) => assert_eq!(
+                            *next, fetched,
+                            "the next page does not start after the rows on screen"
+                        ),
+                        Some(More::Cursor(_)) => {
+                            panic!("a cursor was left open between pages")
+                        }
+                        None => {}
+                    }
+                    pane.state(cx) == GridSourceState::Complete
+                })
+                .expect("the window is open");
+            if complete {
+                break;
+            }
+            window
+                .update(cx, |pane, _window, cx| pane.fetch_more(cx))
+                .expect("the window is open");
+            cx.run_until_parked();
+            pages += 1;
+            assert!(pages < 100, "the source never reached the end");
+        }
+        window
+            .update(cx, |pane, _window, _cx| {
+                assert!(pane.notice.is_none(), "paging said {:?}", pane.notice);
+            })
+            .expect("the window is open");
+        column(window, 0, cx)
+    }
+
+    /// Small pages over a keyed table come back in key order, every row once:
+    /// each page is a statement of its own, ordered by the key, so the pages
+    /// line up end to end.
+    #[gpui::test]
+    fn small_pages_read_a_keyed_table_in_key_order_without_gaps(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-small-pages",
+            &[
+                "create schema if not exists APP",
+                "create table APP.BIG (ID int primary key, NAME varchar(20))",
+                // Inserted out of key order, so that the order on screen is the
+                // statement's and not an accident of how the rows were stored.
+                "insert into APP.BIG select 2501 - X, 'row' from system_range(1, 2500)",
+            ],
+        );
+        let window = pane(&connected, &profile, target("BIG"), 100, cx);
+        window
+            .update(cx, |pane, _window, cx| {
+                // A page, or the few the window's own first frames asked for,
+                // and not the table.
+                let loaded = pane.row_count(cx).expect("the rows arrived");
+                assert!(loaded < 2_500 && loaded % 100 == 0, "{loaded} rows");
+                assert_eq!(pane.state(cx), GridSourceState::HasMore);
+            })
+            .expect("the window is open");
+
+        let rows = scroll_to_end(&window, cx);
+        let expected: Vec<String> = (1..=2_500).map(|id| id.to_string()).collect();
+        assert_eq!(rows, expected);
+        window
+            .update(cx, |pane, _window, _cx| {
+                let Load::Ready(rows) = &pane.load else {
+                    panic!("the rows arrived");
+                };
+                assert!(rows.more.is_none(), "the end still has a way on");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A descending sort pages too, and a sort on a column full of ties still
+    /// lines its pages up, because the key breaks every tie the same way on
+    /// every page.
+    #[gpui::test]
+    fn a_sorted_table_pages_in_the_order_asked_for(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-sorted-pages",
+            &[
+                "create schema if not exists APP",
+                "create table APP.BIG (ID int primary key, GRP int)",
+                "insert into APP.BIG select X, mod(X, 7) from system_range(1, 2500)",
+            ],
+        );
+        let window = pane(&connected, &profile, target("BIG"), 100, cx);
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.reorder(0, Some(SortDirection::Descending), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        let rows = scroll_to_end(&window, cx);
+        let expected: Vec<String> = (1..=2_500).rev().map(|id| id.to_string()).collect();
+        assert_eq!(rows, expected);
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.reorder(1, Some(SortDirection::Descending), window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        let ids = scroll_to_end(&window, cx);
+        let groups = column(&window, 1, cx);
+        let pairs: Vec<(i64, i64)> = groups
+            .iter()
+            .zip(&ids)
+            .map(|(group, id)| (group.parse().unwrap(), id.parse().unwrap()))
+            .collect();
+        let mut expected: Vec<(i64, i64)> = (1..=2_500).map(|id| (id % 7, id)).collect();
+        // The group descending, and the key ascending inside each group.
+        expected.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        assert_eq!(pairs, expected);
+        connected.close().expect("close");
+    }
+
+    /// A table with no key has nothing to order its pages by, and is still
+    /// read whole: every row, once.
+    #[gpui::test]
+    fn a_table_without_a_key_is_paged_whole(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-keyless-pages",
+            &[
+                "create schema if not exists APP",
+                "create table APP.HEAP (V int)",
+                "insert into APP.HEAP select X from system_range(1, 2500)",
+            ],
+        );
+        let window = pane(&connected, &profile, target("HEAP"), 100, cx);
+        window
+            .update(cx, |pane, _window, _cx| assert!(pane.keys.is_empty()))
+            .expect("the window is open");
+
+        let mut values: Vec<i64> = scroll_to_end(&window, cx)
+            .iter()
+            .map(|value| value.parse().unwrap())
+            .collect();
+        values.sort_unstable();
+        assert_eq!(values, (1..=2_500).collect::<Vec<i64>>());
+        connected.close().expect("close");
+    }
+
+    /// A table that is an exact number of pages long ends on an empty page
+    /// rather than asking forever.
+    #[gpui::test]
+    fn a_table_of_whole_pages_ends(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-whole-pages",
+            &[
+                "create schema if not exists APP",
+                "create table APP.EVEN (ID int primary key)",
+                "insert into APP.EVEN select X from system_range(1, 300)",
+            ],
+        );
+        let window = pane(&connected, &profile, target("EVEN"), 100, cx);
+        let rows = scroll_to_end(&window, cx);
+        assert_eq!(rows.len(), 300);
+        assert_eq!(rows.last().map(String::as_str), Some("300"));
         connected.close().expect("close");
     }
 

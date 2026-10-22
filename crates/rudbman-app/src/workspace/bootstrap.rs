@@ -115,7 +115,7 @@ pub(crate) fn editor_theme_for(
 /// Nothing is written to disk here; the file is saved once, when the last
 /// window closes. See [`app_settings::record_window_geometry`].
 pub(super) fn record_window_geometry(window: &Window, cx: &mut App) {
-    app_settings::record_window_geometry(window_geometry(window), cx);
+    app_settings::record_window_geometry(window_geometry(window, cx), cx);
 }
 
 /// The placement to open the window at.

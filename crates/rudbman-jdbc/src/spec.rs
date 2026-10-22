@@ -176,6 +176,17 @@ pub struct StatementSpec {
     pub max_rows: u32,
     /// Query timeout in seconds, `0` for none.
     pub timeout_s: u32,
+    /// Ask for a forward-only, read-only **server-side** cursor where the
+    /// bridge knows the driver's way to open one, and the driver's default
+    /// result set everywhere else.
+    ///
+    /// Only Microsoft's SQL Server driver has one the bridge asks for. Its
+    /// default result set streams until anything else runs on the connection
+    /// and then reads the rest into the heap; a server cursor fetches
+    /// `fetch_size` rows per round trip instead. SQL Server refuses some
+    /// statements as a cursor (`FOR XML`, `FOR JSON`), so set this only for
+    /// statements known to be plain reads.
+    pub server_cursor: bool,
 }
 
 impl StatementSpec {
@@ -187,6 +198,7 @@ impl StatementSpec {
             fetch_size: 0,
             max_rows: 0,
             timeout_s: 0,
+            server_cursor: false,
         }
     }
 
@@ -205,6 +217,13 @@ impl StatementSpec {
     /// Sets the statement timeout in seconds.
     pub fn with_timeout_s(mut self, seconds: u32) -> Self {
         self.timeout_s = seconds;
+        self
+    }
+
+    /// Asks for a server-side cursor, or not; see
+    /// [`StatementSpec::server_cursor`].
+    pub fn with_server_cursor(mut self, server_cursor: bool) -> Self {
+        self.server_cursor = server_cursor;
         self
     }
 }
@@ -1375,6 +1394,16 @@ mod tests {
         // Bare, this would serialise as `3` and be bound with setLong.
         let json = serde_json::to_string(&Param::F64(3.0)).expect("serialises");
         assert_eq!(json, r#"{"type":"f64","value":3.0}"#);
+    }
+
+    #[test]
+    fn a_statement_spec_names_its_server_cursor_the_way_the_bridge_reads_it() {
+        // `Bridge.execute` reads `server_cursor` by hand, defaulting to false.
+        let plain = serde_json::to_value(StatementSpec::new("select 1")).expect("serialises");
+        assert_eq!(plain["server_cursor"], serde_json::json!(false));
+        let cursor = serde_json::to_value(StatementSpec::new("select 1").with_server_cursor(true))
+            .expect("serialises");
+        assert_eq!(cursor["server_cursor"], serde_json::json!(true));
     }
 
     #[test]

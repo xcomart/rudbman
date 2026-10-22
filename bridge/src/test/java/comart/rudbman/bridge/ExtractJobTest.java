@@ -220,11 +220,13 @@ class ExtractJobTest {
                 data(true, "insert", 1, null, null)));
 
         List<Long> samples = new ArrayList<>();
+        boolean ended = false;
         for (int i = 0; i < 40 && samples.size() < 3; i++) {
             JsonObject p = H2.call(Ops.JOB_POLL, job, 0, null).json();
             if (!"running".equals(p.get("state").getAsString())) {
                 // Terminal states unregister the handle, so nothing may poll
                 // again; the job outran the sampler.
+                ended = true;
                 break;
             }
             long rows = p.get("rows_done").getAsLong();
@@ -246,8 +248,13 @@ class ExtractJobTest {
             assertTrue(samples.get(i) > samples.get(i - 1), samples.toString());
         }
 
-        H2.call(Ops.JOB_CANCEL, job, 0, null);
-        await(job);
+        // A job whose terminal state the sampler already read has no handle
+        // left to cancel or poll; a fast runner can finish the whole table
+        // between two samples.
+        if (!ended) {
+            H2.call(Ops.JOB_CANCEL, job, 0, null);
+            await(job);
+        }
     }
 
     @Test

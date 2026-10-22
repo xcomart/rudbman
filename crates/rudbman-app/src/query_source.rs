@@ -48,7 +48,9 @@
 //! pane (architecture document, §7.9) runs a `SELECT` of its own, and both page
 //! the answer the same way.
 
-use rudbman_jdbc::{Batch, ColumnInfo, ColumnKind, Cursor, Error as JdbcError, Value};
+use rudbman_jdbc::{
+    Batch, ColumnInfo, ColumnKind, Cursor, Error as JdbcError, Session, StatementSpec, Value,
+};
 use rugpui_grid::{GridCell, GridColumn, GridColumnKind, GridSource, GridSourceState};
 
 /// `java.sql.Types` constants the app branches on.
@@ -209,7 +211,9 @@ enum RenderedColumn {
 const LOB_SIZE_UNKNOWN: u64 = u64::MAX;
 
 /// One fetched batch, rendered.
-#[derive(Clone, Debug)]
+///
+/// The default is a batch of no rows, which [`ResultSource::push`] drops.
+#[derive(Clone, Debug, Default)]
 pub struct RenderedBatch {
     rows: usize,
     columns: Vec<RenderedColumn>,
@@ -415,6 +419,55 @@ pub fn page(
         steps,
         pageable,
     })
+}
+
+/// One page read by a statement of its own, already closed.
+pub struct ReadPage {
+    /// The result's logical column types.
+    pub columns: Vec<ColumnInfo>,
+    /// The rows, already rendered.
+    pub batch: RenderedBatch,
+    /// How many rows came back. Fewer than the limit is how a caller knows the
+    /// rows have run out: a page that fills its limit says nothing about what
+    /// follows it.
+    pub rows: usize,
+}
+
+/// Runs one page's statement, reads all of it, and closes it.
+///
+/// `None` for a statement that produced no result set. **Blocks**; only ever
+/// called from a background thread.
+///
+/// No fetch size, on purpose: the statement's own page clause already bounds
+/// the result, so the driver may as well buffer it whole at `EXECUTE`. A
+/// streaming result set, however short, would sit open on the shared
+/// connection between the statement and its fetch, and a command from another
+/// pane landing in that gap is exactly what makes MariaDB's Connector/J read
+/// the rest of it into the heap (`fetchRemaining`).
+pub fn read_page(session: &Session, sql: &str, limit: u32) -> Result<Option<ReadPage>, JdbcError> {
+    let cursor = session.execute(&StatementSpec::new(sql.to_string()))?;
+    if !cursor.result().has_result_set {
+        return Ok(None);
+    }
+    let columns = cursor.columns().to_vec();
+    let raw = cursor.fetch(limit)?;
+    // Rendered before the cursor goes: a LOB in the page is copied out through
+    // it, and its locator dies with the result set.
+    let batch = render_fetched_batch(&cursor, &raw, &columns)?;
+    let rows = raw.rows();
+    // Closed now rather than whenever the caller lets go, which is the point:
+    // nothing of this page outlives it. A close that fails is not the page
+    // failing — its rows are already here — and a connection that has really
+    // gone says so on the next statement anyway.
+    let handle = cursor.handle();
+    if let Err(error) = cursor.close() {
+        log::debug!("closing page cursor {handle} failed: {error}");
+    }
+    Ok(Some(ReadPage {
+        columns,
+        batch,
+        rows,
+    }))
 }
 
 /// The name a statement — or a key lookup — should spell a column with.

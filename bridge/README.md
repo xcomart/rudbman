@@ -164,7 +164,8 @@ blank means unset.
   "params": [42, { "type": "decimal", "value": "123456789012.12345678" }],
   "fetch_size": 500,
   "max_rows": 0,
-  "timeout_s": 30
+  "timeout_s": 30,
+  "server_cursor": false
 }
 ```
 
@@ -179,6 +180,14 @@ batch codec refuses to make in the other direction.
 
 Omitting `params`, or sending an empty array, uses a plain `Statement` instead of
 a `PreparedStatement`.
+
+`server_cursor: true` asks for a forward-only, read-only server-side cursor. Only
+Microsoft's SQL Server driver gets one (`TYPE_SS_SERVER_CURSOR_FORWARD_ONLY`,
+picked by `getDriverName()`); every other driver ignores the flag. A default SQL
+Server result set streams only until anything else runs on the connection, then
+the driver reads the rest into the heap. A server cursor fetches `fetch_size`
+rows per round trip and holds no locks between fetches. SQL Server refuses
+`FOR XML` / `FOR JSON` in a cursor, so callers set the flag only for plain reads.
 
 `EXECUTE` **always** returns a non-zero `cursor`, even for an `UPDATE` that
 produced only a row count, so `MORE_RESULTS` always has something to advance and

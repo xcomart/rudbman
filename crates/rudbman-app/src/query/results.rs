@@ -28,7 +28,7 @@ impl QueryPane {
         columns: Vec<ColumnInfo>,
         batch: RenderedBatch,
         state: GridSourceState,
-        cursor: Option<Cursor>,
+        more: Option<More>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -106,7 +106,7 @@ impl QueryPane {
                 columns: Arc::new(columns),
                 table: None,
                 read_only: None,
-                cursor,
+                more,
                 fetching: false,
                 _events: events,
             })),
@@ -244,14 +244,14 @@ impl QueryPane {
 
     /// The grid has come within sight of the last row it holds.
     pub(super) fn fetch_more(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if self.session.is_none() {
-            // `detach` has already dropped the cursors, so this is only reached
-            // by a scroll that was already in flight; saying why the rows stop
-            // is better than a grid that quietly ends early.
+        let Some(session) = self.session.clone() else {
+            // `detach` has already dropped every way on, so this is only
+            // reached by a scroll that was already in flight; saying why the
+            // rows stop is better than a grid that quietly ends early.
             self.notice = Some(ts!("explorer.disconnected"));
             cx.notify();
             return;
-        }
+        };
         let generation = self.generation;
         let fetch_rows = self.fetch_rows;
         let Some(tab) = self.rows_tab(id) else {
@@ -260,7 +260,7 @@ impl QueryPane {
         if tab.fetching {
             return;
         }
-        let Some(mut cursor) = tab.cursor.take() else {
+        let Some(more) = tab.more.take() else {
             return;
         };
         tab.fetching = true;
@@ -275,9 +275,10 @@ impl QueryPane {
         cx.spawn_in(window, async move |pane, cx| {
             let outcome = cx
                 .background_spawn(async move {
-                    match page(&mut cursor, &columns, fetch_rows) {
-                        Ok(paged) => Ok((cursor, paged)),
-                        Err(error) => Err(error),
+                    match more {
+                        More::Cursor(mut cursor) => page(&mut cursor, &columns, fetch_rows)
+                            .map(|paged| (paged, Some(More::Cursor(cursor)))),
+                        More::Offset { pager, next } => pager.next(session.session(), next),
                     }
                 })
                 .await;
@@ -294,24 +295,25 @@ impl QueryPane {
         &mut self,
         id: u64,
         generation: u64,
-        outcome: Result<(Cursor, Paged), JdbcError>,
+        outcome: Result<(Paged, Option<More>), JdbcError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if generation != self.generation {
             // The run this belonged to has been superseded. Dropping the
-            // outcome closes its cursor, and the rows never reach a grid.
+            // outcome closes its cursor, if it held one, and the rows never
+            // reach a grid.
             return;
         }
         match outcome {
-            Ok((cursor, paged)) => {
+            Ok((paged, more)) => {
                 let Paged {
                     batch,
                     complete,
                     steps,
                     pageable,
                 } = paged;
-                let mut cursor = Some(cursor);
+                let mut more = more;
                 // The statement that ran, not the one a sort would wrap:
                 // `append` works the second out of `sort_base` for itself.
                 let execution = self
@@ -321,8 +323,9 @@ impl QueryPane {
                 if let Some(tab) = self.rows_tab(id) {
                     tab.fetching = false;
                     // A completed result set is behind the cursor now: the walk
-                    // in `page` has already moved past it.
-                    tab.cursor = if complete { None } else { cursor.take() };
+                    // in `page` has already moved past it. A statement read a
+                    // page at a time has no way on past its last page at all.
+                    tab.more = if complete { None } else { more.take() };
                     let grid = tab.grid.clone();
                     let limited = grid.update(cx, |grid, cx| {
                         // Into the rows the server sent, under the overlay: the
@@ -339,7 +342,7 @@ impl QueryPane {
                 if !steps.is_empty()
                     && let Some((sql, elapsed)) = execution
                 {
-                    let carried = if pageable { cursor.take() } else { None };
+                    let carried = if pageable { more.take() } else { None };
                     self.append(&sql, steps, elapsed, carried, window, cx);
                 }
                 self.recount(cx);
@@ -347,7 +350,7 @@ impl QueryPane {
             Err(error) => {
                 if let Some(tab) = self.rows_tab(id) {
                     tab.fetching = false;
-                    tab.cursor = None;
+                    tab.more = None;
                     let grid = tab.grid.clone();
                     grid.update(cx, |grid, cx| {
                         grid.source_mut(cx).set_state(GridSourceState::Complete);

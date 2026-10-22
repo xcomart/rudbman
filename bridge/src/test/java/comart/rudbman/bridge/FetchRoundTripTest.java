@@ -340,6 +340,31 @@ class FetchRoundTripTest {
     }
 
     @Test
+    void aServerCursorRequestIsIgnoredByEveryDriverButMicrosofts() {
+        // Only Microsoft's SQL Server driver knows the cursor type the flag asks
+        // for; H2 would refuse it, so it must get its plain statement instead.
+        for (boolean prepared : new boolean[]{false, true}) {
+            JsonObject req = new JsonObject();
+            req.addProperty("sql", prepared
+                    ? "select rn from t where rn > ? order by rn"
+                    : "select rn from t order by rn");
+            if (prepared) {
+                JsonArray params = new JsonArray();
+                params.add(0);
+                req.add("params", params);
+            }
+            req.addProperty("fetch_size", 2);
+            req.addProperty("server_cursor", true);
+            Resp r = H2.call(Ops.EXECUTE, session, 0, req);
+            r.assertOk();
+            long cursor = r.json().get("cursor").getAsLong();
+            Batch b = Resp.of(Bridge.call(Ops.FETCH, cursor, 10, null)).batch();
+            assertArrayEquals(new long[]{1, 2, 3}, b.columns[0].i64);
+            Resp.of(Bridge.call(Ops.CLOSE_CURSOR, cursor, 0, null)).assertOk();
+        }
+    }
+
+    @Test
     void boundParametersKeepDecimalPrecision() {
         JsonObject dec = new JsonObject();
         dec.addProperty("type", "decimal");

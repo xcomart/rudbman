@@ -8,6 +8,7 @@ import comart.rudbman.bridge.meta.SessionInfo;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -156,18 +157,24 @@ public final class Bridge {
         int fetchSize = Json.i32(req, "fetch_size", 0);
         int maxRows = Json.i32(req, "max_rows", 0);
         int timeout = Json.i32(req, "timeout_s", 0);
+        boolean serverCursor = Json.bool(req, "server_cursor", false);
 
         s.lock();
         Cursor cursor = null;
         Params bindings = new Params();
         try {
+            Connection conn = s.connection();
             Statement stmt;
             boolean prepared = params != null && params.size() > 0;
-            if (prepared) {
-                PreparedStatement ps = s.connection().prepareStatement(sql);
+            if (serverCursor && isMicrosoftDriver(conn)) {
+                stmt = prepared
+                        ? conn.prepareStatement(sql, SQLSERVER_SERVER_CURSOR_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)
+                        : conn.createStatement(SQLSERVER_SERVER_CURSOR_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+            } else if (prepared) {
+                PreparedStatement ps = conn.prepareStatement(sql);
                 stmt = ps;
             } else {
-                stmt = s.connection().createStatement();
+                stmt = conn.createStatement();
             }
             // Own the statement before binding, so an invalid parameter also closes it.
             cursor = new Cursor(s, stmt);
@@ -196,6 +203,29 @@ public final class Bridge {
         } finally {
             bindings.close();
             s.unlock();
+        }
+    }
+
+    /**
+     * {@code SQLServerResultSet.TYPE_SS_SERVER_CURSOR_FORWARD_ONLY}: a fast
+     * forward-only, read-only server cursor. Spelled out rather than imported,
+     * since the bridge compiles against no driver.
+     */
+    private static final int SQLSERVER_SERVER_CURSOR_FORWARD_ONLY = 2004;
+
+    /**
+     * Whether {@code conn} is Microsoft's SQL Server driver, the one driver
+     * whose server-cursor result set type {@code server_cursor} asks for.
+     *
+     * <p>Asked of the driver rather than the product: jTDS also reports
+     * "Microsoft SQL Server", and would refuse the type.
+     */
+    private static boolean isMicrosoftDriver(Connection conn) {
+        try {
+            String name = conn.getMetaData().getDriverName();
+            return name != null && name.startsWith("Microsoft JDBC Driver");
+        } catch (SQLException | RuntimeException | AbstractMethodError e) {
+            return false;
         }
     }
 

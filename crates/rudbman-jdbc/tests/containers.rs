@@ -2614,3 +2614,100 @@ fn assert_no_view_placeholder(server: &Server, table: &str) {
         server.product
     );
 }
+
+// --- server cursors --------------------------------------------------------
+
+/// SQL Server's grid read is a real server cursor, and it keeps paging while
+/// the session it shares does what the panes do between two scrolls.
+///
+/// The point is the shared session. A default result set from Microsoft's
+/// driver streams only until another command runs on the connection; then the
+/// driver reads the whole rest of it into the bridge heap. The primary key
+/// lookup below is exactly such a command. A server cursor fetches one batch
+/// per round trip instead, and `sys.dm_exec_cursors` is the server's own word
+/// that one is open.
+#[test]
+fn mssql_grid_reads_page_through_a_server_cursor_while_the_session_works() {
+    let server = server!(Product::MsSql);
+    let table = server.table("cursor");
+    server.exec(&format!(
+        "create table {table} (id int primary key, note nvarchar(max))"
+    ));
+    server.exec(&format!(
+        "insert into {table} select top (5000) \
+         row_number() over (order by (select null)), replicate(N'x', 100) \
+         from sys.all_objects a cross join sys.all_objects b"
+    ));
+    let open_cursors = "select count(*) from sys.dm_exec_cursors(@@spid)";
+    let ids = |batch: &Batch| -> Vec<String> {
+        (0..batch.rows())
+            .map(|row| text(batch, row, 0).expect("id is never null"))
+            .collect()
+    };
+
+    let cursor = server
+        .session
+        .execute(
+            &StatementSpec::new(format!("select id, note from {table} order by id"))
+                .with_fetch_size(100)
+                .with_server_cursor(true),
+        )
+        .expect("a plain select opens as a server cursor");
+    let first = cursor.fetch(100).expect("the first batch decodes");
+    assert_eq!(ids(&first).first().map(String::as_str), Some("1"));
+    assert_eq!(first.rows(), 100);
+    assert_eq!(scalar(&server.session, open_cursors), "1");
+
+    // What the panes send in between: the edit gate's key lookup, another
+    // query, and a write to rows the cursor has not reached. A server cursor
+    // holds no locks between fetches, so the write does not wait on it.
+    assert_eq!(server.primary_key(&table), ["id"]);
+    assert_eq!(scalar(&server.session, "select 1"), "1");
+    server
+        .session
+        .execute(
+            &StatementSpec::new(format!("update {table} set note = N'y' where id > 4000"))
+                .with_timeout_s(10),
+        )
+        .expect("a write beside an open server cursor does not block");
+
+    let second = cursor
+        .fetch(100)
+        .expect("the cursor survives the session's other work");
+    assert_eq!(ids(&second).first().map(String::as_str), Some("101"));
+    assert_eq!(second.rows(), 100);
+
+    // A server cursor names each column's table, which a default result set
+    // from this driver leaves blank — the query pane's edit gate reads it.
+    assert_eq!(cursor.columns()[0].table.as_deref(), Some(table.as_str()));
+
+    cursor.close().expect("the server cursor closes");
+    assert_eq!(scalar(&server.session, open_cursors), "0");
+}
+
+/// The flag is a request, not a command: on every other product the bridge
+/// opens the driver's default result set, so asking can never break a read.
+#[test]
+fn a_server_cursor_request_is_a_plain_read_everywhere_else() {
+    for product in [
+        Product::Postgres,
+        Product::MySql,
+        Product::MariaDb,
+        Product::Oracle,
+    ] {
+        let Some(server) = Server::open(product) else {
+            continue;
+        };
+        let sql = match product {
+            Product::Oracle => "select 1 from dual",
+            _ => "select 1",
+        };
+        let batch = server
+            .session
+            .execute(&StatementSpec::new(sql).with_server_cursor(true))
+            .unwrap_or_else(|error| panic!("{product:?}: {error}"))
+            .fetch(10)
+            .expect("the batch decodes");
+        assert_eq!(text(&batch, 0, 0).as_deref(), Some("1"), "{product:?}");
+    }
+}
