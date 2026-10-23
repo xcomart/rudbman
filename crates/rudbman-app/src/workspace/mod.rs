@@ -70,7 +70,7 @@ use rugpui::{
     scroll_to, scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
 };
 use rugpui_shell::chrome::{
-    SHADOW_BAND, client_tiling, draws_own_titlebar, render_client_frame, titlebar_gestures,
+    apply_client_inset, client_tiling, draws_own_titlebar, render_client_frame, titlebar_gestures,
     window_appearance, window_control_strips,
 };
 pub(crate) use rugpui_shell::menu_rows::SHORTCUT_MODIFIER;
