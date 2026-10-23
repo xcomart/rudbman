@@ -378,6 +378,11 @@ pub(super) fn run() {
                 // [`draws_own_titlebar`] follows what the window actually got.
                 window_decorations: (titlebar == TitlebarStyle::Custom)
                     .then_some(gpui::WindowDecorations::Client),
+                // The shadow band the frame will carry, announced before the
+                // window is mapped: X11 window managers disagree about extents
+                // that only arrive with the first frame, and xfwm4 shrank the
+                // window by the band on every launch.
+                client_inset: opening_client_inset(chrome_titlebar(titlebar)),
                 app_id: Some(APP_ID.into()),
                 // A translucent or blurred window needs the platform surface to
                 // permit alpha; the body then tints its own background.
