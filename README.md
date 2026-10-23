@@ -168,10 +168,13 @@ one next to its executable.
   newer, which fixed several of these cases, also helps.
 - **Linux** — unpack the `.tar.gz` and run `./install.sh`. It copies the tree
   to `~/.local/share/rudbman`, links it from `~/.local/bin/rudbman`, and
-  installs the desktop entry and icons. Needs no root; make sure
-  `~/.local/bin` is on your `PATH`. The binary needs glibc 2.35 or newer:
-  Ubuntu 22.04, Debian 12 and later, or a distribution built on them, MX Linux
-  23 among them.
+  installs the desktop entry and icons. Needs no root, and the launcher in
+  the application menu works whether or not `~/.local/bin` is on your `PATH`
+  (add it to start rudbman from a shell too). The binary needs glibc 2.35 or
+  newer: Ubuntu 22.04, Debian 12 and later, or a distribution built on them,
+  MX Linux 23 among them. The script checks for it and for the system
+  libraries rudbman needs — libxcb, xkbcommon with its X11 half and an EGL or
+  Vulkan loader — and prints the command that installs any that are missing.
 
 To use a JDK of your own instead of the bundled runtime, point
 `RUDBMAN_JAVA_HOME` at it (Java 17 or newer).

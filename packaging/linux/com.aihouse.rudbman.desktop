@@ -1,7 +1,33 @@
 [Desktop Entry]
 Type=Application
 Name=rudbman
+GenericName=Database Tool
+GenericName[de]=Datenbankwerkzeug
+GenericName[es]=Herramienta de bases de datos
+GenericName[fr]=Outil de bases de données
+GenericName[ja]=データベースツール
+GenericName[ko]=데이터베이스 도구
+GenericName[ru]=Инструмент для баз данных
+GenericName[zh_CN]=数据库工具
 Comment=JDBC database GUI
+Comment[de]=Grafische Oberfläche für JDBC-Datenbanken
+Comment[es]=Interfaz gráfica para bases de datos JDBC
+Comment[fr]=Interface graphique pour bases de données JDBC
+Comment[ja]=JDBC データベース GUI
+Comment[ko]=JDBC 데이터베이스 GUI
+Comment[ru]=Графический клиент баз данных JDBC
+Comment[zh_CN]=JDBC 数据库图形界面
+Keywords=database;sql;jdbc;query;table;
+Keywords[de]=datenbank;sql;jdbc;abfrage;tabelle;
+Keywords[es]=base de datos;sql;jdbc;consulta;tabla;
+Keywords[fr]=base de données;sql;jdbc;requête;table;
+Keywords[ja]=データベース;sql;jdbc;クエリ;テーブル;
+Keywords[ko]=데이터베이스;sql;jdbc;쿼리;테이블;
+Keywords[ru]=база данных;sql;jdbc;запрос;таблица;
+Keywords[zh_CN]=数据库;sql;jdbc;查询;表;
+# install.sh rewrites the binary name here to the absolute path of the link it
+# puts in ~/.local/bin, so the launcher works whether or not that directory is
+# on PATH.
 Exec=rudbman
 Icon=rudbman
 Terminal=false
