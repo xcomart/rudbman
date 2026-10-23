@@ -64,9 +64,14 @@ const DEFAULT_WINDOW_WIDTH: u32 = 1440;
 /// Window height used on a first run.
 const DEFAULT_WINDOW_HEIGHT: u32 = 900;
 /// Smallest window the layout still fits in.
-const MIN_WINDOW_WIDTH: u32 = 640;
+///
+/// Also the window's minimum: it cannot be resized narrower, and a narrower
+/// saved size opens at this one.
+pub const MIN_WINDOW_WIDTH: u32 = 640;
 /// Smallest window height the layout still fits in.
-const MIN_WINDOW_HEIGHT: u32 = 400;
+///
+/// Also the window's minimum, like [`MIN_WINDOW_WIDTH`].
+pub const MIN_WINDOW_HEIGHT: u32 = 400;
 
 /// Clamp `value` into `min ..= max`, replacing NaN with `fallback`.
 fn clamp_f32(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
