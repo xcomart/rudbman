@@ -169,7 +169,9 @@ one next to its executable.
 - **Linux** — unpack the `.tar.gz` and run `./install.sh`. It copies the tree
   to `~/.local/share/rudbman`, links it from `~/.local/bin/rudbman`, and
   installs the desktop entry and icons. Needs no root; make sure
-  `~/.local/bin` is on your `PATH`.
+  `~/.local/bin` is on your `PATH`. The binary needs glibc 2.36 or newer:
+  Debian 12, Ubuntu 23.04 and later, or a distribution built on them, MX Linux
+  23 among them.
 
 To use a JDK of your own instead of the bundled runtime, point
 `RUDBMAN_JAVA_HOME` at it (Java 17 or newer).
