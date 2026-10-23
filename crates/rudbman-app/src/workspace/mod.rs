@@ -74,7 +74,7 @@ use rugpui_shell::chrome::{
     render_client_frame, titlebar_gestures, window_appearance, window_control_strips,
 };
 pub(crate) use rugpui_shell::menu_rows::SHORTCUT_MODIFIER;
-use rugpui_shell::settings::{window_bounds, window_geometry};
+use rugpui_shell::settings::{window_bounds_at_least, window_geometry};
 use rugpui_shell::update;
 use rugpui_shell::{AboutDialog, AboutDialogEvent, UpdateDialog, UpdateDialogEvent};
 use rugpui_shell::{apply_caption_theme, window_control_icons};
