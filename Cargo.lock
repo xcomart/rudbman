@@ -5552,7 +5552,7 @@ dependencies = [
 [[package]]
 name = "rudbkit-core"
 version = "0.1.4"
-source = "git+https://github.com/xcomart/rudbkit?rev=48fd96850c5419ed967e7d7a75c9c1b1d873e60c#48fd96850c5419ed967e7d7a75c9c1b1d873e60c"
+source = "git+https://github.com/xcomart/rudbkit?rev=e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc#e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc"
 dependencies = [
  "log",
  "serde",
@@ -5562,7 +5562,7 @@ dependencies = [
 [[package]]
 name = "rudbkit-jdbc"
 version = "0.1.4"
-source = "git+https://github.com/xcomart/rudbkit?rev=48fd96850c5419ed967e7d7a75c9c1b1d873e60c#48fd96850c5419ed967e7d7a75c9c1b1d873e60c"
+source = "git+https://github.com/xcomart/rudbkit?rev=e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc#e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc"
 dependencies = [
  "jni",
  "log",
@@ -5573,7 +5573,7 @@ dependencies = [
 [[package]]
 name = "rudbkit-ssh"
 version = "0.1.4"
-source = "git+https://github.com/xcomart/rudbkit?rev=48fd96850c5419ed967e7d7a75c9c1b1d873e60c#48fd96850c5419ed967e7d7a75c9c1b1d873e60c"
+source = "git+https://github.com/xcomart/rudbkit?rev=e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc#e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc"
 dependencies = [
  "async-trait",
  "futures",

@@ -57,9 +57,9 @@ repository = "https://github.com/xcomart/rudbman"
 
 [workspace.dependencies]
 # Shared database infrastructure; keep all three crates on the same revision.
-rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
-rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
-rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
+rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc" }
+rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc" }
+rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc" }
 
 # --- shared utilities ---
 anyhow = "1"
