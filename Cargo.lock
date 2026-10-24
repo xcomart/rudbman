@@ -5551,8 +5551,8 @@ dependencies = [
 
 [[package]]
 name = "rudbkit-core"
-version = "0.1.4"
-source = "git+https://github.com/xcomart/rudbkit?rev=e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc#e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc"
+version = "0.1.5"
+source = "git+https://github.com/xcomart/rudbkit?rev=035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d#035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d"
 dependencies = [
  "log",
  "serde",
@@ -5561,8 +5561,8 @@ dependencies = [
 
 [[package]]
 name = "rudbkit-jdbc"
-version = "0.1.4"
-source = "git+https://github.com/xcomart/rudbkit?rev=e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc#e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc"
+version = "0.1.5"
+source = "git+https://github.com/xcomart/rudbkit?rev=035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d#035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d"
 dependencies = [
  "jni",
  "log",
@@ -5572,8 +5572,8 @@ dependencies = [
 
 [[package]]
 name = "rudbkit-ssh"
-version = "0.1.4"
-source = "git+https://github.com/xcomart/rudbkit?rev=e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc#e7b0ce08f0fdbf34d36a2ce1fd062a380fce15dc"
+version = "0.1.5"
+source = "git+https://github.com/xcomart/rudbkit?rev=035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d#035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d"
 dependencies = [
  "async-trait",
  "futures",
@@ -5586,7 +5586,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-app"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5620,7 +5620,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "directories",
@@ -5636,7 +5636,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-erd"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "gpui",
  "rugpui",
@@ -5645,7 +5645,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-jdbc"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "jni",
@@ -5662,11 +5662,11 @@ dependencies = [
 
 [[package]]
 name = "rudbman-sql"
-version = "0.3.2"
+version = "0.3.3"
 
 [[package]]
 name = "rudbman-ssh"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "async-trait",
  "futures",
