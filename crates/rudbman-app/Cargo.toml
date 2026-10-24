@@ -18,6 +18,12 @@ path = "src/main.rs"
 [target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true
 
+# Borrows the parent shell's console so `--version` has somewhere to print from a
+# GUI-subsystem build — see `src/cli.rs`. Pinned to the same 0.62 gpui and
+# `rugpui-shell` already link, so this adds no second copy of the bindings.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_System_Console"] }
+
 [dependencies]
 rudbkit-core.workspace = true
 rudbman-core.workspace = true

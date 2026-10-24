@@ -267,6 +267,13 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
 }
 
 pub(super) fn run() {
+    // Ahead of everything, the logger included: `--version` is answered on
+    // standard output and the process ends, before an update is applied or
+    // anything is read or opened. See `cli`.
+    if crate::cli::answer_version_flag() {
+        return;
+    }
+
     env_logger::init();
 
     // The half of the identity that needs no `App`, installed first and ahead
