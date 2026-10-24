@@ -9,6 +9,7 @@ mod app_settings;
 mod backup_dialog;
 mod builder_pane;
 mod builder_sql;
+mod cli;
 mod connection;
 mod connection_dialog;
 mod context_menu;

@@ -49,7 +49,7 @@ gpui_macos = { git = "https://github.com/xcomart/rugpui", rev = "7d40de94279536d
 gpui_windows = { git = "https://github.com/xcomart/rugpui", rev = "7d40de94279536d0e54d25febc978dea9b334e1f" }
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 license = "MIT"
 authors = ["rudbman contributors"]
@@ -57,9 +57,9 @@ repository = "https://github.com/xcomart/rudbman"
 
 [workspace.dependencies]
 # Shared database infrastructure; keep all three crates on the same revision.
-rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
-rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
-rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "48fd96850c5419ed967e7d7a75c9c1b1d873e60c" }
+rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d" }
+rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d" }
+rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "035ba39eb2fcbfa6c8de76d2a126fdb22fd4916d" }
 
 # --- shared utilities ---
 anyhow = "1"
