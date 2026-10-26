@@ -180,15 +180,12 @@ const SPLIT_HANDLE: f32 = 6.;
 
 /// A surface of the workspace that scrolls, and so wears an overlay bar.
 ///
-/// Two of them, on different axes and never on screen together in the way that
-/// matters: the tab strip runs sideways once the tabs outgrow it, the welcome
-/// screen runs down once its column outgrows the window. Naming them lets one
-/// set of handlers answer for both instead of one set each — the shape logman
-/// uses for the same pair of surfaces.
+/// One of them: the welcome screen runs down once its column outgrows the
+/// window. The tab strips are not on the list — [`TabBar`] runs the bar along
+/// each of them itself. Naming the surface keeps the handlers below in the
+/// shape logman uses for its own, ready for a second one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Surface {
-    /// The tab strip.
-    Tabs,
     /// The welcome screen shown while no tab is open.
     Welcome,
 }
@@ -197,7 +194,6 @@ impl Surface {
     /// Which way the surface scrolls, and so which way its bar lies.
     fn axis(self) -> ScrollbarAxis {
         match self {
-            Self::Tabs => ScrollbarAxis::Horizontal,
             Self::Welcome => ScrollbarAxis::Vertical,
         }
     }
@@ -205,15 +201,11 @@ impl Surface {
 
 /// Every scrolling surface, with the element id its bar is drawn under.
 ///
-/// The ids live here rather than inside the elements they overlay — [`TabBar`]
-/// would be the obvious home for the first — because a drag of a thumb is
-/// answered by the workspace, and the id is what tells one bar's drag from any
-/// other bar's in the window. Iterating this is how the drag and release paths
-/// find which bar an event belongs to.
-const SCROLLBARS: [(&str, Surface); 2] = [
-    ("tab-scrollbar", Surface::Tabs),
-    ("welcome-scrollbar", Surface::Welcome),
-];
+/// The ids live here rather than inside the elements they overlay because a
+/// drag of a thumb is answered by the workspace, and the id is what tells one
+/// bar's drag from any other bar's in the window. Iterating this is how the
+/// drag and release paths find which bar an event belongs to.
+const SCROLLBARS: [(&str, Surface); 1] = [("welcome-scrollbar", Surface::Welcome)];
 
 /// Placeholder for a status bar cell with nothing to report.
 ///
@@ -573,10 +565,6 @@ struct Workspace {
     /// up. Nothing else reads this: opening a session goes through the profile
     /// this hands over, not through the file.
     profiles: ConnectionStore,
-    /// Horizontal scroll of the tab strip, used to reveal the active tab.
-    tab_scroll: ScrollHandle,
-    /// Whether the tab strip's overlay scroll indicator is on screen.
-    tab_scrollbar: ScrollbarState,
     /// Vertical scroll of the welcome screen.
     welcome_scroll: ScrollHandle,
     /// Whether the welcome screen's overlay scroll indicator is on screen.
@@ -732,8 +720,6 @@ impl Workspace {
             connections: Vec::new(),
             active_connection: 0,
             profiles: load_profiles(),
-            tab_scroll: ScrollHandle::new(),
-            tab_scrollbar: ScrollbarState::new(),
             welcome_scroll: ScrollHandle::new(),
             welcome_scrollbar: ScrollbarState::new(),
             about,

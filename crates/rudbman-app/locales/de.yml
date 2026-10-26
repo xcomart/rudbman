@@ -46,6 +46,7 @@ tab:
   close: Verbindung schließen
   tip_list: Alle Verbindungen
   tip_new: "Neue Verbindung (%{shortcut})"
+  tip_pane_list: Alle Tabs
 
 welcome:
   hint: Drücke %{shortcut}, um Verbindungen zu verwalten.

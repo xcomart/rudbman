@@ -46,6 +46,7 @@ tab:
   close: 연결 닫기
   tip_list: 모든 연결
   tip_new: "새 연결 (%{shortcut})"
+  tip_pane_list: 모든 탭
 
 welcome:
   hint: "%{shortcut} 키를 누르면 연결 관리를 열 수 있습니다."

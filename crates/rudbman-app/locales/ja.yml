@@ -46,6 +46,7 @@ tab:
   close: 接続を閉じる
   tip_list: すべての接続
   tip_new: "新規接続 (%{shortcut})"
+  tip_pane_list: すべてのタブ
 
 welcome:
   hint: "%{shortcut} で接続を管理します。"

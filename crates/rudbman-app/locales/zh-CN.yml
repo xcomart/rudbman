@@ -46,6 +46,7 @@ tab:
   close: 关闭连接
   tip_list: 所有连接
   tip_new: "新建连接 (%{shortcut})"
+  tip_pane_list: 所有标签页
 
 welcome:
   hint: 按 %{shortcut} 即可管理连接。

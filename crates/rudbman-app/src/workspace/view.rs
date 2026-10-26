@@ -45,8 +45,10 @@ impl Workspace {
 /// Renders one pane's tab strip.
 ///
 /// The same widget as the connection strip at the top of the window, minus the
-/// dropdown and the "+": a pane's tabs are opened from the explorer and the
-/// query commands, so a "new tab" button here would have nothing to open.
+/// "+": a pane's tabs are opened from the explorer and the query commands, so a
+/// "new tab" button here would have nothing to open. The dropdown listing the
+/// pane's tabs, the bar along the strip once they overflow it and bringing the
+/// active tab into view are all the widget's own.
 ///
 /// Every tab of the strip belongs to the connection whose tab is on top — the
 /// work area is that connection's — so the dots all carry one colour, the one
@@ -84,9 +86,11 @@ pub(super) fn render_tab_strip(
         .tabs(tabs)
         .active(pane.active_index())
         .scroll_handle(pane.scroll_handle())
-        // Only the third slot can ever be read: this strip carries neither the
-        // dropdown nor the "+" the first two label.
-        .tooltips("", "", ts!("tab.close"))
+        .menu_icon(icons::TAB_LIST)
+        // The second slot is never read: this strip carries no "+". The close
+        // button reuses the right-click menu's own row, as the connection
+        // strip's does.
+        .tooltips(ts!("tab.tip_pane_list"), "", ts!("context.close_tab"))
         .drag_source(id.as_u64())
         .drop_indicator(chrome.drop.indicator(id.as_u64()))
         .on_drag_over({
@@ -898,8 +902,6 @@ impl Workspace {
                     });
                 }
             })
-            .scroll_handle(&self.tab_scroll)
-            .scrollbar(self.hovering_scrollbar(SCROLLBARS[0].0, Surface::Tabs, cx))
             .menu_icon(icons::TAB_LIST)
             .new_icon(icons::NEW_TAB)
             // The close button reuses the tab menu's own row: it is the same
@@ -1074,7 +1076,7 @@ impl Workspace {
                 .child(div().flex().flex_col().gap(px(1.)).children(rows))
         });
 
-        let bar = self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Welcome, cx);
+        let bar = self.hovering_scrollbar(SCROLLBARS[0].0, Surface::Welcome, cx);
 
         let content = div()
             .flex()
@@ -1144,7 +1146,6 @@ impl Workspace {
     /// One surface's scroll offset and the state of the bar over it.
     pub(super) fn surface(&mut self, surface: Surface) -> (&ScrollHandle, &mut ScrollbarState) {
         match surface {
-            Surface::Tabs => (&self.tab_scroll, &mut self.tab_scrollbar),
             Surface::Welcome => (&self.welcome_scroll, &mut self.welcome_scrollbar),
         }
     }
@@ -1152,7 +1153,6 @@ impl Workspace {
     /// The same pair, for the paths that only read.
     pub(super) fn surface_ref(&self, surface: Surface) -> (&ScrollHandle, &ScrollbarState) {
         match surface {
-            Surface::Tabs => (&self.tab_scroll, &self.tab_scrollbar),
             Surface::Welcome => (&self.welcome_scroll, &self.welcome_scrollbar),
         }
     }
@@ -1188,8 +1188,7 @@ impl Workspace {
     /// the clock that takes it down again.
     ///
     /// Called from `render` because that is where every way of scrolling them
-    /// meets: a wheel over the tabs or the welcome screen, and the jump that
-    /// brings a newly activated tab back into view.
+    /// meets: a wheel over the welcome screen, and a drag of its thumb.
     pub(super) fn watch_scroll(&mut self, cx: &mut Context<Self>) {
         for (_, surface) in SCROLLBARS {
             let (handle, state) = self.surface(surface);
@@ -1245,8 +1244,8 @@ impl Workspace {
     /// Puts one surface's bar up while the pointer rests on the edge it rides,
     /// and starts it going the moment the pointer leaves.
     ///
-    /// Told which surface rather than asked to work it out: each strip carries
-    /// this listener already and knows only its own.
+    /// Told which surface rather than asked to work it out: each surface's bar
+    /// carries this listener already and knows only its own.
     pub(super) fn hover_scrollbar(
         &mut self,
         surface: Surface,

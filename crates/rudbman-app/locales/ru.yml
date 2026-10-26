@@ -46,6 +46,7 @@ tab:
   close: Закрыть подключение
   tip_list: Все подключения
   tip_new: "Новое подключение (%{shortcut})"
+  tip_pane_list: Все вкладки
 
 welcome:
   hint: Нажмите %{shortcut}, чтобы управлять подключениями.

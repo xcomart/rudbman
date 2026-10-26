@@ -46,6 +46,7 @@ tab:
   close: Fermer la connexion
   tip_list: Toutes les connexions
   tip_new: "Nouvelle connexion (%{shortcut})"
+  tip_pane_list: Tous les onglets
 
 welcome:
   hint: Appuyez sur %{shortcut} pour gérer les connexions.

@@ -94,6 +94,8 @@ tab:
   # on each tab reuses `close` above: same command, same wording.
   tip_list: All connections
   tip_new: "New connection (%{shortcut})"
+  # The same dropdown on a pane's strip, listing that pane's tabs.
+  tip_pane_list: All tabs
 
 # The welcome screen: the whole body of the window while no connection is open.
 # A heading, the button that makes a connection, and the connections already
