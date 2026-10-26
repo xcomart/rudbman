@@ -63,8 +63,8 @@ use crate::response::{
     Cancelled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, JobProgress, Ping, SessionInfo,
 };
 use crate::spec::{
-    BackupSpec, ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, StatementSpec,
-    TransferSpec,
+    BackupSpec, ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, RoutineKind,
+    StatementSpec, TransferSpec,
 };
 
 /// The `OPEN_SESSION` response body.
@@ -195,6 +195,39 @@ impl Session {
         request.catalog = catalog.map(str::to_string);
         request.schema = schema.map(str::to_string);
         request.source = Some(source);
+        let body = serde_json::to_vec(&request)?;
+        self.json_call(Op::Describe, self.handle, 0, Some(body))
+    }
+
+    /// Reads one stored procedure's or function's `CREATE` statement.
+    ///
+    /// The same shape as [`Session::describe_ddl`], over a routine: `name` is
+    /// exact and required, and an overloaded name answers every overload, one
+    /// statement each. [`DdlSource::Auto`] asks the server for its own text —
+    /// `SHOW CREATE PROCEDURE`, `pg_get_functiondef`, `ALL_SOURCE` and their
+    /// kin — and falls back to `INFORMATION_SCHEMA.ROUTINES` under a header
+    /// rebuilt from the parameter list, which [`DdlResult::is_reconstructed`]
+    /// then reports.
+    ///
+    /// # Errors
+    ///
+    /// A `sql` error when neither layer has a body to show: an account that may
+    /// run a routine but not read it gets this on MySQL, and so does a routine
+    /// bound to an external method, such as an H2 alias asked for through
+    /// [`DdlSource::Metadata`].
+    pub fn describe_routine_ddl(
+        &self,
+        catalog: Option<&str>,
+        schema: Option<&str>,
+        name: &str,
+        routine: RoutineKind,
+        source: DdlSource,
+    ) -> Result<DdlResult> {
+        let mut request = DescribeRequest::new("ddl").with_name(name);
+        request.catalog = catalog.map(str::to_string);
+        request.schema = schema.map(str::to_string);
+        request.source = Some(source);
+        request.routine = Some(routine);
         let body = serde_json::to_vec(&request)?;
         self.json_call(Op::Describe, self.handle, 0, Some(body))
     }

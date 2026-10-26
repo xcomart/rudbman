@@ -349,6 +349,7 @@ detail:
   empty: ありません
   no_ddl: このオブジェクトに表示できる CREATE 文はありません。
   ddl_reconstructed: メタデータから組み立てた参考用です。CHECK 制約・トリガー・パーティション・照合順序は含まれていません。
+  ddl_reconstructed_routine: カタログのルーチン本体とパラメーター一覧から組み立てた参考用です。決定性やセキュリティなどの特性は含まれていません。
 
   column: 列
   type: 型

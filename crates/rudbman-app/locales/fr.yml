@@ -349,6 +349,7 @@ detail:
   empty: rien ici
   no_ddl: Cet objet n'a aucune instruction CREATE à montrer.
   ddl_reconstructed: Reconstruit à partir des métadonnées, à titre indicatif. Les contraintes CHECK, les déclencheurs, le partitionnement et les collations n'y figurent pas.
+  ddl_reconstructed_routine: Reconstruit à partir du corps et de la liste de paramètres de la routine dans le catalogue, à titre indicatif. Les caractéristiques comme le déterminisme et la sécurité n'y figurent pas.
 
   column: Colonne
   type: Type

@@ -518,6 +518,7 @@ detail:
   # has no way to quote its own back. JDBC metadata carries none of the things
   # listed here, so the text is for reading rather than for restoring from.
   ddl_reconstructed: Rebuilt from metadata, for reference. CHECK constraints, triggers, partitioning and collations are not in it.
+  ddl_reconstructed_routine: Rebuilt from the catalog's routine body and parameter list, for reference. Characteristics such as determinism and security are not in it.
 
   # Column headings.
   column: Column

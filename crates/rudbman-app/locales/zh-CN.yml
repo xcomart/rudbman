@@ -349,6 +349,7 @@ detail:
   empty: 无
   no_ddl: 该对象没有可显示的 CREATE 语句。
   ddl_reconstructed: 由元数据重建，仅供参考。其中不含 CHECK 约束、触发器、分区和排序规则。
+  ddl_reconstructed_routine: 由目录中的例程主体和参数列表重建，仅供参考。其中不含确定性、安全性等特性。
 
   column: 列
   type: 类型

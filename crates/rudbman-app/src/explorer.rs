@@ -1495,6 +1495,7 @@ pub(crate) mod tests {
             "create unique index UX_PERSON_EMAIL on APP.PERSON(EMAIL)",
             "create view APP.RICH as select ID, EMAIL from APP.PERSON where SALARY > 100",
             "create sequence APP.PERSON_SEQ start with 5 increment by 2",
+            "create alias APP.F_ABS for 'java.lang.Math.abs(int)'",
         ] {
             connected
                 .session()

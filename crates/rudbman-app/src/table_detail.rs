@@ -2,8 +2,9 @@
 //!
 //! Opened by activating a node in the explorer, and shown in a pane of the work
 //! area. Four tabs for a relation — columns, keys and indexes, references, and
-//! the `CREATE` statement — and a single one for a routine or a sequence, which
-//! have no columns to lay out.
+//! the `CREATE` statement — two for a routine, its properties and its
+//! `CREATE`, and a single one for a sequence. Neither of the last two has
+//! columns to lay out.
 //!
 //! # One load, one refresh
 //!
@@ -27,6 +28,14 @@
 //! is your table" and "this is most of your table" is not one to leave to the
 //! reader.
 //!
+//! # The DDL is laid out for reading
+//!
+//! Every `CREATE` text goes through [`rudbman_sql::format_ddl`] before it is
+//! shown, whichever layer answered: MySQL quotes a view back on one line, H2
+//! quotes a table on one line, and a routine comes back exactly as whoever
+//! created it typed it. Only the whitespace between tokens changes, so the copy
+//! button hands over a statement that still runs.
+//!
 //! # This is not the result grid
 //!
 //! The tables here are plain rows in a scroll area. A column list is tens of
@@ -48,10 +57,10 @@ use rugpui_editor::editor::{Copy, Find, SelectAll};
 use rugpui_editor::{EditorEvent, EditorView};
 use rugpui_shell::menu_rows::{self, MenuRow};
 
-use rudbman_jdbc::{DdlSource, DescribeRequest, Session};
-use rudbman_sql::Dialect;
+use rudbman_jdbc::{DdlResult, DdlSource, DescribeRequest, RoutineKind, Session};
+use rudbman_sql::{Dialect, format_ddl};
 
-use crate::explorer::{ObjectTarget, describe_failure};
+use crate::explorer::{Folder, ObjectTarget, describe_failure};
 use crate::i18n::ts;
 use crate::icons;
 use crate::sql_highlight::DialectHighlighter;
@@ -118,15 +127,17 @@ pub enum Tab {
     References,
     /// The `CREATE` statement.
     Ddl,
-    /// A routine's or a sequence's properties — the only tab those objects get.
+    /// A routine's or a sequence's properties, which they open on.
     Properties,
 }
 
 impl Tab {
     /// The tabs a relation shows, in order.
     const RELATION: [Tab; 4] = [Tab::Columns, Tab::Keys, Tab::References, Tab::Ddl];
-    /// The tabs a routine or a sequence shows.
-    const ROUTINE: [Tab; 1] = [Tab::Properties];
+    /// The tabs a routine shows.
+    const ROUTINE: [Tab; 2] = [Tab::Properties, Tab::Ddl];
+    /// The tabs a sequence shows.
+    const SEQUENCE: [Tab; 1] = [Tab::Properties];
 
     /// The tab's label in the active language.
     fn label(self) -> SharedString {
@@ -192,6 +203,8 @@ pub struct TableDetail {
     body_scroll: ScrollHandle,
     /// Whether the body's overlay bar is on screen.
     body_scrollbar: ScrollbarState,
+    /// The connection's dialect: the DDL's colours and its layout.
+    dialect: Dialect,
     /// The DDL tab's statement, in the editor the query pane uses but read-only
     /// and without the query pane's toolbar: selecting part of a `CREATE`,
     /// finding a column in it and reading it highlighted are what the panel
@@ -211,11 +224,12 @@ impl TableDetail {
     /// The host subscribes and then calls [`TableDetail::refresh`], which is
     /// the same path the reload button takes.
     ///
-    /// `dialect` is the connection's, and only colours the DDL.
+    /// `dialect` is the connection's, and colours and lays out the DDL.
     pub fn new(target: ObjectTarget, dialect: &str, cx: &mut Context<Self>) -> Self {
+        let dialect = Dialect::from_id(dialect);
         let ddl_editor = cx.new(|cx| {
             EditorView::new(cx)
-                .highlighter(DialectHighlighter::shared(Dialect::from_id(dialect)))
+                .highlighter(DialectHighlighter::shared(dialect))
                 .read_only(true)
         });
         // The editor holds no strings, so its menu is drawn here, as the query
@@ -237,6 +251,7 @@ impl TableDetail {
             focus_handle: cx.focus_handle(),
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
+            dialect,
             ddl_editor,
             ddl_menu: None,
             _ddl_events: ddl_events,
@@ -254,6 +269,14 @@ impl TableDetail {
 
     /// Records what a fetch produced.
     pub fn deliver(&mut self, outcome: Result<Details, SharedString>, cx: &mut Context<Self>) {
+        // Laid out once, here, so that the editor and the copy button hand over
+        // the same text.
+        let outcome = outcome.map(|mut details| {
+            if let Some(ddl) = details.ddl.as_mut() {
+                ddl.text = SharedString::from(format_ddl(&ddl.text, &self.dialect));
+            }
+            details
+        });
         // Set once per load rather than per frame: `set_text` resets the
         // selection and the scroll, which a reader in the middle of the
         // statement would not thank a repaint for.
@@ -346,8 +369,10 @@ impl TableDetail {
     fn tabs(&self) -> &'static [Tab] {
         if self.target.folder.is_relation() {
             &Tab::RELATION
-        } else {
+        } else if routine_kind(self.target.folder).is_some() {
             &Tab::ROUTINE
+        } else {
+            &Tab::SEQUENCE
         }
     }
 
@@ -655,8 +680,14 @@ impl TableDetail {
 
         // The bridge answered from JDBC metadata rather than from the server's
         // own `CREATE` text, which means CHECK constraints, triggers,
-        // partitioning and collations are simply not in it. Saying so is what
+        // partitioning and collations are simply not in it — or, for a routine,
+        // everything between its return type and its body. Saying so is what
         // stops the text being mistaken for a backup.
+        let rebuilt = if self.target.folder.is_relation() {
+            ts!("detail.ddl_reconstructed")
+        } else {
+            ts!("detail.ddl_reconstructed_routine")
+        };
         let banner = ddl.reconstructed.then(|| {
             div()
                 .flex_none()
@@ -668,7 +699,7 @@ impl TableDetail {
                 .bg(chrome.surface)
                 .text_size(px(11.))
                 .text_color(chrome.text_muted)
-                .child(ts!("detail.ddl_reconstructed"))
+                .child(rebuilt)
         });
 
         div()
@@ -844,10 +875,10 @@ impl TableDetail {
 /// that connection is doing rather than racing it — which is also why the panel
 /// shows a spinner rather than pretending to be instant.
 ///
-/// A relation gets all four tabs' worth; a routine or a sequence gets its
-/// properties. The DDL is allowed to fail on its own: a driver with no native
-/// path and a view the reconstruction cannot express still has columns worth
-/// showing.
+/// A relation gets all four tabs' worth; a routine gets its properties and its
+/// DDL, and a sequence its properties. The DDL is allowed to fail on its own: a
+/// driver with no native path and a view the reconstruction cannot express
+/// still has columns worth showing.
 pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details, String> {
     if !target.folder.is_relation() {
         return load_properties(session, target);
@@ -983,16 +1014,7 @@ pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details,
     // reconstructed text, which the banner then labels. Asking for `Native`
     // would fail outright on most drivers.
     let (ddl, ddl_error) =
-        match session.describe_ddl(catalog, schema, &target.name, DdlSource::Auto) {
-            Ok(result) => (
-                Some(Ddl {
-                    reconstructed: result.is_reconstructed(),
-                    text: SharedString::from(result.ddl),
-                }),
-                None,
-            ),
-            Err(error) => (None, Some(SharedString::from(describe_failure(error)))),
-        };
+        ddl_of(session.describe_ddl(catalog, schema, &target.name, DdlSource::Auto));
 
     Ok(Details {
         table_remarks,
@@ -1019,21 +1041,33 @@ pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details,
 /// The smaller panel: a routine's or a sequence's own facts.
 ///
 /// One `DESCRIBE` filtered by name, rendered as name/value pairs, plus one row
-/// per parameter for a routine — which the bridge carries inline, so this is
-/// still a single round trip.
+/// per parameter for a routine — which the bridge carries inline, so that is a
+/// single round trip. A routine's `CREATE` text is a second one, and like a
+/// table's it may fail without taking the properties with it.
 fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, String> {
     let mut request = DescribeRequest::new(target.folder.describe_kind()).with_name(&target.name);
     request.catalog = target.catalog.clone();
     request.schema = target.schema.clone();
 
     let found = items(session, &request)?;
+    let (ddl, ddl_error) = match routine_kind(target.folder) {
+        Some(kind) => ddl_of(session.describe_routine_ddl(
+            target.catalog.as_deref(),
+            target.schema.as_deref(),
+            &target.name,
+            kind,
+            DdlSource::Auto,
+        )),
+        None => (None, None),
+    };
     let Some(object) = found
         .iter()
         .find(|item| text(item, "name") == Some(target.name.as_str()))
         .or_else(|| found.first())
     else {
         return Ok(Details {
-            properties: Vec::new(),
+            ddl,
+            ddl_error,
             ..Details::default()
         });
     };
@@ -1085,8 +1119,34 @@ fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, 
 
     Ok(Details {
         properties,
+        ddl,
+        ddl_error,
         ..Details::default()
     })
+}
+
+/// Which kind of routine a folder lists, or `None` for one that lists no
+/// routines.
+fn routine_kind(folder: Folder) -> Option<RoutineKind> {
+    match folder {
+        Folder::Procedures => Some(RoutineKind::Procedure),
+        Folder::Functions => Some(RoutineKind::Function),
+        Folder::Tables | Folder::Views | Folder::Sequences => None,
+    }
+}
+
+/// A `CREATE` text, or the sentence its tab shows instead.
+fn ddl_of(answer: rudbman_jdbc::Result<DdlResult>) -> (Option<Ddl>, Option<SharedString>) {
+    match answer {
+        Ok(result) => (
+            Some(Ddl {
+                reconstructed: result.is_reconstructed(),
+                text: SharedString::from(result.ddl),
+            }),
+            None,
+        ),
+        Err(error) => (None, Some(SharedString::from(describe_failure(error)))),
+    }
 }
 
 /// Runs one `DESCRIBE` and hands back its items.
@@ -1572,12 +1632,34 @@ mod tests {
     }
 
     #[test]
-    fn a_relation_gets_four_tabs_and_a_routine_gets_one() {
+    fn a_relation_gets_four_tabs_a_routine_two_and_a_sequence_one() {
         // A procedure has no columns, no keys and no indexes; three empty tabs
-        // would be three ways of saying nothing.
+        // would be three ways of saying nothing. It does have a `CREATE`.
         assert_eq!(Tab::RELATION.len(), 4);
-        assert_eq!(Tab::ROUTINE, [Tab::Properties]);
         assert!(Tab::RELATION.contains(&Tab::Ddl));
+        assert_eq!(Tab::ROUTINE, [Tab::Properties, Tab::Ddl]);
+        assert_eq!(Tab::SEQUENCE, [Tab::Properties]);
+    }
+
+    /// A routine's DDL tab holds the server's own text, which on H2 is the
+    /// alias's row of its script.
+    #[test]
+    fn a_routine_carries_its_own_create_text() {
+        let (details, _held) = describe("F_ABS", Folder::Procedures, "detail-routine");
+        assert!(details.ddl_error.is_none(), "{:?}", details.ddl_error);
+        let ddl = details.ddl.expect("H2 quotes an alias back");
+        assert!(!ddl.reconstructed);
+        assert!(
+            ddl.text.starts_with("CREATE FORCE ALIAS \"APP\".\"F_ABS\""),
+            "{}",
+            ddl.text
+        );
+        // The properties came in the same load, beside it.
+        assert!(!details.properties.is_empty());
+
+        // A sequence has no DDL tab, and so asks for no DDL.
+        let (sequence, _held) = describe("PERSON_SEQ", Folder::Sequences, "detail-sequence");
+        assert!(sequence.ddl.is_none() && sequence.ddl_error.is_none());
     }
 
     #[gpui::test]
@@ -1646,12 +1728,18 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_routine_opens_on_the_only_tab_it_has(cx: &mut gpui::TestAppContext) {
-        let panel = cx.new(|cx| TableDetail::new(target(Folder::Procedures), "generic", cx));
-        cx.update(|cx| {
-            assert_eq!(panel.read(cx).tab(), Tab::Properties);
-            assert_eq!(panel.read(cx).tabs(), &Tab::ROUTINE);
-        });
+    fn a_routine_and_a_sequence_open_on_their_properties(cx: &mut gpui::TestAppContext) {
+        for (folder, tabs) in [
+            (Folder::Procedures, &Tab::ROUTINE[..]),
+            (Folder::Functions, &Tab::ROUTINE[..]),
+            (Folder::Sequences, &Tab::SEQUENCE[..]),
+        ] {
+            let panel = cx.new(|cx| TableDetail::new(target(folder), "generic", cx));
+            cx.update(|cx| {
+                assert_eq!(panel.read(cx).tab(), Tab::Properties);
+                assert_eq!(panel.read(cx).tabs(), tabs, "{folder:?}");
+            });
+        }
     }
 
     #[gpui::test]
@@ -1675,8 +1763,9 @@ mod tests {
         });
     }
 
-    /// The DDL lands in a read-only editor, set once per load, and a failed
-    /// reload empties it rather than leaving the last table's statement up.
+    /// The DDL lands in a read-only editor, laid out and set once per load,
+    /// and a failed reload empties it rather than leaving the last table's
+    /// statement up.
     #[gpui::test]
     fn the_ddl_is_shown_in_a_read_only_editor(cx: &mut gpui::TestAppContext) {
         let panel = cx.new(|cx| TableDetail::new(target(Folder::Tables), "generic", cx));
@@ -1696,9 +1785,13 @@ mod tests {
         });
         cx.update(|cx| {
             let editor = panel.read(cx).ddl_editor.read(cx);
-            assert_eq!(editor.text(), "CREATE TABLE PERSON (ID INTEGER)");
+            assert_eq!(editor.text(), "CREATE TABLE PERSON (\n    ID INTEGER\n)");
             assert!(editor.is_read_only());
             assert!(!editor.is_dirty());
+            // And the copy button hands over what the editor shows.
+            let details = panel.read(cx).details().expect("loaded");
+            let ddl = details.ddl.as_ref().expect("delivered");
+            assert_eq!(ddl.text.as_ref(), editor.text());
         });
 
         cx.update(|cx| {
@@ -1774,7 +1867,11 @@ mod tests {
 
     #[test]
     fn every_label_the_panel_draws_has_a_translation() {
-        for tab in Tab::RELATION.iter().chain(Tab::ROUTINE.iter()) {
+        for tab in Tab::RELATION
+            .iter()
+            .chain(Tab::ROUTINE.iter())
+            .chain(Tab::SEQUENCE.iter())
+        {
             let label = tab.label();
             assert!(!label.is_empty());
             assert!(!label.starts_with("detail."), "{label:?}");
@@ -1786,6 +1883,7 @@ mod tests {
             ts!("detail.empty"),
             ts!("detail.no_ddl"),
             ts!("detail.ddl_reconstructed"),
+            ts!("detail.ddl_reconstructed_routine"),
             ts!("detail.column"),
             ts!("detail.type"),
             ts!("detail.nullable"),

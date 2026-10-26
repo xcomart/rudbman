@@ -307,7 +307,8 @@ pub struct DescribeResult {
     pub items: Vec<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// The response to `DESCRIBE` with `kind: "ddl"`: one table's `CREATE` text.
+/// The response to `DESCRIBE` with `kind: "ddl"`: one table's or one routine's
+/// `CREATE` text.
 ///
 /// The one metadata kind that answers with a document instead of a list, which
 /// is why it has [`Session::describe_ddl`](crate::Session::describe_ddl) to
@@ -317,7 +318,7 @@ pub struct DescribeResult {
 pub struct DdlResult {
     /// The statement text, ready to show. One `CREATE TABLE`, possibly followed
     /// by `CREATE INDEX` statements for indexes that do not merely back a
-    /// declared key.
+    /// declared key; for a routine, one `CREATE` per overload of the name.
     pub ddl: String,
     /// Which layer produced it: `"native"` or `"metadata"`.
     ///

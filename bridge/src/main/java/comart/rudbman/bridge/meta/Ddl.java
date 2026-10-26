@@ -94,11 +94,13 @@ public final class Ddl {
     }
 
     /**
-     * Builds the DDL for one table.
+     * Builds the DDL for one table, or for one routine.
      *
      * <p>Request members: {@code catalog}, {@code schema}, {@code table}
      * (required) and {@code source}, one of {@code auto} (default, native then
-     * reverse generation), {@code native} or {@code metadata}.
+     * reverse generation), {@code native} or {@code metadata}. A request that
+     * carries {@code routine} names a stored procedure or function in
+     * {@code name} instead of a table, and is answered by {@link RoutineDdl}.
      *
      * @param conn    the live connection, for the native catalogue queries
      * @param dbm     the connection metadata
@@ -108,10 +110,6 @@ public final class Ddl {
      */
     public static JsonObject of(Connection conn, DatabaseMetaData dbm, JsonObject req)
             throws SQLException {
-        String table = Json.str(req, "table");
-        if (table == null || table.isEmpty()) {
-            throw new BridgeException("protocol", "describe kind 'ddl' requires an exact 'table'");
-        }
         String want = Json.str(req, "source");
         if (want == null || want.isEmpty()) {
             want = "auto";
@@ -120,6 +118,13 @@ public final class Ddl {
             throw new BridgeException("protocol",
                     "describe kind 'ddl' accepts source 'auto', 'native' or 'metadata', not '"
                             + want + "'");
+        }
+        if (Json.str(req, "routine") != null) {
+            return RoutineDdl.of(conn, dbm, req, want);
+        }
+        String table = Json.str(req, "table");
+        if (table == null || table.isEmpty()) {
+            throw new BridgeException("protocol", "describe kind 'ddl' requires an exact 'table'");
         }
 
         String catalog = Json.str(req, "catalog");
@@ -212,7 +217,7 @@ public final class Ddl {
         return new Script("metadata", creates, alters);
     }
 
-    private static JsonObject result(String ddl, String source) {
+    static JsonObject result(String ddl, String source) {
         JsonObject o = new JsonObject();
         o.addProperty("ddl", ddl);
         o.addProperty("source", source);

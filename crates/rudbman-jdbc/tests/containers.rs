@@ -104,8 +104,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use rudbman_jdbc::{
-    Batch, ConnectionSpec, DescribeRequest, Jvm, JvmConfig, Session, StatementSpec, Value,
-    default_bridge_jar,
+    Batch, ConnectionSpec, DdlSource, DescribeRequest, Jvm, JvmConfig, RoutineKind, Session,
+    StatementSpec, Value, default_bridge_jar,
 };
 // The generator under test. `rudbman-sql` is already a dev-dependency of this
 // crate for the editing tests in `h2.rs`, and for the same reason: writing the
@@ -113,7 +113,7 @@ use rudbman_jdbc::{
 // string than the one the application sends.
 use rudbman_sql::{
     ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, Dialect, TableAlter, TableConstraint,
-    TableCreate, plan_alter, plan_create,
+    TableCreate, format_ddl, plan_alter, plan_create,
 };
 
 /// The process-wide JVM, started by whichever test needs it first.
@@ -2709,5 +2709,209 @@ fn a_server_cursor_request_is_a_plain_read_everywhere_else() {
             .fetch(10)
             .expect("the batch decodes");
         assert_eq!(text(&batch, 0, 0).as_deref(), Some("1"), "{product:?}");
+    }
+}
+
+// --- routines --------------------------------------------------------------
+
+/// A routine a test created, dropped however the test ends.
+struct Routine<'a> {
+    server: &'a Server,
+    drop: String,
+}
+
+impl Drop for Routine<'_> {
+    fn drop(&mut self) {
+        let _ = self
+            .server
+            .session
+            .execute(&StatementSpec::new(self.drop.clone()));
+    }
+}
+
+#[test]
+fn postgres_lists_each_routine_once_and_quotes_its_ddl() {
+    routines(&server!(Product::Postgres));
+}
+
+#[test]
+fn mysql_lists_each_routine_once_and_quotes_its_ddl() {
+    routines(&server!(Product::MySql));
+}
+
+#[test]
+fn mariadb_lists_each_routine_once_and_quotes_its_ddl() {
+    routines(&server!(Product::MariaDb));
+}
+
+#[test]
+fn mssql_lists_each_routine_once_and_quotes_its_ddl() {
+    routines(&server!(Product::MsSql));
+}
+
+#[test]
+fn oracle_lists_each_routine_once_and_quotes_its_ddl() {
+    routines(&server!(Product::Oracle));
+}
+
+/// One function and one procedure: each listed under its own kind only, and
+/// each one's `CREATE` read back from the server and laid out.
+///
+/// The listing is the half that was broken. The MySQL family's drivers answer
+/// `getProcedures` with every routine of the schema, functions included, and
+/// `getFunctions` with the functions again, so the explorer drew every
+/// function twice — once under procedures. The DDL is the half that was
+/// missing: a routine's panel had no `CREATE` to show.
+///
+/// MySQL refuses `CREATE FUNCTION` from an account without `SUPER` while
+/// binary logging is on, which it is by default and the CI image does not
+/// change, so there the function half runs only where the server allows it.
+fn routines(server: &Server) {
+    let function = server.fresh("fn");
+    let procedure = server.fresh("proc");
+    let (create_function, create_procedure, drop_function, drop_procedure) = match server.product {
+        Product::Postgres => (
+            format!(
+                "create function {function}(a int, b int) returns int \
+                 language sql as 'select a + b'"
+            ),
+            format!(
+                "create procedure {procedure}(who text) language plpgsql \
+                 as $$ begin raise notice 'hi %', who; end $$"
+            ),
+            format!("drop function if exists {function}(int, int)"),
+            format!("drop procedure if exists {procedure}(text)"),
+        ),
+        Product::MySql | Product::MariaDb => (
+            format!(
+                "create function {function}(a int, b int) returns int deterministic \
+                 begin declare x int default 0; if a > b then set x = a; else set x = b; \
+                 end if; return a + b + x; end"
+            ),
+            format!(
+                "create procedure {procedure}(in who varchar(20), out msg varchar(100)) \
+                 begin select concat('hi ', who) into msg from dual where 1 = 1; end"
+            ),
+            format!("drop function if exists {function}"),
+            format!("drop procedure if exists {procedure}"),
+        ),
+        Product::MsSql => (
+            format!(
+                "create function dbo.{function}(@a int, @b int) returns int \
+                 as begin return @a + @b end"
+            ),
+            format!("create procedure dbo.{procedure} @who nvarchar(20) as begin select @who end"),
+            format!("drop function if exists dbo.{function}"),
+            format!("drop procedure if exists dbo.{procedure}"),
+        ),
+        Product::Oracle => (
+            format!(
+                "create or replace function {function}(a number, b number) return number is \
+                 x number := 0; begin if a > b then x := a; end if; return a + b + x; end;"
+            ),
+            format!(
+                "create or replace procedure {procedure}(who in varchar2) is \
+                 begin null; end;"
+            ),
+            format!("drop function {function}"),
+            format!("drop procedure {procedure}"),
+        ),
+    };
+
+    server.exec(&create_procedure);
+    let _procedure = Routine {
+        server,
+        drop: drop_procedure,
+    };
+    let has_function = match server
+        .session
+        .execute(&StatementSpec::new(create_function.clone()))
+    {
+        Ok(_) => true,
+        Err(error) if server.product == Product::MySql && error.to_string().contains("SUPER") => {
+            println!("skipped the function half: MySQL wants SUPER for it here: {error}");
+            false
+        }
+        Err(error) => panic!("{:?}: {create_function}: {error}", server.product),
+    };
+    let _function = Routine {
+        server,
+        drop: drop_function,
+    };
+
+    // SQL Server numbers its routines in these lists, `name;1`; the explorer
+    // shows what the driver says, so the comparison looks past the number.
+    let listed = |kind: &str, name: &str| -> Vec<String> {
+        let mut request = DescribeRequest::new(kind);
+        request.catalog = server.catalog.clone();
+        request.schema = server.schema.clone();
+        request.name_pattern = Some(format!("{name}%"));
+        server
+            .session
+            .describe(&request)
+            .unwrap_or_else(|error| panic!("{:?}: describe {kind}: {error}", server.product))
+            .items
+            .iter()
+            .map(|item| string(item, "name"))
+            .filter(|listed| listed.split(';').next() == Some(name))
+            .collect()
+    };
+
+    let procedures = listed("procedures", &procedure);
+    assert_eq!(procedures.len(), 1, "{:?}: {procedures:?}", server.product);
+    let mut routines = vec![(procedures[0].clone(), RoutineKind::Procedure)];
+    if has_function {
+        assert!(
+            listed("procedures", &function).is_empty(),
+            "{:?}: a function is listed among the procedures",
+            server.product
+        );
+        let functions = listed("functions", &function);
+        assert_eq!(functions.len(), 1, "{:?}: {functions:?}", server.product);
+        routines.push((functions[0].clone(), RoutineKind::Function));
+    }
+
+    for (name, kind) in routines {
+        let ddl = server
+            .session
+            .describe_routine_ddl(
+                server.catalog.as_deref(),
+                server.schema.as_deref(),
+                &name,
+                kind,
+                DdlSource::Auto,
+            )
+            .unwrap_or_else(|error| panic!("{:?}: ddl of {name}: {error}", server.product));
+        assert!(
+            ddl.is_native(),
+            "{:?}: {name}: {}",
+            server.product,
+            ddl.source
+        );
+        let bare = name.split(';').next().unwrap_or_default();
+        assert!(
+            ddl.ddl.to_lowercase().contains(&bare.to_lowercase()),
+            "{:?}: {}",
+            server.product,
+            ddl.ddl
+        );
+
+        // The layout the panel puts on it changes whitespace and the case of
+        // keywords, and nothing else, on the text each server really answers.
+        let formatted = format_ddl(&ddl.ddl, server.dialect());
+        let squeezed = |text: &str| -> String {
+            text.chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+                .to_uppercase()
+        };
+        assert_eq!(
+            squeezed(&formatted),
+            squeezed(&ddl.ddl),
+            "{:?}:\n{}\n---\n{formatted}",
+            server.product,
+            ddl.ddl
+        );
+        println!("{:?} {name}:\n{formatted}\n", server.product);
     }
 }

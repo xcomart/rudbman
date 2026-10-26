@@ -48,9 +48,11 @@ JVM bridge.
   OS keychain, never on disk, and credentials are masked out of logs and
   JDBC URLs.
 - **A schema explorer** — catalogs, schemas, tables, views, sequences,
-  routines — and a table detail panel with columns, keys, references in both
+  routines — and a detail panel with columns, keys, references in both
   directions, and DDL in a read-only, highlighted editor (the server's own text
   where the dialect offers it, reconstructed from metadata where it does not).
+  Procedures and functions show their `CREATE` too, and every statement is laid
+  out for reading: one column to a line, a routine's body indented by block.
 - **A SQL workbench**: an editor with incremental dialect-aware highlighting
   and IME support, SQL keyword/function/table/column completion (including table aliases),
   statement splitting, run-one/run-selection/run-all,

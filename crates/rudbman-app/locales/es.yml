@@ -349,6 +349,7 @@ detail:
   empty: no hay nada
   no_ddl: Este objeto no tiene ninguna sentencia CREATE que mostrar.
   ddl_reconstructed: Reconstruido a partir de los metadatos, a título orientativo. No incluye restricciones CHECK, disparadores, particiones ni intercalaciones.
+  ddl_reconstructed_routine: Reconstruido a partir del cuerpo y la lista de parámetros de la rutina en el catálogo, a título orientativo. No incluye características como el determinismo o la seguridad.
 
   column: Columna
   type: Tipo

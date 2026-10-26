@@ -349,6 +349,7 @@ detail:
   empty: 없음
   no_ddl: 이 객체에는 보여줄 CREATE 구문이 없습니다.
   ddl_reconstructed: 메타데이터에서 재구성한 참고용입니다. CHECK 제약, 트리거, 파티션, 콜레이션은 포함되지 않습니다.
+  ddl_reconstructed_routine: 카탈로그의 루틴 본문과 매개변수 목록으로 재구성한 참고용입니다. 결정성, 보안 같은 특성은 포함되지 않습니다.
 
   column: 열
   type: 타입

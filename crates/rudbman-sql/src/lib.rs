@@ -119,7 +119,10 @@
 //! * [`mod@dialect`] — [`Dialect`], [`DialectId`], and the [`Syntax`] record of
 //!   what the vendors disagree about.
 //! * [`mod@format`] — [`format_sql`], the editor's "Format SQL": whitespace
-//!   between tokens re-laid out, every literal and comment copied unchanged.
+//!   between tokens re-laid out, every literal and comment copied unchanged;
+//!   and [`format_ddl`], the same terms applied to the `CREATE` text the object
+//!   panel shows — a table's columns one to a line, a routine's body indented
+//!   by block.
 //! * [`mod@ident`] — [`Dialect::quote_ident`] and [`Dialect::qualify`], for the
 //!   callers that write SQL rather than read it.
 //! * [`mod@ddl`] — [`plan_alter`], [`TableAlter`], [`ColumnDef`],
@@ -162,7 +165,7 @@ pub use dialect::{Dialect, DialectId, Syntax};
 pub use dml::{
     DmlError, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
-pub use format::format_sql;
+pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
 pub use state::LineStateCodec;
 pub use statement::{StatementSpan, split_statements, statement_at};

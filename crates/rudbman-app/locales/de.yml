@@ -349,6 +349,7 @@ detail:
   empty: nichts vorhanden
   no_ddl: Für dieses Objekt gibt es keine CREATE-Anweisung zu zeigen.
   ddl_reconstructed: Aus Metadaten rekonstruiert, als Anhaltspunkt. CHECK-Bedingungen, Trigger, Partitionierung und Sortierungen fehlen darin.
+  ddl_reconstructed_routine: Aus Rumpf und Parameterliste der Routine im Katalog rekonstruiert, als Anhaltspunkt. Eigenschaften wie Determinismus und Sicherheit fehlen darin.
 
   column: Spalte
   type: Typ

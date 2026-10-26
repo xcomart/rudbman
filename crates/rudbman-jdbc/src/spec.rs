@@ -370,7 +370,10 @@ pub struct DescribeRequest {
     /// two hundred. Which of the two lists a routine appears in is the product's
     /// decision — H2 files `CREATE ALIAS` functions under `procedures` and
     /// answers `getFunctions` with nothing at all — so an empty list means
-    /// "filed elsewhere", not "none".
+    /// "filed elsewhere", not "none". A routine a driver files in both lists —
+    /// a MySQL or MariaDB function, any SQL Server routine — is answered once,
+    /// under its own kind, and SQL Server's `;1` numbering is taken off its
+    /// name.
     ///
     /// `sequences` is a vendor catalogue query, because JDBC never grew an
     /// accessor for sequences. An empty list is a correct answer on a product
@@ -398,8 +401,8 @@ pub struct DescribeRequest {
     /// Column name as a `LIKE` pattern.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column_pattern: Option<String>,
-    /// `procedures`, `functions` and `sequences` only: exact routine or
-    /// sequence name.
+    /// `procedures`, `functions` and `sequences`, and `ddl` with a
+    /// [`routine`](Self::routine): exact routine or sequence name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// `procedures` and `functions` only: routine name as a `LIKE` pattern.
@@ -424,6 +427,13 @@ pub struct DescribeRequest {
     /// every other kind ignores it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<DdlSource>,
+    /// `ddl` only: the request is about the stored routine in
+    /// [`name`](Self::name) rather than a table.
+    ///
+    /// Set for you by
+    /// [`Session::describe_routine_ddl`](crate::Session::describe_routine_ddl).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routine: Option<RoutineKind>,
 }
 
 impl DescribeRequest {
@@ -490,6 +500,22 @@ pub enum DdlSource {
     /// Always reconstruct, even where a native path exists. Useful for
     /// comparing two products, and for exercising the fallback.
     Metadata,
+}
+
+/// Which kind of stored routine a `ddl` request names.
+///
+/// The explorer's folder, passed on. Only the products whose own syntax tells
+/// the two apart look at it — MySQL's `SHOW CREATE PROCEDURE` against
+/// `SHOW CREATE FUNCTION`, Oracle's `ALL_SOURCE.TYPE` — and those try the other
+/// kind when the named one finds nothing, because which list a driver files a
+/// routine under is the driver's call: H2 files every alias as a procedure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RoutineKind {
+    /// A stored procedure.
+    Procedure,
+    /// A user-defined function.
+    Function,
 }
 
 /// The request body of `PROBE_DRIVER`: which archives to look inside.
@@ -1423,6 +1449,15 @@ mod tests {
             r#""metadata""#
         );
         assert_eq!(DdlSource::default(), DdlSource::Auto);
+        // `RoutineDdl.of` reads the routine kind by these two words.
+        assert_eq!(
+            serde_json::to_string(&RoutineKind::Procedure).expect("serialises"),
+            r#""procedure""#
+        );
+        assert_eq!(
+            serde_json::to_string(&RoutineKind::Function).expect("serialises"),
+            r#""function""#
+        );
     }
 
     #[test]
