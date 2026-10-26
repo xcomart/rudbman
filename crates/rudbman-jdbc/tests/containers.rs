@@ -2714,13 +2714,14 @@ fn a_server_cursor_request_is_a_plain_read_everywhere_else() {
 
 // --- routines --------------------------------------------------------------
 
-/// A routine a test created, dropped however the test ends.
-struct Routine<'a> {
+/// Something a test created outside the table registry, dropped however the
+/// test ends.
+struct DropOnExit<'a> {
     server: &'a Server,
     drop: String,
 }
 
-impl Drop for Routine<'_> {
+impl Drop for DropOnExit<'_> {
     fn drop(&mut self) {
         let _ = self
             .server
@@ -2819,7 +2820,7 @@ fn routines(server: &Server) {
     };
 
     server.exec(&create_procedure);
-    let _procedure = Routine {
+    let _procedure = DropOnExit {
         server,
         drop: drop_procedure,
     };
@@ -2834,7 +2835,7 @@ fn routines(server: &Server) {
         }
         Err(error) => panic!("{:?}: {create_function}: {error}", server.product),
     };
-    let _function = Routine {
+    let _function = DropOnExit {
         server,
         drop: drop_function,
     };
@@ -2914,4 +2915,61 @@ fn routines(server: &Server) {
         );
         println!("{:?} {name}:\n{formatted}\n", server.product);
     }
+}
+
+// --- sequences -------------------------------------------------------------
+
+/// A MariaDB sequence, asked for the way the explorer asks: the database as
+/// the catalog, no schema.
+///
+/// The `SEQUENCES` view answered `def` for the catalog, so a request naming the
+/// database filtered every sequence out and the folder stayed empty; and the
+/// view only exists from 11.5, so on older servers there was nothing to filter.
+#[test]
+fn mariadb_lists_its_sequences_under_the_database() {
+    let server = server!(Product::MariaDb);
+    let sequence = server.fresh("seq");
+    server.exec(&format!(
+        "create sequence {sequence} start with 100 increment by 5 minvalue 10 \
+         maxvalue 100000 cycle cache 20 comment 'order numbers'"
+    ));
+    let _sequence = DropOnExit {
+        server: &server,
+        drop: format!("drop sequence if exists {sequence}"),
+    };
+
+    let describe = |name: Option<&str>| {
+        let mut request = DescribeRequest::new("sequences");
+        request.catalog = server.catalog.clone();
+        request.name = name.map(str::to_string);
+        server
+            .session
+            .describe(&request)
+            .unwrap_or_else(|error| panic!("describe sequences: {error}"))
+            .items
+    };
+
+    let listed = describe(None);
+    let item = listed
+        .iter()
+        .find(|item| string(item, "name") == sequence)
+        .unwrap_or_else(|| panic!("{sequence} is not among {listed:?}"));
+    assert_eq!(
+        item.get("catalog"),
+        Some(&serde_json::json!(server.catalog))
+    );
+    assert_eq!(item.get("schema"), Some(&serde_json::Value::Null));
+    assert_eq!(string(item, "start_value"), "100");
+    assert_eq!(string(item, "increment"), "5");
+    assert_eq!(string(item, "min_value"), "10");
+    assert_eq!(string(item, "max_value"), "100000");
+    assert_eq!(string(item, "cache"), "20");
+    assert_eq!(item.get("cycle"), Some(&serde_json::json!(true)));
+    assert_eq!(string(item, "data_type").to_lowercase(), "bigint");
+    assert_eq!(remarks(item).as_deref(), Some("order numbers"));
+
+    // And by name, which is how the detail panel asks.
+    let one = describe(Some(&sequence));
+    assert_eq!(one.len(), 1, "{one:?}");
+    assert_eq!(string(&one[0], "name"), sequence);
 }

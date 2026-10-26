@@ -6,8 +6,12 @@ import comart.rudbman.bridge.Json;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -30,7 +34,8 @@ import java.util.Map;
  * <p>Row shape is normalised across products by reading each output key from the
  * first metadata label that is present, so that one reader serves the SQL:2003
  * {@code INFORMATION_SCHEMA.SEQUENCES} layout and Oracle's older
- * {@code ALL_SEQUENCES} layout alike. Numbers stay strings: an Oracle sequence
+ * {@code ALL_SEQUENCES} layout alike. MariaDB is read its own way; see
+ * {@link #mariadb}. Numbers stay strings: an Oracle sequence
  * maximum is {@code NUMBER(28)}, which does not fit a {@code long}, and the UI
  * only prints it.
  */
@@ -61,15 +66,31 @@ public final class Sequences {
     private static final String ORACLE_SQL = "SELECT * FROM ALL_SEQUENCES";
 
     /**
-     * MariaDB 10.3 added {@code CREATE SEQUENCE}, but how sequences are exposed
-     * to the information schema has moved between releases - some builds list
-     * them only in {@code INFORMATION_SCHEMA.TABLES} with
-     * {@code TABLE_TYPE = 'SEQUENCE'}. This is therefore a probe: if the view is
-     * there it answers, and if it is not, {@link Attempt} turns the rejection
-     * into the empty list, which is the right answer for a build without it.
-     * Source: MariaDB Server documentation, "SEQUENCE Overview".
+     * MariaDB keeps a sequence as a one-row table, and every release since 10.3
+     * - the one that added {@code CREATE SEQUENCE} - lists it in
+     * {@code INFORMATION_SCHEMA.TABLES} with {@code TABLE_TYPE = 'SEQUENCE'},
+     * its comment beside it. The {@code SEQUENCES} view only arrived in 11.5,
+     * carries no cache size and no comment, and names {@code def} as the catalog
+     * where JDBC - and so the explorer - names the database; so the list comes
+     * from {@code TABLES} and the options from the sequence itself.
+     * Source: MariaDB Server documentation, "SEQUENCE Overview" and
+     * "Information Schema SEQUENCES Table".
      */
-    private static final String MARIADB_SQL = "SELECT * FROM information_schema.SEQUENCES";
+    private static final String MARIADB_SQL = "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_COMMENT"
+            + " FROM information_schema.TABLES WHERE TABLE_TYPE = 'SEQUENCE'";
+
+    /**
+     * How many MariaDB sequences a listing reads the options of. Each costs a
+     * query of its own; a schema with more is listed by name and comment, and
+     * the options of one are read when it is asked for by name.
+     */
+    private static final int MARIADB_DETAIL_LIMIT = 100;
+
+    /** The option columns of a MariaDB sequence's own row, in their order. */
+    private static final String[] MARIADB_OPTIONS = {
+        "MINIMUM_VALUE", "MAXIMUM_VALUE", "START_VALUE", "INCREMENT", "CACHE_SIZE",
+        "CYCLE_OPTION",
+    };
 
     private Sequences() {
     }
@@ -88,6 +109,9 @@ public final class Sequences {
      * @return the sequence list, empty when the product has no sequences
      */
     public static JsonArray of(Connection conn, DatabaseMetaData dbm, JsonObject req) {
+        if (Dialect.of(dbm) == Dialect.MARIADB) {
+            return mariadb(conn, Ident.of(dbm), req);
+        }
         String sql = sqlFor(Dialect.of(dbm));
         if (sql == null) {
             return new JsonArray();
@@ -116,9 +140,93 @@ public final class Sequences {
             case H2:         return H2_SQL;
             case POSTGRESQL: return POSTGRESQL_SQL;
             case ORACLE:     return ORACLE_SQL;
-            case MARIADB:    return MARIADB_SQL;
             default:         return null;
         }
+    }
+
+    /**
+     * MariaDB's sequences, shaped as the other products' are.
+     *
+     * <p>The database is the {@code catalog}, as in every other JDBC answer
+     * about MariaDB, and {@code schema} is null; a request that names the
+     * database as its schema is answered too. A sequence whose own row cannot be
+     * read - a privilege granted on the schema listing but not on the sequence -
+     * is still listed, with its options null.
+     */
+    private static JsonArray mariadb(Connection conn, Ident id, JsonObject req) {
+        String database = Json.str(req, "catalog");
+        if (database == null || database.isEmpty()) {
+            database = Json.str(req, "schema");
+        }
+        String db = database == null || database.isEmpty() ? null : database;
+        String name = Json.str(req, "name");
+        String one = name == null || name.isEmpty() ? null : name;
+
+        List<String[]> found = Attempt.<List<String[]>>on(conn, MARIADB_SQL, c -> {
+            String sql = MARIADB_SQL + (db != null ? " AND TABLE_SCHEMA = ?" : "")
+                    + (one != null ? " AND TABLE_NAME = ?" : "")
+                    + " ORDER BY TABLE_SCHEMA, TABLE_NAME";
+            List<String[]> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                int i = 1;
+                if (db != null) {
+                    ps.setString(i++, db);
+                }
+                if (one != null) {
+                    ps.setString(i, one);
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new String[]{rs.getString(1), rs.getString(2), rs.getString(3)});
+                    }
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+
+        // AS <type> arrived with the SEQUENCES view, in 11.5; before it every
+        // sequence is a BIGINT.
+        Map<String, String> types = Attempt.<Map<String, String>>run(conn,
+                "information_schema.SEQUENCES", st -> {
+                    Map<String, String> out = new HashMap<>();
+                    try (ResultSet rs = st.executeQuery("SELECT SEQUENCE_SCHEMA, SEQUENCE_NAME,"
+                            + " DATA_TYPE FROM information_schema.SEQUENCES")) {
+                        while (rs.next()) {
+                            out.put(rs.getString(1) + '.' + rs.getString(2), rs.getString(3));
+                        }
+                    }
+                    return out;
+                }, new HashMap<>());
+
+        boolean details = one != null || found.size() <= MARIADB_DETAIL_LIMIT;
+        JsonArray arr = new JsonArray();
+        for (String[] f : found) {
+            String qualified = id.qualify(f[0], f[1]);
+            Map<String, String> r = !details ? new HashMap<>()
+                    : Attempt.<Map<String, String>>run(conn, "SELECT FROM " + qualified, st -> {
+                        try (ResultSet rs = st.executeQuery("SELECT * FROM " + qualified)) {
+                            return rs.next() ? new RsView(rs).strs(MARIADB_OPTIONS)
+                                    : new HashMap<>();
+                        }
+                    }, new HashMap<>());
+            JsonObject o = new JsonObject();
+            o.addProperty("catalog", f[0]);
+            o.addProperty("schema", (String) null);
+            o.addProperty("name", f[1]);
+            o.addProperty("data_type", types.getOrDefault(f[0] + '.' + f[1], "bigint"));
+            o.addProperty("start_value", r.get("START_VALUE"));
+            o.addProperty("min_value", r.get("MINIMUM_VALUE"));
+            o.addProperty("max_value", r.get("MAXIMUM_VALUE"));
+            o.addProperty("increment", r.get("INCREMENT"));
+            o.addProperty("cycle", yesNo(r.get("CYCLE_OPTION")));
+            o.addProperty("cache", r.get("CACHE_SIZE"));
+            // next_not_cached_value is where the next cache block starts, not
+            // the value last handed out, and nothing else says what that was.
+            o.addProperty("current_value", (String) null);
+            o.addProperty("remarks", f[2] == null || f[2].isEmpty() ? null : f[2]);
+            arr.add(o);
+        }
+        return arr;
     }
 
     /**

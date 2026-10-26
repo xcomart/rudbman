@@ -1091,11 +1091,16 @@ fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, 
         ("min_value", ts!("detail.min_value")),
         ("max_value", ts!("detail.max_value")),
         ("current_value", ts!("detail.current_value")),
-        ("cycle", ts!("detail.cycle")),
-        ("cache", ts!("detail.cache")),
     ] {
         put(label, text(object, key));
     }
+    // A flag rather than text, and written the way the DDL writes it, like
+    // NULL and NOT NULL on the columns tab.
+    put(
+        ts!("detail.cycle"),
+        flag(object, "cycle").map(|cycle| if cycle { "CYCLE" } else { "NO CYCLE" }),
+    );
+    put(ts!("detail.cache"), text(object, "cache"));
 
     // The parameters, in ordinal order, as one row each.
     if let Some(parameters) = object
@@ -1660,6 +1665,24 @@ mod tests {
         // A sequence has no DDL tab, and so asks for no DDL.
         let (sequence, _held) = describe("PERSON_SEQ", Folder::Sequences, "detail-sequence");
         assert!(sequence.ddl.is_none() && sequence.ddl_error.is_none());
+    }
+
+    /// A sequence's options, the cycle flag among them: it arrives as a JSON
+    /// boolean rather than text, and was dropped as one.
+    #[test]
+    fn a_sequence_shows_its_options() {
+        let (sequence, _held) = describe("PERSON_SEQ", Folder::Sequences, "detail-sequence-opts");
+        let value = |label: SharedString| {
+            sequence
+                .properties
+                .iter()
+                .find(|row| row[0] == label)
+                .map(|row| row[1].clone())
+                .unwrap_or_else(|| panic!("no {label} in {:?}", sequence.properties))
+        };
+        assert_eq!(value(ts!("detail.start_value")), "5");
+        assert_eq!(value(ts!("detail.increment")), "2");
+        assert_eq!(value(ts!("detail.cycle")), "NO CYCLE");
     }
 
     #[gpui::test]
