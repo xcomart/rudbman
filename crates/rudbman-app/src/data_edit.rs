@@ -755,6 +755,13 @@ impl GridSource for EditableSource {
             CellEditor::Text
         }
     }
+
+    /// Text columns offer the multiline viewer from their one-line field: a
+    /// value that is one line today is often the one about to become two. A
+    /// number or a date has no use for a paragraph.
+    fn cell_expandable(&self, _row: usize, column: usize) -> bool {
+        self.kind(column) == DmlKind::Str
+    }
 }
 
 /// One statement of an apply: ready to send, and ready to show.

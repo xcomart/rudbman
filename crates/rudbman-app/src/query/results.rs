@@ -41,7 +41,7 @@ impl QueryPane {
         // takes no edit (see [`TableSource`]).
         let source = EditableSource::new(source, &columns, false, TableSource::Inferred);
 
-        let grid = cx.new(|cx| GridView::new(source, cx));
+        let grid = cx.new(|cx| GridView::new(source, cx).expand_tooltip(ts!("lob.open_text")));
         // The marker the sort that asked for this run was for, if it was one:
         // the grid it was set on has just been replaced by this one.
         if let Some(sort) = self.pending_sort.take() {
@@ -55,6 +55,11 @@ impl QueryPane {
                 }
                 GridEvent::CellActivated { row, column } => {
                     pane.open_cell(id, *row, *column, window, cx);
+                }
+                // The one-line field's expand button: the same viewer, started
+                // from what had been typed.
+                GridEvent::ExpandRequested { row, column, text } => {
+                    pane.open_value_editor(id, *row, *column, Some(text.clone()), window, cx);
                 }
                 // Reachable now that a result can be written back to (§7.9).
                 // The grid refuses to open a field over a cell its source calls
@@ -437,36 +442,65 @@ impl QueryPane {
             return;
         };
         if grid.read(cx).source().uses_value_viewer(row, column) {
-            if self.lob_dialog.is_some()
-                || self.applying
-                || self.preview.is_some()
-                || self.transaction.is_some()
-            {
-                return;
-            }
-            self.close_completion(cx);
-            self.context_menu = None;
-            let attached = self.session.is_some();
-            let dialog = cx.new(|cx| {
-                crate::lob_dialog::LobDialog::new(grid.clone(), row, column, attached, window, cx)
-            });
-            self.lob_events = Some(cx.subscribe_in(
-                &dialog,
-                window,
-                move |pane, _, _: &crate::lob_dialog::Closed, window, cx| {
-                    pane.lob_dialog = None;
-                    pane.lob_events = None;
-                    window.focus(&grid.read(cx).focus_handle(cx), cx);
-                    cx.notify();
-                },
-            ));
-            self.lob_dialog = Some(dialog);
-            cx.notify();
+            self.open_value_editor(id, row, column, None, window, cx);
             return;
         }
         grid.update(cx, |grid, cx| {
             grid.begin_edit(row, column, window, cx);
         });
+    }
+
+    /// Opens the shared LOB and multiline text viewer over one cell of result
+    /// `id`, started from `seed` when the grid's expand button handed one over
+    /// — see [`LobDialog::seeded`](crate::lob_dialog::LobDialog::seeded).
+    pub(super) fn open_value_editor(
+        &mut self,
+        id: u64,
+        row: usize,
+        column: usize,
+        seed: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(grid) = self.grid_of(id).cloned() else {
+            return;
+        };
+        if self.lob_dialog.is_some()
+            || self.applying
+            || self.preview.is_some()
+            || self.transaction.is_some()
+        {
+            return;
+        }
+        self.close_completion(cx);
+        self.context_menu = None;
+        let attached = self.session.is_some();
+        let dialog = cx.new(|cx| match seed {
+            Some(text) => crate::lob_dialog::LobDialog::seeded(
+                grid.clone(),
+                row,
+                column,
+                attached,
+                text,
+                window,
+                cx,
+            ),
+            None => {
+                crate::lob_dialog::LobDialog::new(grid.clone(), row, column, attached, window, cx)
+            }
+        });
+        self.lob_events = Some(cx.subscribe_in(
+            &dialog,
+            window,
+            move |pane, _, _: &crate::lob_dialog::Closed, window, cx| {
+                pane.lob_dialog = None;
+                pane.lob_events = None;
+                window.focus(&grid.read(cx).focus_handle(cx), cx);
+                cx.notify();
+            },
+        ));
+        self.lob_dialog = Some(dialog);
+        cx.notify();
     }
 
     /// Ends the run, whether it succeeded or not.

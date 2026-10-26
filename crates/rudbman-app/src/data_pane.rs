@@ -709,7 +709,11 @@ impl DataPane {
                 );
 
                 let table = self.qualified();
-                let grid = cx.new(|cx| GridView::new(source, cx).insert_table(table));
+                let grid = cx.new(|cx| {
+                    GridView::new(source, cx)
+                        .insert_table(table)
+                        .expand_tooltip(ts!("lob.open_text"))
+                });
                 // The marker the sort that asked for this run was for: the grid
                 // that was wearing it has just been replaced by this one.
                 if let Some(order) = &self.order {
@@ -729,6 +733,17 @@ impl DataPane {
                             // keep the grid's inline field and writability checks.
                             GridEvent::CellActivated { row, column } => {
                                 pane.open_cell(*row, *column, window, cx);
+                            }
+                            // The one-line field's expand button: the same
+                            // viewer, started from what had been typed.
+                            GridEvent::ExpandRequested { row, column, text } => {
+                                pane.open_value_editor(
+                                    *row,
+                                    *column,
+                                    Some(text.clone()),
+                                    window,
+                                    cx,
+                                );
                             }
                             GridEvent::EditCommitted { row, column, value } => {
                                 // The two ways a field ends. An emptied field is
@@ -996,29 +1011,59 @@ impl DataPane {
             return;
         };
         if grid.read(cx).source().uses_value_viewer(row, column) {
-            if self.lob_dialog.is_some() || self.applying || self.preview.is_some() {
-                return;
-            }
-            self.context_menu = None;
-            let attached = self.session.is_some();
-            let dialog = cx.new(|cx| {
-                crate::lob_dialog::LobDialog::new(grid.clone(), row, column, attached, window, cx)
-            });
-            self.lob_events = Some(cx.subscribe_in(
-                &dialog,
-                window,
-                move |pane, _, _: &crate::lob_dialog::Closed, window, cx| {
-                    pane.lob_dialog = None;
-                    pane.lob_events = None;
-                    window.focus(&grid.read(cx).focus_handle(cx), cx);
-                    cx.notify();
-                },
-            ));
-            self.lob_dialog = Some(dialog);
-            cx.notify();
+            self.open_value_editor(row, column, None, window, cx);
         } else {
             grid.update(cx, |grid, cx| grid.begin_edit(row, column, window, cx));
         }
+    }
+
+    /// Opens the shared LOB and multiline text viewer over one cell.
+    ///
+    /// `seed` is what the grid's one-line field held when its expand button
+    /// was pressed, which the viewer starts from instead of the cell's value;
+    /// see [`LobDialog::seeded`](crate::lob_dialog::LobDialog::seeded).
+    fn open_value_editor(
+        &mut self,
+        row: usize,
+        column: usize,
+        seed: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        if self.lob_dialog.is_some() || self.applying || self.preview.is_some() {
+            return;
+        }
+        self.context_menu = None;
+        let attached = self.session.is_some();
+        let dialog = cx.new(|cx| match seed {
+            Some(text) => crate::lob_dialog::LobDialog::seeded(
+                grid.clone(),
+                row,
+                column,
+                attached,
+                text,
+                window,
+                cx,
+            ),
+            None => {
+                crate::lob_dialog::LobDialog::new(grid.clone(), row, column, attached, window, cx)
+            }
+        });
+        self.lob_events = Some(cx.subscribe_in(
+            &dialog,
+            window,
+            move |pane, _, _: &crate::lob_dialog::Closed, window, cx| {
+                pane.lob_dialog = None;
+                pane.lob_events = None;
+                window.focus(&grid.read(cx).focus_handle(cx), cx);
+                cx.notify();
+            },
+        ));
+        self.lob_dialog = Some(dialog);
+        cx.notify();
     }
 
     /// Adds a row above the fetched rows, and starts typing into it.
@@ -3579,6 +3624,78 @@ mod tests {
                 assert!(!pane.has_pending_edits(cx));
             })
             .unwrap();
+    }
+
+    /// A one-line text cell's field carries the expand button: pressing it
+    /// opens the shared viewer on what had been typed, and stages nothing
+    /// until the viewer does. A number column's field has no button.
+    #[gpui::test]
+    fn the_expand_button_opens_a_one_line_cell_in_the_viewer(cx: &mut TestAppContext) {
+        let (connected, profile) = h2(
+            "data-expand",
+            &[
+                "CREATE SCHEMA APP",
+                "CREATE TABLE APP.NOTES (ID INT PRIMARY KEY, NAME VARCHAR(30), QTY INT)",
+                "INSERT INTO APP.NOTES VALUES (1, 'name', 3)",
+            ],
+        );
+        let handle = pane(&connected, &profile, target("NOTES"), 100, cx);
+        let mut cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                window.activate_window();
+                pane.grid().unwrap().update(cx, |grid, cx| {
+                    assert!(grid.begin_edit(0, 2, window, cx));
+                    assert!(!grid.is_expandable(), "a number has no use for a paragraph");
+                    grid.cancel_edit(cx);
+                    assert!(grid.begin_edit(0, 1, window, cx));
+                    assert!(grid.is_expandable());
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_input("!");
+        let button = cx
+            .debug_bounds("grid-cell-expand")
+            .expect("a text cell's field draws the expand button");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, _, cx| {
+                assert!(pane.lob_dialog.is_some());
+                assert!(pane.grid().unwrap().read(cx).editing().is_none());
+                assert!(
+                    pane.grid().unwrap().read(cx).source().edits().is_empty(),
+                    "the button stages nothing itself"
+                );
+                // What was typed is already an edit, held by the viewer.
+                assert!(pane.has_pending_edits(cx));
+            })
+            .unwrap();
+        // And `Add to changes` stages it as it is.
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-enter"
+        } else {
+            "ctrl-enter"
+        });
+        cx.run_until_parked();
+        handle
+            .update(&mut cx, |pane, window, cx| {
+                assert!(pane.lob_dialog.is_none());
+                assert!(pane.has_pending_edits(cx));
+                pane.apply(window, cx);
+                assert_eq!(
+                    pane.preview.as_ref().unwrap()[0].params[0],
+                    rudbman_jdbc::Param::Str("name!".into())
+                );
+                pane.confirm_apply(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            server_rows(&connected, "SELECT NAME FROM APP.NOTES"),
+            ["name!"]
+        );
     }
 
     #[gpui::test]
