@@ -2889,6 +2889,12 @@ fn routines(server: &Server) {
             server.product,
             ddl.source
         );
+        assert!(
+            !ddl.ddl.to_uppercase().contains("DEFINER="),
+            "{:?}: {}",
+            server.product,
+            ddl.ddl
+        );
         let bare = name.split(';').next().unwrap_or_default();
         assert!(
             ddl.ddl.to_lowercase().contains(&bare.to_lowercase()),
@@ -3168,6 +3174,10 @@ fn every_kind(server: &Server) {
                 "{product:?} {kind:?}: {}",
                 ddl.source
             );
+        }
+        // The account and the plan that made the object are not the object.
+        for clause in ["DEFINER=", "ALGORITHM=", "SQL SECURITY"] {
+            assert!(!upper.contains(clause), "{product:?} {kind:?}: {}", ddl.ddl);
         }
 
         // Laid out, the text is the same statement.

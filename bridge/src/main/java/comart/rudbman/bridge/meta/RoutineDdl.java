@@ -146,7 +146,7 @@ public final class RoutineDdl {
             // a label that differs per kind. It is NULL for an account that may
             // run the routine but not read it, which is "no native text".
             if (rs.next() && rs.getMetaData().getColumnCount() >= 3) {
-                return DdlText.terminated(rs.getString(3));
+                return DdlText.terminated(DdlText.withoutDefiner(rs.getString(3)));
             }
             return null;
         }

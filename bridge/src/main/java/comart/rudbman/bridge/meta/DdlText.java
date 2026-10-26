@@ -8,6 +8,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Text helpers and vendor DDL sources shared by {@link Ddl}, {@link RoutineDdl}
@@ -41,7 +43,42 @@ final class DdlText {
             + " 'SQLTERMINATOR', TRUE);"
             + " END;";
 
+    /** A MySQL account or host part: quoted three ways, or bare. */
+    private static final String MYSQL_NAME = "(?:`(?:[^`]|``)*`|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\""
+            + "|[\\w.$%-]+(?:\\(\\))?)";
+
+    /**
+     * What MySQL and MariaDB write between {@code CREATE [OR REPLACE]} and the
+     * object's keyword: {@code ALGORITHM=...}, {@code DEFINER=...} and a view's
+     * {@code SQL SECURITY ...}.
+     */
+    private static final Pattern MYSQL_PREAMBLE = Pattern.compile(
+            "^(CREATE\\s+(?:OR\\s+REPLACE\\s+)?)"
+                    + "(?:ALGORITHM\\s*=\\s*\\w+\\s+)?"
+                    + "(?:DEFINER\\s*=\\s*" + MYSQL_NAME + "(?:\\s*@\\s*" + MYSQL_NAME + ")?\\s+)?"
+                    + "(?:SQL\\s+SECURITY\\s+(?:DEFINER|INVOKER)\\s+)?"
+                    + "(?=(?:VIEW|PROCEDURE|FUNCTION|TRIGGER|EVENT|AGGREGATE)\\b)",
+            Pattern.CASE_INSENSITIVE);
+
     private DdlText() {
+    }
+
+    /**
+     * MySQL's and MariaDB's {@code SHOW CREATE} text without its
+     * {@code ALGORITHM}, {@code DEFINER} and view {@code SQL SECURITY} clauses.
+     *
+     * <p>They name the account that created the object and the plan the server
+     * picked, not the object itself, and a statement carrying another account's
+     * {@code DEFINER} is one most accounts may not run. What the object is - its
+     * columns, its query, its body - is untouched, and so is a routine's own
+     * {@code SQL SECURITY} characteristic, which comes after its parameters.
+     */
+    static String withoutDefiner(String text) {
+        if (text == null) {
+            return null;
+        }
+        Matcher m = MYSQL_PREAMBLE.matcher(text);
+        return m.find() ? m.group(1) + text.substring(m.end()) : text;
     }
 
     /** The text with its surrounding blanks gone, or {@code null} when nothing is left. */

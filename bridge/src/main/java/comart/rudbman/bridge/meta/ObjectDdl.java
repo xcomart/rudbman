@@ -346,15 +346,16 @@ public final class ObjectDdl {
     /**
      * MySQL's and MariaDB's {@code SHOW CREATE <what>}, whose text is in
      * {@code column}: the second for a view or a sequence, the third for a
-     * trigger. NULL - an account that may use the object but not read it - is
-     * "no native text".
+     * trigger, without its {@code DEFINER} and the like - see
+     * {@link DdlText#withoutDefiner}. NULL - an account that may use the object
+     * but not read it - is "no native text".
      */
     private static String show(Connection conn, String what, Target t, int column) {
         String qualified = t.qualified();
         return Attempt.<String>run(conn, "SHOW CREATE " + what, st -> {
             try (ResultSet rs = st.executeQuery("SHOW CREATE " + what + " " + qualified)) {
                 if (rs.next() && rs.getMetaData().getColumnCount() >= column) {
-                    return DdlText.terminated(rs.getString(column));
+                    return DdlText.terminated(DdlText.withoutDefiner(rs.getString(column)));
                 }
                 return null;
             }

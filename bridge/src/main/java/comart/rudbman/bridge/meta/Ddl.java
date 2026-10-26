@@ -366,7 +366,7 @@ public final class Ddl {
             // the label is "Create Table" for tables and "Create View" for
             // views, and MariaDB adds two more columns for views.
             if (rs.next() && rs.getMetaData().getColumnCount() >= 2) {
-                String ddl = rs.getString(2);
+                String ddl = DdlText.withoutDefiner(rs.getString(2));
                 if (ddl != null && !ddl.isBlank()) {
                     return ddl.endsWith(";") ? ddl : ddl + ";";
                 }

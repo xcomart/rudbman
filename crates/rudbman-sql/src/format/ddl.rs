@@ -49,6 +49,38 @@ const VIEW_WORDS: &[&str] = &[
     "VIEW",
 ];
 
+/// The words that open a sequence's options, one to a line.
+const SEQUENCE_OPTIONS: &[&str] = &[
+    "AS",
+    "CACHE",
+    "COMMENT",
+    "CYCLE",
+    "ENGINE",
+    "EXTEND",
+    "GLOBAL",
+    "INCREMENT",
+    "KEEP",
+    "MAXVALUE",
+    "MINVALUE",
+    "NO",
+    "NOCACHE",
+    "NOCYCLE",
+    "NOEXTEND",
+    "NOKEEP",
+    "NOMAXVALUE",
+    "NOMINVALUE",
+    "NOORDER",
+    "NOSCALE",
+    "NOSHARD",
+    "ORDER",
+    "OWNED",
+    "RESTART",
+    "SCALE",
+    "SESSION",
+    "SHARD",
+    "START",
+];
+
 /// The words of a sequence's options.
 const SEQUENCE_WORDS: &[&str] = &[
     "AS",
@@ -207,8 +239,10 @@ const MYSQL_BODY: &[&str] = &[
 ///   `EXCEPTION` handlers — and each statement inside it is laid out by the
 ///   query formatter, so a `SELECT` in a procedure reads as one in the editor
 ///   does. An empty line the author left between two statements stays.
-/// * **Anything else** — `CREATE INDEX`, `ALTER TABLE`, `COMMENT ON`, a
-///   sequence — on one line, single-spaced.
+/// * **`CREATE SEQUENCE`** — the name on the first line, one option to a line
+///   under it.
+/// * **Anything else** — `CREATE INDEX`, `ALTER TABLE`, `COMMENT ON` — on one
+///   line, single-spaced.
 ///
 /// Statements are separated by an empty line, except that a run of one-line
 /// statements of one kind — the `COMMENT ON`s under a table — stays together.
@@ -488,8 +522,8 @@ impl<'a> Layout<'a> {
         (format!("{header}\n{query}"), end)
     }
 
-    /// A sequence on one line, its options in upper case: MariaDB quotes them
-    /// back in lower case, and the rest of the statement is already upper.
+    /// A sequence: its name on the first line and one option to a line under
+    /// it, the options in upper case — MariaDB quotes them back in lower case.
     fn sequence(&self, i: usize, word: usize) -> (String, usize) {
         let end = self.statement_end(word);
         // The name is not an option, whatever it is called: one part, or
@@ -502,9 +536,38 @@ impl<'a> Layout<'a> {
         while self.items.get(after).is_some_and(|item| item.is_punct(".")) {
             after += 2;
         }
+        let after = after.min(end);
         let mut forced = self.words_in(i..name.min(end), SEQUENCE_WORDS);
-        forced.extend(self.words_in(after.min(end)..end, SEQUENCE_WORDS));
-        (self.phrase(i..end, &forced), end)
+        forced.extend(self.words_in(after..end, SEQUENCE_WORDS));
+
+        let mut lines = vec![self.phrase(i..after, &forced)];
+        let mut k = after;
+        while k < end {
+            let mut next = k + 1;
+            while next < end && !self.starts_sequence_option(next) {
+                next += 1;
+            }
+            let option = self.phrase(k..next, &forced);
+            match lines.last_mut() {
+                // A lone `;` closes the line before it.
+                Some(last) if option == ";" => last.push(';'),
+                _ => lines.push(format!("{INDENT}{option}")),
+            }
+            k = next;
+        }
+        (lines.join("\n"), end)
+    }
+
+    /// Whether the token at `k` opens one of a sequence's options. `NO` opens
+    /// `NO CYCLE` and its kin, so the word after it does not open another.
+    fn starts_sequence_option(&self, k: usize) -> bool {
+        if self.items[k].is_punct(";") {
+            return true;
+        }
+        SEQUENCE_OPTIONS.iter().any(|w| self.is_word(k, w))
+            && !self.is_word(k.wrapping_sub(1), "NO")
+            && !self.next_is_punct(k, ".")
+            && !(k > 0 && self.items[k - 1].is_punct("."))
     }
 
     /// The bare words in `range` that are in `words`, and not part of a dotted
@@ -1588,17 +1651,33 @@ END;"
         assert_eq!(
             my(
                 "CREATE SEQUENCE `cache` start with 100 minvalue 1 maxvalue 9 increment by 5 \
-                cache 20 nocycle ENGINE=InnoDB;"
+                cache 20 nocycle ENGINE=InnoDB COMMENT='order numbers';"
             ),
-            "CREATE SEQUENCE `cache` START WITH 100 MINVALUE 1 MAXVALUE 9 INCREMENT BY 5 \
-             CACHE 20 NOCYCLE ENGINE=InnoDB;"
+            "CREATE SEQUENCE `cache`
+    START WITH 100
+    MINVALUE 1
+    MAXVALUE 9
+    INCREMENT BY 5
+    CACHE 20
+    NOCYCLE
+    ENGINE=InnoDB
+    COMMENT='order numbers';"
         );
         assert_eq!(
             format_ddl(
-                "create sequence if not exists s.cycle start with 1",
+                "create sequence if not exists s.cycle as bigint start with 1 no minvalue \
+                 no cycle",
                 &Dialect::from_id("postgres")
             ),
-            "CREATE SEQUENCE IF NOT EXISTS s.cycle START WITH 1"
+            "CREATE SEQUENCE IF NOT EXISTS s.cycle
+    AS bigint
+    START WITH 1
+    NO MINVALUE
+    NO CYCLE"
+        );
+        assert_eq!(
+            format_ddl("CREATE SEQUENCE s;", &Dialect::GENERIC),
+            "CREATE SEQUENCE s;"
         );
         assert_eq!(
             format_ddl(
@@ -1831,6 +1910,11 @@ END p_hello;"
             (
                 "mysql",
                 "CREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW BEGIN SET NEW.a = 1; END",
+            ),
+            (
+                "oracle",
+                "CREATE SEQUENCE \"S\".\"Q\" MINVALUE 1 MAXVALUE 9 INCREMENT BY 5 START WITH 1 \
+                 CACHE 20 NOORDER NOCYCLE GLOBAL;",
             ),
         ];
         for (dialect, sql) in samples {
