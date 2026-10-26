@@ -156,7 +156,7 @@ class DescribeRoutinesTest {
      */
     @Test
     void routineDdlIsTheServersOwnText() {
-        JsonObject resp = ddl("routine", "procedure", "schema", "APP", "name", "F_ADD");
+        JsonObject resp = ddl("object", "procedure", "schema", "APP", "name", "F_ADD");
         assertEquals("native", resp.get("source").getAsString());
         String text = resp.get("ddl").getAsString();
         assertTrue(text.startsWith("CREATE FORCE ALIAS \"APP\".\"F_ADD\" FOR "), text);
@@ -173,7 +173,7 @@ class DescribeRoutinesTest {
     void aRoutineWithNoReadableBodyIsReportedAsSuch() {
         JsonObject req = new JsonObject();
         req.addProperty("kind", "ddl");
-        req.addProperty("routine", "procedure");
+        req.addProperty("object", "procedure");
         req.addProperty("schema", "APP");
         req.addProperty("name", "F_ADD");
         req.addProperty("source", "metadata");
@@ -185,8 +185,8 @@ class DescribeRoutinesTest {
     @Test
     void routineDdlNeedsAKindAndAName() {
         for (String[] kv : new String[][]{
-                {"routine", "procedure", "schema", "APP"},
-                {"routine", "trigger", "schema", "APP", "name", "F_ADD"},
+                {"object", "procedure", "schema", "APP"},
+                {"object", "index", "schema", "APP", "name", "F_ADD"},
         }) {
             JsonObject req = new JsonObject();
             req.addProperty("kind", "ddl");

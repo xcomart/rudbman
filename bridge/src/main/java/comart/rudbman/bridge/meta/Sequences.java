@@ -24,8 +24,8 @@ import java.util.Map;
  * years after the JDBC metadata interface was fixed, and no later JDBC revision
  * went back for them. So this is a vendor catalogue query per product.
  *
- * <p><b>An empty list is a correct answer.</b> Most of the world's databases
- * have no sequences: MySQL has none at all, SQLite has none, and a server whose
+ * <p><b>An empty list is a correct answer.</b> Many databases have no
+ * sequences: MySQL has none at all, SQLite has none, and a server whose
  * product name is not recognised is simply not asked. None of that is an error
  * condition, and the explorer tree should show an empty branch, not a failure.
  * A query that is attempted and rejected - the object is not there, or the user
@@ -57,6 +57,29 @@ public final class Sequences {
     private static final String POSTGRESQL_SQL = "SELECT * FROM information_schema.sequences";
 
     /**
+     * PostgreSQL 10's {@code pg_sequences}, which also has the cache size and
+     * the last value handed out - the standard view has neither - with the
+     * columns named as the standard view names them. A sequence an identity
+     * column owns is left out, as the standard view leaves it out: it is part of
+     * its table. Before 10 the query fails and the standard view answers.
+     * Source: PostgreSQL documentation, "pg_sequences".
+     */
+    private static final String POSTGRESQL_CATALOG_SQL = "SELECT current_database()"
+            + " AS sequence_catalog, s.schemaname AS sequence_schema,"
+            + " s.sequencename AS sequence_name, s.data_type::text AS data_type,"
+            + " s.start_value, s.min_value AS minimum_value, s.max_value AS maximum_value,"
+            + " s.increment_by AS increment,"
+            + " CASE WHEN s.cycle THEN 'YES' ELSE 'NO' END AS cycle_option,"
+            + " s.cache_size AS cache, s.last_value AS current_value,"
+            + " pg_catalog.obj_description(c.oid, 'pg_class') AS remarks"
+            + " FROM pg_catalog.pg_sequences s"
+            + " JOIN pg_catalog.pg_namespace n ON n.nspname = s.schemaname"
+            + " JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = s.sequencename"
+            + " WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d"
+            + " WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid"
+            + " AND d.deptype = 'i')";
+
+    /**
      * Oracle has no information schema; {@code ALL_SEQUENCES} is the accessible
      * subset of {@code DBA_SEQUENCES}. It has no {@code START WITH} column - the
      * original start value is not retained - so {@code start_value} comes back
@@ -64,6 +87,17 @@ public final class Sequences {
      * Source: Oracle Database Reference, "ALL_SEQUENCES".
      */
     private static final String ORACLE_SQL = "SELECT * FROM ALL_SEQUENCES";
+
+    /**
+     * The same, less the {@code ISEQ$$} sequences Oracle 12c makes for identity
+     * columns: they are part of their table, as PostgreSQL's are. Before 12c
+     * there is no {@code ALL_TAB_IDENTITY_COLS}, the query fails, and the plain
+     * one answers.
+     * Source: Oracle Database Reference, "ALL_TAB_IDENTITY_COLS".
+     */
+    private static final String ORACLE_OWN_SQL = "SELECT s.* FROM ALL_SEQUENCES s"
+            + " WHERE NOT EXISTS (SELECT 1 FROM ALL_TAB_IDENTITY_COLS i"
+            + " WHERE i.OWNER = s.SEQUENCE_OWNER AND i.SEQUENCE_NAME = s.SEQUENCE_NAME)";
 
     /**
      * MariaDB keeps a sequence as a one-row table, and every release since 10.3
@@ -109,39 +143,69 @@ public final class Sequences {
      * @return the sequence list, empty when the product has no sequences
      */
     public static JsonArray of(Connection conn, DatabaseMetaData dbm, JsonObject req) {
-        if (Dialect.of(dbm) == Dialect.MARIADB) {
+        Dialect dialect = Dialect.of(dbm);
+        if (dialect == Dialect.MARIADB) {
             return mariadb(conn, Ident.of(dbm), req);
-        }
-        String sql = sqlFor(Dialect.of(dbm));
-        if (sql == null) {
-            return new JsonArray();
         }
         String catalog = Json.str(req, "catalog");
         String schema = Json.str(req, "schema");
         String name = Json.str(req, "name");
-        return Attempt.run(conn, sql, st -> {
-            JsonArray arr = new JsonArray();
-            try (ResultSet rs = st.executeQuery(sql)) {
-                RsView v = new RsView(rs);
-                while (rs.next()) {
-                    JsonObject o = row(v);
-                    if (matches(o, "catalog", catalog) && matches(o, "schema", schema)
-                            && matches(o, "name", name)) {
-                        arr.add(o);
+        // The first query the server answers is the one used; a later one is
+        // the older catalogue a server without the first still has.
+        for (String sql : sqlFor(dialect, Ident.of(dbm), catalog)) {
+            JsonArray answered = Attempt.<JsonArray>run(conn, sql, st -> {
+                JsonArray arr = new JsonArray();
+                try (ResultSet rs = st.executeQuery(sql)) {
+                    RsView v = new RsView(rs);
+                    while (rs.next()) {
+                        JsonObject o = row(v);
+                        if (matches(o, "catalog", catalog) && matches(o, "schema", schema)
+                                && matches(o, "name", name)) {
+                            arr.add(o);
+                        }
                     }
                 }
+                return arr;
+            }, null);
+            if (answered != null) {
+                return answered;
             }
-            return arr;
-        }, new JsonArray());
+        }
+        return new JsonArray();
     }
 
-    private static String sqlFor(Dialect dialect) {
+    private static List<String> sqlFor(Dialect dialect, Ident id, String catalog) {
         switch (dialect) {
-            case H2:         return H2_SQL;
-            case POSTGRESQL: return POSTGRESQL_SQL;
-            case ORACLE:     return ORACLE_SQL;
-            default:         return null;
+            case H2:         return List.of(H2_SQL);
+            case POSTGRESQL: return List.of(POSTGRESQL_CATALOG_SQL, POSTGRESQL_SQL);
+            case ORACLE:     return List.of(ORACLE_OWN_SQL, ORACLE_SQL);
+            case SQLSERVER:  return List.of(sqlServer(id, catalog));
+            default:         return List.of();
         }
+    }
+
+    /**
+     * SQL Server's {@code sys.sequences}, which is per database: a catalog other
+     * than the session's is read through its three-part name. The values are
+     * {@code sql_variant}, cast to text for the driver to hand over.
+     * Source: SQL Server documentation, "sys.sequences".
+     */
+    private static String sqlServer(Ident id, String catalog) {
+        boolean other = catalog != null && !catalog.isEmpty();
+        String db = other ? id.q(catalog) + "." : "";
+        return "SELECT " + (other ? Ident.literal(catalog) : "DB_NAME()") + " AS SEQUENCE_CATALOG,"
+                + " sc.name AS SEQUENCE_SCHEMA, s.name AS SEQUENCE_NAME,"
+                + " TYPE_NAME(s.user_type_id) AS DATA_TYPE,"
+                + " CAST(s.start_value AS VARCHAR(40)) AS START_VALUE,"
+                + " CAST(s.minimum_value AS VARCHAR(40)) AS MINIMUM_VALUE,"
+                + " CAST(s.maximum_value AS VARCHAR(40)) AS MAXIMUM_VALUE,"
+                + " CAST(s.increment AS VARCHAR(40)) AS INCREMENT,"
+                + " CASE WHEN s.is_cycling = 1 THEN 'YES' ELSE 'NO' END AS CYCLE_OPTION,"
+                + " CASE WHEN s.is_cached = 0 THEN '0'"
+                + " ELSE CAST(s.cache_size AS VARCHAR(20)) END AS CACHE,"
+                + " CAST(s.current_value AS VARCHAR(40)) AS CURRENT_VALUE"
+                + " FROM " + db + "sys.sequences s"
+                + " JOIN " + db + "sys.schemas sc ON sc.schema_id = s.schema_id";
     }
 
     /**

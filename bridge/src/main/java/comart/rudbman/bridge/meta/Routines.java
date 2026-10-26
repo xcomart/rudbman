@@ -7,6 +7,7 @@ import comart.rudbman.bridge.Json;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -61,6 +62,10 @@ import java.util.regex.Pattern;
 public final class Routines {
 
     private static final Logger LOG = Logger.getLogger(Routines.class.getName());
+
+    /** ojdbc's fixed {@code REMARKS}; see {@link #remarks}. */
+    private static final Pattern ORACLE_REMARKS = Pattern.compile(
+            "(?i)(standalone|packaged) (procedure|function)( or function)?");
 
     /** SQL Server's {@code name;number}; see the class documentation. */
     private static final Pattern NUMBERED = Pattern.compile("(.*);(\\d+)");
@@ -125,7 +130,7 @@ public final class Routines {
                 }
                 o.addProperty("name", shown);
                 o.addProperty("specific_name", specific);
-                o.addProperty("remarks", remarks);
+                o.addProperty("remarks", remarks(dbm, remarks));
                 o.addProperty("type", type);
                 o.addProperty("type_name", procedureType(type));
                 o.add("parameters", params.forRoutine(specific, routine));
@@ -156,7 +161,16 @@ public final class Routines {
         boolean numbered = Dialect.of(dbm) == Dialect.SQLSERVER;
 
         JsonArray arr = new JsonArray();
-        try (ResultSet rs = dbm.getFunctions(catalog, schema, name)) {
+        ResultSet listed;
+        try {
+            listed = dbm.getFunctions(catalog, schema, name);
+        } catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+            // SQLite's driver, among others: a product with no functions to
+            // list is an empty folder, not a failed one.
+            LOG.log(Level.FINE, "getFunctions is not supported", e);
+            return arr;
+        }
+        try (ResultSet rs = listed) {
             RsView v = new RsView(rs);
             while (rs.next()) {
                 JsonObject o = new JsonObject();
@@ -179,7 +193,7 @@ public final class Routines {
                 }
                 o.addProperty("name", shown);
                 o.addProperty("specific_name", specific);
-                o.addProperty("remarks", remarks);
+                o.addProperty("remarks", remarks(dbm, remarks));
                 o.addProperty("type", type);
                 o.addProperty("type_name", functionType(type));
                 o.add("parameters", params.forRoutine(specific, routine));
@@ -210,6 +224,19 @@ public final class Routines {
             LOG.log(Level.FINE, "functions unavailable via getFunctions", e);
         }
         return out;
+    }
+
+    /**
+     * The driver's {@code REMARKS}, less what Oracle's driver writes into it for
+     * every routine - "Standalone procedure or function", "Packaged function" -
+     * which says nothing about the routine and is not a comment anyone wrote.
+     */
+    private static String remarks(DatabaseMetaData dbm, String remarks) {
+        if (remarks != null && Dialect.of(dbm) == Dialect.ORACLE
+                && ORACLE_REMARKS.matcher(remarks.trim()).matches()) {
+            return null;
+        }
+        return remarks;
     }
 
     /** One routine's place: catalog, schema and name, absent parts empty. */

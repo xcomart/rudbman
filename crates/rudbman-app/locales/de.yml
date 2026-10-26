@@ -334,6 +334,7 @@ explorer:
   procedures: Prozeduren
   functions: Funktionen
   sequences: Sequenzen
+  triggers: Trigger
 
 # Die Detailansicht eines Objekts.
 detail:
@@ -349,7 +350,7 @@ detail:
   empty: nichts vorhanden
   no_ddl: Für dieses Objekt gibt es keine CREATE-Anweisung zu zeigen.
   ddl_reconstructed: Aus Metadaten rekonstruiert, als Anhaltspunkt. CHECK-Bedingungen, Trigger, Partitionierung und Sortierungen fehlen darin.
-  ddl_reconstructed_routine: Aus Rumpf und Parameterliste der Routine im Katalog rekonstruiert, als Anhaltspunkt. Eigenschaften wie Determinismus und Sicherheit fehlen darin.
+  ddl_reconstructed_object: Aus dem Katalog rekonstruiert, als Anhaltspunkt. Was der Katalog nicht festhält – etwa die Eigenschaften einer Routine – fehlt darin.
 
   column: Spalte
   type: Typ
@@ -380,6 +381,11 @@ detail:
   current_value: Aktuell
   cycle: Zyklus
   cache: Cache
+  trigger_table: Tabelle
+  timing: Zeitpunkt
+  events: Ereignisse
+  level: Ebene
+  status: Status
 
 query:
   result_log: "Ausführungsprotokoll"

@@ -93,6 +93,9 @@ pub const FUNCTION: &str = "icons/function.svg";
 /// A sequence.
 pub const SEQUENCE: &str = "icons/sequence.svg";
 
+/// A trigger: the bolt of something that fires on its own.
+pub const TRIGGER: &str = "icons/trigger.svg";
+
 /// Reloads whatever the panel is showing.
 pub const REFRESH: &str = "icons/refresh.svg";
 
@@ -173,6 +176,7 @@ const OWN: &[(&str, &[u8])] = &[
     (PROCEDURE, include_bytes!("../assets/icons/procedure.svg")),
     (FUNCTION, include_bytes!("../assets/icons/function.svg")),
     (SEQUENCE, include_bytes!("../assets/icons/sequence.svg")),
+    (TRIGGER, include_bytes!("../assets/icons/trigger.svg")),
     (REFRESH, include_bytes!("../assets/icons/refresh.svg")),
     (COPY, include_bytes!("../assets/icons/copy.svg")),
     (SIDEBAR, include_bytes!("../assets/icons/sidebar.svg")),

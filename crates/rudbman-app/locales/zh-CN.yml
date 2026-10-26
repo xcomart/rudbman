@@ -334,6 +334,7 @@ explorer:
   procedures: 存储过程
   functions: 函数
   sequences: 序列
+  triggers: 触发器
 
 # 对象详情面板。
 detail:
@@ -349,7 +350,7 @@ detail:
   empty: 无
   no_ddl: 该对象没有可显示的 CREATE 语句。
   ddl_reconstructed: 由元数据重建，仅供参考。其中不含 CHECK 约束、触发器、分区和排序规则。
-  ddl_reconstructed_routine: 由目录中的例程主体和参数列表重建，仅供参考。其中不含确定性、安全性等特性。
+  ddl_reconstructed_object: 由目录重建，仅供参考。其中不含例程特性等目录中没有的内容。
 
   column: 列
   type: 类型
@@ -380,6 +381,11 @@ detail:
   current_value: 当前值
   cycle: 循环
   cache: 缓存
+  trigger_table: 表
+  timing: 触发时机
+  events: 事件
+  level: 级别
+  status: 状态
 
 query:
   result_log: "执行日志"

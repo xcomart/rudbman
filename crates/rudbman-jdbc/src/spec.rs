@@ -360,10 +360,12 @@ fn base64(bytes: &[u8]) -> String {
 pub struct DescribeRequest {
     /// One of `catalogs`, `schemas`, `tables`, `columns`, `primary_keys`,
     /// `imported_keys`, `exported_keys`, `indexes`, `type_info`, `procedures`,
-    /// `functions`, `sequences`.
+    /// `functions`, `sequences`, `triggers`.
     ///
-    /// `ddl` is the thirteenth kind and goes through
-    /// [`Session::describe_ddl`](crate::Session::describe_ddl) instead.
+    /// `ddl` is the fourteenth kind and goes through
+    /// [`Session::describe_ddl`](crate::Session::describe_ddl) and
+    /// [`Session::describe_object_ddl`](crate::Session::describe_object_ddl)
+    /// instead.
     ///
     /// `procedures` and `functions` carry each routine's `parameters[]` inline,
     /// so a schema with two hundred routines costs one round trip rather than
@@ -375,9 +377,13 @@ pub struct DescribeRequest {
     /// under its own kind, and SQL Server's `;1` numbering is taken off its
     /// name.
     ///
-    /// `sequences` is a vendor catalogue query, because JDBC never grew an
-    /// accessor for sequences. An empty list is a correct answer on a product
-    /// the bridge has no query for, and on one where the query was refused.
+    /// `sequences` and `triggers` are vendor catalogue queries, because JDBC
+    /// never grew an accessor for either. An empty list is a correct answer on a
+    /// product the bridge has no query for, and on one where the query was
+    /// refused. A trigger item carries the `table` it fires on, its `timing`,
+    /// its `events` (`INSERT OR UPDATE`), its `orientation` (`ROW` or
+    /// `STATEMENT`), whether it is `enabled`, and its `remarks`, each null where
+    /// the product does not say.
     pub kind: String,
     /// Exact catalog name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -401,8 +407,8 @@ pub struct DescribeRequest {
     /// Column name as a `LIKE` pattern.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column_pattern: Option<String>,
-    /// `procedures`, `functions` and `sequences`, and `ddl` with a
-    /// [`routine`](Self::routine): exact routine or sequence name.
+    /// `procedures`, `functions`, `sequences` and `triggers`, and `ddl` for any
+    /// [`object`](Self::object) but a table: exact object name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// `procedures` and `functions` only: routine name as a `LIKE` pattern.
@@ -427,13 +433,14 @@ pub struct DescribeRequest {
     /// every other kind ignores it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<DdlSource>,
-    /// `ddl` only: the request is about the stored routine in
-    /// [`name`](Self::name) rather than a table.
+    /// `ddl` only: what kind of object the request is about. Absent, or
+    /// [`ObjectKind::Table`], names a table in [`table`](Self::table); any
+    /// other kind names its object in [`name`](Self::name).
     ///
     /// Set for you by
-    /// [`Session::describe_routine_ddl`](crate::Session::describe_routine_ddl).
+    /// [`Session::describe_object_ddl`](crate::Session::describe_object_ddl).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub routine: Option<RoutineKind>,
+    pub object: Option<ObjectKind>,
 }
 
 impl DescribeRequest {
@@ -502,16 +509,29 @@ pub enum DdlSource {
     Metadata,
 }
 
-/// Which kind of stored routine a `ddl` request names.
+/// Which kind of object a `ddl` request names.
 ///
-/// The explorer's folder, passed on. Only the products whose own syntax tells
-/// the two apart look at it — MySQL's `SHOW CREATE PROCEDURE` against
-/// `SHOW CREATE FUNCTION`, Oracle's `ALL_SOURCE.TYPE` — and those try the other
-/// kind when the named one finds nothing, because which list a driver files a
-/// routine under is the driver's call: H2 files every alias as a procedure.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// The explorer's folder, passed on, because each kind has its own way to its
+/// `CREATE` text: a view's is its query, never the `CREATE TABLE` its column
+/// list would rebuild into; a sequence's is its options; a trigger's and a
+/// routine's are their source. Between a procedure and a function only the
+/// products whose own syntax tells the two apart look at the difference —
+/// MySQL's `SHOW CREATE PROCEDURE` against `SHOW CREATE FUNCTION`, Oracle's
+/// `ALL_SOURCE.TYPE` — and those try the other kind when the named one finds
+/// nothing, because which list a driver files a routine under is the driver's
+/// call: H2 files every alias as a procedure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RoutineKind {
+pub enum ObjectKind {
+    /// A table, the default.
+    #[default]
+    Table,
+    /// A view or a materialized view.
+    View,
+    /// A sequence.
+    Sequence,
+    /// A trigger.
+    Trigger,
     /// A stored procedure.
     Procedure,
     /// A user-defined function.
@@ -1449,15 +1469,20 @@ mod tests {
             r#""metadata""#
         );
         assert_eq!(DdlSource::default(), DdlSource::Auto);
-        // `RoutineDdl.of` reads the routine kind by these two words.
-        assert_eq!(
-            serde_json::to_string(&RoutineKind::Procedure).expect("serialises"),
-            r#""procedure""#
-        );
-        assert_eq!(
-            serde_json::to_string(&RoutineKind::Function).expect("serialises"),
-            r#""function""#
-        );
+        // `Ddl.of` reads the object kind by these words.
+        for (kind, word) in [
+            (ObjectKind::Table, "table"),
+            (ObjectKind::View, "view"),
+            (ObjectKind::Sequence, "sequence"),
+            (ObjectKind::Trigger, "trigger"),
+            (ObjectKind::Procedure, "procedure"),
+            (ObjectKind::Function, "function"),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&kind).expect("serialises"),
+                format!("\"{word}\"")
+            );
+        }
     }
 
     #[test]

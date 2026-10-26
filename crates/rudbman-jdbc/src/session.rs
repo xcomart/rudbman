@@ -63,8 +63,8 @@ use crate::response::{
     Cancelled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, JobProgress, Ping, SessionInfo,
 };
 use crate::spec::{
-    BackupSpec, ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, RoutineKind,
-    StatementSpec, TransferSpec,
+    BackupSpec, ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, ObjectKind, StatementSpec,
+    TransferSpec,
 };
 
 /// The `OPEN_SESSION` response body.
@@ -199,35 +199,48 @@ impl Session {
         self.json_call(Op::Describe, self.handle, 0, Some(body))
     }
 
-    /// Reads one stored procedure's or function's `CREATE` statement.
+    /// Reads one object's `CREATE` statement, whatever kind it is.
     ///
-    /// The same shape as [`Session::describe_ddl`], over a routine: `name` is
-    /// exact and required, and an overloaded name answers every overload, one
-    /// statement each. [`DdlSource::Auto`] asks the server for its own text —
-    /// `SHOW CREATE PROCEDURE`, `pg_get_functiondef`, `ALL_SOURCE` and their
-    /// kin — and falls back to `INFORMATION_SCHEMA.ROUTINES` under a header
-    /// rebuilt from the parameter list, which [`DdlResult::is_reconstructed`]
-    /// then reports.
+    /// The same shape as [`Session::describe_ddl`], which is this with
+    /// [`ObjectKind::Table`]. `name` is exact and required. What each kind
+    /// answers with:
+    ///
+    /// * a **view**: the server's own text where it keeps one, otherwise a
+    ///   `CREATE VIEW` around `INFORMATION_SCHEMA.VIEWS.VIEW_DEFINITION`
+    ///   (`metadata`) — never the `CREATE TABLE` its column list would rebuild
+    ///   into;
+    /// * a **sequence**: the server's own text, or a `CREATE SEQUENCE` rebuilt
+    ///   from the sequence catalogue, which holds every option a sequence has
+    ///   and so says `catalog` rather than `metadata`;
+    /// * a **trigger**: the server's own text, or one rebuilt from
+    ///   `INFORMATION_SCHEMA.TRIGGERS` (`metadata`);
+    /// * a **routine**: `SHOW CREATE PROCEDURE`, `pg_get_functiondef`,
+    ///   `ALL_SOURCE` and their kin, or `INFORMATION_SCHEMA.ROUTINES` under a
+    ///   header rebuilt from the parameter list (`metadata`); an overloaded name
+    ///   answers every overload, one statement each.
     ///
     /// # Errors
     ///
-    /// A `sql` error when neither layer has a body to show: an account that may
-    /// run a routine but not read it gets this on MySQL, and so does a routine
-    /// bound to an external method, such as an H2 alias asked for through
+    /// A `sql` error when no layer has text to show: an account that may run a
+    /// routine but not read it gets this on MySQL, and so does a routine bound
+    /// to an external method, such as an H2 alias asked for through
     /// [`DdlSource::Metadata`].
-    pub fn describe_routine_ddl(
+    pub fn describe_object_ddl(
         &self,
         catalog: Option<&str>,
         schema: Option<&str>,
         name: &str,
-        routine: RoutineKind,
+        kind: ObjectKind,
         source: DdlSource,
     ) -> Result<DdlResult> {
+        if kind == ObjectKind::Table {
+            return self.describe_ddl(catalog, schema, name, source);
+        }
         let mut request = DescribeRequest::new("ddl").with_name(name);
         request.catalog = catalog.map(str::to_string);
         request.schema = schema.map(str::to_string);
         request.source = Some(source);
-        request.routine = Some(routine);
+        request.object = Some(kind);
         let body = serde_json::to_vec(&request)?;
         self.json_call(Op::Describe, self.handle, 0, Some(body))
     }

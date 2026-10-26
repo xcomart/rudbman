@@ -122,18 +122,21 @@ pub enum Folder {
     Functions,
     /// Sequences.
     Sequences,
+    /// Triggers.
+    Triggers,
 }
 
 /// The folders under a schema, in the order they are drawn.
 ///
 /// Tables first because that is what anyone opening a database is looking for;
-/// sequences last because most products have none.
-pub const FOLDERS: [Folder; 5] = [
+/// sequences and triggers last because most schemas have few.
+pub const FOLDERS: [Folder; 6] = [
     Folder::Tables,
     Folder::Views,
     Folder::Procedures,
     Folder::Functions,
     Folder::Sequences,
+    Folder::Triggers,
 ];
 
 impl Folder {
@@ -148,6 +151,7 @@ impl Folder {
             Folder::Procedures => "procedures",
             Folder::Functions => "functions",
             Folder::Sequences => "sequences",
+            Folder::Triggers => "triggers",
         }
     }
 
@@ -155,11 +159,13 @@ impl Folder {
     ///
     /// `TABLE` and `SYSTEM TABLE` are separate types and only the first is
     /// listed: a user opening a schema is not looking for the catalogue's own
-    /// bookkeeping. `VIEW` and `SYSTEM VIEW` likewise.
+    /// bookkeeping. `VIEW` and `SYSTEM VIEW` likewise. A materialized view is a
+    /// view to its reader, and is listed with them on the products that have
+    /// one; a driver that knows no such type ignores the word.
     pub fn table_types(self) -> Option<&'static [&'static str]> {
         match self {
             Folder::Tables => Some(&["TABLE"]),
-            Folder::Views => Some(&["VIEW"]),
+            Folder::Views => Some(&["VIEW", "MATERIALIZED VIEW"]),
             _ => None,
         }
     }
@@ -172,6 +178,7 @@ impl Folder {
             Folder::Procedures => ts!("explorer.procedures"),
             Folder::Functions => ts!("explorer.functions"),
             Folder::Sequences => ts!("explorer.sequences"),
+            Folder::Triggers => ts!("explorer.triggers"),
         }
     }
 
@@ -183,13 +190,15 @@ impl Folder {
             Folder::Procedures => icons::PROCEDURE,
             Folder::Functions => icons::FUNCTION,
             Folder::Sequences => icons::SEQUENCE,
+            Folder::Triggers => icons::TRIGGER,
         }
     }
 
     /// Whether activating an object of this folder opens a detail panel with
     /// columns, keys and DDL in it.
     ///
-    /// Only what has columns: a routine and a sequence get the smaller panel.
+    /// Only what has columns: a routine, a sequence and a trigger get the
+    /// smaller panel, their properties and their DDL.
     pub fn is_relation(self) -> bool {
         matches!(self, Folder::Tables | Folder::Views)
     }
@@ -1918,7 +1927,12 @@ pub(crate) mod tests {
     fn only_a_table_or_a_view_opens_the_full_detail_panel() {
         assert!(Folder::Tables.is_relation());
         assert!(Folder::Views.is_relation());
-        for folder in [Folder::Procedures, Folder::Functions, Folder::Sequences] {
+        for folder in [
+            Folder::Procedures,
+            Folder::Functions,
+            Folder::Sequences,
+            Folder::Triggers,
+        ] {
             assert!(!folder.is_relation(), "{folder:?}");
         }
     }
@@ -1930,11 +1944,20 @@ pub(crate) mod tests {
         assert_eq!(Folder::Tables.describe_kind(), "tables");
         assert_eq!(Folder::Views.describe_kind(), "tables");
         assert_eq!(Folder::Tables.table_types(), Some(&["TABLE"][..]));
-        assert_eq!(Folder::Views.table_types(), Some(&["VIEW"][..]));
-        for folder in [Folder::Procedures, Folder::Functions, Folder::Sequences] {
+        assert_eq!(
+            Folder::Views.table_types(),
+            Some(&["VIEW", "MATERIALIZED VIEW"][..])
+        );
+        for folder in [
+            Folder::Procedures,
+            Folder::Functions,
+            Folder::Sequences,
+            Folder::Triggers,
+        ] {
             assert_eq!(folder.table_types(), None, "{folder:?}");
         }
         assert_eq!(Folder::Sequences.describe_kind(), "sequences");
+        assert_eq!(Folder::Triggers.describe_kind(), "triggers");
     }
 
     #[test]

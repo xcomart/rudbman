@@ -307,8 +307,7 @@ pub struct DescribeResult {
     pub items: Vec<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// The response to `DESCRIBE` with `kind: "ddl"`: one table's or one routine's
-/// `CREATE` text.
+/// The response to `DESCRIBE` with `kind: "ddl"`: one object's `CREATE` text.
 ///
 /// The one metadata kind that answers with a document instead of a list, which
 /// is why it has [`Session::describe_ddl`](crate::Session::describe_ddl) to
@@ -318,9 +317,12 @@ pub struct DescribeResult {
 pub struct DdlResult {
     /// The statement text, ready to show. One `CREATE TABLE`, possibly followed
     /// by `CREATE INDEX` statements for indexes that do not merely back a
-    /// declared key; for a routine, one `CREATE` per overload of the name.
+    /// declared key; for a routine, one `CREATE` per overload of the name; for
+    /// a view, a sequence or a trigger, its own `CREATE`.
     pub ddl: String,
-    /// Which layer produced it: `"native"` or `"metadata"`.
+    /// Which layer produced it: `"native"`, `"metadata"`, or `"catalog"` — a
+    /// statement rebuilt from a catalogue that holds everything the object is,
+    /// as the sequence catalogues do, and so complete without being quoted.
     ///
     /// Kept as a string rather than an enum so that a bridge which learns a
     /// third path does not fail to parse here. Use [`DdlResult::is_native`] and

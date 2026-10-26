@@ -334,6 +334,7 @@ explorer:
   procedures: Procedimientos
   functions: Funciones
   sequences: Secuencias
+  triggers: Disparadores
 
 # El panel de detalle de un objeto.
 detail:
@@ -349,7 +350,7 @@ detail:
   empty: no hay nada
   no_ddl: Este objeto no tiene ninguna sentencia CREATE que mostrar.
   ddl_reconstructed: Reconstruido a partir de los metadatos, a título orientativo. No incluye restricciones CHECK, disparadores, particiones ni intercalaciones.
-  ddl_reconstructed_routine: Reconstruido a partir del cuerpo y la lista de parámetros de la rutina en el catálogo, a título orientativo. No incluye características como el determinismo o la seguridad.
+  ddl_reconstructed_object: Reconstruido a partir del catálogo, a título orientativo. Lo que el catálogo no guarda —entre otras cosas, las características de una rutina— no está incluido.
 
   column: Columna
   type: Tipo
@@ -380,6 +381,11 @@ detail:
   current_value: Actual
   cycle: Ciclo
   cache: Caché
+  trigger_table: Tabla
+  timing: Momento
+  events: Eventos
+  level: Nivel
+  status: Estado
 
 query:
   result_log: "Registro de ejecución"

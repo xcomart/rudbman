@@ -334,6 +334,7 @@ explorer:
   procedures: 프로시저
   functions: 함수
   sequences: 시퀀스
+  triggers: 트리거
 
 # 객체 상세 패널.
 detail:
@@ -349,7 +350,7 @@ detail:
   empty: 없음
   no_ddl: 이 객체에는 보여줄 CREATE 구문이 없습니다.
   ddl_reconstructed: 메타데이터에서 재구성한 참고용입니다. CHECK 제약, 트리거, 파티션, 콜레이션은 포함되지 않습니다.
-  ddl_reconstructed_routine: 카탈로그의 루틴 본문과 매개변수 목록으로 재구성한 참고용입니다. 결정성, 보안 같은 특성은 포함되지 않습니다.
+  ddl_reconstructed_object: 카탈로그에서 재구성한 참고용입니다. 루틴의 특성처럼 카탈로그에 없는 내용은 포함되지 않습니다.
 
   column: 열
   type: 타입
@@ -380,6 +381,11 @@ detail:
   current_value: 현재값
   cycle: 순환
   cache: 캐시
+  trigger_table: 테이블
+  timing: 실행 시점
+  events: 이벤트
+  level: 수준
+  status: 상태
 
 query:
   result_log: "결과 로그"

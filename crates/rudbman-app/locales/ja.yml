@@ -334,6 +334,7 @@ explorer:
   procedures: プロシージャー
   functions: 関数
   sequences: シーケンス
+  triggers: トリガー
 
 # オブジェクトの詳細パネル。
 detail:
@@ -349,7 +350,7 @@ detail:
   empty: ありません
   no_ddl: このオブジェクトに表示できる CREATE 文はありません。
   ddl_reconstructed: メタデータから組み立てた参考用です。CHECK 制約・トリガー・パーティション・照合順序は含まれていません。
-  ddl_reconstructed_routine: カタログのルーチン本体とパラメーター一覧から組み立てた参考用です。決定性やセキュリティなどの特性は含まれていません。
+  ddl_reconstructed_object: カタログから組み立てた参考用です。ルーチンの特性など、カタログにない内容は含まれていません。
 
   column: 列
   type: 型
@@ -380,6 +381,11 @@ detail:
   current_value: 現在値
   cycle: 循環
   cache: キャッシュ
+  trigger_table: テーブル
+  timing: タイミング
+  events: イベント
+  level: レベル
+  status: 状態
 
 query:
   result_log: "実行ログ"

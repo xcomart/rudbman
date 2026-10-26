@@ -104,7 +104,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use rudbman_jdbc::{
-    Batch, ConnectionSpec, DdlSource, DescribeRequest, Jvm, JvmConfig, RoutineKind, Session,
+    Batch, ConnectionSpec, DdlSource, DescribeRequest, Jvm, JvmConfig, ObjectKind, Session,
     StatementSpec, Value, default_bridge_jar,
 };
 // The generator under test. `rudbman-sql` is already a dev-dependency of this
@@ -2860,7 +2860,7 @@ fn routines(server: &Server) {
 
     let procedures = listed("procedures", &procedure);
     assert_eq!(procedures.len(), 1, "{:?}: {procedures:?}", server.product);
-    let mut routines = vec![(procedures[0].clone(), RoutineKind::Procedure)];
+    let mut routines = vec![(procedures[0].clone(), ObjectKind::Procedure)];
     if has_function {
         assert!(
             listed("procedures", &function).is_empty(),
@@ -2869,13 +2869,13 @@ fn routines(server: &Server) {
         );
         let functions = listed("functions", &function);
         assert_eq!(functions.len(), 1, "{:?}: {functions:?}", server.product);
-        routines.push((functions[0].clone(), RoutineKind::Function));
+        routines.push((functions[0].clone(), ObjectKind::Function));
     }
 
     for (name, kind) in routines {
         let ddl = server
             .session
-            .describe_routine_ddl(
+            .describe_object_ddl(
                 server.catalog.as_deref(),
                 server.schema.as_deref(),
                 &name,
@@ -2972,4 +2972,243 @@ fn mariadb_lists_its_sequences_under_the_database() {
     let one = describe(Some(&sequence));
     assert_eq!(one.len(), 1, "{one:?}");
     assert_eq!(string(&one[0], "name"), sequence);
+}
+
+// --- every kind of object ----------------------------------------------------
+
+#[test]
+fn postgres_lists_and_quotes_every_kind_of_object() {
+    every_kind(&server!(Product::Postgres));
+}
+
+#[test]
+fn mysql_lists_and_quotes_every_kind_of_object() {
+    every_kind(&server!(Product::MySql));
+}
+
+#[test]
+fn mariadb_lists_and_quotes_every_kind_of_object() {
+    every_kind(&server!(Product::MariaDb));
+}
+
+#[test]
+fn mssql_lists_and_quotes_every_kind_of_object() {
+    every_kind(&server!(Product::MsSql));
+}
+
+#[test]
+fn oracle_lists_and_quotes_every_kind_of_object() {
+    every_kind(&server!(Product::Oracle));
+}
+
+/// A table, a view, a sequence and a trigger, each listed by the request the
+/// explorer's folder sends and each answered with its own `CREATE` — the
+/// procedure and the function are [`routines`]'.
+///
+/// The view is the one that was wrong: every product but MySQL's family and H2
+/// answered it with the `CREATE TABLE` its column list rebuilds into, a
+/// different object a reader would take for this one. Sequences and triggers
+/// had no `CREATE` at all, and triggers were not listed. MySQL refuses
+/// `CREATE TRIGGER` from an account without `SUPER` while binary logging is on,
+/// as it does `CREATE FUNCTION`, so there that half runs only where the server
+/// allows it.
+fn every_kind(server: &Server) {
+    let product = server.product;
+    let table = server.table("obj");
+    let view = server.view("objv");
+    let sequence = server.fresh("objseq");
+    let trigger = server.fresh("objtrg");
+    let note = server.col("note");
+    server.exec(&format!(
+        "create table {table} (id int primary key, {note} varchar(20))"
+    ));
+    server.exec(&format!(
+        "create view {view} as select id from {table} where id > 0"
+    ));
+
+    let has_sequences = product != Product::MySql;
+    let _sequence = has_sequences.then(|| {
+        server.exec(&format!(
+            "create sequence {sequence} start with 100 increment by 5 cache 20"
+        ));
+        DropOnExit {
+            server,
+            drop: format!("drop sequence {sequence}"),
+        }
+    });
+
+    let mut guards = Vec::new();
+    let create_trigger = match product {
+        Product::Postgres => {
+            let function = server.fresh("objtrgfn");
+            server.exec(&format!(
+                "create function {function}() returns trigger language plpgsql \
+                 as $$ begin return new; end $$"
+            ));
+            guards.push(DropOnExit {
+                server,
+                drop: format!("drop function if exists {function}() cascade"),
+            });
+            format!(
+                "create trigger {trigger} before insert or update on {table} \
+                 for each row execute function {function}()"
+            )
+        }
+        Product::MySql | Product::MariaDb => format!(
+            "create trigger {trigger} before insert on {table} for each row \
+             set new.note = upper(new.note)"
+        ),
+        Product::MsSql => {
+            format!("create trigger {trigger} on {table} after insert as begin set nocount on; end")
+        }
+        Product::Oracle => format!(
+            "create or replace trigger {trigger} before insert on {table} for each row \
+             begin :new.{note} := upper(:new.{note}); end;"
+        ),
+    };
+    let has_trigger = match server
+        .session
+        .execute(&StatementSpec::new(create_trigger.clone()))
+    {
+        Ok(_) => true,
+        Err(error) if product == Product::MySql && error.to_string().contains("SUPER") => {
+            println!("skipped the trigger half: MySQL wants SUPER for it here: {error}");
+            false
+        }
+        Err(error) => panic!("{product:?}: {create_trigger}: {error}"),
+    };
+
+    let describe = |kind: &str, name: Option<&str>, types: Option<&[&str]>| {
+        let mut request = DescribeRequest::new(kind);
+        request.catalog = server.catalog.clone();
+        request.schema = server.schema.clone();
+        request.name = name.map(str::to_string);
+        if let Some(types) = types {
+            request.table_pattern = name.map(str::to_string);
+            request.name = None;
+            request.types = Some(types.iter().map(|t| (*t).to_string()).collect());
+        }
+        server
+            .session
+            .describe(&request)
+            .unwrap_or_else(|error| panic!("{product:?}: describe {kind}: {error}"))
+            .items
+    };
+    let names = |items: &[serde_json::Map<String, serde_json::Value>]| -> Vec<String> {
+        items.iter().map(|item| string(item, "name")).collect()
+    };
+
+    // The explorer's folders, as it asks for them.
+    assert_eq!(
+        names(&describe("tables", Some(&table), Some(&["TABLE"]))),
+        std::slice::from_ref(&table),
+        "{product:?}"
+    );
+    assert_eq!(
+        names(&describe(
+            "tables",
+            Some(&view),
+            Some(&["VIEW", "MATERIALIZED VIEW"])
+        )),
+        std::slice::from_ref(&view),
+        "{product:?}"
+    );
+    let mut objects = vec![
+        (table.clone(), ObjectKind::Table, "TABLE"),
+        (view.clone(), ObjectKind::View, "VIEW"),
+    ];
+    if has_sequences {
+        let listed = describe("sequences", Some(&sequence), None);
+        assert_eq!(
+            names(&listed),
+            std::slice::from_ref(&sequence),
+            "{product:?}"
+        );
+        assert_eq!(string(&listed[0], "increment"), "5", "{product:?}");
+        objects.push((sequence.clone(), ObjectKind::Sequence, "SEQUENCE"));
+    }
+    if has_trigger {
+        let listed = describe("triggers", Some(&trigger), None);
+        assert_eq!(
+            names(&listed),
+            std::slice::from_ref(&trigger),
+            "{product:?}: {listed:?}"
+        );
+        assert_eq!(string(&listed[0], "table"), table, "{product:?}");
+        assert!(
+            string(&listed[0], "events").contains("INSERT"),
+            "{product:?}: {listed:?}"
+        );
+        objects.push((trigger.clone(), ObjectKind::Trigger, "TRIGGER"));
+    }
+
+    for (name, kind, word) in objects {
+        let ddl = server
+            .session
+            .describe_object_ddl(
+                server.catalog.as_deref(),
+                server.schema.as_deref(),
+                &name,
+                kind,
+                DdlSource::Auto,
+            )
+            .unwrap_or_else(|error| panic!("{product:?}: ddl of {kind:?} {name}: {error}"));
+        let upper = ddl.ddl.to_uppercase();
+        assert!(
+            upper.contains(word) && upper.contains(&name.to_uppercase()),
+            "{product:?} {kind:?}: {}",
+            ddl.ddl
+        );
+        if kind == ObjectKind::View {
+            assert!(!upper.contains("CREATE TABLE"), "{product:?}: {}", ddl.ddl);
+        }
+        if kind != ObjectKind::Table {
+            assert!(
+                !ddl.is_reconstructed(),
+                "{product:?} {kind:?}: {}",
+                ddl.source
+            );
+        }
+
+        // Laid out, the text is the same statement.
+        let formatted = format_ddl(&ddl.ddl, server.dialect());
+        let squeezed = |text: &str| -> String {
+            text.chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+                .to_uppercase()
+        };
+        assert_eq!(squeezed(&formatted), squeezed(&ddl.ddl), "{product:?}");
+        println!("{product:?} {kind:?} ({}):\n{formatted}\n", ddl.source);
+    }
+
+    // PostgreSQL browses the database it connected to and no other, so that
+    // is the one catalogue it lists.
+    if product == Product::Postgres {
+        let catalogs = server
+            .session
+            .describe(&DescribeRequest::new("catalogs"))
+            .expect("catalogs")
+            .items;
+        assert_eq!(
+            names(&catalogs),
+            [scalar(&server.session, "select current_database()")]
+        );
+    }
+
+    // Connector/J answers getExportedKeys once per unique key of the parent;
+    // the bridge answers the one foreign key once.
+    if matches!(product, Product::MySql | Product::MariaDb) {
+        let parent = server.table("fkp");
+        let child = server.table("fkc");
+        server.exec(&format!(
+            "create table {parent} (id int primary key, code varchar(10) not null unique)"
+        ));
+        server.exec(&format!(
+            "create table {child} (id int primary key, parent_id int not null, \
+             foreign key (parent_id) references {parent}(id))"
+        ));
+        let exported = server.describe("exported_keys", &parent);
+        assert_eq!(exported.len(), 1, "{product:?}: {exported:?}");
+    }
 }

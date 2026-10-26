@@ -17,8 +17,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * {@code DESCRIBE kind: "ddl"} with a {@code routine} member: the {@code CREATE}
- * text of one stored procedure or function.
+ * {@code DESCRIBE kind: "ddl"} with {@code object} {@code procedure} or
+ * {@code function}: the {@code CREATE} text of one stored routine.
  *
  * <p>The same two layers as {@link Ddl}, and for the same reason.
  *
@@ -50,49 +50,27 @@ import java.util.Locale;
  */
 public final class RoutineDdl {
 
-    /**
-     * H2's {@code SCRIPT} restricted to one schema still writes every object in
-     * it; the routine is the row creating its alias.
-     * Source: H2 2.x SQL grammar, "SCRIPT".
-     */
-    private static final String H2_SCRIPT = "SCRIPT NODATA NOPASSWORDS NOSETTINGS SCHEMA ";
-
     private RoutineDdl() {
     }
 
     /**
      * Builds the DDL for one routine.
      *
-     * <p>Request members: {@code routine} ({@code procedure} or
-     * {@code function}), {@code catalog}, {@code schema} and {@code name}
+     * <p>Request members: {@code catalog}, {@code schema} and {@code name}
      * (required, exact). {@code source} has already been checked by
      * {@link Ddl#of} and means the same as there.
      *
-     * @param conn the live connection
-     * @param dbm  the connection metadata
-     * @param req  the request body
-     * @param want {@code auto}, {@code native} or {@code metadata}
+     * @param conn     the live connection
+     * @param dbm      the connection metadata
+     * @param req      the request body
+     * @param want     {@code auto}, {@code native} or {@code metadata}
+     * @param function whether the request named a function
      * @return an object carrying {@code ddl} and {@code source}
      * @throws SQLException if the driver fails on the portable path
      */
-    static JsonObject of(Connection conn, DatabaseMetaData dbm, JsonObject req, String want)
-            throws SQLException {
-        String routine = Json.str(req, "routine");
-        boolean function;
-        if ("function".equals(routine)) {
-            function = true;
-        } else if ("procedure".equals(routine)) {
-            function = false;
-        } else {
-            throw new BridgeException("protocol",
-                    "describe kind 'ddl' accepts routine 'procedure' or 'function', not '"
-                            + routine + "'");
-        }
-        String name = Json.str(req, "name");
-        if (name == null || name.isEmpty()) {
-            throw new BridgeException("protocol",
-                    "describe kind 'ddl' for a routine requires an exact 'name'");
-        }
+    static JsonObject of(Connection conn, DatabaseMetaData dbm, JsonObject req, String want,
+                         boolean function) throws SQLException {
+        String name = Ddl.objectName(req);
         String catalog = Json.str(req, "catalog");
         String schema = Json.str(req, "schema");
         Dialect dialect = Dialect.of(dbm);
@@ -143,25 +121,19 @@ public final class RoutineDdl {
                 return Attempt.<String>on(conn, "pg_get_functiondef",
                         c -> postgres(c, schema, name), null);
             case ORACLE: {
-                String first = function ? "FUNCTION" : "PROCEDURE";
-                String other = function ? "PROCEDURE" : "FUNCTION";
-                String text = Attempt.<String>on(conn, "ALL_SOURCE " + first,
-                        c -> oracle(c, schema, name, first), null);
-                return text != null ? text : Attempt.<String>on(conn, "ALL_SOURCE " + other,
-                        c -> oracle(c, schema, name, other), null);
+                String text = DdlText.oracleSource(conn, schema, name,
+                        function ? "FUNCTION" : "PROCEDURE");
+                return text != null ? text : DdlText.oracleSource(conn, schema, name,
+                        function ? "PROCEDURE" : "FUNCTION");
             }
             case SQLSERVER:
-                return Attempt.<String>on(conn, "OBJECT_DEFINITION",
-                        c -> sqlServer(c, id.qualify(catalog, schema, unnumbered(name))), null);
+                return DdlText.sqlServerDefinition(conn,
+                        id.qualify(catalog, schema, unnumbered(name)));
             case DB2:
                 return Attempt.<String>on(conn, "SYSCAT.ROUTINES",
                         c -> db2(c, schema, name), null);
             case H2:
-                if (schema == null || schema.isEmpty()) {
-                    return null;
-                }
-                return Attempt.<String>run(conn, "SCRIPT SCHEMA",
-                        st -> h2Script(st, id, schema, name), null);
+                return DdlText.h2Script(conn, id, schema, "ALIAS", name);
             default:
                 return null;
         }
@@ -174,7 +146,7 @@ public final class RoutineDdl {
             // a label that differs per kind. It is NULL for an account that may
             // run the routine but not read it, which is "no native text".
             if (rs.next() && rs.getMetaData().getColumnCount() >= 3) {
-                return terminated(rs.getString(3));
+                return DdlText.terminated(rs.getString(3));
             }
             return null;
         }
@@ -204,56 +176,13 @@ public final class RoutineDdl {
             List<String> texts = new ArrayList<>();
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    String text = terminated(rs.getString(1));
+                    String text = DdlText.terminated(rs.getString(1));
                     if (text != null) {
                         texts.add(text);
                     }
                 }
             }
             return texts.isEmpty() ? null : String.join("\n\n", texts);
-        }
-    }
-
-    /**
-     * {@code ALL_SOURCE} holds the text after {@code CREATE [OR REPLACE]}, one
-     * row per line with the line break kept, so the rows are joined as they
-     * stand. Its last line already ends in {@code END;}.
-     */
-    private static String oracle(Connection conn, String schema, String name, String type)
-            throws SQLException {
-        boolean scoped = schema != null && !schema.isEmpty();
-        String sql = "SELECT TEXT FROM ALL_SOURCE WHERE OWNER = "
-                + (scoped ? "?" : "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')")
-                + " AND NAME = ? AND TYPE = ? ORDER BY LINE";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            int i = 1;
-            if (scoped) {
-                ps.setString(i++, schema);
-            }
-            ps.setString(i++, name);
-            ps.setString(i, type);
-            StringBuilder sb = new StringBuilder();
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String line = rs.getString(1);
-                    if (line != null) {
-                        sb.append(line);
-                    }
-                }
-            }
-            String text = sb.toString().strip();
-            return text.isEmpty() ? null : "CREATE OR REPLACE " + text;
-        }
-    }
-
-    /** {@code OBJECT_DEFINITION} is the batch the routine was created with. */
-    private static String sqlServer(Connection conn, String qualified) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT OBJECT_DEFINITION(OBJECT_ID(?))")) {
-            ps.setString(1, qualified);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? stripped(rs.getString(1)) : null;
-            }
         }
     }
 
@@ -271,7 +200,7 @@ public final class RoutineDdl {
             List<String> texts = new ArrayList<>();
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    String text = stripped(rs.getString(1));
+                    String text = DdlText.stripped(rs.getString(1));
                     if (text != null) {
                         texts.add(text);
                     }
@@ -279,30 +208,6 @@ public final class RoutineDdl {
             }
             return texts.isEmpty() ? null : String.join("\n\n", texts);
         }
-    }
-
-    /**
-     * Runs H2's {@code SCRIPT} over the schema and keeps the alias.
-     *
-     * <p>H2 writes fully quoted, fully qualified names in a script, so the row
-     * that creates this routine is the one with {@code ALIAS "SCHEMA"."NAME"}
-     * in it - followed by a space, so that {@code F} does not also pick
-     * {@code F_2}.
-     */
-    private static String h2Script(Statement st, Ident id, String schema, String name)
-            throws SQLException {
-        String ref = "ALIAS \"" + schema + "\".\"" + name + "\" ";
-        List<String> texts = new ArrayList<>();
-        try (ResultSet rs = st.executeQuery(H2_SCRIPT + id.q(schema))) {
-            while (rs.next()) {
-                String stmt = stripped(rs.getString(1));
-                if (stmt != null && stmt.toUpperCase(Locale.ROOT).startsWith("CREATE ")
-                        && stmt.contains(ref)) {
-                    texts.add(stmt);
-                }
-            }
-        }
-        return texts.isEmpty() ? null : String.join("\n\n", texts);
     }
 
     // -------------------------------------------------------------- catalog
@@ -329,7 +234,7 @@ public final class RoutineDdl {
                     ps.setString(2, owner);
                 }
                 try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() ? stripped(rs.getString(1)) : null;
+                    return rs.next() ? DdlText.stripped(rs.getString(1)) : null;
                 }
             }
         }, null);
@@ -389,7 +294,7 @@ public final class RoutineDdl {
         if (returns != null) {
             sb.append(" RETURNS ").append(returns);
         }
-        return sb.append('\n').append(terminated(body)).toString();
+        return sb.append('\n').append(DdlText.terminated(body)).toString();
     }
 
     // ---------------------------------------------------------------- text
@@ -399,21 +304,4 @@ public final class RoutineDdl {
         return name.replaceFirst(";\\d+$", "");
     }
 
-    /** The text with its trailing blanks gone, or {@code null} when nothing is left. */
-    private static String stripped(String text) {
-        if (text == null) {
-            return null;
-        }
-        String out = text.strip();
-        return out.isEmpty() ? null : out;
-    }
-
-    /** {@link #stripped}, ending in a {@code ;} as a table's DDL does. */
-    private static String terminated(String text) {
-        String out = stripped(text);
-        if (out == null) {
-            return null;
-        }
-        return out.endsWith(";") ? out : out + ";";
-    }
 }

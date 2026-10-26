@@ -32,6 +32,91 @@ const LEAD_WORDS: &[&str] = &[
     "REPLACE",
 ];
 
+/// The words of a view's header up to its `AS`.
+const VIEW_WORDS: &[&str] = &[
+    "AS",
+    "CREATE",
+    "EDITIONABLE",
+    "FORCE",
+    "MATERIALIZED",
+    "NOFORCE",
+    "NONEDITIONABLE",
+    "OR",
+    "RECURSIVE",
+    "REPLACE",
+    "TEMP",
+    "TEMPORARY",
+    "VIEW",
+];
+
+/// The words of a sequence's options.
+const SEQUENCE_WORDS: &[&str] = &[
+    "AS",
+    "BY",
+    "CACHE",
+    "CREATE",
+    "CYCLE",
+    "EXISTS",
+    "GLOBAL",
+    "IF",
+    "INCREMENT",
+    "KEEP",
+    "MAXVALUE",
+    "MINVALUE",
+    "NO",
+    "NOCACHE",
+    "NOCYCLE",
+    "NOKEEP",
+    "NOMAXVALUE",
+    "NOMINVALUE",
+    "NOORDER",
+    "NOSCALE",
+    "NOT",
+    "OR",
+    "ORDER",
+    "REPLACE",
+    "RESTART",
+    "SCALE",
+    "SEQUENCE",
+    "SESSION",
+    "START",
+    "TEMPORARY",
+    "WITH",
+];
+
+/// The words of a trigger's header, in upper case where they stand there.
+const TRIGGER_WORDS: &[&str] = &[
+    "AFTER",
+    "BEFORE",
+    "CONSTRAINT",
+    "CREATE",
+    "DEFINER",
+    "DELETE",
+    "EACH",
+    "EDITIONABLE",
+    "EXECUTE",
+    "FOLLOWS",
+    "FOR",
+    "FORCE",
+    "FUNCTION",
+    "INSERT",
+    "INSTEAD",
+    "NONEDITIONABLE",
+    "OF",
+    "ON",
+    "OR",
+    "PRECEDES",
+    "PROCEDURE",
+    "REFERENCING",
+    "REPLACE",
+    "ROW",
+    "STATEMENT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE",
+    "WHEN",
+];
+
 /// Words that complete a characteristic: `NOT DETERMINISTIC`,
 /// `READS SQL DATA`, `SQL SECURITY INVOKER`, `CALLED ON NULL INPUT`.
 const COMPANION_WORDS: &[&str] = &[
@@ -110,6 +195,9 @@ const MYSQL_BODY: &[&str] = &[
 ///   the reconstructed DDL already has, so that text is left as it is.
 /// * **`CREATE VIEW`** — the header to `AS` on one line, and the query under
 ///   it laid out by [`format_sql`](super::format_sql).
+/// * **`CREATE TRIGGER`** — what it fires on and when on the first line, the
+///   body under it laid out as a routine's is. A trigger whose action is a
+///   call — PostgreSQL's `EXECUTE FUNCTION`, H2's `CALL` — is one line.
 /// * **`CREATE FUNCTION` / `PROCEDURE`** — the name and its parameters on the
 ///   first line, or one parameter to a line when that line would pass a
 ///   hundred columns; the return type beside them; one characteristic
@@ -139,8 +227,6 @@ const MYSQL_BODY: &[&str] = &[
 /// * **A SQL Server body** stays as it was written. T-SQL does not end its
 ///   statements with `;`, and a token-level layout cannot tell where one ends
 ///   and the next begins without it; only the header is laid out.
-/// * **Triggers** are written on one line like any other statement: no folder
-///   of the explorer shows one on its own.
 ///
 /// The result has no leading or trailing whitespace.
 pub fn format_ddl(source: &str, dialect: &Dialect) -> String {
@@ -195,6 +281,10 @@ enum Kind {
     View(usize),
     /// `CREATE FUNCTION` or `CREATE PROCEDURE`, with the index of that word.
     Routine(usize),
+    /// `CREATE TRIGGER`, with the index of that word.
+    Trigger(usize),
+    /// `CREATE SEQUENCE`, with the index of that word.
+    Sequence(usize),
     /// Anything else.
     Other,
 }
@@ -246,6 +336,8 @@ impl<'a> Layout<'a> {
                     Kind::Table(open) => self.table(first, open),
                     Kind::View(as_) => self.view(first, as_),
                     Kind::Routine(word) => self.routine(first, word),
+                    Kind::Trigger(word) => self.trigger(first, word),
+                    Kind::Sequence(word) => self.sequence(first, word),
                     Kind::Other => {
                         let end = self.statement_end(first);
                         (self.phrase(first..end, &[]), end)
@@ -316,6 +408,12 @@ impl<'a> Layout<'a> {
             if self.is_word(k, "FUNCTION") || self.is_word(k, "PROCEDURE") {
                 return Kind::Routine(k);
             }
+            if self.is_word(k, "TRIGGER") {
+                return Kind::Trigger(k);
+            }
+            if self.is_word(k, "SEQUENCE") {
+                return Kind::Sequence(k);
+            }
             if self.is_word(k, "AS") {
                 return Kind::Other;
             }
@@ -381,12 +479,44 @@ impl<'a> Layout<'a> {
 
     fn view(&self, i: usize, as_: usize) -> (String, usize) {
         let end = self.statement_end(as_);
-        let header = self.phrase(i..as_ + 1, &[as_]);
+        let forced = self.words_in(i..as_ + 1, VIEW_WORDS);
+        let header = self.phrase(i..as_ + 1, &forced);
         if as_ + 1 >= end {
             return (header, end);
         }
         let query = format_segment(self.source(as_ + 1, end), self.dialect);
         (format!("{header}\n{query}"), end)
+    }
+
+    /// A sequence on one line, its options in upper case: MariaDB quotes them
+    /// back in lower case, and the rest of the statement is already upper.
+    fn sequence(&self, i: usize, word: usize) -> (String, usize) {
+        let end = self.statement_end(word);
+        // The name is not an option, whatever it is called: one part, or
+        // several joined by dots, after any `IF NOT EXISTS`.
+        let mut name = word + 1;
+        if self.is_word(name, "IF") {
+            name += if self.is_word(name + 1, "NOT") { 3 } else { 2 };
+        }
+        let mut after = name + 1;
+        while self.items.get(after).is_some_and(|item| item.is_punct(".")) {
+            after += 2;
+        }
+        let mut forced = self.words_in(i..name.min(end), SEQUENCE_WORDS);
+        forced.extend(self.words_in(after.min(end)..end, SEQUENCE_WORDS));
+        (self.phrase(i..end, &forced), end)
+    }
+
+    /// The bare words in `range` that are in `words`, and not part of a dotted
+    /// name.
+    fn words_in(&self, range: std::ops::Range<usize>, words: &[&str]) -> Vec<usize> {
+        range
+            .filter(|&k| {
+                words.iter().any(|w| self.is_word(k, w))
+                    && !self.next_is_punct(k, ".")
+                    && !(k > 0 && self.items[k - 1].is_punct("."))
+            })
+            .collect()
     }
 
     // -------------------------------------------------------------- routine
@@ -403,6 +533,77 @@ impl<'a> Layout<'a> {
             Some(body) => self.body(body, &mut lines),
         };
         (lines.join("\n"), end)
+    }
+
+    // -------------------------------------------------------------- trigger
+
+    /// A trigger: its header on one line, its body laid out as a routine's.
+    fn trigger(&self, i: usize, word: usize) -> (String, usize) {
+        let body = self.trigger_body(word + 1);
+        let header_end = body.unwrap_or_else(|| self.statement_end(word));
+        // The header's own words are keywords where they stand; a name after a
+        // dot (`NEW.x`, in a `WHEN`) is not one of them.
+        let forced: Vec<usize> = (i..header_end)
+            .filter(|&k| {
+                TRIGGER_WORDS.iter().any(|w| self.is_word(k, w))
+                    && !self.next_is_punct(k, ".")
+                    && !(k > 0 && self.items[k - 1].is_punct("."))
+            })
+            .collect();
+        let mut lines = vec![self.phrase(i..header_end, &forced)];
+        let end = match body {
+            None => header_end,
+            Some(body) => self.body(body, &mut lines),
+        };
+        (lines.join("\n"), end)
+    }
+
+    /// Where a trigger's body starts, searching from just after `TRIGGER`; or
+    /// `None` for a trigger whose action is part of its header.
+    fn trigger_body(&self, from: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        for k in from..self.items.len() {
+            let item = &self.items[k];
+            if item.is_punct("(") {
+                depth += 1;
+                continue;
+            }
+            if item.is_punct(")") {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            if depth > 0 {
+                continue;
+            }
+            if item.is_punct(";") {
+                return None;
+            }
+            let starts = match self.family {
+                // `FOR EACH ROW [FOLLOWS | PRECEDES other]`, then the statement.
+                Family::MySql => {
+                    if self.is_word(k, "FOR")
+                        && self.is_word(k + 1, "EACH")
+                        && self.is_word(k + 2, "ROW")
+                    {
+                        let mut body = k + 3;
+                        if self.is_word(body, "FOLLOWS") || self.is_word(body, "PRECEDES") {
+                            body += 2;
+                        }
+                        return (body < self.items.len()).then_some(body);
+                    }
+                    false
+                }
+                Family::Oracle => self.is_word(k, "DECLARE") || self.is_word(k, "BEGIN"),
+                Family::MsSql => {
+                    self.is_word(k, "AS") && !self.is_word(k.wrapping_sub(1), "EXECUTE")
+                }
+                Family::Other => self.is_word(k, "BEGIN") || self.is_word(k, "AS"),
+            };
+            if starts {
+                return Some(k);
+            }
+        }
+        None
     }
 
     /// The bracket around a routine's parameters, when its name is followed by
@@ -1312,6 +1513,103 @@ END"
     }
 
     #[test]
+    fn a_trigger_puts_its_body_under_its_header() {
+        assert_eq!(
+            my(
+                "CREATE DEFINER=`root`@`%` trigger aud.aud_trg before insert on aud.aud_child \
+                for each row set new.note = upper(new.note);"
+            ),
+            "CREATE DEFINER=`root`@`%` TRIGGER aud.aud_trg BEFORE INSERT ON aud.aud_child \
+             FOR EACH ROW\nSET new.note = upper(new.note);"
+        );
+        assert_eq!(
+            my(
+                "CREATE TRIGGER t AFTER UPDATE ON x FOR EACH ROW FOLLOWS other BEGIN \
+                IF new.a <> old.a THEN INSERT INTO log VALUES (new.a); END IF; END;"
+            ),
+            "CREATE TRIGGER t AFTER UPDATE ON x FOR EACH ROW FOLLOWS other
+BEGIN
+    IF new.a <> old.a THEN
+        INSERT INTO log
+        VALUES (new.a);
+    END IF;
+END;"
+        );
+        let ora = Dialect::from_id("oracle");
+        assert_eq!(
+            format_ddl(
+                "CREATE OR REPLACE trigger aud_trg before insert on aud_child for each row \
+                 when (new.note is not null) begin :new.note := upper(:new.note); end;",
+                &ora
+            ),
+            "CREATE OR REPLACE TRIGGER aud_trg BEFORE INSERT ON aud_child FOR EACH ROW \
+             WHEN (new.note IS NOT NULL)\nBEGIN\n    :new.note := upper(:new.note);\nEND;"
+        );
+        let sqlite = Dialect::from_id("sqlite");
+        assert_eq!(
+            format_ddl(
+                "CREATE TRIGGER aud_trg after insert on aud_child begin update aud_child \
+                 set note = upper(note) where id = new.id; end;",
+                &sqlite
+            ),
+            "CREATE TRIGGER aud_trg AFTER INSERT ON aud_child
+BEGIN
+    UPDATE aud_child
+       SET note = upper(note)
+     WHERE id = new.id;
+END;"
+        );
+        // A call is the whole trigger.
+        let pg = Dialect::from_id("postgres");
+        assert_eq!(
+            format_ddl(
+                "CREATE TRIGGER aud_trg BEFORE INSERT ON aud.aud_child FOR EACH ROW \
+                 EXECUTE FUNCTION aud.aud_trgfn();",
+                &pg
+            ),
+            "CREATE TRIGGER aud_trg BEFORE INSERT ON aud.aud_child FOR EACH ROW \
+             EXECUTE FUNCTION aud.aud_trgfn();"
+        );
+        // And T-SQL keeps its body as written.
+        let ms = Dialect::from_id("mssql");
+        assert_eq!(
+            format_ddl(
+                "create trigger aud.aud_trg on aud.aud_child after insert as begin\n  \
+                 set nocount on;\nend",
+                &ms
+            ),
+            "CREATE TRIGGER aud.aud_trg ON aud.aud_child AFTER INSERT\nas begin\n  set nocount \
+             on;\nend"
+        );
+    }
+
+    #[test]
+    fn a_sequence_and_a_view_write_their_own_words_in_upper_case() {
+        assert_eq!(
+            my(
+                "CREATE SEQUENCE `cache` start with 100 minvalue 1 maxvalue 9 increment by 5 \
+                cache 20 nocycle ENGINE=InnoDB;"
+            ),
+            "CREATE SEQUENCE `cache` START WITH 100 MINVALUE 1 MAXVALUE 9 INCREMENT BY 5 \
+             CACHE 20 NOCYCLE ENGINE=InnoDB;"
+        );
+        assert_eq!(
+            format_ddl(
+                "create sequence if not exists s.cycle start with 1",
+                &Dialect::from_id("postgres")
+            ),
+            "CREATE SEQUENCE IF NOT EXISTS s.cycle START WITH 1"
+        );
+        assert_eq!(
+            format_ddl(
+                "create view v as select id from t",
+                &Dialect::from_id("mssql")
+            ),
+            "CREATE VIEW v AS\nSELECT id\n  FROM t"
+        );
+    }
+
+    #[test]
     fn a_table_puts_one_column_to_a_line() {
         let h2 = Dialect::from_id("h2");
         assert_eq!(
@@ -1524,6 +1822,15 @@ END p_hello;"
             (
                 "h2",
                 "CREATE FORCE VIEW \"APP\".\"V\"(\"ID\") AS\nSELECT\n    \"ID\"\nFROM \"APP\".\"T\";",
+            ),
+            (
+                "oracle",
+                "CREATE TRIGGER t BEFORE UPDATE OF a ON x FOR EACH ROW DECLARE n NUMBER; \
+                 BEGIN n := 1; END;",
+            ),
+            (
+                "mysql",
+                "CREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW BEGIN SET NEW.a = 1; END",
             ),
         ];
         for (dialect, sql) in samples {

@@ -7,11 +7,14 @@ import comart.rudbman.bridge.BridgeException;
 import comart.rudbman.bridge.Json;
 import comart.rudbman.bridge.Session;
 
+import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * {@code DESCRIBE} (op {@code 0x10}): {@link DatabaseMetaData} queries rendered
@@ -34,10 +37,11 @@ import java.util.Map;
  * a one-element array would only make the Rust side unwrap it again. See
  * {@link Ddl}.
  *
- * <p>Four kinds reach past {@link DatabaseMetaData}. {@code ddl} and
- * {@code sequences} need vendor catalogue queries ({@link Ddl},
- * {@link Sequences}), and both are written so that an unsupported or forbidden
- * query degrades to a reconstruction or an empty list rather than to an error.
+ * <p>Five kinds reach past {@link DatabaseMetaData}. {@code ddl},
+ * {@code sequences} and {@code triggers} need vendor catalogue queries
+ * ({@link Ddl}, {@link Sequences}, {@link Triggers}), and all three are written
+ * so that an unsupported or forbidden query degrades to a reconstruction or an
+ * empty list rather than to an error.
  * {@code tables} and {@code columns} stay pure JDBC reads, but their
  * {@code remarks} are then reconciled against the vendor catalogue on the
  * products whose drivers report comments badly ({@link Comments}): topped up
@@ -80,7 +84,7 @@ public final class Describe {
             }
             JsonArray items;
             switch (kind) {
-                case "catalogs":       items = catalogs(dbm); break;
+                case "catalogs":       items = catalogs(session.connection(), dbm); break;
                 case "schemas":        items = schemas(dbm, req); break;
                 case "tables":
                     items = tables(dbm, req);
@@ -100,6 +104,7 @@ public final class Describe {
                 case "procedures":     items = Routines.procedures(dbm, req); break;
                 case "functions":      items = Routines.functions(dbm, req); break;
                 case "sequences":      items = Sequences.of(session.connection(), dbm, req); break;
+                case "triggers":       items = Triggers.of(session.connection(), dbm, req); break;
                 default:
                     throw new BridgeException("protocol", "unknown describe kind: " + kind);
             }
@@ -112,8 +117,25 @@ public final class Describe {
         }
     }
 
-    private static JsonArray catalogs(DatabaseMetaData dbm) throws SQLException {
+    /**
+     * The catalogs a session can browse.
+     *
+     * <p>pgjdbc lists every database on the server, but a PostgreSQL session
+     * sees only the one it connected to: every metadata call answers about that
+     * one whatever catalog it is given. Listing the others drew the same schemas
+     * under each of them, so only the session's own is answered there.
+     */
+    private static JsonArray catalogs(Connection conn, DatabaseMetaData dbm) throws SQLException {
         JsonArray arr = new JsonArray();
+        if (Dialect.of(dbm) == Dialect.POSTGRESQL) {
+            String current = conn.getCatalog();
+            if (current != null && !current.isEmpty()) {
+                JsonObject o = new JsonObject();
+                o.addProperty("name", current);
+                arr.add(o);
+                return arr;
+            }
+        }
         try (ResultSet rs = dbm.getCatalogs()) {
             RsView v = new RsView(rs);
             while (rs.next()) {
@@ -253,9 +275,15 @@ public final class Describe {
      * Shared shape for imported and exported keys: both metadata result sets
      * have identical columns, only the direction of the query differs, so both
      * are rendered with the same pk_/fk_ prefixed keys.
+     *
+     * <p>A row that repeats another in everything but {@code PK_NAME} is
+     * dropped. MySQL's Connector/J answers {@code getExportedKeys} with one row
+     * per unique key of the parent table - the primary key and every unique
+     * index - for the one foreign key that references it.
      */
     private static JsonArray foreignKeys(ResultSet rs) throws SQLException {
         JsonArray arr = new JsonArray();
+        Set<String> seen = new HashSet<>();
         RsView v = new RsView(rs);
         while (rs.next()) {
             JsonObject o = new JsonObject();
@@ -273,7 +301,14 @@ public final class Describe {
             v.putStr(o, "fk_name", "FK_NAME");
             v.putStr(o, "pk_name", "PK_NAME");
             v.putI32(o, "deferrability", "DEFERRABILITY");
-            arr.add(o);
+            StringBuilder key = new StringBuilder();
+            for (String member : new String[]{"pk_catalog", "pk_schema", "pk_table", "pk_column",
+                    "fk_catalog", "fk_schema", "fk_table", "fk_column", "seq", "fk_name"}) {
+                key.append(o.get(member)).append('\0');
+            }
+            if (seen.add(key.toString())) {
+                arr.add(o);
+            }
         }
         return arr;
     }

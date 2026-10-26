@@ -486,12 +486,13 @@ explorer:
   # An error row whose message went missing, for the same reason.
   load_failed_unknown: This could not be loaded.
 
-  # The five folders under a schema.
+  # The six folders under a schema.
   tables: Tables
   views: Views
   procedures: Procedures
   functions: Functions
   sequences: Sequences
+  triggers: Triggers
 
 # The object detail panel: what one table, view or routine is made of.
 #
@@ -518,7 +519,7 @@ detail:
   # has no way to quote its own back. JDBC metadata carries none of the things
   # listed here, so the text is for reading rather than for restoring from.
   ddl_reconstructed: Rebuilt from metadata, for reference. CHECK constraints, triggers, partitioning and collations are not in it.
-  ddl_reconstructed_routine: Rebuilt from the catalog's routine body and parameter list, for reference. Characteristics such as determinism and security are not in it.
+  ddl_reconstructed_object: Rebuilt from the catalog, for reference. What the catalog does not keep — a routine's characteristics, among others — is not in it.
 
   # Column headings.
   column: Column
@@ -556,6 +557,14 @@ detail:
   current_value: Current
   cycle: Cycle
   cache: Cache
+
+  # Rows of a trigger's properties. The values are SQL words - BEFORE, INSERT,
+  # ROW, ENABLED - and stay as they are in every language.
+  trigger_table: Table
+  timing: Timing
+  events: Events
+  level: Level
+  status: Status
 
 # The query pane: a SQL editor over the results of what it ran. Opened with the
 # menu row or its shortcut, and over the object selected in the explorer with

@@ -2,9 +2,8 @@
 //!
 //! Opened by activating a node in the explorer, and shown in a pane of the work
 //! area. Four tabs for a relation — columns, keys and indexes, references, and
-//! the `CREATE` statement — two for a routine, its properties and its
-//! `CREATE`, and a single one for a sequence. Neither of the last two has
-//! columns to lay out.
+//! the `CREATE` statement — and two for a routine, a sequence or a trigger,
+//! which have no columns to lay out: its properties and its `CREATE`.
 //!
 //! # One load, one refresh
 //!
@@ -57,7 +56,7 @@ use rugpui_editor::editor::{Copy, Find, SelectAll};
 use rugpui_editor::{EditorEvent, EditorView};
 use rugpui_shell::menu_rows::{self, MenuRow};
 
-use rudbman_jdbc::{DdlResult, DdlSource, DescribeRequest, RoutineKind, Session};
+use rudbman_jdbc::{DdlResult, DdlSource, DescribeRequest, ObjectKind, Session};
 use rudbman_sql::{Dialect, format_ddl};
 
 use crate::explorer::{Folder, ObjectTarget, describe_failure};
@@ -134,10 +133,8 @@ pub enum Tab {
 impl Tab {
     /// The tabs a relation shows, in order.
     const RELATION: [Tab; 4] = [Tab::Columns, Tab::Keys, Tab::References, Tab::Ddl];
-    /// The tabs a routine shows.
-    const ROUTINE: [Tab; 2] = [Tab::Properties, Tab::Ddl];
-    /// The tabs a sequence shows.
-    const SEQUENCE: [Tab; 1] = [Tab::Properties];
+    /// The tabs a routine, a sequence or a trigger shows.
+    const OBJECT: [Tab; 2] = [Tab::Properties, Tab::Ddl];
 
     /// The tab's label in the active language.
     fn label(self) -> SharedString {
@@ -369,10 +366,8 @@ impl TableDetail {
     fn tabs(&self) -> &'static [Tab] {
         if self.target.folder.is_relation() {
             &Tab::RELATION
-        } else if routine_kind(self.target.folder).is_some() {
-            &Tab::ROUTINE
         } else {
-            &Tab::SEQUENCE
+            &Tab::OBJECT
         }
     }
 
@@ -680,13 +675,14 @@ impl TableDetail {
 
         // The bridge answered from JDBC metadata rather than from the server's
         // own `CREATE` text, which means CHECK constraints, triggers,
-        // partitioning and collations are simply not in it — or, for a routine,
-        // everything between its return type and its body. Saying so is what
-        // stops the text being mistaken for a backup.
-        let rebuilt = if self.target.folder.is_relation() {
+        // partitioning and collations are simply not in a table's — and for
+        // anything else, whatever the catalogue does not keep, such as a
+        // routine's characteristics. Saying so is what stops the text being
+        // mistaken for a backup.
+        let rebuilt = if self.target.folder == Folder::Tables {
             ts!("detail.ddl_reconstructed")
         } else {
-            ts!("detail.ddl_reconstructed_routine")
+            ts!("detail.ddl_reconstructed_object")
         };
         let banner = ddl.reconstructed.then(|| {
             div()
@@ -875,10 +871,10 @@ impl TableDetail {
 /// that connection is doing rather than racing it — which is also why the panel
 /// shows a spinner rather than pretending to be instant.
 ///
-/// A relation gets all four tabs' worth; a routine gets its properties and its
-/// DDL, and a sequence its properties. The DDL is allowed to fail on its own: a
-/// driver with no native path and a view the reconstruction cannot express
-/// still has columns worth showing.
+/// A relation gets all four tabs' worth; anything else its properties and its
+/// DDL. The DDL is allowed to fail on its own: a driver with no native path and
+/// a view the catalogue keeps no definition of still has columns worth
+/// showing.
 pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details, String> {
     if !target.folder.is_relation() {
         return load_properties(session, target);
@@ -1013,8 +1009,13 @@ pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details,
     // `Auto` rather than `Native`: a product with no native path answers with
     // reconstructed text, which the banner then labels. Asking for `Native`
     // would fail outright on most drivers.
-    let (ddl, ddl_error) =
-        ddl_of(session.describe_ddl(catalog, schema, &target.name, DdlSource::Auto));
+    let (ddl, ddl_error) = ddl_of(session.describe_object_ddl(
+        catalog,
+        schema,
+        &target.name,
+        object_kind(target.folder),
+        DdlSource::Auto,
+    ));
 
     Ok(Details {
         table_remarks,
@@ -1038,28 +1039,25 @@ pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details,
     })
 }
 
-/// The smaller panel: a routine's or a sequence's own facts.
+/// The smaller panel: a routine's, a sequence's or a trigger's own facts.
 ///
 /// One `DESCRIBE` filtered by name, rendered as name/value pairs, plus one row
 /// per parameter for a routine — which the bridge carries inline, so that is a
-/// single round trip. A routine's `CREATE` text is a second one, and like a
-/// table's it may fail without taking the properties with it.
+/// single round trip. The `CREATE` text is a second one, and like a table's it
+/// may fail without taking the properties with it.
 fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, String> {
     let mut request = DescribeRequest::new(target.folder.describe_kind()).with_name(&target.name);
     request.catalog = target.catalog.clone();
     request.schema = target.schema.clone();
 
     let found = items(session, &request)?;
-    let (ddl, ddl_error) = match routine_kind(target.folder) {
-        Some(kind) => ddl_of(session.describe_routine_ddl(
-            target.catalog.as_deref(),
-            target.schema.as_deref(),
-            &target.name,
-            kind,
-            DdlSource::Auto,
-        )),
-        None => (None, None),
-    };
+    let (ddl, ddl_error) = ddl_of(session.describe_object_ddl(
+        target.catalog.as_deref(),
+        target.schema.as_deref(),
+        &target.name,
+        object_kind(target.folder),
+        DdlSource::Auto,
+    ));
     let Some(object) = found
         .iter()
         .find(|item| text(item, "name") == Some(target.name.as_str()))
@@ -1080,10 +1078,18 @@ fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, 
     };
     put(ts!("detail.name"), text(object, "name"));
     put(ts!("detail.schema"), text(object, "schema"));
-    put(ts!("detail.type"), text(object, "type_name"));
     put(ts!("detail.comment"), text(object, "remarks"));
-    // Sequence facts, absent on a routine and vice versa; each is only shown
-    // where the product answered one.
+    // Trigger facts. Each is only shown where the product answered one, and
+    // the values are the SQL words the DDL itself uses.
+    put(ts!("detail.trigger_table"), text(object, "table"));
+    put(ts!("detail.timing"), text(object, "timing"));
+    put(ts!("detail.events"), text(object, "events"));
+    put(ts!("detail.level"), text(object, "orientation"));
+    put(
+        ts!("detail.status"),
+        flag(object, "enabled").map(|on| if on { "ENABLED" } else { "DISABLED" }),
+    );
+    // Sequence facts, likewise.
     for (key, label) in [
         ("data_type", ts!("detail.type")),
         ("start_value", ts!("detail.start_value")),
@@ -1111,14 +1117,24 @@ fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, 
             let Some(parameter) = parameter.as_object() else {
                 continue;
             };
+            let name = text(parameter, "name");
             let label = match text(parameter, "mode_name") {
-                Some(mode) => SharedString::from(format!(
-                    "{} ({mode})",
-                    text(parameter, "name").unwrap_or("?")
-                )),
-                None => cell(text(parameter, "name")),
+                // What the routine returns, under whatever placeholder the
+                // driver gave it a name with: `?`, `returnValue`,
+                // `@RETURN_VALUE`, `RESULT`.
+                Some("RETURN" | "RESULT") if name.is_none_or(is_return_placeholder) => {
+                    SharedString::new_static("RETURNS")
+                }
+                Some(mode) => SharedString::from(format!("{} ({mode})", name.unwrap_or("?"))),
+                None => cell(name),
             };
-            properties.push(vec![label, cell(Some(&type_of(parameter)))]);
+            let kind = type_of(parameter);
+            // PostgreSQL gives a procedure a `void` return value, which says
+            // nothing a procedure does not already.
+            if label == "RETURNS" && kind.eq_ignore_ascii_case("void") {
+                continue;
+            }
+            properties.push(vec![label, cell(Some(&kind))]);
         }
     }
 
@@ -1130,14 +1146,29 @@ fn load_properties(session: &Session, target: &ObjectTarget) -> Result<Details, 
     })
 }
 
-/// Which kind of routine a folder lists, or `None` for one that lists no
-/// routines.
-fn routine_kind(folder: Folder) -> Option<RoutineKind> {
+/// What kind of object a folder lists, as a DDL request names it.
+fn object_kind(folder: Folder) -> ObjectKind {
     match folder {
-        Folder::Procedures => Some(RoutineKind::Procedure),
-        Folder::Functions => Some(RoutineKind::Function),
-        Folder::Tables | Folder::Views | Folder::Sequences => None,
+        Folder::Tables => ObjectKind::Table,
+        Folder::Views => ObjectKind::View,
+        Folder::Procedures => ObjectKind::Procedure,
+        Folder::Functions => ObjectKind::Function,
+        Folder::Sequences => ObjectKind::Sequence,
+        Folder::Triggers => ObjectKind::Trigger,
     }
+}
+
+/// A name a driver gives the value a routine returns rather than a parameter.
+fn is_return_placeholder(name: &str) -> bool {
+    [
+        "?",
+        "returnValue",
+        "@RETURN_VALUE",
+        "RETURN_VALUE",
+        "RESULT",
+    ]
+    .iter()
+    .any(|placeholder| placeholder.eq_ignore_ascii_case(name))
 }
 
 /// A `CREATE` text, or the sentence its tab shows instead.
@@ -1547,12 +1578,11 @@ mod tests {
         assert!(rebuilt.ddl.to_uppercase().contains("CREATE"));
     }
 
-    /// The one tab a sequence gets, with the properties the product answered.
+    /// A sequence's properties tab, with the properties the product answered.
     #[test]
     fn a_sequence_reports_its_start_and_its_increment() {
-        let (details, _held) = describe("PERSON_SEQ", Folder::Sequences, "detail-sequence");
+        let (details, _held) = describe("PERSON_SEQ", Folder::Sequences, "detail-sequence-props");
         assert!(details.columns.is_empty(), "a sequence has no columns");
-        assert!(details.ddl.is_none());
 
         let start = row_for(&details.properties, &ts!("detail.start_value"));
         assert_eq!(start[1], "5", "{start:?}");
@@ -1637,13 +1667,12 @@ mod tests {
     }
 
     #[test]
-    fn a_relation_gets_four_tabs_a_routine_two_and_a_sequence_one() {
+    fn a_relation_gets_four_tabs_and_anything_else_two() {
         // A procedure has no columns, no keys and no indexes; three empty tabs
         // would be three ways of saying nothing. It does have a `CREATE`.
         assert_eq!(Tab::RELATION.len(), 4);
         assert!(Tab::RELATION.contains(&Tab::Ddl));
-        assert_eq!(Tab::ROUTINE, [Tab::Properties, Tab::Ddl]);
-        assert_eq!(Tab::SEQUENCE, [Tab::Properties]);
+        assert_eq!(Tab::OBJECT, [Tab::Properties, Tab::Ddl]);
     }
 
     /// A routine's DDL tab holds the server's own text, which on H2 is the
@@ -1659,12 +1688,39 @@ mod tests {
             "{}",
             ddl.text
         );
-        // The properties came in the same load, beside it.
+        // The properties came in the same load, beside it, and the return
+        // value is labelled as what it is rather than by the driver's name.
         assert!(!details.properties.is_empty());
+        assert!(
+            details.properties.iter().any(|row| row[0] == "RETURNS"),
+            "{:?}",
+            details.properties
+        );
+    }
 
-        // A sequence has no DDL tab, and so asks for no DDL.
+    /// Every kind of object answers with its own `CREATE`: a view with its
+    /// query, never the `CREATE TABLE` its column list would rebuild into, and
+    /// a sequence with its options.
+    #[test]
+    fn every_kind_of_object_has_its_own_create_text() {
+        let (view, _held) = describe("RICH", Folder::Views, "detail-view-ddl");
+        let ddl = view.ddl.expect("H2 quotes a view back");
+        assert!(!ddl.reconstructed);
+        assert!(
+            ddl.text.starts_with("CREATE FORCE VIEW \"APP\".\"RICH\""),
+            "{}",
+            ddl.text
+        );
+        assert!(!ddl.text.contains("CREATE TABLE"), "{}", ddl.text);
+
         let (sequence, _held) = describe("PERSON_SEQ", Folder::Sequences, "detail-sequence");
-        assert!(sequence.ddl.is_none() && sequence.ddl_error.is_none());
+        let ddl = sequence.ddl.expect("H2 quotes a sequence back");
+        assert!(
+            ddl.text
+                .starts_with("CREATE SEQUENCE \"APP\".\"PERSON_SEQ\""),
+            "{}",
+            ddl.text
+        );
     }
 
     /// A sequence's options, the cycle flag among them: it arrives as a JSON
@@ -1751,16 +1807,17 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_routine_and_a_sequence_open_on_their_properties(cx: &mut gpui::TestAppContext) {
-        for (folder, tabs) in [
-            (Folder::Procedures, &Tab::ROUTINE[..]),
-            (Folder::Functions, &Tab::ROUTINE[..]),
-            (Folder::Sequences, &Tab::SEQUENCE[..]),
+    fn anything_but_a_relation_opens_on_its_properties(cx: &mut gpui::TestAppContext) {
+        for folder in [
+            Folder::Procedures,
+            Folder::Functions,
+            Folder::Sequences,
+            Folder::Triggers,
         ] {
             let panel = cx.new(|cx| TableDetail::new(target(folder), "generic", cx));
             cx.update(|cx| {
                 assert_eq!(panel.read(cx).tab(), Tab::Properties);
-                assert_eq!(panel.read(cx).tabs(), tabs, "{folder:?}");
+                assert_eq!(panel.read(cx).tabs(), &Tab::OBJECT, "{folder:?}");
             });
         }
     }
@@ -1890,11 +1947,7 @@ mod tests {
 
     #[test]
     fn every_label_the_panel_draws_has_a_translation() {
-        for tab in Tab::RELATION
-            .iter()
-            .chain(Tab::ROUTINE.iter())
-            .chain(Tab::SEQUENCE.iter())
-        {
+        for tab in Tab::RELATION.iter().chain(Tab::OBJECT.iter()) {
             let label = tab.label();
             assert!(!label.is_empty());
             assert!(!label.starts_with("detail."), "{label:?}");
@@ -1906,7 +1959,12 @@ mod tests {
             ts!("detail.empty"),
             ts!("detail.no_ddl"),
             ts!("detail.ddl_reconstructed"),
-            ts!("detail.ddl_reconstructed_routine"),
+            ts!("detail.ddl_reconstructed_object"),
+            ts!("detail.trigger_table"),
+            ts!("detail.timing"),
+            ts!("detail.events"),
+            ts!("detail.level"),
+            ts!("detail.status"),
             ts!("detail.column"),
             ts!("detail.type"),
             ts!("detail.nullable"),

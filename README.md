@@ -47,12 +47,13 @@ JVM bridge.
   and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
   OS keychain, never on disk, and credentials are masked out of logs and
   JDBC URLs.
-- **A schema explorer** — catalogs, schemas, tables, views, sequences,
-  routines — and a detail panel with columns, keys, references in both
-  directions, and DDL in a read-only, highlighted editor (the server's own text
-  where the dialect offers it, reconstructed from metadata where it does not).
-  Procedures and functions show their `CREATE` too, and every statement is laid
-  out for reading: one column to a line, a routine's body indented by block.
+- **A schema explorer** — catalogs, schemas, tables, views (materialized ones
+  too), procedures, functions, sequences and triggers — and a detail panel with
+  columns, keys, references in both directions, and DDL in a read-only,
+  highlighted editor (the server's own text where the dialect offers it,
+  rebuilt from the catalog where it does not). Every kind of object shows its
+  `CREATE`, laid out for reading: one column to a line, a view's query as Format
+  SQL writes it, a routine's or a trigger's body indented by block.
 - **A SQL workbench**: an editor with incremental dialect-aware highlighting
   and IME support, SQL keyword/function/table/column completion (including table aliases),
   statement splitting, run-one/run-selection/run-all,
