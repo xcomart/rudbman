@@ -5,10 +5,6 @@ use super::{Item, Segment, UPPER, cmp_ignore_case, format_segment, items, needs_
 use crate::dialect::{Dialect, DialectId};
 use crate::lexer::{TokenKind, lex};
 
-/// The column a routine's first line may reach before its parameters go one
-/// to a line.
-const WIDTH: usize = 100;
-
 /// One level of indentation.
 const INDENT: &str = "    ";
 
@@ -218,7 +214,9 @@ const MYSQL_BODY: &[&str] = &[
 /// the lexer's tokens, has no grammar, and may change only the whitespace
 /// between tokens and the case of words it recognizes where they stand. Every
 /// string, comment and quoted name is copied byte for byte, so the text stays
-/// the statement the server answered with.
+/// the statement the server answered with — but for the indentation of a
+/// comment's later lines, which move with its `/*` when the comment stands
+/// between statements and is indented with them.
 ///
 /// # What each statement becomes
 ///
@@ -230,15 +228,16 @@ const MYSQL_BODY: &[&str] = &[
 /// * **`CREATE TRIGGER`** — what it fires on and when on the first line, the
 ///   body under it laid out as a routine's is. A trigger whose action is a
 ///   call — PostgreSQL's `EXECUTE FUNCTION`, H2's `CALL` — is one line.
-/// * **`CREATE FUNCTION` / `PROCEDURE`** — the name and its parameters on the
-///   first line, or one parameter to a line when that line would pass a
-///   hundred columns; the return type beside them; one characteristic
-///   (`DETERMINISTIC`, `LANGUAGE`, `COMMENT`...) to a line under them. The
-///   body is indented by block — `BEGIN`/`END`, `IF`/`ELSEIF`/`ELSE`,
-///   statement `CASE`, the loops, PL/SQL's declaration section and its
-///   `EXCEPTION` handlers — and each statement inside it is laid out by the
-///   query formatter, so a `SELECT` in a procedure reads as one in the editor
-///   does. An empty line the author left between two statements stays.
+/// * **`CREATE FUNCTION` / `PROCEDURE`** — the name on the first line, with
+///   its parameter when it has one and one parameter to a line under it when
+///   it has more; the return type after the closing bracket; one
+///   characteristic (`DETERMINISTIC`, `LANGUAGE`, `COMMENT`...) to a line
+///   under them. The body is indented by block — `BEGIN`/`END`,
+///   `IF`/`ELSEIF`/`ELSE`, statement `CASE`, the loops, PL/SQL's declaration
+///   section and its `EXCEPTION` handlers — and each statement inside it is
+///   laid out by the query formatter, so a `SELECT` in a procedure reads as
+///   one in the editor does. An empty line the author left between two statements stays, and a
+///   comment written on lines of its own moves with its `/*`.
 /// * **`CREATE SEQUENCE`** — the name on the first line, one option to a line
 ///   under it.
 /// * **Anything else** — `CREATE INDEX`, `ALTER TABLE`, `COMMENT ON` — on one
@@ -358,7 +357,7 @@ impl<'a> Layout<'a> {
             // A comment written after a statement, on its line, stays there.
             if item.kind == TokenKind::Comment && !item.newline && !out.is_empty() {
                 out.push(' ');
-                out.push_str(item.text);
+                out.push_str(&self.moved(i, last_column(&out)));
                 i += 1;
                 continue;
             }
@@ -399,7 +398,7 @@ impl<'a> Layout<'a> {
     fn leading_comments(&self, mut i: usize) -> (String, usize) {
         let mut lines = Vec::new();
         while i < self.items.len() && self.items[i].kind == TokenKind::Comment {
-            lines.push(self.items[i].text);
+            lines.push(self.moved(i, 0));
             i += 1;
         }
         (lines.join("\n"), i)
@@ -731,8 +730,9 @@ impl<'a> Layout<'a> {
         None
     }
 
-    /// The header: name, parameters and return type on the first line, one
-    /// characteristic to a line after it.
+    /// The header: the name with its parameter on the first line, or with the
+    /// bracket of several and one of them to a line under it; the return type
+    /// after them, and one characteristic to a line after that.
     ///
     /// The words that make it a header — `CREATE ... PROCEDURE`, `RETURNS`,
     /// each characteristic's own — are keywords where they stand and are
@@ -760,12 +760,9 @@ impl<'a> Layout<'a> {
             forced.extend((after..first_end).find(|&k| self.is_word(k, "RETURN")));
         }
 
-        let one_line = self.phrase(i..first_end, &forced);
         let elements = params.map(|(open, close)| self.split(open + 1, close));
         match (params, elements) {
-            (Some((open, close)), Some(elements))
-                if elements.len() > 1 && one_line.chars().count() > WIDTH =>
-            {
+            (Some((open, close)), Some(elements)) if elements.len() > 1 => {
                 lines.push(format!("{}(", self.phrase(i..open, &forced)));
                 lines.extend(self.element_lines(&elements, 1));
                 let rest = self.phrase(close + 1..first_end, &forced);
@@ -775,7 +772,7 @@ impl<'a> Layout<'a> {
                     format!(") {rest}")
                 });
             }
-            _ => lines.push(one_line),
+            _ => lines.push(self.phrase(i..first_end, &forced)),
         }
 
         let mut k = first_end;
@@ -1163,13 +1160,15 @@ impl<'a> Layout<'a> {
             match lines.last_mut() {
                 Some(last) if !item.newline => {
                     last.push(' ');
-                    last.push_str(item.text);
+                    let moved = self.moved(k, last_column(last));
+                    last.push_str(&moved);
                 }
                 _ => {
                     if item.blank && lines.last().is_some_and(|last| !last.is_empty()) {
                         lines.push(String::new());
                     }
-                    lines.push(self.line(level, item.text));
+                    let moved = self.moved(k, level * INDENT.len());
+                    lines.push(self.line(level, &moved));
                 }
             }
             k += 1;
@@ -1324,6 +1323,15 @@ impl<'a> Layout<'a> {
 
     // ----------------------------------------------------------------- text
 
+    /// The comment at `k` written from column `to`, its later lines moved with
+    /// it from where it stood in the input.
+    fn moved(&self, k: usize, to: usize) -> String {
+        let item = &self.items[k];
+        let line = self.sql[..item.start].rfind('\n').map_or(0, |n| n + 1);
+        let from = self.sql[line..item.start].chars().count();
+        move_comment(item.text, from, to)
+    }
+
     /// The input from token `from` to the end of token `to - 1`.
     fn source(&self, from: usize, to: usize) -> &'a str {
         let last = &self.items[to - 1];
@@ -1410,6 +1418,54 @@ impl<'a> Layout<'a> {
     }
 }
 
+/// The column the next character after `text` lands in.
+fn last_column(text: &str) -> usize {
+    text.rsplit('\n').next().unwrap_or_default().chars().count()
+}
+
+/// A block comment whose `/*` moves from column `from` to column `to`, with
+/// its later lines.
+///
+/// When each of them starts with `*` — the way such a comment is usually
+/// written — the stars line up one column in from the `/*`, wherever they
+/// stood. Otherwise a line keeps its indentation past the `/*`'s, and one
+/// indented less lines up with it. A MySQL `/*! ... */` is code the server
+/// runs, so it is copied as it is.
+fn move_comment(text: &str, from: usize, to: usize) -> String {
+    let mut lines = text.split('\n');
+    let first = lines.next().unwrap_or_default();
+    let rest: Vec<&str> = lines.collect();
+    if rest.is_empty() || !text.starts_with("/*") || text.starts_with("/*!") {
+        return text.to_owned();
+    }
+    let starred = rest.iter().all(|line| {
+        let body = line.trim_start();
+        body.is_empty() || body.starts_with('*')
+    });
+    let mut out = String::with_capacity(text.len() + rest.len() * (to + 1));
+    out.push_str(first);
+    for line in rest {
+        out.push('\n');
+        let body = line.trim_start();
+        if body.is_empty() {
+            continue;
+        }
+        if starred {
+            out.extend(std::iter::repeat_n(' ', to + 1));
+            out.push_str(body);
+        } else {
+            let past = line
+                .char_indices()
+                .take_while(|&(_, c)| c.is_whitespace())
+                .nth(from)
+                .map_or(body, |(n, _)| &line[n..]);
+            out.extend(std::iter::repeat_n(' ', to));
+            out.push_str(past);
+        }
+    }
+    out
+}
+
 /// `text` with its first word in upper case when that word is one of
 /// [`STATEMENT_WORDS`].
 fn upper_first_word(text: &str) -> String {
@@ -1449,7 +1505,10 @@ mod tests {
                    return a + b + x; END;";
         assert_eq!(
             my(ddl),
-            "CREATE DEFINER=`rudbman`@`%` FUNCTION `f_add`(a INT, b INT) RETURNS int(11)
+            "CREATE DEFINER=`rudbman`@`%` FUNCTION `f_add`(
+    a INT,
+    b INT
+) RETURNS int(11)
     DETERMINISTIC
     COMMENT 'adds'
 BEGIN
@@ -1473,7 +1532,10 @@ END;"
                    and who <> ''; END;";
         assert_eq!(
             my(ddl),
-            "CREATE DEFINER=`rudbman`@`%` PROCEDURE `p_hello`(IN who VARCHAR(20), OUT msg VARCHAR(100))
+            "CREATE DEFINER=`rudbman`@`%` PROCEDURE `p_hello`(
+    IN who VARCHAR(20),
+    OUT msg VARCHAR(100)
+)
 BEGIN
     SELECT concat('hi ', who) INTO msg
       FROM dual
@@ -1572,6 +1634,68 @@ END"
 BEGIN
     SELECT 1;
 END"
+        );
+    }
+
+    #[test]
+    fn several_parameters_go_one_to_a_line_and_one_stays_beside_the_name() {
+        let ddl = "CREATE FUNCTION `FN_TEST`(`v_str_date` VARCHAR(100), `v_dateformat` \
+                   VARCHAR(100)) RETURNS date\nBEGIN\n/*\n * 테스트 작업\n */\n    DECLARE v_date \
+                   DATE;\n\n    SELECT STR_TO_DATE(v_str_date, v_dateformat) INTO v_date;\n\n    \
+                   RETURN v_date;\nEND";
+        assert_eq!(
+            my(ddl),
+            "CREATE FUNCTION `FN_TEST`(
+    `v_str_date` VARCHAR(100),
+    `v_dateformat` VARCHAR(100)
+) RETURNS date
+BEGIN
+    /*
+     * 테스트 작업
+     */
+    DECLARE v_date DATE;
+
+    SELECT STR_TO_DATE(v_str_date, v_dateformat) INTO v_date;
+
+    RETURN v_date;
+END"
+        );
+        assert_eq!(
+            my("CREATE FUNCTION f(a INT) RETURNS INT RETURN a;"),
+            "CREATE FUNCTION f(a INT) RETURNS INT\nRETURN a;"
+        );
+    }
+
+    #[test]
+    fn a_comment_on_lines_of_its_own_moves_with_its_opening() {
+        // Stars line up under the `/*` wherever they stood, even out of line.
+        assert_eq!(
+            my("CREATE PROCEDURE p()\nBEGIN\n    /*\n * one\n\n *two\n*/\n    SELECT 1;\nEND"),
+            "CREATE PROCEDURE p()\nBEGIN\n    /*\n     * one\n\n     *two\n     */\n    SELECT 1;\nEND"
+        );
+        // Other lines keep their indentation past the `/*`'s.
+        assert_eq!(
+            my(
+                "CREATE PROCEDURE p()\nBEGIN\n/* first\n     second\n*/\nSELECT 1; /* a\n          b */\nEND"
+            ),
+            "CREATE PROCEDURE p()
+BEGIN
+    /* first
+         second
+    */
+    SELECT 1; /* a
+              b */
+END"
+        );
+        // Before the statement, at the left margin.
+        assert_eq!(
+            my("  /**\n   * Adds.\n   */\nCREATE FUNCTION f() RETURNS INT RETURN 1;"),
+            "/**\n * Adds.\n */\nCREATE FUNCTION f() RETURNS INT\nRETURN 1;"
+        );
+        // A versioned comment is code, and stays as written.
+        assert_eq!(
+            move_comment("/*!50100 PARTITION BY\n  HASH (id) */", 0, 4),
+            "/*!50100 PARTITION BY\n  HASH (id) */"
         );
     }
 
@@ -1799,7 +1923,10 @@ SELECT 1 AS `a`,
                    AS $procedure$select 1$procedure$;";
         assert_eq!(
             format_ddl(ddl, &pg),
-            "CREATE OR REPLACE FUNCTION public.f_add(a integer, b integer) RETURNS integer
+            "CREATE OR REPLACE FUNCTION public.f_add(
+    a integer,
+    b integer
+) RETURNS integer
     LANGUAGE plpgsql
     IMMUTABLE
     STRICT
@@ -1916,15 +2043,26 @@ END p_hello;"
                 "CREATE SEQUENCE \"S\".\"Q\" MINVALUE 1 MAXVALUE 9 INCREMENT BY 5 START WITH 1 \
                  CACHE 20 NOORDER NOCYCLE GLOBAL;",
             ),
+            (
+                "mariadb",
+                "/*\n   * doc\n */\nCREATE FUNCTION f(a INT, b INT) RETURNS INT BEGIN\n\
+                 /* x\n     y */\n  /*\n * z\n */\nRETURN a; /* r\n   s */\nEND",
+            ),
         ];
         for (dialect, sql) in samples {
             let dialect = Dialect::from_id(dialect);
             let once = format_ddl(sql, &dialect);
             assert_eq!(format_ddl(&once, &dialect), once, "{once}");
+            // A comment's later lines may move, so only its words count.
             let words = |s: &str| -> Vec<String> {
                 items(s, &dialect)
                     .iter()
-                    .map(|i| i.text.to_ascii_uppercase())
+                    .map(|i| match i.kind {
+                        TokenKind::Comment => {
+                            i.text.split_whitespace().collect::<Vec<_>>().join(" ")
+                        }
+                        _ => i.text.to_ascii_uppercase(),
+                    })
                     .collect()
             };
             assert_eq!(words(sql), words(&once), "{once}");
