@@ -315,7 +315,7 @@ impl fmt::Debug for Connected {
         f.debug_struct("Connected")
             .field("session", &self.live.session)
             .field("product", &self.info.product_name)
-            .field("tunnelled", &self.live.lease.is_some())
+            .field("tunneled", &self.live.lease.is_some())
             .finish_non_exhaustive()
     }
 }

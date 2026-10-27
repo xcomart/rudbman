@@ -739,7 +739,7 @@ impl Drop for Job {
             return;
         }
         if let Err(error) = self.cancel() {
-            log::debug!("cancelling job {} failed: {error}", self.handle);
+            log::debug!("canceling job {} failed: {error}", self.handle);
         }
         // One reading, to retire the handle if the job has already stopped. It
         // often has not — the worker notices the flag at the next row boundary

@@ -235,7 +235,7 @@ lifecycle, and the milestone plan — lives in
 [docs/architecture.md](docs/architecture.md). Current progress and
 open items are tracked in [docs/status.md](docs/status.md).
 
-The widget kit, the virtualised result grid and the code editor are not in this
+The widget kit, the virtualized result grid and the code editor are not in this
 repository. They are [rugpui](https://github.com/xcomart/rugpui), extracted so that
 the three desktop applications built on them stop carrying byte-identical
 copies of the same code. Nothing there knows what a database is: rudbman hands
@@ -246,7 +246,7 @@ JDBC cursor.
 Neither is the layer *above* the widgets. `rugpui-shell`, from the same
 repository, is the window that draws its own title bar, the self-updater that
 replaces the installed copy with the one GitHub published, the about and update
-dialogs, the split-pane tree, the palette catalogue and its editor, and the
+dialogs, the split-pane tree, the palette catalog and its editor, and the
 pieces the settings form is built out of — each of them written once here and
 then copied twice. It knows nothing about rudbman either: the name, the version,
 the release endpoints, the words and the ignored-release tag are handed to it by

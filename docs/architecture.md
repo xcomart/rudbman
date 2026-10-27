@@ -25,7 +25,7 @@ without changing this document.
 | D8 | Result batches use a **custom columnar binary codec**; metadata is JSON | Arrow Java demands 40MB+ of dependencies and `--add-opens`. What the grid needs is far less than that |
 | D9 | The **UI theme and the editor theme are separate** token sets | The 11 colors of the window chrome and the twenty-odd colors of syntax highlighting are different axes |
 | D10 | **SSH local port forwarding is in scope for M1** | Production databases usually sit behind a bastion. Bolting it on later means fixing the connection profile schema and session lifetime management twice |
-| D11 | The **application shell** — window chrome, self-updater, about and update dialogs, split-pane tree, palette catalogue and editor, settings-form pieces — is **`rugpui-shell`**, not code in this repository | D1's reasoning one layer up. None of it is about a database, and all of it had been written once here and copied twice; a fix to a resize grip or a staged-update swap should be one fix. Everything specific to rudbman is injected by `app_identity.rs` — the name, the version, the release endpoints, the words, the ignored-release tag (§3.2) |
+| D11 | The **application shell** — window chrome, self-updater, about and update dialogs, split-pane tree, palette catalog and editor, settings-form pieces — is **`rugpui-shell`**, not code in this repository | D1's reasoning one layer up. None of it is about a database, and all of it had been written once here and copied twice; a fix to a resize grip or a staged-update swap should be one fix. Everything specific to rudbman is injected by `app_identity.rs` — the name, the version, the release endpoints, the words, the ignored-release tag (§3.2) |
 
 ---
 
@@ -126,7 +126,7 @@ rugpui/                           github.com/xcomart/rugpui
     ├── rugpui-editor/            multi-line code editor widget
     └── rugpui-shell/             the layer above the widgets: window chrome,
                                 self-updater, about/update dialogs, pane tree,
-                                palette catalogue + editor, form pieces
+                                palette catalog + editor, form pieces
 ```
 
 and the database half of the same idea:
@@ -190,7 +190,7 @@ the template editor's. So the call turned around, and
 `crates/rudbman-app/src/sql_highlight.rs` is what stands where the dependency
 edge used to be — a `Highlighter` that lexes with `rudbman-sql` in the dialect
 of the session's driver and maps its tokens onto the palette's twelve slots.
-Two things travelled with it: the comment toggle's `--`, and the fact that a
+Two things traveled with it: the comment toggle's `--`, and the fact that a
 statement is `;`-terminated. What did *not* travel is
 `rudbman_sql::statement_at`: the editor now cuts statements out of the spans it
 is drawing anyway, stepping over a `;` the highlighter called part of a string
@@ -241,7 +241,7 @@ Two spellings of one setting survive the split. `rudbman_core::TitlebarStyle`
 has to stay free of gpui because `rudbman-core` reads and writes
 `settings.json`; `rugpui_shell::TitlebarStyle` cannot, because the chrome around
 it is gpui. `workspace/bootstrap.rs`'s `chrome_titlebar` is the one line between
-them, and a test in `workspace/tests/settings.rs` asserts that both serialise to
+them, and a test in `workspace/tests/settings.rs` asserts that both serialize to
 the same two `snake_case` words.
 
 The four patched gpui crates went to rugpui with the widgets, and rudbman's
@@ -771,7 +771,7 @@ JOB_START { kind: "extract",
 - Progress and cancellation are `JOB_POLL`/`JOB_CANCEL`, exactly as for
   transfer.
 - **Output file**: the job writes into a hidden sibling of the target and
-  renames it into place only on success, so a failed or cancelled job leaves an
+  renames it into place only on success, so a failed or canceled job leaves an
   existing file untouched and no partial file behind.
 
 Semantics the implementation settled (M4 — the contract the Rust side codes
@@ -782,7 +782,7 @@ against):
   Polls and cancels after that are `protocol` errors — once you have read a
   terminal state, stop polling. `CLOSE_SESSION` first cancels and releases that
   session's jobs (the job thread holds the connection lock, so without
-  cancelling, closing is blocked).
+  canceling, closing is blocked).
 - **Spec errors are synchronous**: a bad `objects`/`mode`/`charset` and the
   like are rejected by `JOB_START` immediately with an error envelope. They do
   not become a failed job you have to poll for.
@@ -1203,7 +1203,7 @@ underneath for a second one to collide with.
   module: one typed value per column (§4.4's `params`, with `decimal`, `date`,
   `time`, `timestamp` and `bytes` in their typed form), never a literal spliced
   into the text. The bridge's `Literals.java` already writes literals for the
-  extract and backup jobs; a second copy of that judgement in Rust would be a
+  extract and backup jobs; a second copy of that judgment in Rust would be a
   second place for a quoting bug to live, and the wire already carries the form
   that does not ask the question. Which form a column takes is resolved once from
   its `java.sql.Types` constant, and conservatively: anything not in the table is
@@ -1214,7 +1214,7 @@ underneath for a second one to collide with.
   value is a `?` in a string, and "the third parameter of statement two" is not
   something to show anybody. Only whether the text can *become* the bound form
   is checked — an integer that parses, hex of an even length. Whether the server
-  will accept it is the server's judgement, and its refusal says more than a
+  will accept it is the server's judgment, and its refusal says more than a
   guess made here would.
 - **A table with no primary key stays read-only**, and says so in one line above
   the grid rather than by refusing a keystroke later: with no key there is no
@@ -1226,7 +1226,7 @@ underneath for a second one to collide with.
 
 A `SELECT` somebody wrote has no single table behind it in general, which is
 why the pane above is the one that edits. But the cases that *do* have one are
-recognisable from metadata the wire already carries — `ColumnInfo` holds a
+recognizable from metadata the wire already carries — `ColumnInfo` holds a
 `table`, `schema` and `catalog` per column — and a result grid that can fix the
 row it is showing is worth having. So a query result becomes editable, under a
 gate with three clauses, and the machinery underneath is the data pane's own,
@@ -1266,7 +1266,7 @@ gate with three clauses, and the machinery underneath is the data pane's own,
   * pgjdbc reports a column's **alias** as `getColumnName`, so `name` and
     `label` are both the alias, where Connector/J keeps the two apart. This is
     why aliasing a *key* column silently turns editing off on PostgreSQL and not
-    on MySQL: the catalogue name the key is matched against is gone. It fails to
+    on MySQL: the catalog name the key is matched against is gone. It fails to
     the read-only side, which is the right direction, but it is a real
     difference in what the same query offers on two products.
   * mssql-jdbc 12.8.1 and ojdbc11 23.6 answer `""` for the **table itself** —
@@ -1449,7 +1449,7 @@ and the pane opens with nothing staged but its name field focused.
   neither the omission nor the fix. This document previously claimed every
   product took the short form. It does not, so that shape is now refused for
   both of them by name and reason, like the other per-product refusals above.
-- **Auto-increment is not modelled.** It is spelled at least five ways —
+- **Auto-increment is not modeled.** It is spelled at least five ways —
   `SERIAL`, `AUTO_INCREMENT` after the type, `IDENTITY`, `GENERATED BY DEFAULT
   AS IDENTITY`, `AUTOINCREMENT` — and some of those are a type, some a column
   attribute and some a clause. Since a column's type here is already the user's
@@ -1740,7 +1740,7 @@ Shipping twice means the two halves have to agree about what is installed, and
 they would not on their own: the in-app updater replaces files, while winget
 reads the `DisplayVersion` in that uninstall key. So after a successful update
 rugpui-shell's `update.rs` rewrites that one value, and does it under a guard — only when the
-key's `InstallLocation` canonicalises to the directory the running executable is
+key's `InstallLocation` canonicalizes to the directory the running executable is
 in. A copy unpacked from the zip has no key and none is created; an installed
 copy and a portable copy on one machine cannot bump each other's recorded
 version. Without the guard a self-updating portable copy would mark the
@@ -1816,7 +1816,7 @@ the job of [status.md](status.md).
 | **M0** | Workspace, vendored gpui, `rudbman-ui`/`rudbman-core` ported, theme/settings/i18n | An empty window opens, theme switching and settings persistence work. `cargo test` passes |
 | **M1** | Minimal bridge JAR, JVM bootstrap, session workers, driver manager, connection dialog, **SSH tunnel** | Connect/disconnect/PING round trips on H2, PostgreSQL and MySQL. The error envelope shows up in the UI. PostgreSQL over a bastion |
 | **M2** | Explorer tree, every kind of `DESCRIBE`, table detail (columns, keys, indexes, FKs, DDL) | Schema browsing and DDL display on all three databases |
-| **M3** | `rudbman-sql`, `rudbman-editor`, `rudbman-grid`, execution/cancellation/multiple results | A million-row result scrolls without a stutter. Cancelling mid-execution works. IME input behaves |
+| **M3** | `rudbman-sql`, `rudbman-editor`, `rudbman-grid`, execution/cancellation/multiple results | A million-row result scrolls without a stutter. Canceling mid-execution works. IME input behaves |
 | **M4** | Script extraction (DDL/DML), script execution, the template engine | Table → CREATE/INSERT script, running a script file with error reporting |
 | **M5** | ERD model, layout, canvas, SVG export | An ERD of a schema with FKs, saved drag layout, SVG output |
 | **M6** | Backup, DB-to-DB transfer (§6) | A million rows moved from PostgreSQL to MySQL, with progress, cancellation and error reporting |

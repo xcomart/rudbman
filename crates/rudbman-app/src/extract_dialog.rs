@@ -754,7 +754,7 @@ impl ExtractDialog {
         // the statement in flight — so it is taken here rather than handed to a
         // task that would arrive after the work it was meant to stop.
         if let Err(error) = running.job.lock().cancel() {
-            log::warn!("cancelling the extraction failed: {error}");
+            log::warn!("canceling the extraction failed: {error}");
         }
         cx.notify();
     }

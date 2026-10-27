@@ -370,7 +370,7 @@ impl QueryPane {
         // button that was just pressed.
         cx.background_spawn(async move {
             if let Err(error) = canceller.cancel() {
-                log::warn!("cancelling the statement failed: {error}");
+                log::warn!("canceling the statement failed: {error}");
             }
         })
         .detach();

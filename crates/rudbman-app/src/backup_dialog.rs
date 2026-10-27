@@ -567,7 +567,7 @@ impl BackupDialog {
         }
         running.cancelling = true;
         if let Err(error) = running.job.lock().cancel() {
-            log::warn!("cancelling the backup failed: {error}");
+            log::warn!("canceling the backup failed: {error}");
         }
         cx.notify();
     }

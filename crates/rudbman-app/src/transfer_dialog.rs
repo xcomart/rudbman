@@ -639,7 +639,7 @@ impl TransferDialog {
         // cancel is detached and quick, and a task would arrive after the work
         // it was meant to stop.
         if let Err(error) = running.job.lock().cancel() {
-            log::warn!("cancelling the transfer failed: {error}");
+            log::warn!("canceling the transfer failed: {error}");
         }
         cx.notify();
     }
