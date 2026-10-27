@@ -68,8 +68,8 @@ impl Workspace {
             //
             // An error row is the one node with no menu at all: it names
             // nothing — it is the sentence saying why its parent could not
-            // be read — so every command would be greyed, and a panel of
-            // nothing but greyed rows says less than no panel.
+            // be read — so every command would be grayed, and a panel of
+            // nothing but grayed rows says less than no panel.
             ExplorerEvent::ContextMenu { node, position } => {
                 if !matches!(node, NodeId::Error(_)) {
                     self.open_context_menu(

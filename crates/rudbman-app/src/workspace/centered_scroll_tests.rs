@@ -90,7 +90,7 @@ fn a_column_that_fits_stays_in_the_middle(cx: &mut TestAppContext) {
     let below = f32::from(box_.bottom() - column.bottom());
     assert!(
         (above - below).abs() < SLACK,
-        "the column was not centred: {above} above, {below} below"
+        "the column was not centered: {above} above, {below} below"
     );
     assert_eq!(
         scroll.max_offset().y,

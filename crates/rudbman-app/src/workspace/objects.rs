@@ -267,7 +267,7 @@ impl Workspace {
         panel.update(cx, |panel, cx| panel.take_focus(window, cx));
     }
 
-    /// Fetches one diagram: the catalogue, and the arrangement it was left in.
+    /// Fetches one diagram: the catalog, and the arrangement it was left in.
     ///
     /// Both on one background task. They are wanted at the same moment and
     /// handing them to [`ErdPane::deliver`] separately would draw the grid
@@ -438,8 +438,8 @@ impl Workspace {
     ///
     /// The name is written by [`builder_sql::table_ref`], which is also what
     /// the query builder's `FROM` goes through: a name that needs quoting gets
-    /// it, a catalogue is not dropped on a product that has no schemas, and an
-    /// ordinary name in the catalogue's own case comes out exactly as before.
+    /// it, a catalog is not dropped on a product that has no schemas, and an
+    /// ordinary name in the catalog's own case comes out exactly as before.
     pub(super) fn open_query_for(
         &mut self,
         target: &ObjectTarget,
@@ -500,7 +500,7 @@ impl Workspace {
 
         let panel = cx.new(|cx| BuilderPane::new(connection, &dialect, cx));
         // Through `open_query`, which is the one gate every new query pane
-        // comes through: running, cancelling and the write confirmation are its
+        // comes through: running, canceling and the write confirmation are its
         // pipeline, and the builder has no business owning a second one.
         cx.subscribe_in(
             &panel,

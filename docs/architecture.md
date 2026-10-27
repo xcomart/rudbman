@@ -381,14 +381,14 @@ forever.
 | `0x21` | `FETCH` | cursor | max rows | — | **binary batch** (§4.6) |
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
-| `0x24` | `CANCEL` | session | — | — | JSON `{cancelled}` |
+| `0x24` | `CANCEL` | session | — | — | JSON `{canceled}` |
 | `0x25` | `LOB_READ` | cursor | — | JSON `{id, offset, length}` | binary |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
 | `0x40` | `JOB_START` | session | — | JSON job spec (§6) | JSON `{job}` |
 | `0x41` | `JOB_POLL` | job | — | — | JSON progress |
-| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{cancelled}` |
+| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{canceled}` |
 | `0x50` | `PROBE_DRIVER` | — | — | JSON `{jars[]}` | JSON `{classes[], services[]}` |
 
 `DESCRIBE`'s `kind`: `catalogs`, `schemas`, `tables`, `columns`,
@@ -778,7 +778,7 @@ Semantics the implementation settled (M4 — the contract the Rust side codes
 against):
 
 - **Handle lifetime**: the `JOB_POLL` that first reports a terminal state
-  (`done|failed|cancelled`) unregisters the handle within that same call.
+  (`done|failed|canceled`) unregisters the handle within that same call.
   Polls and cancels after that are `protocol` errors — once you have read a
   terminal state, stop polling. `CLOSE_SESSION` first cancels and releases that
   session's jobs (the job thread holds the connection lock, so without

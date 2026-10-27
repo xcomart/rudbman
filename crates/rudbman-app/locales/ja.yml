@@ -221,7 +221,7 @@ connect:
   add_prop: プロパティを追加
 
   section:
-    behaviour: 動作
+    behavior: 動作
     tunnel: SSH トンネル
 
   read_only: 読み取り専用で接続する
@@ -300,7 +300,7 @@ driver:
   downloading: "%{file} をダウンロードしています…"
   downloading_percent: "%{file} をダウンロード中 — %{percent}%"
   downloaded: "%{file} をダウンロードして追加しました。"
-  download_cancelled: ダウンロードをキャンセルしました。
+  download_canceled: ダウンロードをキャンセルしました。
   bad_coordinate: "「%{coordinate}」は group:artifact:version 形式の座標ではありません。"
   not_found: "Maven Central の %{url} には何もありません。"
   network_failed: "ダウンロードに失敗しました: %{error}"
@@ -404,7 +404,7 @@ query:
   commit_auto: "コミット（自動コミットが有効です）"
   run: 実行
   cancel: キャンセル
-  cancelling: キャンセル中…
+  canceling: キャンセル中…
   result: "結果 %{index}"
   tab: "クエリ %{index}"
   empty: 文を書いて実行してください。
@@ -428,7 +428,7 @@ query:
   hint_constraint: テーブルが宣言している制約に違反しました。
   hint_auth: この接続にはその権限がありません。
   hint_network: データベースとの接続が失われました。
-  hint_cancelled: 文の実行はキャンセルされました。
+  hint_canceled: 文の実行はキャンセルされました。
   open_file_select: SQL ファイルを選択
 
 data:
@@ -529,9 +529,9 @@ extract:
   start: 抽出
   starting: 開始しています…
   counters: "%{rows} 行、%{bytes}"
-  cancelling: キャンセルしています…
+  canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
 
@@ -554,10 +554,10 @@ transfer:
   starting: 開始しています…
   counters: "%{rows} 行"
   skipped: "%{skipped} 行をスキップ"
-  cancelling: キャンセルしています…
+  canceling: キャンセルしています…
   done: "%{rows} 行を %{table} に転送しました。"
   done_skipped: "%{skipped} 行は挿入できなかったためスキップしました。"
-  cancelled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
+  canceled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
   failed: "転送に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま転送に失敗しました。
 
@@ -576,9 +576,9 @@ backup:
   start: バックアップ
   starting: 開始しています…
   counters: "%{rows} 行、%{bytes}"
-  cancelling: キャンセルしています…
+  canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
 

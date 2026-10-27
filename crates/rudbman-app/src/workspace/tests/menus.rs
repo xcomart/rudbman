@@ -160,8 +160,8 @@ fn a_created_table_and_the_refresh_menu_invalidate_the_right_scope(cx: &mut gpui
 
 /// A right-click on a tree row asks the shell for a menu, and what that
 /// menu carries follows the kind of node it was raised over: a command a
-/// node cannot answer is left out rather than greyed for ever, and the
-/// commands that need a scope are greyed on the one node that names none.
+/// node cannot answer is left out rather than grayed for ever, and the
+/// commands that need a scope are grayed on the one node that names none.
 #[gpui::test]
 fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
     let (window, connection) = workspace_over_h2("tree-menu", cx);
@@ -204,11 +204,11 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             let mut expected = relation_labels();
             expected.extend(scope_labels());
             assert_eq!(context_menu::labels(&rows), expected);
-            assert!(context_menu::greyed(&rows).is_empty());
+            assert!(context_menu::grayed(&rows).is_empty());
 
             // A routine is an object and not a relation: `SELECT * FROM` a
             // procedure is not a statement, so those rows are absent rather
-            // than greyed.
+            // than grayed.
             assert_eq!(
                 context_menu::labels(&workspace.explorer_rows(&routine, cx)),
                 scope_labels(),
@@ -235,16 +235,16 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             );
 
             // The connection root names no scope — a diagram of every
-            // catalogue at once is not a diagram — so it keeps the rows and
-            // greys them. It offers no new table for the same reason: there
+            // catalog at once is not a diagram — so it keeps the rows and
+            // grays them. It offers no new table for the same reason: there
             // is no schema to make one in.
             let rows = workspace.explorer_rows(&root, cx);
             assert_eq!(context_menu::labels(&rows), scope_labels());
-            assert_eq!(context_menu::greyed(&rows), scope_labels()[..2]);
+            assert_eq!(context_menu::grayed(&rows), scope_labels()[..2]);
         })
         .expect("the window is open");
 
-    // A connection that never opened greys everything: the tree can still
+    // A connection that never opened grays everything: the tree can still
     // be read, and none of these commands can run without a session.
     window
         .update(&mut cx, |workspace, _window, cx| {
@@ -267,7 +267,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             expected.extend(scope_labels());
             expected.retain(|label| !label.is_empty());
             assert_eq!(
-                context_menu::greyed(&rows),
+                context_menu::grayed(&rows),
                 expected,
                 "a dead connection offered a live command"
             );
@@ -315,7 +315,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
         .update(&mut cx, |workspace, _window, _cx| {
             assert!(
                 workspace.context_menu.is_none(),
-                "an error row was given a menu of greyed rows"
+                "an error row was given a menu of grayed rows"
             );
         })
         .expect("the window is open");
@@ -446,7 +446,7 @@ fn closing_the_tabs_to_the_right_keeps_the_ones_before_them(cx: &mut gpui::TestA
 }
 
 /// A connection tab's menu acts on the tab that was pressed rather than on
-/// the one showing, and greys what needs a session.
+/// the one showing, and grays what needs a session.
 #[gpui::test]
 fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestAppContext) {
     let (window, _connection) = workspace_over_h2("conn-menu", cx);
@@ -471,7 +471,7 @@ fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestA
                     ts!("tab.close").to_string(),
                 ]
             );
-            assert!(context_menu::greyed(&live).is_empty());
+            assert!(context_menu::grayed(&live).is_empty());
 
             let dead = workspace.connection_rows(1, cx);
             assert!(!context_menu::row(&dead, &ts!("menu.new_query")).is_enabled());

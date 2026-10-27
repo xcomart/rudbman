@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>This is the one operation that arrives on a thread other than the session
  * worker, and the one that must not take the connection lock: the worker is
- * holding it inside the very statement being cancelled.
+ * holding it inside the very statement being canceled.
  */
 class CancelTest {
 
@@ -57,16 +57,16 @@ class CancelTest {
             H2.call(Ops.CANCEL, session, 0, null).assertOk();
             finished = done.await(100, TimeUnit.MILLISECONDS);
         }
-        assertTrue(finished, "the cancelled statement never returned");
+        assertTrue(finished, "the canceled statement never returned");
 
         Resp r = result.get();
         assertNotNull(r);
-        assertFalse(r.ok, "a cancelled statement must come back as an error envelope");
+        assertFalse(r.ok, "a canceled statement must come back as an error envelope");
         JsonObject err = r.error();
         assertEquals("sql", err.get("kind").getAsString());
         assertNotNull(err.get("sql_state"));
         assertFalse(err.get("sql_state").isJsonNull(),
-                "a cancelled statement still carries a SQLSTATE: " + err);
+                "a canceled statement still carries a SQLSTATE: " + err);
 
         H2.close(session);
     }
@@ -75,7 +75,7 @@ class CancelTest {
     void cancelOnAnIdleSessionIsHarmless() {
         long session = H2.open(H2.freshUrl());
         JsonObject o = H2.call(Ops.CANCEL, session, 0, null).json();
-        assertEquals(0, o.get("cancelled").getAsInt());
+        assertEquals(0, o.get("canceled").getAsInt());
         assertTrue(H2.call(Ops.PING, session, 0, null).json().get("ok").getAsBoolean());
         H2.close(session);
     }

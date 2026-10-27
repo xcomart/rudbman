@@ -1,6 +1,6 @@
 //! The SQL dialect, handed to an editor that has never heard of one.
 //!
-//! `rugpui-editor` holds a [`Highlighter`] — "give me the coloured runs of this
+//! `rugpui-editor` holds a [`Highlighter`] — "give me the colored runs of this
 //! line, given the state the line before it ended in" — and nothing else. It
 //! knows no SQL, no dialects, and no `rudbman-sql`. [`DialectHighlighter`] is
 //! the whole of what rudbman puts on the other side of that trait: it lexes a
@@ -27,7 +27,7 @@
 //!   flat.
 //! * **The statement under the caret** was cut by [`rudbman_sql::statement_at`]
 //!   over a window of the buffer. The widget now cuts it itself, from the
-//!   colours it is drawing anyway: a `;` terminates a statement unless the
+//!   colors it is drawing anyway: a `;` terminates a statement unless the
 //!   highlighter called it part of a string or a comment. `statement_boundaries`
 //!   in this module's tests is what holds the two answers together across the
 //!   dialects where they could drift — MySQL's `#`, PostgreSQL's `$$`, SQL
@@ -91,13 +91,13 @@ impl Highlighter for DialectHighlighter {
 /// Which palette slot a lexed token is painted in, if any.
 ///
 /// The mapping the editor's element used to hold, save one split: a parameter
-/// is still coloured like a number, because the palette has no slot of its
+/// is still colored like a number, because the palette has no slot of its
 /// own for one. A quoted identifier used to land on plain [`Token::Identifier`]
 /// for the same reason, but the editor now has [`Token::QuotedIdentifier`] —
-/// painted in the same slot as `Identifier`, so the colour is unchanged, but
+/// painted in the same slot as `Identifier`, so the color is unchanged, but
 /// opaque to the statement splitter and the bracket matcher the way a string
 /// is. Whitespace gets no span at all — it used to be painted in the
-/// palette's foreground colour, which is what the editor draws the bytes no
+/// palette's foreground color, which is what the editor draws the bytes no
 /// span covers in.
 const fn paint(kind: TokenKind) -> Option<Token> {
     Some(match kind {
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn a_quoted_identifier_is_its_own_token_in_the_identifier_slot() {
         // Each dialect gets the quoting form it actually has: `Token::
-        // QuotedIdentifier` shares `Identifier`'s colour slot, so all three
+        // QuotedIdentifier` shares `Identifier`'s color slot, so all three
         // still land beside the bare names around them the way they always
         // have — but as their own token, opaque to the statement splitter
         // and the bracket matcher the way a string is.
@@ -195,7 +195,7 @@ mod tests {
         }
 
         // MySQL is the one dialect where `"..."` is a string rather than a
-        // name, and the colour follows the dialect rather than the character.
+        // name, and the color follows the dialect rather than the character.
         let script = "select \"a\" from t;\n";
         let (buffer, cache) = open(script, Dialect::MYSQL);
         assert!(painted(script, &buffer, &cache, 0).contains(&("\"a\"", Token::String)));

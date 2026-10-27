@@ -295,7 +295,7 @@ class TransferJobTest {
     // -------------------------------------------------- cancel, session close
 
     @Test
-    void cancellingMidFlightLeavesBothSessionsUsable() throws Exception {
+    void cancelingMidFlightLeavesBothSessionsUsable() throws Exception {
         generateBigSource();
         H2.exec(target, "create table dst (id int, v varchar(80))");
 
@@ -306,14 +306,14 @@ class TransferJobTest {
 
         long seen = awaitRows(job, 1);
         assertTrue(seen > 0);
-        assertTrue(H2.call(Ops.JOB_CANCEL, job, 0, null).json().get("cancelled").getAsBoolean());
+        assertTrue(H2.call(Ops.JOB_CANCEL, job, 0, null).json().get("canceled").getAsBoolean());
 
         JsonObject end = await(job);
-        assertEquals("cancelled", end.get("state").getAsString(), end.toString());
+        assertEquals("canceled", end.get("state").getAsString(), end.toString());
         assertTrue(end.get("rows_done").getAsLong() < BIG_ROWS,
                 "a cancel that only arrived after the last row proves nothing: " + end);
 
-        // Both connections survived having a statement cancelled underneath them.
+        // Both connections survived having a statement canceled underneath them.
         assertEquals(String.valueOf(BIG_ROWS), one(source, "select count(*) from src"));
         long left = Long.parseLong(one(target, "select count(*) from dst"));
         // Rows committed before the cancel stay: that is what rows_done reports,
@@ -343,7 +343,7 @@ class TransferJobTest {
         awaitRows(job, 5_000);
         H2.call(Ops.JOB_CANCEL, job, 0, null);
         JsonObject end = await(job);
-        assertEquals("cancelled", end.get("state").getAsString(), end.toString());
+        assertEquals("canceled", end.get("state").getAsString(), end.toString());
 
         long left = Long.parseLong(one(target, "select count(*) from dst"));
         assertTrue(left >= 4_000, "the committed prefix should have survived, got " + left);

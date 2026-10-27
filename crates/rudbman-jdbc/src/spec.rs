@@ -2,7 +2,7 @@
 //! with, and what a job is started with.
 //!
 //! These are the Rust side of the JSON documented in `bridge/README.md`. They
-//! serialise field for field; nothing here is renamed on the way out, so a
+//! serialize field for field; nothing here is renamed on the way out, so a
 //! reader can compare this file with the bridge's `Session.open` and `Params`
 //! and see the same names.
 //!
@@ -377,7 +377,7 @@ pub struct DescribeRequest {
     /// under its own kind, and SQL Server's `;1` numbering is taken off its
     /// name.
     ///
-    /// `sequences` and `triggers` are vendor catalogue queries, because JDBC
+    /// `sequences` and `triggers` are vendor catalog queries, because JDBC
     /// never grew an accessor for either. An empty list is a correct answer on a
     /// product the bridge has no query for, and on one where the query was
     /// refused. A trigger item carries the `table` it fires on, its `timing`,
@@ -613,7 +613,7 @@ impl ExtractSpec {
     /// The path is resolved **by the JVM, on the machine the JVM runs on**, and
     /// its parent directories are created. A relative path is therefore
     /// relative to the process's working directory, which is rarely what a user
-    /// picking a file in a dialogue means: pass an absolute one.
+    /// picking a file in a dialog means: pass an absolute one.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         ExtractSpec {
             kind: "extract",
@@ -700,7 +700,7 @@ impl ObjectRef {
 pub struct OutputSpec {
     /// The file to write, interpreted by the JVM.
     ///
-    /// A path that is not valid UTF-8 fails to serialise — the request body is
+    /// A path that is not valid UTF-8 fails to serialize — the request body is
     /// JSON, and there is no lossless way to put such a path in it.
     pub path: PathBuf,
     /// The charset name, as `java.nio.charset.Charset.forName` reads it.
@@ -1073,7 +1073,7 @@ pub enum TransferMode {
     /// than a job that fails later. The statement is dialect-specific —
     /// `ON CONFLICT … DO UPDATE` on PostgreSQL and SQLite, `ON DUPLICATE KEY
     /// UPDATE` on MySQL and MariaDB, `MERGE` on H2, Oracle, SQL Server and Db2
-    /// — and a product the bridge does not recognise is rejected too: there is
+    /// — and a product the bridge does not recognize is rejected too: there is
     /// no portable upsert, and a quietly wrong statement is worse than a
     /// refusal.
     Upsert,
@@ -1145,7 +1145,7 @@ pub enum OnError {
 /// different per table. That job is [`ExtractSpec`]'s.
 ///
 /// Phases, cancellation and the output path left as it was by a cancel or a
-/// failure are an extraction's exactly — which is what keeps a cancelled backup
+/// failure are an extraction's exactly — which is what keeps a canceled backup
 /// from destroying the previous one.
 ///
 /// ```
@@ -1425,7 +1425,7 @@ mod tests {
             Param::Timestamp("2026-08-04 09:30:00".into()),
             Param::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
         ])
-        .expect("serialises");
+        .expect("serializes");
         assert_eq!(
             json,
             r#"[42,"text",true,null,"#.to_string()
@@ -1437,18 +1437,18 @@ mod tests {
 
     #[test]
     fn a_whole_numbered_double_stays_a_double() {
-        // Bare, this would serialise as `3` and be bound with setLong.
-        let json = serde_json::to_string(&Param::F64(3.0)).expect("serialises");
+        // Bare, this would serialize as `3` and be bound with setLong.
+        let json = serde_json::to_string(&Param::F64(3.0)).expect("serializes");
         assert_eq!(json, r#"{"type":"f64","value":3.0}"#);
     }
 
     #[test]
     fn a_statement_spec_names_its_server_cursor_the_way_the_bridge_reads_it() {
         // `Bridge.execute` reads `server_cursor` by hand, defaulting to false.
-        let plain = serde_json::to_value(StatementSpec::new("select 1")).expect("serialises");
+        let plain = serde_json::to_value(StatementSpec::new("select 1")).expect("serializes");
         assert_eq!(plain["server_cursor"], serde_json::json!(false));
         let cursor = serde_json::to_value(StatementSpec::new("select 1").with_server_cursor(true))
-            .expect("serialises");
+            .expect("serializes");
         assert_eq!(cursor["server_cursor"], serde_json::json!(true));
     }
 
@@ -1457,15 +1457,15 @@ mod tests {
         // The bridge rejects anything but these three by name, so a rename here
         // is a protocol break rather than a refactor.
         assert_eq!(
-            serde_json::to_string(&DdlSource::Auto).expect("serialises"),
+            serde_json::to_string(&DdlSource::Auto).expect("serializes"),
             r#""auto""#
         );
         assert_eq!(
-            serde_json::to_string(&DdlSource::Native).expect("serialises"),
+            serde_json::to_string(&DdlSource::Native).expect("serializes"),
             r#""native""#
         );
         assert_eq!(
-            serde_json::to_string(&DdlSource::Metadata).expect("serialises"),
+            serde_json::to_string(&DdlSource::Metadata).expect("serializes"),
             r#""metadata""#
         );
         assert_eq!(DdlSource::default(), DdlSource::Auto);
@@ -1479,7 +1479,7 @@ mod tests {
             (ObjectKind::Function, "function"),
         ] {
             assert_eq!(
-                serde_json::to_string(&kind).expect("serialises"),
+                serde_json::to_string(&kind).expect("serializes"),
                 format!("\"{word}\"")
             );
         }
@@ -1491,12 +1491,12 @@ mod tests {
         // null is "any schema", and sending one where the caller said nothing
         // would silently widen the query.
         let json = serde_json::to_string(&DescribeRequest::new("tables").with_schema("APP"))
-            .expect("serialises");
+            .expect("serializes");
         assert_eq!(json, r#"{"kind":"tables","schema":"APP"}"#);
     }
 
     #[test]
-    fn an_extract_spec_serialises_to_the_documented_wire_shape() {
+    fn an_extract_spec_serializes_to_the_documented_wire_shape() {
         // The wire pin for architecture document §6. Every name here is read by
         // `ExtractJob`'s constructor by hand, so a rename on either side is a
         // protocol break that only a comparison like this one catches.
@@ -1505,7 +1505,7 @@ mod tests {
             .with_ddl(DdlOptions::included())
             .with_data(DataOptions::included(DataMode::Insert));
         assert_eq!(
-            serde_json::to_string(&spec).expect("serialises"),
+            serde_json::to_string(&spec).expect("serializes"),
             r#"{"kind":"extract","objects":[{"schema":"PUBLIC","name":"T"}],"#.to_string()
                 + r#""output":{"path":"/tmp/out.sql","charset":"UTF-8","newline":"\n"},"#
                 + r#""ddl":{"include":true,"include_drop":false,"constraints":"alter"},"#
@@ -1535,7 +1535,7 @@ mod tests {
                     .with_insert_batch_rows(50)
                     .with_where("id > 10"),
             );
-        let json = serde_json::to_string(&spec).expect("serialises");
+        let json = serde_json::to_string(&spec).expect("serializes");
         assert!(
             json.contains(r#""catalog":"APP","schema":"S","name":"T""#),
             "{json}"
@@ -1558,7 +1558,7 @@ mod tests {
     }
 
     #[test]
-    fn a_transfer_spec_serialises_to_the_documented_wire_shape() {
+    fn a_transfer_spec_serializes_to_the_documented_wire_shape() {
         // The wire pin for architecture document §6. The bridge reads every one
         // of these names by hand, and the defaults are pinned too: 500 and
         // 10 000 are what the document says a caller who says nothing gets.
@@ -1568,7 +1568,7 @@ mod tests {
             ObjectRef::new("T").with_schema("PUBLIC"),
         );
         assert_eq!(
-            serde_json::to_string(&spec).expect("serialises"),
+            serde_json::to_string(&spec).expect("serializes"),
             r#"{"kind":"transfer","source_sql":"select id, txt from t","#.to_string()
                 + r#""target_session":7,"target_table":{"schema":"PUBLIC","name":"T"},"#
                 + r#""mode":"insert","batch_size":500,"commit_every":10000,"#
@@ -1583,29 +1583,29 @@ mod tests {
         // `truncate_insert` is snake_case while every other enum on this wire is
         // one lowercase word, so it is the one a rename would quietly break.
         assert_eq!(
-            serde_json::to_string(&TransferMode::Insert).expect("serialises"),
+            serde_json::to_string(&TransferMode::Insert).expect("serializes"),
             r#""insert""#
         );
         assert_eq!(
-            serde_json::to_string(&TransferMode::Upsert).expect("serialises"),
+            serde_json::to_string(&TransferMode::Upsert).expect("serializes"),
             r#""upsert""#
         );
         assert_eq!(
-            serde_json::to_string(&TransferMode::TruncateInsert).expect("serialises"),
+            serde_json::to_string(&TransferMode::TruncateInsert).expect("serializes"),
             r#""truncate_insert""#
         );
         assert_eq!(TransferMode::default(), TransferMode::Insert);
 
         assert_eq!(
-            serde_json::to_string(&OnError::Abort).expect("serialises"),
+            serde_json::to_string(&OnError::Abort).expect("serializes"),
             r#""abort""#
         );
         assert_eq!(
-            serde_json::to_string(&OnError::Skip).expect("serialises"),
+            serde_json::to_string(&OnError::Skip).expect("serializes"),
             r#""skip""#
         );
         assert_eq!(
-            serde_json::to_string(&OnError::Log).expect("serialises"),
+            serde_json::to_string(&OnError::Log).expect("serializes"),
             r#""log""#
         );
         assert_eq!(OnError::default(), OnError::Abort);
@@ -1621,7 +1621,7 @@ mod tests {
             .with_column("SRC_TXT", "TXT")
             .with_on_error(OnError::Log);
         assert_eq!(
-            serde_json::to_string(&spec).expect("serialises"),
+            serde_json::to_string(&spec).expect("serializes"),
             r#"{"kind":"transfer","source_sql":"select 1","target_session":3,"#.to_string()
                 // The target table names neither catalog nor schema, and neither
                 // travels as a null.
@@ -1634,18 +1634,18 @@ mod tests {
         let cleared = spec.with_column_map([]);
         assert!(
             !serde_json::to_string(&cleared)
-                .expect("serialises")
+                .expect("serializes")
                 .contains("column_map")
         );
     }
 
     #[test]
-    fn a_backup_spec_serialises_to_the_documented_wire_shape() {
+    fn a_backup_spec_serializes_to_the_documented_wire_shape() {
         // An unset scope is an empty object, not a pair of nulls: the bridge
         // reads absent as "wherever the connection is pointed".
         let spec = BackupSpec::new("/tmp/backup.sql");
         assert_eq!(
-            serde_json::to_string(&spec).expect("serialises"),
+            serde_json::to_string(&spec).expect("serializes"),
             r#"{"kind":"backup","scope":{},"#.to_string()
                 + r#""output":{"path":"/tmp/backup.sql","charset":"UTF-8","newline":"\n"},"#
                 + r#""compress":"none","#
@@ -1669,7 +1669,7 @@ mod tests {
             .with_ddl(DdlOptions::included().with_drop(true))
             .with_data(BackupDataOptions::included().with_insert_batch_rows(100));
         assert_eq!(
-            serde_json::to_string(&spec).expect("serialises"),
+            serde_json::to_string(&spec).expect("serializes"),
             r#"{"kind":"backup","scope":{"catalog":"APP","schema":"PUBLIC"},"#.to_string()
                 + r#""output":{"path":"/tmp/app.sql.gz","charset":"EUC-KR","newline":"\r\n"},"#
                 + r#""compress":"gzip","#
@@ -1679,7 +1679,7 @@ mod tests {
 
         // A scope with only a schema leaves the catalog off entirely.
         let json = serde_json::to_string(&BackupSpec::new("/tmp/s.sql").with_schema("APP"))
-            .expect("serialises");
+            .expect("serializes");
         assert!(json.contains(r#""scope":{"schema":"APP"}"#), "{json}");
         assert_eq!(Compression::default(), Compression::None);
     }
@@ -1701,14 +1701,14 @@ mod tests {
         // answers its own comments" and would take a null as one too, but only
         // absent is what the contract with `Session.open` says.
         let plain = serde_json::to_string(&ConnectionSpec::new("jdbc:h2:mem:t", "org.h2.Driver"))
-            .expect("serialises");
+            .expect("serializes");
         assert!(!plain.contains("table_comments_sql"), "{plain}");
         assert!(!plain.contains("column_comments_sql"), "{plain}");
 
         let mut spec = ConnectionSpec::new("jdbc:h2:mem:t", "org.h2.Driver");
         spec.table_comments_sql = Some("select t, c from meta where s = '${schema}'".into());
         spec.column_comments_sql = Some("select t, c, m from cols".into());
-        let json = serde_json::to_string(&spec).expect("serialises");
+        let json = serde_json::to_string(&spec).expect("serializes");
         // The `${schema}` hole travels untouched: the substitution is the
         // bridge's, and escaping or filling it here would break it.
         assert!(

@@ -38,12 +38,12 @@ import java.util.Set;
  * {@link Ddl}.
  *
  * <p>Five kinds reach past {@link DatabaseMetaData}. {@code ddl},
- * {@code sequences} and {@code triggers} need vendor catalogue queries
+ * {@code sequences} and {@code triggers} need vendor catalog queries
  * ({@link Ddl}, {@link Sequences}, {@link Triggers}), and all three are written
  * so that an unsupported or forbidden query degrades to a reconstruction or an
  * empty list rather than to an error.
  * {@code tables} and {@code columns} stay pure JDBC reads, but their
- * {@code remarks} are then reconciled against the vendor catalogue on the
+ * {@code remarks} are then reconciled against the vendor catalog on the
  * products whose drivers report comments badly ({@link Comments}): topped up
  * where a driver reports none, and cleared where one reports a placeholder
  * instead. The top-up happens only where the driver left a hole, and silently

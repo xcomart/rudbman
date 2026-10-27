@@ -33,7 +33,7 @@ import java.util.Locale;
  *       and the JDBC parameter list a header for it. The header carries the
  *       name, the parameters and the return type and nothing else: a routine's
  *       characteristics - determinism, security, language - are in no portable
- *       catalogue, so the response says {@code metadata} and the UI labels
+ *       catalog, so the response says {@code metadata} and the UI labels
  *       it.</li>
  * </ol>
  *
@@ -101,7 +101,7 @@ public final class RoutineDdl {
      * Asks the server for the routine's own text, or answers {@code null}.
      *
      * <p>Every attempt is fenced by {@link Attempt}: a missing privilege or a
-     * server version without the catalogue column is an answer here ("no
+     * server version without the catalog column is an answer here ("no
      * native text"), not a failure.
      */
     private static String nativeDdl(Connection conn, Dialect dialect, Ident id, String catalog,
@@ -157,7 +157,7 @@ public final class RoutineDdl {
      * {@code CREATE OR REPLACE} statement. Aggregates are left out: the function
      * refuses them, and {@code prokind} - PostgreSQL 11 and newer - is what says
      * which they are. An older server fails the query and falls through to the
-     * catalogue layer.
+     * catalog layer.
      */
     private static String postgres(Connection conn, String schema, String name)
             throws SQLException {
@@ -214,7 +214,7 @@ public final class RoutineDdl {
 
     /**
      * Rebuilds the statement from {@code INFORMATION_SCHEMA.ROUTINES} and the
-     * JDBC parameter list, or answers {@code null} when the catalogue has no
+     * JDBC parameter list, or answers {@code null} when the catalog has no
      * body to give - no such view, or a body the account may not read.
      *
      * <p>MySQL calls its databases catalogs in JDBC and schemas in

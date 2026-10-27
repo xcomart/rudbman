@@ -20,7 +20,7 @@ import java.util.logging.Logger;
  *
  * <p>Shared by {@link ExtractJob} and {@link BackupJob}. Opening the target
  * itself would truncate it before the first row is read, so a backup that fails
- * or is cancelled half way would take the previous good backup down with it.
+ * or is canceled half way would take the previous good backup down with it.
  * Writing beside it and renaming on success means the target is only ever the
  * old file or the complete new one: {@link #commit()} moves the sibling over it
  * in one rename, and {@link #discard()} deletes the sibling and leaves the old

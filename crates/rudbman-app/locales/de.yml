@@ -221,7 +221,7 @@ connect:
   add_prop: Eigenschaft hinzufügen
 
   section:
-    behaviour: Verhalten
+    behavior: Verhalten
     tunnel: SSH-Tunnel
 
   read_only: Verbindung schreibgeschützt öffnen
@@ -300,7 +300,7 @@ driver:
   downloading: "%{file} wird heruntergeladen…"
   downloading_percent: "%{file} wird heruntergeladen — %{percent} %"
   downloaded: "%{file} wurde heruntergeladen und hinzugefügt."
-  download_cancelled: Der Download wurde abgebrochen.
+  download_canceled: Der Download wurde abgebrochen.
   bad_coordinate: "„%{coordinate}“ ist keine Koordinate der Form group:artifact:version."
   not_found: "Maven Central hat nichts unter %{url}."
   network_failed: "Der Download ist fehlgeschlagen: %{error}"
@@ -404,7 +404,7 @@ query:
   commit_auto: "Commit (automatisches Commit ist aktiviert)"
   run: Ausführen
   cancel: Abbrechen
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   result: "Ergebnis %{index}"
   tab: "Abfrage %{index}"
   empty: Schreiben Sie eine Anweisung und führen Sie sie aus.
@@ -428,7 +428,7 @@ query:
   hint_constraint: Die Anweisung verletzt ein Constraint der Tabelle.
   hint_auth: Diese Verbindung darf das nicht.
   hint_network: Die Verbindung zur Datenbank ging verloren.
-  hint_cancelled: Die Anweisung wurde abgebrochen.
+  hint_canceled: Die Anweisung wurde abgebrochen.
   open_file_select: SQL-Datei auswählen
 
 data:
@@ -529,9 +529,9 @@ extract:
   start: Extrahieren
   starting: wird gestartet…
   counters: "%{rows} Zeilen, %{bytes}"
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Extraktion schlug fehl: %{error}"
   failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.
 
@@ -554,10 +554,10 @@ transfer:
   starting: wird gestartet…
   counters: "%{rows} Zeilen"
   skipped: "%{skipped} übersprungen"
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   done: "%{rows} Zeilen nach %{table} übertragen."
   done_skipped: "%{skipped} Zeilen konnten nicht eingefügt werden und wurden übersprungen."
-  cancelled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
+  canceled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
   failed: "Die Übertragung schlug fehl: %{error}"
   failed_unknown: Die Übertragung schlug fehl; die Bridge nannte keinen Grund.
 
@@ -576,9 +576,9 @@ backup:
   start: Sichern
   starting: wird gestartet…
   counters: "%{rows} Zeilen, %{bytes}"
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
 

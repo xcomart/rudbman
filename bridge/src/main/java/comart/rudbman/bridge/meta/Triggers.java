@@ -20,9 +20,9 @@ import java.util.regex.Pattern;
  * {@code DESCRIBE kind: "triggers"}.
  *
  * <p>Like sequences, triggers have no {@link DatabaseMetaData} accessor, so
- * this is a catalogue query per product: {@code pg_trigger},
+ * this is a catalog query per product: {@code pg_trigger},
  * {@code INFORMATION_SCHEMA.TRIGGERS} on MySQL, MariaDB, H2 and anything
- * unrecognised, {@code sys.triggers} on SQL Server, {@code ALL_TRIGGERS} on
+ * unrecognized, {@code sys.triggers} on SQL Server, {@code ALL_TRIGGERS} on
  * Oracle and {@code sqlite_master} on SQLite. An empty list is a correct answer,
  * and so is a rejected query, via {@link Attempt}.
  *
@@ -39,7 +39,7 @@ import java.util.regex.Pattern;
 public final class Triggers {
 
     /**
-     * PostgreSQL's own catalogue rather than the standard view: it also lists
+     * PostgreSQL's own catalog rather than the standard view: it also lists
      * triggers on tables the user may only read, and says whether a trigger is
      * enabled. {@code tgtype} is a bit set - row 1, before 2, insert 4, delete
      * 8, update 16, truncate 32, instead 64.
@@ -68,7 +68,7 @@ public final class Triggers {
 
     /**
      * The SQL standard view, with H2's {@code REMARKS}; also the attempt made on
-     * a product this bridge does not recognise.
+     * a product this bridge does not recognize.
      */
     private static final String STANDARD_SQL = "SELECT TRIGGER_CATALOG, TRIGGER_SCHEMA,"
             + " TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION,"

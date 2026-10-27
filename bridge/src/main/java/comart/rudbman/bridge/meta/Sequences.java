@@ -20,18 +20,18 @@ import java.util.Map;
  *
  * <p>The one metadata kind with no JDBC behind it. {@link DatabaseMetaData} has
  * accessors for tables, columns, keys, indexes, procedures, functions and user
- * types, and none at all for sequences - they were standardised in SQL:2003,
+ * types, and none at all for sequences - they were standardized in SQL:2003,
  * years after the JDBC metadata interface was fixed, and no later JDBC revision
- * went back for them. So this is a vendor catalogue query per product.
+ * went back for them. So this is a vendor catalog query per product.
  *
  * <p><b>An empty list is a correct answer.</b> Many databases have no
  * sequences: MySQL has none at all, SQLite has none, and a server whose
- * product name is not recognised is simply not asked. None of that is an error
+ * product name is not recognized is simply not asked. None of that is an error
  * condition, and the explorer tree should show an empty branch, not a failure.
  * A query that is attempted and rejected - the object is not there, or the user
  * cannot read it - lands in the same place, via {@link Attempt}.
  *
- * <p>Row shape is normalised across products by reading each output key from the
+ * <p>Row shape is normalized across products by reading each output key from the
  * first metadata label that is present, so that one reader serves the SQL:2003
  * {@code INFORMATION_SCHEMA.SEQUENCES} layout and Oracle's older
  * {@code ALL_SEQUENCES} layout alike. MariaDB is read its own way; see
@@ -135,7 +135,7 @@ public final class Sequences {
      * <p>Request members: {@code catalog}, {@code schema} and {@code name}, all
      * optional and all matched exactly. Filtering happens here rather than in a
      * {@code WHERE} clause because the column holding the schema name differs
-     * per product, and sequence catalogues are small.
+     * per product, and sequence catalogs are small.
      *
      * @param conn the live connection
      * @param dbm  the connection metadata, for the product name
@@ -151,7 +151,7 @@ public final class Sequences {
         String schema = Json.str(req, "schema");
         String name = Json.str(req, "name");
         // The first query the server answers is the one used; a later one is
-        // the older catalogue a server without the first still has.
+        // the older catalog a server without the first still has.
         for (String sql : sqlFor(dialect, Ident.of(dbm), catalog)) {
             JsonArray answered = Attempt.<JsonArray>run(conn, sql, st -> {
                 JsonArray arr = new JsonArray();
@@ -294,7 +294,7 @@ public final class Sequences {
     }
 
     /**
-     * Every label this reader knows, across all four catalogue layouts.
+     * Every label this reader knows, across all four catalog layouts.
      *
      * <p>The row is fetched as a set rather than field by field because a row
      * has to be read left to right - see {@link RsView} - and these products do

@@ -94,7 +94,7 @@ class DescribeObjectsTest {
         assertFalse(text.contains("CREATE TABLE"), text);
     }
 
-    /** A sequence rebuilt from the catalogue is complete, and says so. */
+    /** A sequence rebuilt from the catalog is complete, and says so. */
     @Test
     void aSequenceIsAnsweredWithItsOptions() {
         JsonObject own = ddl("sequence", "SEQ_ORDER", "auto");

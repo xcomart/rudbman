@@ -9,12 +9,12 @@
 //!
 //! # Live preview
 //!
-//! Colours and fonts are shown before they are saved, because judging a palette
+//! Colors and fonts are shown before they are saved, because judging a palette
 //! from a swatch is not the same as living in it. The dialog does that without
 //! persisting anything: every change to one of those controls publishes the form
 //! through [`crate::app_settings::set_preview`] and emits
 //! [`SettingsDialogEvent::Previewed`], and the shell re-applies the palettes from
-//! whatever that call left in place. Cancelling drops the preview, at which point
+//! whatever that call left in place. Canceling drops the preview, at which point
 //! the same code path resolves back to the saved settings — the revert is the
 //! absence of an override rather than a second copy of the settings kept around
 //! to restore from.
@@ -171,7 +171,7 @@ pub enum SettingsDialogEvent {
 
 /// Which of the dialog's two palette pickers is meant.
 ///
-/// The catalogues themselves are [`rugpui_shell::catalog`]'s; what stays here is
+/// The catalogs themselves are [`rugpui_shell::catalog`]'s; what stays here is
 /// the *form field* each one is attached to, because the selected id is a
 /// setting and the dialog is what owns those.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,7 +279,7 @@ type FontChoices = (
 /// root. It renders nothing while [`SettingsDialog::is_open`] is `false`, so it
 /// is safe to render unconditionally.
 pub struct SettingsDialog {
-    // Invalidated when opening the dialog or changing a palette catalogue.
+    // Invalidated when opening the dialog or changing a palette catalog.
     palette_choices: RefCell<Option<PaletteChoices>>,
     font_choices: RefCell<Option<FontChoices>>,
     /// Whether the dialog is currently visible.
@@ -314,7 +314,7 @@ pub struct SettingsDialog {
     editor_theme_actions: Entity<CatalogActions>,
     /// Keeps both rows' subscriptions alive.
     catalog_events: Vec<Subscription>,
-    /// The colour editor, while one is open. The dialog renders it *instead of*
+    /// The color editor, while one is open. The dialog renders it *instead of*
     /// the form rather than over it; see [`rugpui_shell::theme_editor`].
     editor: Option<Entity<ThemeEditor>>,
     /// Keeps the open editor's subscription alive.
@@ -408,7 +408,7 @@ impl SettingsDialog {
         let jvm_args_input = field(cx, "-Dfoo=bar".into(), tab::JVM_ARGS);
 
         // Numeric fields have no input filter of their own, so each one is
-        // sanitised after the fact by an observer.
+        // sanitized after the fact by an observer.
         restrict_to_number(cx, &ui_font_size_input, true, 5);
         restrict_to_number(cx, &editor_font_size_input, true, 5);
         restrict_to_number(cx, &opacity_input, false, 3);
@@ -424,7 +424,7 @@ impl SettingsDialog {
         }
 
         let defaults = AppSettings::default();
-        // One pair of catalogues for the life of the dialog: they hold the
+        // One pair of catalogs for the life of the dialog: they hold the
         // directories and the id to fall back on, both of which are fixed.
         let dirs = crate::theme_dirs().unwrap_or_else(|err| {
             log::warn!("cannot locate the theme directories: {err:#}");
@@ -633,7 +633,7 @@ impl SettingsDialog {
             }
             CatalogActionEvent::Select(id) => dialog.select(which, id.clone(), cx),
             // Files were written or removed and the registries reloaded, so a
-            // palette already in use has to repaint under its new colours
+            // palette already in use has to repaint under its new colors
             // without the settings themselves having been saved.
             CatalogActionEvent::Changed => {
                 dialog.palette_choices.get_mut().take();
@@ -643,7 +643,7 @@ impl SettingsDialog {
         (row, events)
     }
 
-    /// The row under one catalogue's picker.
+    /// The row under one catalog's picker.
     fn actions(&self, catalog: Catalog) -> &Entity<CatalogActions> {
         match catalog {
             Catalog::UiTheme => &self.ui_theme_actions,
@@ -651,7 +651,7 @@ impl SettingsDialog {
         }
     }
 
-    /// The id currently highlighted in one catalogue's picker.
+    /// The id currently highlighted in one catalog's picker.
     fn selection(&self, catalog: Catalog) -> SharedString {
         match catalog {
             Catalog::UiTheme => self.ui_theme.clone(),
@@ -662,7 +662,7 @@ impl SettingsDialog {
     /// Tells both rows which entry their picker is showing.
     ///
     /// Everything a row offers is about the selection, so a row that had not
-    /// been told would grey the wrong buttons out.
+    /// been told would gray the wrong buttons out.
     fn push_selections(&mut self, cx: &mut Context<Self>) {
         for catalog in [Catalog::UiTheme, Catalog::EditorTheme] {
             let id = self.selection(catalog).to_string();
@@ -672,10 +672,10 @@ impl SettingsDialog {
         }
     }
 
-    /// Highlights `id` in one catalogue's picker and previews it.
+    /// Highlights `id` in one catalog's picker and previews it.
     ///
     /// Nothing is persisted; the preview is dropped again if the dialog is
-    /// cancelled, exactly as when the user picks a row of the dropdown.
+    /// canceled, exactly as when the user picks a row of the dropdown.
     fn select(&mut self, catalog: Catalog, id: impl Into<SharedString>, cx: &mut Context<Self>) {
         match catalog {
             Catalog::UiTheme => self.ui_theme = id.into(),
@@ -707,7 +707,7 @@ impl SettingsDialog {
     /// Takes the editor back down and returns to the form.
     ///
     /// When something was written the preview is refreshed, so that a palette
-    /// already in use repaints under its new colours without the settings
+    /// already in use repaints under its new colors without the settings
     /// themselves having to be saved.
     fn close_editor(&mut self, saved: bool, cx: &mut Context<Self>) {
         self.editor = None;
@@ -885,7 +885,7 @@ impl SettingsDialog {
     ///
     /// Anything layered on top of the form takes the key first and only undoes
     /// itself, so that backing out of a list, a delete confirmation or the
-    /// colour editor does not also throw away the whole form. The editor is
+    /// color editor does not also throw away the whole form. The editor is
     /// checked before the dropdowns because it replaces the form outright:
     /// while it is up there is no list to close. A management row's delete
     /// confirmation is checked last, ahead of dismissing the dialog outright,
@@ -1067,7 +1067,7 @@ impl SettingsDialog {
     /// resolved theme keeps the row informative, since that answer moves with
     /// the chrome theme picked in the row above — and the disabled trigger is
     /// the same line in the same place as the live one, so ticking the box
-    /// shifts nothing on screen but the colours.
+    /// shifts nothing on screen but the colors.
     fn render_editor_theme(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
 
@@ -1554,7 +1554,7 @@ impl Render for SettingsDialog {
         let chrome = theme(cx);
         let body_bar = self.hovering_body_bar(cx);
 
-        // While a colour is being edited the form steps aside entirely rather
+        // While a color is being edited the form steps aside entirely rather
         // than being covered up, so that the window's tab ring holds only the
         // controls that are actually on screen; see
         // [`rugpui_shell::theme_editor`]. The form is not even built in that
@@ -1721,7 +1721,7 @@ mod tests {
 
     /// The word-wrap switch is the one appearance control the dialog does not
     /// preview — the editors are handed the change on save — so it has to reach
-    /// `collect` on its own, and cancelling has to leave the saved answer alone.
+    /// `collect` on its own, and canceling has to leave the saved answer alone.
     #[gpui::test]
     fn the_word_wrap_switch_reaches_the_settings_without_a_preview(cx: &mut gpui::TestAppContext) {
         let saved = AppSettings::default();
@@ -1785,7 +1785,7 @@ mod tests {
     /// Nothing typed into the form may reach the disk on its own, and closing
     /// the dialog has to leave the window drawn from the saved settings again.
     #[gpui::test]
-    fn a_cancelled_edit_leaves_nothing_behind(cx: &mut gpui::TestAppContext) {
+    fn a_canceled_edit_leaves_nothing_behind(cx: &mut gpui::TestAppContext) {
         let saved = AppSettings::default();
         let dialog = cx.update(|cx| {
             app_settings::replace(saved.clone(), cx);
@@ -1839,7 +1839,7 @@ mod tests {
             });
         });
 
-        // The colour editor up: `escape` cancels it in place. `cancel` reports
+        // The color editor up: `escape` cancels it in place. `cancel` reports
         // itself through an emitted event rather than a direct field write —
         // see `ThemeEditor::cancel` — so the close it causes only lands once
         // this update's effects flush, which is why the two checks below are

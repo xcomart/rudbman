@@ -20,7 +20,7 @@
 //!
 //! # One statement at a time, and cancellation goes round the queue
 //!
-//! A session serialises everything on its own worker thread (architecture
+//! A session serializes everything on its own worker thread (architecture
 //! document, §4.2), so a fetch, a schema load and a `DESCRIBE` on one
 //! connection queue behind each other whether or not this module arranges it.
 //! What this module does arrange is that a *second* run is refused while one is
@@ -32,7 +32,7 @@
 //! # Generations
 //!
 //! Every run takes the next generation number, and every delivery carries the
-//! generation it belongs to. A cancelled statement's batch can still be in
+//! generation it belongs to. A canceled statement's batch can still be in
 //! flight when the next run starts, and the number is what stops it landing in
 //! the new run's grid. Nothing here relies on a task being dropped in time.
 //!
@@ -47,11 +47,11 @@
 //! # A result that can be written back
 //!
 //! A `SELECT` somebody wrote has no single table behind it in general, but the
-//! cases that do are recognisable from metadata the wire already carries, and
+//! cases that do are recognizable from metadata the wire already carries, and
 //! the architecture document's §7.9 says such a result should be editable.
-//! [`source_table`] is that gate, and it is the whole of the judgement: every
+//! [`source_table`] is that gate, and it is the whole of the judgment: every
 //! column that names a source table must name the same one, at least one must,
-//! and then — asked of the catalogue, not guessed — the table's primary key
+//! and then — asked of the catalog, not guessed — the table's primary key
 //! must be present in the result in full. A column that names no table is a
 //! computed one: read-only, but not disqualifying.
 //!
@@ -159,12 +159,12 @@ const PREVIEW_CHARS: usize = 400;
 ///
 /// Carries the pane it belongs to because gpui delivers drag moves to every
 /// ancestor of the element the drag started on, and a pane inside another
-/// pane's subtree would otherwise write its neighbour's ratio.
+/// pane's subtree would otherwise write its neighbor's ratio.
 pub struct DraggedQueryDivider(EntityId);
 
 /// A table's three name parts, each `None` where the driver would not say.
 ///
-/// The order is the catalogue's own — catalog, schema, table — which is also
+/// The order is the catalog's own — catalog, schema, table — which is also
 /// the order [`crate::row_apply::primary_key`] takes them in.
 type TableName = (Option<String>, Option<String>, String);
 
@@ -219,16 +219,16 @@ impl QueryError {
     /// Whether this failure is the cancel button rather than the statement.
     ///
     /// Class `57` is "operator intervention", which is what a driver raises for
-    /// a statement someone cancelled; `interrupted` is what the bridge reports
+    /// a statement someone canceled; `interrupted` is what the bridge reports
     /// when the JVM call itself was interrupted.
-    pub fn is_cancelled(&self) -> bool {
+    pub fn is_canceled(&self) -> bool {
         self.kind == BridgeErrorKind::Interrupted || self.sql_state_class() == Some("57")
     }
 
     /// A one-line suggestion, for the classes worth one.
     pub fn hint(&self) -> Option<SharedString> {
-        if self.is_cancelled() {
-            return Some(ts!("query.hint_cancelled"));
+        if self.is_canceled() {
+            return Some(ts!("query.hint_canceled"));
         }
         match self.sql_state_class() {
             // Syntax error or access rule violation: the two the class cannot
@@ -258,7 +258,7 @@ struct Executed {
 /// # Why a page is a statement of its own where it can be
 ///
 /// Every pane, the explorer and the metadata lookups share one JDBC
-/// connection, and an open streaming result set is a poor neighbour on it.
+/// connection, and an open streaming result set is a poor neighbor on it.
 /// MariaDB's Connector/J answers *any* other command sent while one is open by
 /// reading the rest of it into the heap first (`fetchRemaining`) — and this
 /// pane sends one itself, the primary key lookup that decides whether a result
@@ -508,10 +508,10 @@ struct Running {
     canceller: Canceller,
     /// Whether the cancel has been issued, so the button says so and cannot be
     /// pressed twice.
-    cancelling: bool,
+    canceling: bool,
 }
 
-/// How a finished run is summarised in the status bar.
+/// How a finished run is summarized in the status bar.
 struct Finished {
     rows: usize,
     elapsed: Duration,
@@ -521,7 +521,7 @@ struct Finished {
 pub enum QueryPaneEvent {
     /// A write is about to run and the profile asks first.
     ///
-    /// The workspace owns the modal: a dialog centred inside a pane is centred
+    /// The workspace owns the modal: a dialog centered inside a pane is centered
     /// in the wrong box, and every other dialog in the application is already
     /// rendered at the window's root.
     ConfirmWrites(Box<ConfirmRequest>),
@@ -648,7 +648,7 @@ pub struct QueryPane {
     applying: bool,
     /// Why the last apply did not happen.
     ///
-    /// Held apart from [`QueryPane::notice`] and drawn in the danger colour: a
+    /// Held apart from [`QueryPane::notice`] and drawn in the danger color: a
     /// failed apply leaves every staged change where it was, and a line that
     /// faded in with the other passing remarks would be the wrong weight for
     /// "nothing you asked for has happened".
@@ -720,7 +720,7 @@ impl QueryPane {
     ///
     /// `settings` supplies the batch size; the profile supplies the two write
     /// guards. Both are read once, when the pane opens: a pane that re-read
-    /// them per statement would change behaviour under a run already in flight.
+    /// them per statement would change behavior under a run already in flight.
     ///
     /// The pane holds a [`SessionHandle`], which is what that type is for — it
     /// keeps the session, and the tunnel under it, alive while a fetch is out.

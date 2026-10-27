@@ -139,7 +139,7 @@ struct Page {
 /// # Why a page is a statement of its own
 ///
 /// Every pane, the explorer and the metadata lookups share one JDBC connection,
-/// and an open streaming result set is a poor neighbour on it. MariaDB's
+/// and an open streaming result set is a poor neighbor on it. MariaDB's
 /// Connector/J answers *any* other command sent while one is open by reading
 /// the rest of it into the heap first (`fetchRemaining`), so the explorer
 /// expanding a folder beside a huge table took the whole table into the
@@ -238,7 +238,7 @@ impl Select {
 struct Order {
     /// The source column, as the grid numbers them.
     column: usize,
-    /// Its name, as the catalogue spells it.
+    /// Its name, as the catalog spells it.
     name: String,
     /// Which way.
     direction: SortDirection,
@@ -367,7 +367,7 @@ pub struct DataPane {
     applying: bool,
     /// Why the last apply did not happen.
     ///
-    /// Held apart from [`DataPane::notice`] and drawn in the danger colour: a
+    /// Held apart from [`DataPane::notice`] and drawn in the danger color: a
     /// failed apply leaves every staged change exactly where it was, and a line
     /// that faded in with the other passing remarks would be the wrong weight
     /// for "nothing you asked for has happened".
@@ -1375,7 +1375,7 @@ impl DataPane {
     /// `ORDER BY` rather than a derived table.
     ///
     /// The cell half is that crate's copy rows plus the five commands only a
-    /// writable grid has. They are drawn even where they cannot be run, greyed:
+    /// writable grid has. They are drawn even where they cannot be run, grayed:
     /// a menu that changed shape between a keyed table and a keyless one would
     /// make the user work out which of the two they were looking at, and the
     /// banner above the grid has already said.
@@ -1406,7 +1406,7 @@ impl DataPane {
         let deleted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Deleted);
         let inserted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Inserted);
         // A cell may take a NULL when it may take anything at all *and* the
-        // catalogue lets the column hold one. Both halves are the source's:
+        // catalog lets the column hold one. Both halves are the source's:
         // this side only asks.
         let nullable = cell.is_some_and(|(row, column)| {
             source.cell_editable(row, column) && source.nullable(column)
@@ -2543,7 +2543,7 @@ mod tests {
             .expect("the window is open")
     }
 
-    /// Runs the cell menu's row labelled `label`, as clicking it would.
+    /// Runs the cell menu's row labeled `label`, as clicking it would.
     ///
     /// From outside the pane's own update, because that is where the click
     /// happens: every row's callback reaches back into the pane, and running
@@ -3035,7 +3035,7 @@ mod tests {
     }
 
     /// Neither of §7.9's two read-only reasons lets a keystroke through, and
-    /// the menu that would go round the field is greyed for both.
+    /// the menu that would go round the field is grayed for both.
     #[gpui::test]
     fn a_pane_that_may_not_be_written_to_opens_no_field(cx: &mut TestAppContext) {
         for (name, table, setup, read_only) in [
@@ -3241,7 +3241,7 @@ mod tests {
         connected.close().expect("close");
     }
 
-    /// Cancelling the confirmation sends nothing and keeps everything staged.
+    /// Canceling the confirmation sends nothing and keeps everything staged.
     #[gpui::test]
     fn the_confirmation_can_be_turned_down(cx: &mut TestAppContext) {
         let (connected, profile) = person("data-apply-cancel");

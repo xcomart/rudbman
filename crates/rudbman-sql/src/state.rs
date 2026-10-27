@@ -43,7 +43,7 @@
 //! so a script that opens `$a$`, `$b$`, `$c$` … forever grows it forever. The
 //! index saturates at [`MAX_TAG_INDEX`] rather than overflowing into the tag
 //! bits: past a billion distinct tags a dollar quote may be decoded as no
-//! dollar quote at all, and a colour goes wrong on a file that cannot exist.
+//! dollar quote at all, and a color goes wrong on a file that cannot exist.
 //! Nothing panics.
 
 use std::collections::HashMap;

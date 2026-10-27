@@ -8,7 +8,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Runs a vendor catalogue query that is allowed to fail.
+ * Runs a vendor catalog query that is allowed to fail.
  *
  * <p>Both {@code ddl} and {@code sequences} probe for syntax the server may not
  * have: {@code SHOW CREATE TABLE} on something that turns out not to be MySQL,

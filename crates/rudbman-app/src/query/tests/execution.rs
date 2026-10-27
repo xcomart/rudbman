@@ -23,7 +23,7 @@ fn two_tables_among_the_columns_disqualify_the_result() {
     assert_eq!(source_table(&columns), None);
 
     // The same table in another schema is another table, and so is the
-    // same table in another catalogue: the whole triple has to agree.
+    // same table in another catalog: the whole triple has to agree.
     for other in [
         described("N", Some("APP"), Some("OTHER"), Some("USERS")),
         described("N", Some("OTHER"), Some("PUBLIC"), Some("USERS")),
@@ -57,7 +57,7 @@ fn an_empty_name_part_reads_as_unknown_and_not_as_a_name() {
     assert_eq!(
         source_table(&columns),
         Some((None, None, "USERS".to_string())),
-        "an empty catalogue or schema was taken for a name"
+        "an empty catalog or schema was taken for a name"
     );
 
     // And a column whose *table* is the empty string is computed, not a
@@ -371,7 +371,7 @@ fn a_write_only_script_has_one_log_and_the_next_run_starts_fresh(cx: &mut TestAp
     connected.close().expect("close");
 }
 
-/// A statement that would never finish, cancelled, and a session that is
+/// A statement that would never finish, canceled, and a session that is
 /// still usable afterwards.
 ///
 /// The cancel comes from a thread of its own rather than from the button:
@@ -379,7 +379,7 @@ fn a_write_only_script_has_one_log_and_the_next_run_starts_fresh(cx: &mut TestAp
 /// would otherwise deliver the click, and [`Canceller`] is `Send + Sync`
 /// for exactly this reason.
 #[gpui::test]
-fn a_cancelled_statement_says_so_and_leaves_the_session_working(cx: &mut TestAppContext) {
+fn a_canceled_statement_says_so_and_leaves_the_session_working(cx: &mut TestAppContext) {
     let (connected, profile) = h2("cancel", &[]);
     let canceller = connected.session().canceller();
     let window = pane(&connected, &profile, 500, cx);
@@ -400,20 +400,20 @@ fn a_cancelled_statement_says_so_and_leaves_the_session_working(cx: &mut TestApp
              where a.X <> b.X",
         cx,
     );
-    let reached = stopper.join().expect("the cancelling thread finished");
+    let reached = stopper.join().expect("the canceling thread finished");
 
     window
         .update(cx, |pane, _window, _cx| {
             assert!(reached, "the cancel never reached a running statement");
             let error = pane.error.as_ref().expect("a cancel is a failure here");
             assert!(
-                error.is_cancelled(),
+                error.is_canceled(),
                 "kind {:?}, sqlstate {:?}: {}",
                 error.kind,
                 error.sql_state,
                 error.message
             );
-            assert_eq!(error.hint(), Some(ts!("query.hint_cancelled")));
+            assert_eq!(error.hint(), Some(ts!("query.hint_canceled")));
             assert!(!pane.is_running(), "the run ended with the cancel");
         })
         .expect("the window is open");

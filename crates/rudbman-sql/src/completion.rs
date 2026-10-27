@@ -136,7 +136,7 @@ pub fn request(
         }
     }
     let prefix = unquote(&source[replace.start..caret]);
-    // Do not use names or aliases from neighbouring statements.
+    // Do not use names or aliases from neighboring statements.
     let start = tokens
         .iter()
         .filter(|t| t.end <= replace.start && t.text(source) == ";")

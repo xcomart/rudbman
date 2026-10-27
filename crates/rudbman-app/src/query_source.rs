@@ -472,10 +472,10 @@ pub fn read_page(session: &Session, sql: &str, limit: u32) -> Result<Option<Read
 
 /// The name a statement — or a key lookup — should spell a column with.
 ///
-/// The catalogue's name and not [`ColumnInfo::display_name`]'s preference for
+/// The catalog's name and not [`ColumnInfo::display_name`]'s preference for
 /// the label: a `SELECT *` gives the two the same value, but where a driver
 /// reports a label of its own it is a heading, and a heading is not something
-/// an `UPDATE` can assign to. A column with no catalogue name at all — a
+/// an `UPDATE` can assign to. A column with no catalog name at all — a
 /// computed expression — has only its heading, so that is what is left.
 pub(crate) fn column_name(column: &ColumnInfo) -> String {
     column
@@ -493,7 +493,7 @@ pub(crate) fn column_name(column: &ColumnInfo) -> String {
 /// keyless.
 ///
 /// `names` is always [`column_name`]'s answer for each column, which is what
-/// makes `SELECT id AS pk FROM t` find its key: the catalogue still calls that
+/// makes `SELECT id AS pk FROM t` find its key: the catalog still calls that
 /// column `id`, and the alias is only what the heading says. Both
 /// [`ResultSource::mark_primary_keys`] and [`crate::data_edit::plan_apply`] ask
 /// this one function, so the column the grid marks and the column the `WHERE`
@@ -516,7 +516,7 @@ struct SourceColumn {
     /// names and only one of them is the table's.
     key_name: String,
     kind: GridColumnKind,
-    /// Whether the grid emphasises it as part of the primary key. False unless
+    /// Whether the grid emphasizes it as part of the primary key. False unless
     /// somebody who knows the key said otherwise; see
     /// [`ResultSource::mark_primary_keys`].
     primary_key: bool,
@@ -938,7 +938,7 @@ pub(crate) mod tests {
         assert!(!source.column(0).primary_key, "a query result has no key");
     }
 
-    /// The same column metadata, with a label the catalogue name does not share.
+    /// The same column metadata, with a label the catalog name does not share.
     fn aliased(index: i32, name: &str, label: &str) -> ColumnInfo {
         serde_json::from_str(&format!(
             r#"{{"index":{index},"name":"{name}","label":"{label}","table":"T","schema":null,
@@ -951,8 +951,8 @@ pub(crate) mod tests {
 
     /// `SELECT id AS pk` still marks the key column.
     ///
-    /// The heading says `pk` and the catalogue says `id`, and it is the
-    /// catalogue that [`crate::data_edit::plan_apply`] writes the `WHERE`
+    /// The heading says `pk` and the catalog says `id`, and it is the
+    /// catalog that [`crate::data_edit::plan_apply`] writes the `WHERE`
     /// clause from. Marking off the heading left the two disagreeing: the grid
     /// drew no key while the apply happily used one.
     #[test]

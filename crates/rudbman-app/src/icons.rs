@@ -3,14 +3,14 @@
 //! gpui's [`svg`](gpui::svg) element resolves its `path` through the
 //! [`AssetSource`](gpui::AssetSource) the application was built with —
 //! [`ICONS`] here — and paints the result as a *monochrome* sprite: resvg
-//! rasterises the file, only the alpha channel survives, and the element's
-//! `text_color` supplies the colour. Two things follow, and both are why these
+//! rasterizes the file, only the alpha channel survives, and the element's
+//! `text_color` supplies the color. Two things follow, and both are why these
 //! files look the way they do:
 //!
-//! * the colours written in an icon never reach the screen, only its coverage
+//! * the colors written in an icon never reach the screen, only its coverage
 //!   does, so a `fill-opacity` below `1` reads as a lighter shade of the tint;
 //! * the tint is whatever the *element* asks for, and unlike text it is not
-//!   inherited from a parent, so a hover that recolours a button has to reach
+//!   inherited from a parent, so a hover that recolors a button has to reach
 //!   the icon through [`group_hover`](gpui::InteractiveElement::group_hover).
 //!
 //! The bytes come from [`include_bytes!`], not from files read at run time: a
@@ -49,7 +49,7 @@ pub const NEW_TAB: &str = "icons/new-tab.svg";
 /// The application mark, drawn at the left end of the custom title bar.
 ///
 /// Reuse the shipped PNG generated from `assets/icon.svg` by `assets/render.py`.
-/// [`img`](gpui::img) preserves its colours on every platform; the tintable
+/// [`img`](gpui::img) preserves its colors on every platform; the tintable
 /// [`svg`](gpui::svg) element would reduce the filled tile to a solid silhouette.
 /// The 128 px asset also covers scaled displays without a second icon to maintain.
 pub const APP_ICON: &str = "icons/app-icon.png";
@@ -60,7 +60,7 @@ pub const APP_ICON: &str = "icons/app-icon.png";
 // shape before it is read by word: a schema with two hundred tables and four
 // views is only scannable if a view does not look like a table. They share the
 // set's 1.8 stroke and 24×24 box, and they are drawn as outlines rather than
-// filled shapes so that the theme's tint is what colours them.
+// filled shapes so that the theme's tint is what colors them.
 
 /// A base table.
 pub const TABLE: &str = "icons/table.svg";
@@ -75,7 +75,7 @@ pub const VIEW: &str = "icons/view.svg";
 /// One of the folders a schema is divided into.
 pub const FOLDER: &str = "icons/folder.svg";
 
-/// A schema, and — where a product has them — a catalogue.
+/// A schema, and — where a product has them — a catalog.
 ///
 /// The database cylinder, the same solid [`APP_ICON`] draws, because that is what
 /// the level *is*: everything under it is one database's contents.
@@ -220,7 +220,7 @@ mod tests {
                 .load(name)
                 .expect("loading an embedded icon cannot fail")
                 .unwrap_or_else(|| panic!("{name} is missing from the asset source"));
-            // The application mark is a colour image; the other icons are
+            // The application mark is a color image; the other icons are
             // 24×24 SVG glyphs that can be tinted to match the theme.
             if name.ends_with(".png") {
                 assert!(

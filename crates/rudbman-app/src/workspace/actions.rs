@@ -294,7 +294,7 @@ impl Workspace {
         }
         if self.settings.read(cx).is_open() {
             // Routed through the dialog rather than closed from here: it stacks
-            // a colour editor, two dropdowns and a delete confirmation of its
+            // a color editor, two dropdowns and a delete confirmation of its
             // own, and each of those has to be able to take `Escape` for itself
             // before the whole form is thrown away. gpui matches key bindings
             // ahead of key listeners, so this handler — not the dialog's own —

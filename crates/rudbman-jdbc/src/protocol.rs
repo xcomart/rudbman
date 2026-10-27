@@ -41,7 +41,7 @@ pub enum Op {
     /// Cancel whatever is running on a session. Handle: session.
     ///
     /// The one operation that arrives on a thread other than the session
-    /// worker — the worker is blocked inside the statement being cancelled.
+    /// worker — the worker is blocked inside the statement being canceled.
     Cancel,
     /// Read part of a LOB. Handle: cursor.
     LobRead,
@@ -61,12 +61,12 @@ pub enum Op {
     /// The first poll that reports a terminal state unregisters the job in the
     /// same call, so a later poll or cancel is a `protocol` error.
     JobPoll,
-    /// Cancel a job. Handle: job. Response: `{cancelled}`.
+    /// Cancel a job. Handle: job. Response: `{canceled}`.
     ///
     /// The second operation that may arrive on a thread other than the session
     /// worker, for the same reason [`Op::Cancel`] does.
     JobCancel,
-    /// Inspect driver JARs without initialising anything in them.
+    /// Inspect driver JARs without initializing anything in them.
     ProbeDriver,
 }
 

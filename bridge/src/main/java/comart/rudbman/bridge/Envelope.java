@@ -54,7 +54,7 @@ public final class Envelope {
     }
 
     /**
-     * @param body JSON tree to serialise
+     * @param body JSON tree to serialize
      * @return an OK envelope carrying {@code body}
      */
     public static byte[] ok(JsonElement body) {

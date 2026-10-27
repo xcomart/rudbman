@@ -99,7 +99,7 @@
 //!
 //! * **Oracle PL/SQL blocks and MySQL `DELIMITER`** are not understood by
 //!   [`split_statements`]. A `BEGIN ... END;` block splits into pieces, the `/`
-//!   terminator means nothing, and `DELIMITER //` is not honoured. See the
+//!   terminator means nothing, and `DELIMITER //` is not honored. See the
 //!   [`mod@statement`] module documentation for why a half-working version would
 //!   be worse, and when the question gets answered.
 //! * **Oracle's `q'[...]'` quote operator** is lexed as the identifier `q`
@@ -110,7 +110,7 @@
 //!   a color would change.
 //! * **Read classification is conservative, not an authorization boundary.**
 //!   Vendor-specific executable comments are unknown, and a `SELECT` that calls
-//!   a side-effecting user function cannot be recognised without server help.
+//!   a side-effecting user function cannot be recognized without server help.
 //! * **A word is a function when `(` follows it** on the same line, which calls
 //!   `t (x)` in a join a function. Context enough to do better is a parser.
 //!

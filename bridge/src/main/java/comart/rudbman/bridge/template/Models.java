@@ -104,7 +104,7 @@ public final class Models {
      * counter as {@code no} on each item.
      *
      * <p>Silently does nothing when the model has no way to accept the value;
-     * that is jdbgen's behaviour and a template that never reads {@code no}
+     * that is jdbgen's behavior and a template that never reads {@code no}
      * must not fail because the model is immutable.
      *
      * <p>The {@link Map} case is an addition: jdbgen only ever looped over beans,

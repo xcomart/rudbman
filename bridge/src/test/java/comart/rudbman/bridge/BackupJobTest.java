@@ -143,14 +143,14 @@ class BackupJobTest {
     }
 
     @Test
-    void aCancelledBackupLeavesThePreviousBackupInPlace() throws Exception {
+    void aCanceledBackupLeavesThePreviousBackupInPlace() throws Exception {
         H2.exec(session, "create schema bg");
         H2.exec(session, "create table bg.big (id int, v varchar(80))");
         H2.exec(session, "insert into bg.big select x, 'row number ' || x"
                 + " from system_range(1, 200000)");
 
         // The case the rule exists for: last night's backup is at the path, and
-        // tonight's is cancelled half way. Truncating up front would have lost
+        // tonight's is canceled half way. Truncating up front would have lost
         // both.
         Path out = tmp.resolve("nightly.sql.gz");
         byte[] previous = "-- last night's backup\n".getBytes(StandardCharsets.UTF_8);
@@ -160,7 +160,7 @@ class BackupJobTest {
 
         H2.call(Ops.JOB_CANCEL, job, 0, null);
         JsonObject end = await(job);
-        assertEquals("cancelled", end.get("state").getAsString(), end.toString());
+        assertEquals("canceled", end.get("state").getAsString(), end.toString());
         assertTrue(end.get("rows_done").getAsLong() < 200000, end.toString());
 
         assertArrayEquals(previous, Files.readAllBytes(out));

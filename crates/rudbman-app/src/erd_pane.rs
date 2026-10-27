@@ -1,6 +1,6 @@
 //! The ERD panel: one schema's tables and the foreign keys between them.
 //!
-//! Opened over a scope — a catalogue and a schema — from the explorer, and
+//! Opened over a scope — a catalog and a schema — from the explorer, and
 //! shown in a pane of the work area. A toolbar, and under it the canvas
 //! [`rudbman_erd::ErdView`] draws.
 //!
@@ -119,7 +119,7 @@ pub(crate) fn close_canvas_menu<T, V: 'static>(slot: &mut Option<T>, cx: &mut Co
 
 /// The one `TABLE_TYPE` a diagram is drawn from.
 ///
-/// Views have columns but no declared foreign keys, and the system catalogue's
+/// Views have columns but no declared foreign keys, and the system catalog's
 /// own tables are not what anyone opens a diagram to look at.
 const TABLE_TYPE: &str = "TABLE";
 
@@ -137,7 +137,7 @@ type Item = serde_json::Map<String, serde_json::Value>;
 pub struct ErdTarget {
     /// Which connection to ask.
     pub connection: ConnectionId,
-    /// The catalogue and schema whose tables are drawn.
+    /// The catalog and schema whose tables are drawn.
     pub scope: Scope,
 }
 
@@ -155,7 +155,7 @@ impl ErdTarget {
 
     /// The title its tab carries.
     ///
-    /// A scope that names neither a catalogue nor a schema — SQLite, and any
+    /// A scope that names neither a catalog nor a schema — SQLite, and any
     /// product whose levels were all skipped — gets the bare word, because
     /// "ERD — " with nothing after it reads as a bug.
     pub fn title(&self) -> SharedString {
@@ -184,7 +184,7 @@ impl ErdTarget {
 /// A diagram and the arrangement to draw it in.
 ///
 /// The two travel together because they are fetched together — one background
-/// task reads the catalogue and the saved layout — and because handing them to
+/// task reads the catalog and the saved layout — and because handing them to
 /// [`ErdView::set_model`] separately would draw the grid layout for one frame
 /// and then jump.
 pub struct ErdDiagram {
@@ -208,7 +208,7 @@ enum Load {
 struct Notice {
     /// The sentence shown in the toolbar.
     message: SharedString,
-    /// Whether it is a failure, and so drawn in the danger colour.
+    /// Whether it is a failure, and so drawn in the danger color.
     error: bool,
 }
 
@@ -523,7 +523,7 @@ impl ErdPane {
     /// background gets the same menu without it, rather than a shorter menu
     /// that would make the two gestures look like two surfaces.
     ///
-    /// The rows that need a loaded diagram are greyed rather than dropped, so
+    /// The rows that need a loaded diagram are grayed rather than dropped, so
     /// that a menu raised while the fetch is still out has the shape the same
     /// menu will have a moment later.
     fn canvas_rows(&self, table: Option<usize>, cx: &mut Context<Self>) -> Vec<MenuRow> {
@@ -1036,7 +1036,7 @@ fn edges_of(table: &str, rows: &[Item], scope: &Scope) -> Vec<Edge> {
 
 /// Whether the table an `imported_keys` row points at is inside `scope`.
 ///
-/// A half the scope does not name is not compared: a product whose catalogue
+/// A half the scope does not name is not compared: a product whose catalog
 /// level was skipped answers `PKTABLE_CAT` all the same, and refusing the edge
 /// over that would empty the diagram of lines.
 fn in_scope(row: &Item, scope: &Scope) -> bool {
@@ -1097,7 +1097,7 @@ mod tests {
         assert_eq!(names, ["PERSON", "TEAM"], "sorted, and tables only");
 
         let person = table(&model, "PERSON");
-        // Columns in the order the catalogue reported them, typed the way the
+        // Columns in the order the catalog reported them, typed the way the
         // detail panel types them.
         let columns: Vec<&str> = person
             .columns
@@ -1108,7 +1108,7 @@ mod tests {
         assert_eq!(column(person, "SALARY").type_name, "NUMERIC(12,2)");
         assert_eq!(column(person, "EMAIL").type_name, "CHARACTER VARYING(200)");
 
-        // The two marks the canvas colours a row by.
+        // The two marks the canvas colors a row by.
         assert!(column(person, "ID").primary_key);
         assert!(!column(person, "ID").foreign_key);
         assert!(column(person, "TEAM_ID").foreign_key);
@@ -1462,7 +1462,7 @@ mod tests {
                 assert_eq!(labels[0], ts!("context.open_detail").to_string());
                 assert_eq!(labels[1], "");
                 assert_eq!(labels[2..], canvas[..]);
-                assert!(crate::context_menu::greyed(&over_a_box).is_empty());
+                assert!(crate::context_menu::grayed(&over_a_box).is_empty());
 
                 // And it names the box that was pressed, by the connection and
                 // scope the panel was opened over.
@@ -1476,9 +1476,9 @@ mod tests {
     }
 
     /// Raised while the fetch is still out, the rows that need a diagram are
-    /// greyed rather than dropped, so the menu keeps its shape.
+    /// grayed rather than dropped, so the menu keeps its shape.
     #[gpui::test]
-    fn a_menu_over_a_loading_diagram_greys_what_needs_one(cx: &mut gpui::TestAppContext) {
+    fn a_menu_over_a_loading_diagram_grays_what_needs_one(cx: &mut gpui::TestAppContext) {
         cx.update(rugpui::init);
         let window = cx.add_window(|_window, cx| ErdPane::new(target("APP"), cx));
         window

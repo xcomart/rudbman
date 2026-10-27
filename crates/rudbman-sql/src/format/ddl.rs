@@ -249,7 +249,7 @@ const MYSQL_BODY: &[&str] = &[
 /// # Operators keep their spacing
 ///
 /// A table's options and a routine's header are full of `=` and `@` that
-/// belong to their neighbours: `ENGINE=InnoDB`, ``DEFINER=`root`@`%` ``. Outside
+/// belong to their neighbors: `ENGINE=InnoDB`, ``DEFINER=`root`@`%` ``. Outside
 /// the statements handed to the query formatter, an operator is therefore
 /// spaced as it was written rather than as an expression would be.
 ///
@@ -815,7 +815,7 @@ impl<'a> Layout<'a> {
     /// The union of what the products write between the parameters and the
     /// body. A word that only means that inside a phrase — `SQL` of
     /// `LANGUAGE SQL`, `NO` of anything but `NO SQL` — is told apart by its
-    /// neighbour.
+    /// neighbor.
     fn is_characteristic(&self, k: usize) -> bool {
         if !self.is_bare(k) {
             return false;

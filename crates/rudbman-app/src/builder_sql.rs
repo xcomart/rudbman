@@ -36,11 +36,11 @@ use rudbman_sql::Dialect;
 /// columns that can be picked from it.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BuilderTable {
-    /// Its catalogue, when the product has them and the driver reported one.
+    /// Its catalog, when the product has them and the driver reported one.
     pub catalog: Option<String>,
     /// Its schema, likewise.
     pub schema: Option<String>,
-    /// The table's own name, as the catalogue spells it.
+    /// The table's own name, as the catalog spells it.
     pub name: String,
     /// What the statement calls it.
     ///
@@ -48,7 +48,7 @@ pub struct BuilderTable {
     /// twice, which is how a self-join is expressed; see [`unique_alias`]. An
     /// alias equal to the name is not written out at all.
     pub alias: String,
-    /// The column names, in catalogue order. Indices into this are what
+    /// The column names, in catalog order. Indices into this are what
     /// [`BuilderQuery::selected`] and [`Join`] name.
     pub columns: Vec<String>,
 }
@@ -171,8 +171,8 @@ pub fn unique_alias(name: &str, taken: &[String]) -> String {
 /// One table's name parts, most significant first and with the absent ones
 /// dropped.
 ///
-/// The schema wins when there is one, the catalogue stands in for it when there
-/// is not — which is MySQL, where the catalogue *is* the database — and a
+/// The schema wins when there is one, the catalog stands in for it when there
+/// is not — which is MySQL, where the catalog *is* the database — and a
 /// product with neither gives one bare part. Naming *one* qualification rule is
 /// the point: [`table_ref`] writes the `SELECT`'s table and the data pane's
 /// apply hands the same parts to `rudbman_sql::plan_edits`, and a statement that
@@ -275,7 +275,7 @@ pub fn generate(query: &BuilderQuery, dialect: &Dialect) -> String {
                 terms.join(" AND ")
             )),
             // Nothing joins it to what came before, so it is a cross join —
-            // written as a comma, which is what the user will recognise as the
+            // written as a comma, which is what the user will recognize as the
             // thing they have not finished drawing yet.
             _ => {
                 if let Some(previous) = lines.last_mut() {
@@ -491,7 +491,7 @@ mod tests {
             ..BuilderQuery::default()
         };
 
-        // MySQL: back ticks, case preserved, and the catalogue standing in for
+        // MySQL: back ticks, case preserved, and the catalog standing in for
         // the schema on the second table.
         assert_eq!(
             generate(&query, &Dialect::MYSQL),
@@ -547,7 +547,7 @@ mod tests {
 
     /// The rule the explorer's "query this object" now shares.
     #[test]
-    fn a_table_reference_prefers_the_schema_and_falls_back_to_the_catalogue() {
+    fn a_table_reference_prefers_the_schema_and_falls_back_to_the_catalog() {
         let h2 = Dialect::H2;
         assert_eq!(table_ref(&h2, None, Some("APP"), "PERSON"), "APP.PERSON");
         assert_eq!(

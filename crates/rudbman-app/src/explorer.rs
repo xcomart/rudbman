@@ -1,7 +1,7 @@
 //! The explorer sidebar: the tree of the connection whose tab is on top.
 //!
 //! The panel down the left of the window (architecture document, §7.1). Each
-//! open connection is a root; under it the database's catalogues, schemas,
+//! open connection is a root; under it the database's catalogs, schemas,
 //! folders and objects arrive one round trip at a time.
 //!
 //! # Why every root is kept and only one is drawn
@@ -32,13 +32,13 @@
 //! # The layer-skipping rule
 //!
 //! Products disagree about how many levels sit above a table. PostgreSQL has
-//! catalogues *and* schemas, MySQL has only catalogues, H2 has one catalogue and
+//! catalogs *and* schemas, MySQL has only catalogs, H2 has one catalog and
 //! usually one schema, SQLite has neither. A tree that drew every level would
 //! make the common case — one database, one schema — cost two clicks that lead
 //! nowhere.
 //!
 //! So a level with **one or no** members is skipped: the fetch that would have
-//! produced it goes straight on to the next one, and the single catalogue or
+//! produced it goes straight on to the next one, and the single catalog or
 //! schema it found becomes part of the scope its children are asked in. A level
 //! with two or more is drawn. The rule lives in [`load_children`] and its
 //! `next_level`, which is where a fetch decides what it actually asked for,
@@ -61,7 +61,7 @@
 //! A schema the user cannot read is one error row under that node
 //! ([`NodeId::Error`]), and nothing else changes: the rest of the tree stays,
 //! the connection stays, and the message is the driver's own. A metadata failure
-//! is routine — permissions, a catalogue the product exposes but will not open —
+//! is routine — permissions, a catalog the product exposes but will not open —
 //! and it must not cost the user the tree.
 
 use std::collections::HashMap;
@@ -99,11 +99,11 @@ pub struct ConnectionId(pub u64);
 /// Where in a database a node sits.
 ///
 /// Both halves are optional because both levels are skippable; see the module
-/// documentation. A `None` catalogue with a `Some` schema is ordinary — that is
+/// documentation. A `None` catalog with a `Some` schema is ordinary — that is
 /// PostgreSQL with one database — and both `None` is SQLite.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Scope {
-    /// The catalogue, when the product has more than one or named the one.
+    /// The catalog, when the product has more than one or named the one.
     pub catalog: Option<String>,
     /// The schema, likewise.
     pub schema: Option<String>,
@@ -158,7 +158,7 @@ impl Folder {
     /// The `types` filter for the `tables` kind, or `None` for the others.
     ///
     /// `TABLE` and `SYSTEM TABLE` are separate types and only the first is
-    /// listed: a user opening a schema is not looking for the catalogue's own
+    /// listed: a user opening a schema is not looking for the catalog's own
     /// bookkeeping. `VIEW` and `SYSTEM VIEW` likewise. A materialized view is a
     /// view to its reader, and is listed with them on the products that have
     /// one; a driver that knows no such type ignores the word.
@@ -212,18 +212,18 @@ impl Folder {
 pub enum NodeId {
     /// An open connection: the outermost level.
     Connection(ConnectionId),
-    /// A catalogue, drawn only when the product has more than one.
+    /// A catalog, drawn only when the product has more than one.
     Catalog {
         /// The connection it belongs to.
         connection: ConnectionId,
-        /// The catalogue's name.
+        /// The catalog's name.
         name: String,
     },
-    /// A schema, drawn only when its catalogue has more than one.
+    /// A schema, drawn only when its catalog has more than one.
     Schema {
         /// The connection it belongs to.
         connection: ConnectionId,
-        /// The catalogue it sits in, when there is one.
+        /// The catalog it sits in, when there is one.
         catalog: Option<String>,
         /// The schema's name.
         name: String,
@@ -315,10 +315,10 @@ impl NodeId {
     /// Where in the database this node sits, for the panel that draws a whole
     /// scope rather than one object.
     ///
-    /// What the ERD is opened over. A catalogue answers with itself and no
+    /// What the ERD is opened over. A catalog answers with itself and no
     /// schema, which is the right scope on a product whose schema level was
     /// skipped; a folder and an object answer with the scope they were listed
-    /// in. The connection root answers `None` — a diagram of every catalogue at
+    /// in. The connection root answers `None` — a diagram of every catalog at
     /// once is not a diagram — and so does an error row, which names nothing.
     pub fn as_scope(&self) -> Option<Scope> {
         match self {
@@ -361,7 +361,7 @@ impl NodeId {
 pub struct ObjectTarget {
     /// Which connection to ask.
     pub connection: ConnectionId,
-    /// Exact catalogue name, or `None` for "wherever the connection points".
+    /// Exact catalog name, or `None` for "wherever the connection points".
     pub catalog: Option<String>,
     /// Exact schema name, likewise.
     pub schema: Option<String>,
@@ -439,7 +439,7 @@ impl Render for DragGhost {
 pub struct RootInfo {
     /// The profile's name, which is the row's label.
     pub name: SharedString,
-    /// The colour tag, drawn as the status dot's ring.
+    /// The color tag, drawn as the status dot's ring.
     pub color: Option<SharedString>,
     /// Whether the session is live. A root whose session is gone still draws —
     /// the user may be reading it — but its children are never refetched.
@@ -807,7 +807,7 @@ impl TreeSource for ExplorerSource {
 }
 
 impl ExplorerSource {
-    /// The root row: a status dot in the profile's colour, then its name.
+    /// The root row: a status dot in the profile's color, then its name.
     fn render_root(
         &self,
         connection: ConnectionId,
@@ -882,7 +882,7 @@ pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<Child>, Str
                     })
                     .collect());
             }
-            // One catalogue or none: it becomes part of the scope rather than a
+            // One catalog or none: it becomes part of the scope rather than a
             // row of its own.
             next_level(
                 session,
@@ -923,7 +923,7 @@ pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<Child>, Str
     }
 }
 
-/// The schemas of one catalogue, or its folders when there is at most one.
+/// The schemas of one catalog, or its folders when there is at most one.
 ///
 /// The second half of the layer-skipping rule. A product with no schemas at all
 /// — SQLite — and one with exactly one both land on the folders, with whatever
@@ -999,7 +999,7 @@ fn names(
 /// Turns a JNI-layer failure into the sentence the error row shows.
 ///
 /// The bridge's own message, never a stack trace: a metadata refusal is
-/// something the user can act on — a permission, a catalogue the product will
+/// something the user can act on — a permission, a catalog the product will
 /// not open — and the driver says it better than anything invented here.
 pub fn describe_failure(error: JdbcError) -> String {
     match error {
@@ -1516,12 +1516,12 @@ pub(crate) mod tests {
 
     /// The layer-skipping rule against a real product.
     ///
-    /// H2 has exactly one catalogue, so that level is skipped and opening the
+    /// H2 has exactly one catalog, so that level is skipped and opening the
     /// connection lands on its schemas — of which there are two, `PUBLIC` and
     /// `INFORMATION_SCHEMA`, plus the `APP` the fixture makes — so *that* level
     /// is drawn.
     #[test]
-    fn a_single_catalogue_is_skipped_and_several_schemas_are_not() {
+    fn a_single_catalog_is_skipped_and_several_schemas_are_not() {
         let connected = h2_fixture("explorer-levels");
         let session = connected.session();
 
@@ -1530,7 +1530,7 @@ pub(crate) mod tests {
             children
                 .iter()
                 .all(|child| matches!(child.id, NodeId::Schema { .. })),
-            "one catalogue must not be drawn as a level: {children:?}"
+            "one catalog must not be drawn as a level: {children:?}"
         );
         let names: Vec<String> = children
             .iter()
@@ -1542,12 +1542,12 @@ pub(crate) mod tests {
         assert!(names.iter().any(|name| name == "APP"), "{names:?}");
         assert!(names.len() > 1, "H2 has more than one schema: {names:?}");
 
-        // And the single catalogue was folded into the scope rather than lost,
+        // And the single catalog was folded into the scope rather than lost,
         // so the queries underneath stay qualified.
         let NodeId::Schema { catalog, .. } = &children[0].id else {
             unreachable!()
         };
-        assert!(catalog.is_some(), "the one catalogue is remembered");
+        assert!(catalog.is_some(), "the one catalog is remembered");
     }
 
     /// The folders under a schema, and what they hold.
@@ -1598,7 +1598,7 @@ pub(crate) mod tests {
         assert!(names(Folder::Functions).is_empty());
     }
 
-    /// The catalogue's comment on an object comes down with the row and is kept
+    /// The catalog's comment on an object comes down with the row and is kept
     /// beside it, so the tree can draw it without a second describe.
     #[test]
     fn a_commented_table_carries_its_comment_onto_its_row() {

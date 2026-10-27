@@ -198,7 +198,7 @@ class DdlTest {
     /**
      * A schema-independent signature of a table: the columns with their types
      * and nullability, the primary key, the foreign keys with their rules and
-     * the indexes. Object names of the referenced schema are normalised away so
+     * the indexes. Object names of the referenced schema are normalized away so
      * that the same table in two schemas compares equal.
      */
     private String structure(String schema, String table) {

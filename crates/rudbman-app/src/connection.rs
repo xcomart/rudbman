@@ -56,7 +56,10 @@ use rudbman_jdbc::{
 };
 use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
-pub use rudbkit_core::url::{CATALOGUE_PLACEHOLDERS, placeholders_of, redirect_url, substitute};
+// rudbkit spells it the British way; the app calls it `CATALOG_PLACEHOLDERS`.
+pub use rudbkit_core::url::{
+    CATALOGUE_PLACEHOLDERS as CATALOG_PLACEHOLDERS, placeholders_of, redirect_url, substitute,
+};
 
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
@@ -163,7 +166,7 @@ impl ConnectError {
     }
 
     /// Whether the failure was the driver rather than the database — a class
-    /// that is not in the JAR, a URL the driver does not recognise.
+    /// that is not in the JAR, a URL the driver does not recognize.
     pub fn is_driver(&self) -> bool {
         matches!(
             self,
@@ -427,7 +430,7 @@ const NO_ROUTE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_mill
 /// the local network, and the socket connect a tunnel or a direct JDBC URL
 /// opens while that decision is still pending comes back `EHOSTUNREACH` —
 /// "No route to host" — even though the exact same address is reachable a
-/// moment later. [`is_no_route`] recognises that failure regardless of which
+/// moment later. [`is_no_route`] recognizes that failure regardless of which
 /// layer raised it, and this wrapper waits [`NO_ROUTE_RETRY_DELAY`] and asks
 /// [`connect_once`] to try again, exactly once — a host that is actually
 /// unreachable fails the retry the same way and is reported as such.
@@ -955,7 +958,7 @@ pub(crate) mod h2 {
         let mut newest: Option<(String, PathBuf)> = None;
         for version in std::fs::read_dir(&root).ok()?.flatten() {
             let number = version.file_name().to_string_lossy().into_owned();
-            // Only the binary artefact: the same directory holds `-javadoc` and
+            // Only the binary artifact: the same directory holds `-javadoc` and
             // `-sources`, and picking one of those gets a class loader with no
             // driver in it.
             let wanted = format!("h2-{number}.jar");
@@ -1462,7 +1465,7 @@ mod tests {
     }
 
     #[test]
-    fn no_route_to_host_is_recognised_from_either_layer() {
+    fn no_route_to_host_is_recognized_from_either_layer() {
         // The SSH tunnel path: `rudbman-ssh` surfaces the OS error as text.
         assert!(is_no_route(&ConnectError::Tunnel(
             "connect: No route to host (os error 65)".to_string()

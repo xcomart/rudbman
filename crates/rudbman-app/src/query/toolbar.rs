@@ -45,7 +45,7 @@ impl QueryPane {
         let running = self.is_running();
         let can_run =
             self.session.is_some() && !running && !self.applying && self.transaction.is_none();
-        let cancelling = matches!(&self.run, RunState::Running(run) if run.cancelling);
+        let canceling = matches!(&self.run, RunState::Running(run) if run.canceling);
         let modifier = SHORTCUT_MODIFIER;
         let button = |id, icon, label: SharedString, shortcut, enabled, action: Box<dyn Action>| {
             let handle = handle.clone();
@@ -121,15 +121,15 @@ impl QueryPane {
         let cancel = tool_button(
             "query-cancel",
             icons::icon(icons::STOP, px(16.), chrome.danger),
-            if cancelling {
-                ts!("query.cancelling")
+            if canceling {
+                ts!("query.canceling")
             } else {
                 ts!("query.cancel")
             },
-            running && !cancelling,
+            running && !canceling,
             chrome,
         )
-        .when(running && !cancelling, |button| {
+        .when(running && !canceling, |button| {
             button.on_click(move |_, _, cx| {
                 this.update(cx, |pane, cx| pane.cancel(cx));
             })

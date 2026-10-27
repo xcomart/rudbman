@@ -5,7 +5,7 @@
 //! menu described as data rather than as [`MenuEntry`](rugpui::MenuEntry) is what
 //! makes "what does this node offer" a testable question in every application
 //! that asks it. [`entries`] turns a list of rows into the widget's own rows on
-//! the way to being drawn, and [`labels`], [`greyed`] and [`row`] are what the
+//! the way to being drawn, and [`labels`], [`grayed`] and [`row`] are what the
 //! tests read them back with.
 //!
 //! What is left here is the two menus that are *about a result grid*: the cell
@@ -18,7 +18,8 @@ use gpui::{App, ClipboardItem, Entity, Window};
 use rugpui_grid::{CopyFormat, GridSource, GridView, SortDirection};
 pub(crate) use rugpui_shell::menu_rows::{MenuRow, entries};
 #[cfg(test)]
-pub(crate) use rugpui_shell::menu_rows::{greyed, labels, row};
+// rugpui spells it the British way; the app calls it `grayed`.
+pub(crate) use rugpui_shell::menu_rows::{greyed as grayed, labels, row};
 
 use crate::SHORTCUT_MODIFIER;
 use crate::i18n::ts;
@@ -31,7 +32,7 @@ use crate::i18n::ts;
 /// grid menu: the query pane over a result nobody can write to, and the data
 /// pane over one that stages edits (architecture document, §7.9). A second copy
 /// of these seven rows would be a second place for the shortcut hint and the
-/// greying rule to drift.
+/// graying rule to drift.
 ///
 /// The rows act on [`GridView::selection`] rather than on the pressed cell: a
 /// right click inside a selection leaves it alone, so the cell under the

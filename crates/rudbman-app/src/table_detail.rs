@@ -18,7 +18,7 @@
 //! session belongs to the tab, not to the panel. The panel emits
 //! [`TableDetailEvent::Load`] and is handed a [`Details`] back.
 //!
-//! # Reconstructed DDL is labelled
+//! # Reconstructed DDL is labeled
 //!
 //! [`DdlResult::is_reconstructed`] means the text was reassembled from JDBC
 //! metadata rather than quoted by the server, and JDBC metadata carries no
@@ -39,7 +39,7 @@
 //!
 //! The tables here are plain rows in a scroll area. A column list is tens of
 //! rows, occasionally hundreds, and never the millions the query grid has to
-//! survive — that one is `rugpui-grid`, and it virtualises. What this panel
+//! survive — that one is `rugpui-grid`, and it virtualizes. What this panel
 //! does need is the vertical scrollbar, because a wide table really can have
 //! several hundred columns.
 
@@ -200,7 +200,7 @@ pub struct TableDetail {
     body_scroll: ScrollHandle,
     /// Whether the body's overlay bar is on screen.
     body_scrollbar: ScrollbarState,
-    /// The connection's dialect: the DDL's colours and its layout.
+    /// The connection's dialect: the DDL's colors and its layout.
     dialect: Dialect,
     /// The DDL tab's statement, in the editor the query pane uses but read-only
     /// and without the query pane's toolbar: selecting part of a `CREATE`,
@@ -221,7 +221,7 @@ impl TableDetail {
     /// The host subscribes and then calls [`TableDetail::refresh`], which is
     /// the same path the reload button takes.
     ///
-    /// `dialect` is the connection's, and colours and lays out the DDL.
+    /// `dialect` is the connection's, and colors and lays out the DDL.
     pub fn new(target: ObjectTarget, dialect: &str, cx: &mut Context<Self>) -> Self {
         let dialect = Dialect::from_id(dialect);
         let ddl_editor = cx.new(|cx| {
@@ -257,7 +257,7 @@ impl TableDetail {
 
     /// The object this panel describes.
     ///
-    /// The shell's tab strip titles the tab with it and colours its dot by the
+    /// The shell's tab strip titles the tab with it and colors its dot by the
     /// connection it names, and the explorer's "open this object" path compares
     /// against it to reuse an open tab rather than opening a second copy.
     pub fn target(&self) -> &ObjectTarget {
@@ -606,7 +606,7 @@ impl TableDetail {
                 ))
                 .into_any_element(),
 
-            // Both directions, and labelled by direction rather than by JDBC's
+            // Both directions, and labeled by direction rather than by JDBC's
             // "imported"/"exported": which way a foreign key points is the one
             // thing a reader has to get right, and the JDBC words do not say it.
             Tab::References => div()
@@ -676,7 +676,7 @@ impl TableDetail {
         // The bridge answered from JDBC metadata rather than from the server's
         // own `CREATE` text, which means CHECK constraints, triggers,
         // partitioning and collations are simply not in a table's — and for
-        // anything else, whatever the catalogue does not keep, such as a
+        // anything else, whatever the catalog does not keep, such as a
         // routine's characteristics. Saying so is what stops the text being
         // mistaken for a backup.
         let rebuilt = if self.target.folder == Folder::Tables {
@@ -873,7 +873,7 @@ impl TableDetail {
 ///
 /// A relation gets all four tabs' worth; anything else its properties and its
 /// DDL. The DDL is allowed to fail on its own: a driver with no native path and
-/// a view the catalogue keeps no definition of still has columns worth
+/// a view the catalog keeps no definition of still has columns worth
 /// showing.
 pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details, String> {
     if !target.folder.is_relation() {
@@ -892,7 +892,7 @@ pub fn load_details(session: &Session, target: &ObjectTarget) -> Result<Details,
     // The object's own comment. `getTables` is the only call that carries one,
     // and it takes a table *pattern*, so the exact name is passed as the filter
     // and the answer is searched for it: a product whose pattern matching treats
-    // `_` as a wildcard would otherwise hand back a neighbour's comment.
+    // `_` as a wildcard would otherwise hand back a neighbor's comment.
     let table_remarks = {
         let mut request = scoped("tables");
         // The same `types` filter the explorer's own folder uses, so a view and
@@ -1689,7 +1689,7 @@ mod tests {
             ddl.text
         );
         // The properties came in the same load, beside it, and the return
-        // value is labelled as what it is rather than by the driver's name.
+        // value is labeled as what it is rather than by the driver's name.
         assert!(!details.properties.is_empty());
         assert!(
             details.properties.iter().any(|row| row[0] == "RETURNS"),

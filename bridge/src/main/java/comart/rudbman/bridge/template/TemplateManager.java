@@ -70,7 +70,7 @@ import java.util.regex.Pattern;
  *       {@link #configureAbbreviations}, empty by default, so the engine has no
  *       dependency on any configuration model.</li>
  *   <li>{@code ObjUtils}/{@code StrUtils} shrank to {@link Models} and
- *       {@link Str}; the only behavioural addition is that
+ *       {@link Str}; the only behavioral addition is that
  *       {@link Models#setValue} understands maps, so {@code ${no}} works inside
  *       a {@code for} over map-shaped models.</li>
  * </ul>

@@ -43,7 +43,7 @@ impl QueryPane {
     /// of them and should not have to: the menu and the chord are the same
     /// command reaching the same handler.
     ///
-    /// What is greyed and why: the three clipboard rows follow the selection
+    /// What is grayed and why: the three clipboard rows follow the selection
     /// and whether the buffer may be written to, `Undo` and `Redo` follow the
     /// history, and the three run rows follow the session — a pane whose
     /// connection tab has been closed keeps its text and its rows and can run
@@ -169,7 +169,7 @@ impl QueryPane {
     /// The cell menu then carries the editing commands, which are the data
     /// pane's **minus its insert row** (§7.9: a result carries the columns the
     /// user selected, not the columns the table requires). They are drawn even
-    /// where they cannot be run, greyed: a menu that changed shape between an
+    /// where they cannot be run, grayed: a menu that changed shape between an
     /// editable result and a read-only one would make the user work out which
     /// of the two they were looking at, and the line above the grid has already
     /// said.
@@ -207,7 +207,7 @@ impl QueryPane {
         let writable = source.writable();
         let deleted = cell.is_some_and(|(row, _)| source.row_status(row) == RowStatus::Deleted);
         // A cell may take a NULL when it may take anything at all *and* the
-        // catalogue lets the column hold one. Both halves are the source's:
+        // catalog lets the column hold one. Both halves are the source's:
         // this side only asks.
         let nullable = cell.is_some_and(|(row, column)| {
             source.cell_editable(row, column) && source.nullable(column)

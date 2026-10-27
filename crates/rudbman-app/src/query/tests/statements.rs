@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn a_comment_before_a_write_does_not_hide_it() {
     let h2 = Dialect::H2;
-    // The whole reason the judgement goes through the lexer: a script's
+    // The whole reason the judgment goes through the lexer: a script's
     // explanation sits above the statement it explains.
     assert!(is_write_statement(
         "-- nightly clean-up\nUPDATE orders SET state = 'x'",

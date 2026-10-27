@@ -221,7 +221,7 @@ connect:
   add_prop: Добавить свойство
 
   section:
-    behaviour: Поведение
+    behavior: Поведение
     tunnel: SSH-туннель
 
   read_only: Открывать подключение только для чтения
@@ -300,7 +300,7 @@ driver:
   downloading: "Скачивание %{file}…"
   downloading_percent: "Скачивание %{file} — %{percent} %"
   downloaded: "Файл %{file} скачан и добавлен."
-  download_cancelled: Скачивание отменено.
+  download_canceled: Скачивание отменено.
   bad_coordinate: "«%{coordinate}» — это не координата вида group:artifact:version."
   not_found: "На Maven Central по адресу %{url} ничего нет."
   network_failed: "Скачивание не удалось: %{error}"
@@ -404,7 +404,7 @@ query:
   commit_auto: "Зафиксировать (автофиксация включена)"
   run: Выполнить
   cancel: Отмена
-  cancelling: Отмена…
+  canceling: Отмена…
   result: "Результат %{index}"
   tab: "Запрос %{index}"
   empty: Напишите инструкцию и выполните её.
@@ -428,7 +428,7 @@ query:
   hint_constraint: Инструкция нарушила ограничение, объявленное таблицей.
   hint_auth: У этого подключения нет прав на такое действие.
   hint_network: Подключение к базе данных потеряно.
-  hint_cancelled: Выполнение инструкции отменено.
+  hint_canceled: Выполнение инструкции отменено.
   open_file_select: Выберите файл SQL
 
 data:
@@ -529,9 +529,9 @@ extract:
   start: Извлечь
   starting: запуск…
   counters: "Строк: %{rows}, объём: %{bytes}"
-  cancelling: Отмена…
+  canceling: Отмена…
   done: "Записано строк: %{rows} (%{bytes}) в %{path}."
-  cancelled: "Отменено. В %{path} ничего не записано."
+  canceled: "Отменено. В %{path} ничего не записано."
   failed: "Извлечение не удалось: %{error}"
   failed_unknown: Извлечение не удалось, но мост не сообщил причину.
 
@@ -554,10 +554,10 @@ transfer:
   starting: запуск…
   counters: "Строк: %{rows}"
   skipped: "пропущено: %{skipped}"
-  cancelling: Отмена…
+  canceling: Отмена…
   done: "Перенесено строк в %{table}: %{rows}."
   done_skipped: "Не удалось записать, пропущено строк: %{skipped}."
-  cancelled: "Отменено. Уже зафиксировано в %{table} и осталось там строк: %{rows}."
+  canceled: "Отменено. Уже зафиксировано в %{table} и осталось там строк: %{rows}."
   failed: "Перенос не удался: %{error}"
   failed_unknown: Перенос не удался, но мост не сообщил причину.
 
@@ -576,9 +576,9 @@ backup:
   start: Создать резервную копию
   starting: запуск…
   counters: "Строк: %{rows}, объём: %{bytes}"
-  cancelling: Отмена…
+  canceling: Отмена…
   done: "Записано строк: %{rows} (%{bytes}) в %{path}."
-  cancelled: "Отменено. В %{path} ничего не записано."
+  canceled: "Отменено. В %{path} ничего не записано."
   failed: "Резервное копирование не удалось: %{error}"
   failed_unknown: Резервное копирование не удалось, но мост не сообщил причину.
 

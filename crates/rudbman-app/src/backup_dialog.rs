@@ -200,7 +200,7 @@ struct Running {
     /// Bytes written so far — after compression, when there is any.
     bytes: u64,
     /// Whether a cancel has been issued and the job has not stopped yet.
-    cancelling: bool,
+    canceling: bool,
 }
 
 /// How a job ended.
@@ -214,8 +214,8 @@ enum Ended {
     },
     /// The job failed. The message is the first error's, as the bridge wrote it.
     Failed(SharedString),
-    /// The job was cancelled. The file at the path is left as it was.
-    Cancelled,
+    /// The job was canceled. The file at the path is left as it was.
+    Canceled,
 }
 
 /// Modal dialog that backs one schema up to a script file.
@@ -321,7 +321,7 @@ impl BackupDialog {
 
     /// Hides the dialog without emitting an event.
     ///
-    /// **A job still running is cancelled**, by the drop chain
+    /// **A job still running is canceled**, by the drop chain
     /// [`crate::extract_dialog`] documents. The file at the path is left as it
     /// was, which is what the bridge promises.
     pub fn close(&mut self, cx: &mut Context<Self>) {
@@ -499,7 +499,7 @@ impl BackupDialog {
             phase: SharedString::default(),
             rows_done: 0,
             bytes: 0,
-            cancelling: false,
+            canceling: false,
         });
         cx.notify();
     }
@@ -541,7 +541,7 @@ impl BackupDialog {
                 rows: progress.rows_done,
                 bytes: progress.bytes,
             },
-            JobState::Cancelled => Ended::Cancelled,
+            JobState::Canceled => Ended::Canceled,
             // `Running` cannot reach here — `is_terminal` excluded it — and a
             // failure without an error envelope is a bridge that broke its own
             // contract, so the fallback says so rather than showing nothing.
@@ -562,10 +562,10 @@ impl BackupDialog {
         let Stage::Running(running) = &mut self.stage else {
             return;
         };
-        if running.cancelling {
+        if running.canceling {
             return;
         }
-        running.cancelling = true;
+        running.canceling = true;
         if let Err(error) = running.job.lock().cancel() {
             log::warn!("canceling the backup failed: {error}");
         }
@@ -593,7 +593,7 @@ impl BackupDialog {
             .map(qualified)
             .filter(|scope| !scope.is_empty())
             .map(SharedString::from)
-            // A product that skipped both the catalogue and the schema level —
+            // A product that skipped both the catalog and the schema level —
             // SQLite — has one scope and no name for it, and a blank row would
             // be worse than a word.
             .unwrap_or_else(|| ts!("backup.scope_all"));
@@ -738,8 +738,8 @@ impl BackupDialog {
                 div()
                     .text_size(px(12.))
                     .text_color(chrome.text_muted)
-                    .child(if running.cancelling {
-                        ts!("backup.cancelling")
+                    .child(if running.canceling {
+                        ts!("backup.canceling")
                     } else {
                         phase
                     }),
@@ -770,7 +770,7 @@ impl BackupDialog {
                 ),
                 chrome.success,
             ),
-            Ended::Cancelled => (ts!("backup.cancelled", path = path), chrome.text),
+            Ended::Canceled => (ts!("backup.canceled", path = path), chrome.text),
             Ended::Failed(message) => (
                 ts!("backup.failed", error = message.as_ref()),
                 chrome.danger,
@@ -833,7 +833,7 @@ impl BackupDialog {
             Stage::Running(running) => div().flex().flex_row().gap(px(8.)).child(
                 Button::new("backup-stop", ts!("common.cancel"))
                     .variant(ButtonVariant::Secondary)
-                    .disabled(running.cancelling)
+                    .disabled(running.canceling)
                     .tab_index(tab::DISMISS)
                     .on_click({
                         let this = this.clone();
@@ -1062,14 +1062,14 @@ mod tests {
             1
         );
 
-        // A catalogue on the scope reaches the request; a blank half does not,
+        // A catalog on the scope reaches the request; a blank half does not,
         // because "" is not a name — it is the absence of one, and the bridge
         // reads an absent member as "wherever the connection is pointed".
-        let catalogued = Scope {
+        let cataloged = Scope {
             catalog: Some("TESTDB".to_string()),
             schema: Some("   ".to_string()),
         };
-        let spec = build_spec(&catalogued, &ddl_only).expect("a path and the schema are enough");
+        let spec = build_spec(&cataloged, &ddl_only).expect("a path and the schema are enough");
         assert_eq!(spec.scope.catalog.as_deref(), Some("TESTDB"));
         assert_eq!(spec.scope.schema, None);
     }
@@ -1107,7 +1107,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_reads_as_its_catalogue_and_its_schema() {
+    fn a_scope_reads_as_its_catalog_and_its_schema() {
         assert_eq!(
             qualified(&Scope {
                 catalog: Some("APP".to_string()),
@@ -1195,7 +1195,7 @@ mod tests {
                 rows: 12,
                 bytes: 3_400,
             },
-            Ended::Cancelled,
+            Ended::Canceled,
             Ended::Failed(SharedString::from("the schema went away")),
         ] {
             window

@@ -513,7 +513,7 @@ impl<'a> Lexer<'a> {
         self.emit(TokenKind::Comment, start, self.bytes.len())
     }
 
-    /// Open a `'...'` string, honouring the dialect's backslash rule.
+    /// Open a `'...'` string, honoring the dialect's backslash rule.
     ///
     /// `escaped` forces backslash escaping on for a `E'...'` prefix.
     fn open_quote(&mut self, start: usize, body: usize, escaped: bool) -> Token {

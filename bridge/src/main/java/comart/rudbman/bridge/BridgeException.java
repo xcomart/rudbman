@@ -9,7 +9,7 @@ package comart.rudbman.bridge;
  */
 public class BridgeException extends RuntimeException {
 
-    /** Serialised form version; the bridge never serialises these, but the compiler asks. */
+    /** Serialized form version; the bridge never serializes these, but the compiler asks. */
     private static final long serialVersionUID = 1L;
 
     /** Envelope discriminant this failure should be reported under. */

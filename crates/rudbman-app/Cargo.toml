@@ -41,7 +41,7 @@ rugpui.workspace = true
 rugpui-editor.workspace = true
 rugpui-grid.workspace = true
 # The application shell: the window chrome, the updater and its dialog, the
-# about dialog, the split-pane tree, the palette catalogue and its editor, and
+# about dialog, the split-pane tree, the palette catalog and its editor, and
 # the pieces the settings form is built out of. It is told what rudbman is —
 # `rugpui_shell::init`, `set_strings` and `set_update_policy`, all three in
 # `main` — and knows nothing else about it.
@@ -70,7 +70,7 @@ uuid.workspace = true
 # larger dependency. See the note beside the entry in the workspace manifest.
 ureq.workspace = true
 # The saved ERD layout reports its file errors as `anyhow::Result`, and so does
-# the pair of theme directories the shell's catalogues are built over.
+# the pair of theme directories the shell's catalogs are built over.
 anyhow.workspace = true
 # The extract and ERD export dialogs fall back to the user's home directory;
 # `rudbman-core` resolves the configuration directory but has no reason to
@@ -87,7 +87,7 @@ rust-i18n.workspace = true
 sys-locale.workspace = true
 
 [dev-dependencies]
-# gpui's headless test platform, for the behaviour that only exists once an
+# gpui's headless test platform, for the behavior that only exists once an
 # element tree has been laid out. Test-only: the binary links gpui without it.
 gpui = { workspace = true, features = ["test-support"] }
 # The window-geometry round trip writes a real `settings.json` and reads it

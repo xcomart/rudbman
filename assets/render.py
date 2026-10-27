@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rasterise `assets/icon.svg` into every format the packaging needs.
+"""Rasterize `assets/icon.svg` into every format the packaging needs.
 
 Usage
 -----
@@ -21,7 +21,7 @@ glyph) pass files and sizes explicitly:
 
 Why GdkPixbuf and not something more obvious
 --------------------------------------------
-The usual command line rasterisers are not installed here and are not worth
+The usual command line rasterizers are not installed here and are not worth
 adding as a build dependency: there is no ``rsvg-convert``, no ``inkscape``,
 and ``cairosvg`` is not importable. What *is* present, because the application
 is a GTK program and the toolkit is already a hard dependency of this
@@ -36,7 +36,7 @@ Every size is drawn from the vector
 size instead of scaling a large bitmap down, and every size in every container
 below is produced that way — the 16 px frame in the `.ico` is a 16 px drawing,
 not a shrunk 256. The difference is plain at that size: a downscaled 256 turns
-the cylinder's grooves into grey haze across the barrel, while a fresh 16 px
+the cylinder's grooves into gray haze across the barrel, while a fresh 16 px
 render drops them and keeps the silhouette clean. Pillow would happily resample
 for us in both container writers, so each one is handed a complete set of
 exact-size frames through ``append_images`` and never gets the chance.
@@ -64,7 +64,7 @@ PNG_SIZES = (128, 256)
 
 #: Frames in the Windows `.ico`. Explorer, the taskbar, the window title bar
 #: and Alt-Tab each pick a different one out of the same file, so leaving a
-#: size out means Windows scales a neighbouring frame and shows its artefacts.
+#: size out means Windows scales a neighboring frame and shows its artifacts.
 #: `crates/rudbman-app/build.rs` embeds this file as resource ID 1.
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
@@ -74,7 +74,7 @@ ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 ICNS_SIZES = (32, 64, 128, 256, 512, 1024)
 
 
-def rasterise(svg: Path, size: int) -> Image.Image:
+def rasterize(svg: Path, size: int) -> Image.Image:
     """Render *svg* at *size*x*size* pixels and return it as a Pillow image."""
     pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(str(svg), size, size)
     if pixbuf is None:  # loader failure normally raises, but be certain
@@ -94,7 +94,7 @@ def render(svg: Path, size: int, outdir: Path | None = None) -> Path:
     """Render *svg* at *size* and write `<stem>-<size>.png`; return that path."""
     target = (outdir or svg.parent) / f"{svg.stem}-{size}.png"
     target.parent.mkdir(parents=True, exist_ok=True)
-    rasterise(svg, size).save(target, "png")
+    rasterize(svg, size).save(target, "png")
     return target
 
 
@@ -106,7 +106,7 @@ def build_all(svg: Path = MASTER, outdir: Path | None = None) -> list[Path]:
 
     for size in PNG_SIZES:
         target = out / f"icon-{size}.png"
-        rasterise(svg, size).save(target, "png")
+        rasterize(svg, size).save(target, "png")
         written.append(target)
 
     # Pillow's ICO writer looks through `[im] + append_images` for a frame
@@ -115,7 +115,7 @@ def build_all(svg: Path = MASTER, outdir: Path | None = None) -> list[Path]:
     # has to be the largest, because the writer skips any requested size larger
     # than the base.
     largest = max(ICO_SIZES)
-    ico_frames = {size: rasterise(svg, size) for size in ICO_SIZES}
+    ico_frames = {size: rasterize(svg, size) for size in ICO_SIZES}
     ico = out / "icon.ico"
     ico_frames[largest].save(
         ico,
@@ -127,7 +127,7 @@ def build_all(svg: Path = MASTER, outdir: Path | None = None) -> list[Path]:
 
     # The ICNS writer keys `append_images` by width and resizes only for a
     # width it was not given, so the same rule applies: supply them all.
-    icns_frames = [rasterise(svg, size) for size in ICNS_SIZES]
+    icns_frames = [rasterize(svg, size) for size in ICNS_SIZES]
     icns = out / "icon.icns"
     icns_frames[-1].save(icns, "icns", append_images=icns_frames)
     written.append(icns)
@@ -155,7 +155,7 @@ def verify(paths: list[Path]) -> None:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Rasterise the application icon from its master SVG."
+        description="Rasterize the application icon from its master SVG."
     )
     parser.add_argument(
         "svg", nargs="*", type=Path, help="SVGs to render (default: the full set)"

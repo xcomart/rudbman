@@ -60,7 +60,7 @@ import java.util.logging.Logger;
  *       column is generated but never says from what;</li>
  *   <li>{@code UNIQUE} constraints as constraints - they arrive as unique
  *       indexes and are emitted as {@code CREATE UNIQUE INDEX};</li>
- *   <li>view, materialised view and typed-table definitions - a view reaches
+ *   <li>view, materialized view and typed-table definitions - a view reaches
  *       this path as a bare column list.</li>
  * </ul>
  *
@@ -108,7 +108,7 @@ public final class Ddl {
      * {@code table}. The kinds other than a table are answered by
      * {@link ObjectDdl} and {@link RoutineDdl}.
      *
-     * @param conn    the live connection, for the native catalogue queries
+     * @param conn    the live connection, for the native catalog queries
      * @param dbm     the connection metadata
      * @param req     the request body
      * @return an object carrying {@code ddl} and {@code source}
@@ -586,7 +586,7 @@ public final class Ddl {
     private static String typeText(Col c) {
         String name = c.typeName == null ? "UNKNOWN" : c.typeName.trim();
         if (name.indexOf('(') >= 0) {
-            // Some drivers hand back a fully parameterised name already.
+            // Some drivers hand back a fully parameterized name already.
             return name;
         }
         // MySQL appends attributes to TYPE_NAME ("DECIMAL UNSIGNED"), and the
@@ -758,7 +758,7 @@ public final class Ddl {
             while (rs.next()) {
                 if (!table.equals(v.str("TABLE_NAME"))) {
                     // TABLE_NAME is a pattern argument: a name holding _ or %
-                    // matches its neighbours too.
+                    // matches its neighbors too.
                     continue;
                 }
                 // getColumns column order, which the reads have to follow - see

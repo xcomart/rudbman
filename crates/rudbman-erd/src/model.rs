@@ -1,7 +1,7 @@
 //! What a diagram is made of: tables, their columns, and the foreign keys
 //! between them.
 //!
-//! Four plain structs with public fields and no behaviour worth the name. The
+//! Four plain structs with public fields and no behavior worth the name. The
 //! point of the module is what it does *not* know: there is no `rudbman-jdbc`
 //! here and no `Connection`, because a diagram is built by the host out of
 //! `imported_keys` and column metadata it has already fetched (architecture

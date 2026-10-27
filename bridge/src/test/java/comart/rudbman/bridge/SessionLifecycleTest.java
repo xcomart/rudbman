@@ -42,7 +42,7 @@ class SessionLifecycleTest {
     }
 
     @Test
-    void readOnlyAndAutoCommitAreHonoured() {
+    void readOnlyAndAutoCommitAreHonored() {
         JsonObject req = new JsonObject();
         req.addProperty("url", H2.freshUrl());
         req.addProperty("driver_class", H2.DRIVER);

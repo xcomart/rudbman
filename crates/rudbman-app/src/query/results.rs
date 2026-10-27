@@ -133,7 +133,7 @@ impl QueryPane {
             self.mark_read_only(id, ts!("data.read_only"), cx);
             return;
         }
-        // A detached pane can still be read; it cannot ask the catalogue
+        // A detached pane can still be read; it cannot ask the catalog
         // anything, so its results stay as they came.
         let Some(session) = self.session.clone() else {
             self.mark_read_only(id, ts!("query.not_editable"), cx);

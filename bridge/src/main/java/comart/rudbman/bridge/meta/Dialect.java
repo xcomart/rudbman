@@ -10,13 +10,13 @@ import java.util.Locale;
  * <p>Two of the {@code DESCRIBE} kinds cannot be answered through JDBC alone.
  * Sequences have no {@link DatabaseMetaData} accessor at all, and a table's own
  * {@code CREATE} text is something only the server can quote verbatim. Both
- * therefore need a vendor catalogue query, and a vendor catalogue query needs to
+ * therefore need a vendor catalog query, and a vendor catalog query needs to
  * know the vendor.
  *
  * <p>The discriminator is {@link DatabaseMetaData#getDatabaseProductName()},
  * the same string {@code SESSION_INFO} reports, matched case-insensitively on a
  * substring. Product names are marketing text and do drift between versions, so
- * an unrecognised name is not an error: it maps to {@link #OTHER}, which means
+ * an unrecognized name is not an error: it maps to {@link #OTHER}, which means
  * "portable paths only". Every caller must stay useful under {@link #OTHER}.
  */
 public enum Dialect {
@@ -37,7 +37,7 @@ public enum Dialect {
     SQLITE,
     /** IBM Db2. */
     DB2,
-    /** Anything unrecognised. Only portable, standard-JDBC paths may be used. */
+    /** Anything unrecognized. Only portable, standard-JDBC paths may be used. */
     OTHER;
 
     /**

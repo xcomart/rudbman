@@ -76,7 +76,7 @@ fn a_header_menu_hides_a_column_and_puts_them_all_back(cx: &mut TestAppContext) 
 
 /// The editor menu's copy row writes the selection to the real clipboard,
 /// through the editor's own action rather than through anything invented
-/// here — and it is greyed out when there is nothing selected to copy.
+/// here — and it is grayed out when there is nothing selected to copy.
 #[gpui::test]
 fn the_editor_menu_copies_the_selection(cx: &mut TestAppContext) {
     let (connected, profile) = h2("editor-menu", &[]);
@@ -128,10 +128,10 @@ fn the_editor_menu_copies_the_selection(cx: &mut TestAppContext) {
 }
 
 /// A detached pane keeps its editor and refuses to run from the menu too:
-/// the three run rows are greyed, and the rows that only touch text are
+/// the three run rows are grayed, and the rows that only touch text are
 /// not.
 #[gpui::test]
-fn a_detached_pane_greys_the_menus_run_rows(cx: &mut TestAppContext) {
+fn a_detached_pane_grays_the_menus_run_rows(cx: &mut TestAppContext) {
     let (connected, profile) = h2("editor-menu-detached", &[]);
     let window = pane(&connected, &profile, 500, cx);
 
@@ -226,7 +226,7 @@ fn a_sort_from_the_header_menu_marks_the_grid_it_comes_back_in(cx: &mut TestAppC
 }
 
 /// A cell menu is about the selection rather than about the cell that was
-/// pressed, and says so by greying every row that would act on nothing.
+/// pressed, and says so by graying every row that would act on nothing.
 #[gpui::test]
 fn a_cell_menu_follows_the_selection(cx: &mut TestAppContext) {
     let (connected, profile) = h2(
@@ -261,7 +261,7 @@ fn a_cell_menu_follows_the_selection(cx: &mut TestAppContext) {
             ts!("data.discard_row").to_string(),
             ts!("data.discard").to_string(),
         ],
-        "the editing rows are drawn greyed rather than left out (§7.8)"
+        "the editing rows are drawn grayed rather than left out (§7.8)"
     );
     assert!(
         !context_menu::labels(&rows).contains(&ts!("data.insert_row").to_string()),
@@ -277,7 +277,7 @@ fn a_cell_menu_follows_the_selection(cx: &mut TestAppContext) {
         );
     }
     // `C` has no primary key, so the result failed §7.9's gate: every
-    // editing row is there and every one of them is greyed.
+    // editing row is there and every one of them is grayed.
     for label in [
         ts!("data.set_null"),
         ts!("data.delete_row"),

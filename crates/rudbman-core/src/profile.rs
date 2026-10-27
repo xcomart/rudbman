@@ -501,7 +501,7 @@ pub struct DriverDef {
     ///
     /// Picks the keyword set, identifier quoting rules, DDL generator, and
     /// paging syntax used by the SQL layer, so an unknown value degrades to
-    /// generic behaviour rather than failing.
+    /// generic behavior rather than failing.
     pub dialect: String,
     /// Whether [`DriverDef::table_comments_sql`] is used at all.
     ///

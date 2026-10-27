@@ -125,7 +125,7 @@ fn lob_file_picker_exports_the_complete_value_and_imports_an_immutable_replaceme
         .update(cx, |dialog, _, cx| {
             assert!(
                 !dialog.changed,
-                "cancelled picker leaves the original intact"
+                "canceled picker leaves the original intact"
             );
             dialog.import(cx);
         })

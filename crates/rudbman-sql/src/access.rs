@@ -8,9 +8,9 @@ use crate::{Dialect, Token, TokenKind, lex, split_statements};
 /// still call a vendor-specific function with side effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatementAccess {
-    /// A recognised query shape with no syntactically modifying CTE.
+    /// A recognized query shape with no syntactically modifying CTE.
     Read,
-    /// A recognised modifying statement.
+    /// A recognized modifying statement.
     Write,
     /// Empty, malformed, or dialect-specific syntax the classifier cannot place.
     Unknown,
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_and_unrecognised_are_unknown() {
+    fn malformed_and_unrecognized_are_unknown() {
         let h2 = Dialect::H2;
         for sql in [
             "",

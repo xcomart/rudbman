@@ -84,7 +84,7 @@ impl Workspace {
             let outcome = opening.await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    // A neighbouring connection may have closed during the handshake.
+                    // A neighboring connection may have closed during the handshake.
                     let Some(index) = workspace.connections.iter().position(|open| open.id == id)
                     else {
                         return;
@@ -148,7 +148,7 @@ impl Workspace {
 
     /// Fetches the children of one explorer node.
     ///
-    /// The session's own worker thread serialises this against everything else
+    /// The session's own worker thread serializes this against everything else
     /// that connection is doing, which is the reason the tree draws a
     /// placeholder rather than pretending to be instant: a schema opened while a
     /// statement is running waits for it.

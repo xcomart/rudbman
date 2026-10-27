@@ -4,7 +4,7 @@
 //! Two widgets sit on this module — [`crate::view::ErdView`], which draws a
 //! schema, and [`crate::builder::BuilderView`], which draws a query. They differ
 //! in exactly one thing, *what a press on a box means*; everything else — the
-//! transform, the pan and the zoom, the box hit test, the virtualisation, the
+//! transform, the pan and the zoom, the box hit test, the virtualization, the
 //! elided labels, the paint order — is one implementation here rather than two
 //! that drift apart (architecture document, §7.7).
 //!
@@ -226,7 +226,7 @@ impl Viewport {
 
     /// Whether any part of `rect` falls inside `bounds`.
     ///
-    /// The whole of the virtualisation: a diagram of two hundred tables zoomed
+    /// The whole of the virtualization: a diagram of two hundred tables zoomed
     /// in on one of them costs what one costs.
     pub(crate) fn visible(&self, bounds: &Bounds<Pixels>, rect: &NodeRect) -> bool {
         let top_left = self.to_screen(bounds, rect.x, rect.y);
@@ -275,7 +275,7 @@ impl Viewport {
     }
 
     /// The middle of the viewport, which is what a keyboard zoom is about.
-    pub(crate) fn centre(&self) -> Point<Pixels> {
+    pub(crate) fn center(&self) -> Point<Pixels> {
         point(
             self.bounds.origin.x + self.bounds.size.width / 2.,
             self.bounds.origin.y + self.bounds.size.height / 2.,
@@ -284,12 +284,12 @@ impl Viewport {
 
     /// One step closer, about the middle of the viewport.
     pub(crate) fn zoom_in(&mut self) -> bool {
-        self.zoom_to(self.zoom * ZOOM_STEP, self.centre())
+        self.zoom_to(self.zoom * ZOOM_STEP, self.center())
     }
 
     /// One step further out, about the middle of the viewport.
     pub(crate) fn zoom_out(&mut self) -> bool {
-        self.zoom_to(self.zoom / ZOOM_STEP, self.centre())
+        self.zoom_to(self.zoom / ZOOM_STEP, self.center())
     }
 
     /// Back to the corner the diagram starts in, at whatever the scale is.
@@ -414,7 +414,7 @@ impl Viewport {
 /// Which box is under the logical point `(x, y)`, if any.
 ///
 /// Reverse order, because the boxes are drawn in table order and the one drawn
-/// last is the one the user sees on top — the judgement the result grid reached
+/// last is the one the user sees on top — the judgment the result grid reached
 /// about cells, for the same reason.
 pub(crate) fn hit_box(rects: &[NodeRect], x: f32, y: f32) -> Option<usize> {
     rects
@@ -494,7 +494,7 @@ pub(crate) struct RowLabel {
     pub(crate) name: SharedString,
     /// The type as it should read, elided to what the name left.
     pub(crate) type_name: SharedString,
-    /// Which colour the name is drawn in.
+    /// Which color the name is drawn in.
     pub(crate) kind: RowKind,
 }
 
@@ -548,10 +548,10 @@ pub(crate) fn labels_of(tables: &[ErdTable], rects: &[NodeRect], mode: NameMode)
         .collect()
 }
 
-/// One line between two boxes, at box centres or at column rows.
+/// One line between two boxes, at box centers or at column rows.
 ///
 /// A foreign key has no row to attach to — the relation belongs to the tables,
-/// not to one row of them — so [`None`] means the box's centre and is what the
+/// not to one row of them — so [`None`] means the box's center and is what the
 /// ERD passes. A join drawn in the query builder is a statement about two
 /// *columns*, so it carries both rows and is drawn at their heights.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -560,14 +560,14 @@ pub(crate) struct Edge {
     pub(crate) from: usize,
     /// Index of the box the line arrives at.
     pub(crate) to: usize,
-    /// Which row of `from` the line leaves, or the box's centre.
+    /// Which row of `from` the line leaves, or the box's center.
     pub(crate) from_row: Option<usize>,
-    /// Which row of `to` the line arrives at, or the box's centre.
+    /// Which row of `to` the line arrives at, or the box's center.
     pub(crate) to_row: Option<usize>,
 }
 
 impl Edge {
-    /// A line between two boxes' centres, as a foreign key is drawn.
+    /// A line between two boxes' centers, as a foreign key is drawn.
     pub(crate) fn between(from: usize, to: usize) -> Self {
         Self {
             from,
@@ -603,7 +603,7 @@ pub(crate) struct Scene {
     pub(crate) rects: Vec<NodeRect>,
     /// Where the canvas is looking.
     pub(crate) viewport: Viewport,
-    /// Which box is outlined in the accent colour, if any.
+    /// Which box is outlined in the accent color, if any.
     pub(crate) selected: Option<usize>,
     /// Which `(box, row)` pairs are highlighted.
     pub(crate) selected_rows: Rc<HashSet<(usize, usize)>>,
@@ -615,7 +615,7 @@ pub(crate) struct Scene {
     pub(crate) marks: bool,
     /// A line being dragged, from a point on a box to the pointer.
     pub(crate) rubber: Option<((f32, f32), (f32, f32))>,
-    /// The colours this frame is drawn in.
+    /// The colors this frame is drawn in.
     pub(crate) palette: Theme,
 }
 
@@ -662,7 +662,7 @@ impl Scene {
 
     /// Works out where everything is and shapes the text that will be legible.
     ///
-    /// **The virtualisation.** Only boxes that intersect `bounds` are placed at
+    /// **The virtualization.** Only boxes that intersect `bounds` are placed at
     /// all, and only their labels are shaped. Below [`TEXT_FLOOR`] no text is
     /// shaped at all, because none of it could be read.
     pub(crate) fn prepaint(self, bounds: Bounds<Pixels>, window: &mut Window) -> Painted {
@@ -681,7 +681,7 @@ impl Scene {
                 continue;
             }
 
-            // Which side each line leaves by is the router's judgement, and the
+            // Which side each line leaves by is the router's judgment, and the
             // row anchors have to be asked the same question so that a line at
             // a row's height still leaves the edge the route runs from.
             let rightwards = to.center_x() >= from.center_x();
@@ -696,23 +696,23 @@ impl Scene {
                 continue;
             }
 
-            let colour = self.palette.text_muted;
+            let color = self.palette.text_muted;
             painted
                 .under_lines
-                .push((points.iter().map(|(x, y)| at(*x, *y)).collect(), colour));
+                .push((points.iter().map(|(x, y)| at(*x, *y)).collect(), color));
             if !self.marks {
                 continue;
             }
             for prong in crow_foot(points[0], head_direction(&points)) {
                 painted.under_lines.push((
                     vec![at(prong[0].0, prong[0].1), at(prong[1].0, prong[1].1)],
-                    colour,
+                    color,
                 ));
             }
             let bar = key_bar(points[points.len() - 1], tail_direction(&points));
             painted
                 .under_lines
-                .push((vec![at(bar[0].0, bar[0].1), at(bar[1].0, bar[1].1)], colour));
+                .push((vec![at(bar[0].0, bar[0].1), at(bar[1].0, bar[1].1)], color));
         }
 
         let style = window.text_style();
@@ -857,7 +857,7 @@ fn shape_box_labels(
             continue;
         }
 
-        let colour = match label.kind {
+        let color = match label.kind {
             RowKind::PrimaryKey => palette.grid_pk,
             RowKind::ForeignKey => palette.accent,
             RowKind::Plain => palette.text,
@@ -865,7 +865,7 @@ fn shape_box_labels(
         let name = window.text_system().shape_line(
             label.name.clone(),
             px(FONT_SIZE * zoom),
-            &[run(&label.name, colour, font)],
+            &[run(&label.name, color, font)],
             None,
         );
         painted.labels.push((name, point(left, top), row_height));
@@ -908,16 +908,16 @@ impl Painted {
     /// Draws the frame, clipped to the viewport.
     pub(crate) fn paint(mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            for (points, colour) in self.under_lines.drain(..) {
-                stroke(window, points, colour);
+            for (points, color) in self.under_lines.drain(..) {
+                stroke(window, points, color);
             }
 
             for quad in self.quads.drain(..) {
                 window.paint_quad(quad);
             }
 
-            for (points, colour) in self.over_lines.drain(..) {
-                stroke(window, points, colour);
+            for (points, color) in self.over_lines.drain(..) {
+                stroke(window, points, color);
             }
 
             for (line, origin, line_height) in self.labels.drain(..) {
@@ -929,7 +929,7 @@ impl Painted {
 }
 
 /// One polyline, a pixel wide.
-fn stroke(window: &mut Window, points: Vec<Point<Pixels>>, colour: Hsla) {
+fn stroke(window: &mut Window, points: Vec<Point<Pixels>>, color: Hsla) {
     let mut builder = PathBuilder::stroke(px(1.));
     for (index, at) in points.into_iter().enumerate() {
         if index == 0 {
@@ -939,16 +939,16 @@ fn stroke(window: &mut Window, points: Vec<Point<Pixels>>, colour: Hsla) {
         }
     }
     if let Ok(path) = builder.build() {
-        window.paint_path(path, colour);
+        window.paint_path(path, color);
     }
 }
 
-/// One run covering the whole of `text`, in one colour and the window's font.
-pub(crate) fn run(text: &str, colour: Hsla, font: &gpui::Font) -> TextRun {
+/// One run covering the whole of `text`, in one color and the window's font.
+pub(crate) fn run(text: &str, color: Hsla, font: &gpui::Font) -> TextRun {
     TextRun {
         len: text.len(),
         font: font.clone(),
-        color: colour,
+        color,
         background_color: None,
         underline: None,
         strikethrough: None,
@@ -961,7 +961,7 @@ pub(crate) mod test_support {
     //!
     //! Both widgets are opened the same way — a window, a host view that holds
     //! nothing but the widget, a subscription that collects its events, and the
-    //! focus — so the opening is written once here and parameterised by the
+    //! focus — so the opening is written once here and parameterized by the
     //! widget rather than copied per widget.
 
     use std::cell::RefCell;

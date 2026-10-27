@@ -41,7 +41,7 @@
 //!   `DECLARE ... BEGIN`, and package bodies.
 //! * **MySQL's `DELIMITER`.** The client-side directive that changes the
 //!   terminator (`DELIMITER //`) is not a MySQL statement — it is a feature of
-//!   the `mysql` command-line tool — and it is not honoured here.
+//!   the `mysql` command-line tool — and it is not honored here.
 //!
 //! Both would need block-structure tracking, which is a parser, and a
 //! half-working version of either is worse than none: a script runner that

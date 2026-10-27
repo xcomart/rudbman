@@ -224,7 +224,7 @@ fn a_diagram_loads_while_rows_are_open_for_editing(cx: &mut gpui::TestAppContext
 
 /// stops being rendered, and gpui resolves actions against the focused
 /// element of the last drawn frame. The keyboard has to land on the
-/// neighbour that took its place — or on the shell, when nothing did.
+/// neighbor that took its place — or on the shell, when nothing did.
 #[gpui::test]
 fn closing_a_tab_hands_the_keyboard_to_the_tab_beside_it(cx: &mut gpui::TestAppContext) {
     let (window, _id) = workspace_over_h2("tab-focus", cx);
@@ -251,13 +251,13 @@ fn closing_a_tab_hands_the_keyboard_to_the_tab_beside_it(cx: &mut gpui::TestAppC
             workspace.close_tab(pane, 1, window, cx);
             assert_eq!(tab_titles(workspace, pane, cx), ["Query 1"]);
             assert_eq!(active_tab(workspace, pane), 0);
-            let neighbour = workspace
+            let neighbor = workspace
                 .active_query()
                 .expect("the first query took its place")
                 .read(cx)
                 .focus_handle(cx);
             assert!(
-                neighbour.is_focused(window),
+                neighbor.is_focused(window),
                 "the focus stayed on the editor of the closed tab"
             );
         })
@@ -685,7 +685,7 @@ fn moving_a_tab_within_its_strip_reorders_it(cx: &mut gpui::TestAppContext) {
             );
             assert_eq!(active_pane(workspace), pane);
 
-            // Onto itself, and before its own neighbour, both change nothing.
+            // Onto itself, and before its own neighbor, both change nothing.
             workspace.move_tab(pane, 1, pane, 1, window, cx);
             workspace.move_tab(pane, 1, pane, 2, window, cx);
             assert_eq!(

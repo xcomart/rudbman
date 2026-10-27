@@ -17,7 +17,7 @@
 //!
 //! The alternative, one tree shared by every connection, was tried first and
 //! reads badly: a split arranged for one database follows the user into the
-//! next, and a strip of tabs from three connections at once needs a colour dot
+//! next, and a strip of tabs from three connections at once needs a color dot
 //! per tab to be legible at all. Scoping the whole area is what makes the tab
 //! mean something.
 //!
@@ -116,7 +116,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 /// traffic lights, in the custom title bar style.
 ///
 /// The buttons are 14 pt tall, so half the difference to [`TOOLBAR_HEIGHT`]
-/// centres them in the toolbar band.
+/// centers them in the toolbar band.
 const TRAFFIC_LIGHT_ORIGIN: Point<Pixels> = Point {
     x: px(12.),
     y: px(11.),
@@ -156,7 +156,7 @@ const PANE_SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
 
 /// [`PANE_SHORTCUT_MODIFIER`] as a menu hint writes it.
 ///
-/// The same key, capitalised: gpui's binding syntax is lower case and the name
+/// The same key, capitalized: gpui's binding syntax is lower case and the name
 /// printed on the key is not. Never translated, for [`SHORTCUT_MODIFIER`]'s
 /// reason.
 const PANE_SHORTCUT_LABEL: &str = if cfg!(target_os = "macos") {
@@ -175,7 +175,7 @@ const PANE_SHORTCUT_LABEL: &str = if cfg!(target_os = "macos") {
 /// same six pixels [`rugpui::Splitter`] gives the dividers inside the pane tree
 /// — and, since both are the same [`rugpui::ResizeHandle`], the same accent bar
 /// under the pointer too, so the two resize gestures of one window are equally
-/// easy to find and equally easy to recognise.
+/// easy to find and equally easy to recognize.
 const SPLIT_HANDLE: f32 = 6.;
 
 /// A surface of the workspace that scrolls, and so wears an overlay bar.
@@ -216,7 +216,7 @@ const NOTHING: SharedString = SharedString::new_static("—");
 ///
 /// Fixed rather than fluid, and the width logman gives the same column: wide
 /// enough for a profile's name beside its host, narrow enough to read as one
-/// card in a maximised window rather than a screen-wide smear of rows.
+/// card in a maximized window rather than a screen-wide smear of rows.
 const WELCOME_WIDTH: f32 = 320.;
 
 /// Element id of the welcome screen's scrolling box.
@@ -238,7 +238,7 @@ const WELCOME_NEW_TAB: isize = 1;
 /// Debug selector of the welcome screen's "new connection" button.
 ///
 /// Compiled away outside a test build; it saves a test working the button's
-/// position out from the centred column's layout.
+/// position out from the centered column's layout.
 const WELCOME_NEW_SELECTOR: &str = "welcome-new";
 
 /// Marker for a drag of the explorer's right edge.
@@ -427,7 +427,7 @@ enum ConnectionState {
     /// The connect task is in flight.
     ///
     /// The task is held rather than detached so that closing the tab abandons
-    /// the attempt: a `Task` that is dropped is cancelled at its next await
+    /// the attempt: a `Task` that is dropped is canceled at its next await
     /// point, and the half-opened session that may be in flight behind it is
     /// closed by `Connected`'s own `Drop`.
     Connecting { _task: Task<()> },
@@ -599,7 +599,7 @@ struct Workspace {
     context_menu: Option<OpenContextMenu>,
     /// The write confirmation, while a query pane is waiting on it.
     ///
-    /// Held here rather than in the pane because a modal centres itself in its
+    /// Held here rather than in the pane because a modal centers itself in its
     /// nearest positioned ancestor, and inside a pane that is the wrong box.
     confirm: Option<PendingConfirm>,
     /// Where a dragged tab would land, while a drag is over a strip.
@@ -751,7 +751,7 @@ impl Workspace {
 /// What every pane of one frame is drawn against.
 ///
 /// Gathered once by [`Workspace::render_body`] and handed down the recursion
-/// rather than recomputed per leaf: the palette and the connection colours are
+/// rather than recomputed per leaf: the palette and the connection colors are
 /// the same for every pane on screen, and the alternative is a `render_pane`
 /// with seven parameters, most of them constants of the frame.
 struct PaneChrome {
@@ -762,10 +762,10 @@ struct PaneChrome {
     frame: bool,
     /// The palette.
     theme: Theme,
-    /// The colour tag of every connection that has one, for the tab dots.
+    /// The color tag of every connection that has one, for the tab dots.
     ///
-    /// A profile with no colour is simply absent, and its tabs draw no dot: an
-    /// invented colour would read as a tag the user chose.
+    /// A profile with no color is simply absent, and its tabs draw no dot: an
+    /// invented color would read as a tag the user chose.
     colors: HashMap<ConnectionId, Hsla>,
     /// Where a dragged tab would land, while a drag is over a strip.
     ///

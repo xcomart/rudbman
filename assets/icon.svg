@@ -10,7 +10,7 @@
     the drawing every developer already reads as "database" without a legend,
     so it gets the whole tile and nothing is set beside it.
 
-    The colours are the application's own, from `crates/rudbman-ui/src/
+    The colors are the application's own, from `crates/rudbman-ui/src/
     theme.rs`. The body is `accent` (#61afef); the cap is `grid_pk` (#e5c07b),
     the gold the grid marks primary keys with: a primary key is what
     identifies a row and what every relation in a schema hangs off, so a
@@ -20,17 +20,17 @@
 
     Not green, though green is in the palette and the sibling app uses it:
     `theme.rs` binds green to `success`. It already means "that worked"
-    everywhere in the UI, and a colour cannot be both a transient state and
+    everywhere in the UI, and a color cannot be both a transient state and
     the application's name. Gold carries no status meaning here.
 
-    The second colour is inside the silhouette rather than beside it. A
+    The second color is inside the silhouette rather than beside it. A
     second *shape* would have to be given its own room and would break the
     mark into two masses at 16 px; the cap is the end of the solid, so there
     is no seam and the mark stays one object. Gold over blue also keeps a
     brightness step between the two, which is what a hue change alone cannot
     do — the cap stays the lit end and does not read as a separate chip.
 
-    The modelling. One light, above and a little to the left, and everything
+    The modeling. One light, above and a little to the left, and everything
     below follows from it. The barrel is shaded around its girth — dark left
     edge, highlight at about a third of the way across, falling away dark on
     the right — which is the gradient that makes a rectangle read as a turned
@@ -38,7 +38,7 @@
     a soft specular streak where the highlight peaks, a darkening toward the
     base where the form turns from the light, and a crescent of shadow under
     the cap that seats the gold on the barrel instead of leaving it pasted
-    on. The cap itself takes an off-centre radial so its top face tilts
+    on. The cap itself takes an off-center radial so its top face tilts
     toward the light, with a thin bright arc on the near rim. The cylinder
     drops a blurred pool of shadow on the tile, which is what lifts it off
     the plate. Every one of these is a translucent overlay on the two base
@@ -47,12 +47,12 @@
     small sizes nothing.
 
     The plate. The tile's gradient is steep enough to be seen as one — the
-    same One Dark greys, but a clear step from lit top to dark base rather
+    same One Dark grays, but a clear step from lit top to dark base rather
     than a whisper of one. Its border is drawn twice: a dark crease at the
-    very edge that cuts the tile out of whatever it sits on, and a mid-grey
+    very edge that cuts the tile out of whatever it sits on, and a mid-gray
     ring inside it that stays legible on both light and dark backdrops. The
-    emboss lives in that ring itself: its gradient runs from lit grey at the
-    top to shadowed grey at the base — the same overhead light that models
+    emboss lives in that ring itself: its gradient runs from lit gray at the
+    top to shadowed gray at the base — the same overhead light that models
     the cylinder catching the plate's frame — so the tile reads as a raised
     plate while the ring keeps one geometric width all the way round. (An
     earlier draft laid a separate highlight/shadow band inside a flat ring;
@@ -61,7 +61,7 @@
     plate; the emboss is this icon's own.
 
     Master file. `assets/icon-128.png`, `icon-256.png`, `icon.ico` and
-    `icon.icns` are all rasterised from this one by `assets/render.py`, each
+    `icon.icns` are all rasterized from this one by `assets/render.py`, each
     size drawn from the vector rather than scaled down from a larger bitmap.
     Edit this, then re-run that script; do not edit the raster files.
   -->
@@ -77,7 +77,7 @@
       <stop offset="0.5" stop-color="#5b6474"/>
       <stop offset="1" stop-color="#343a44"/>
     </linearGradient>
-    <!-- round-shading across the girth: edge, highlight, local colour, far edge -->
+    <!-- round-shading across the girth: edge, highlight, local color, far edge -->
     <linearGradient id="barrel" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#3a76ad"/>
       <stop offset="0.22" stop-color="#7fc3f8"/>
@@ -139,7 +139,7 @@
 
     <!--
       Two grooves. Drawn in the tile's own dark and translucent, so they read
-      as shadow rather than as a third colour; below about 24 px they dissolve
+      as shadow rather than as a third color; below about 24 px they dissolve
       into the barrel instead of breaking it into stripes. Each carries a
       faint lit lower lip, which is what makes a line into a recess.
     -->

@@ -221,7 +221,7 @@ connect:
   add_prop: Añadir una propiedad
 
   section:
-    behaviour: Comportamiento
+    behavior: Comportamiento
     tunnel: Túnel SSH
 
   read_only: Abrir la conexión en solo lectura
@@ -300,7 +300,7 @@ driver:
   downloading: "Descargando %{file}…"
   downloading_percent: "Descargando %{file} — %{percent} %"
   downloaded: "Se descargó y añadió %{file}."
-  download_cancelled: Se canceló la descarga.
+  download_canceled: Se canceló la descarga.
   bad_coordinate: "«%{coordinate}» no es una coordenada group:artifact:version."
   not_found: "Maven Central no tiene nada en %{url}."
   network_failed: "La descarga falló: %{error}"
@@ -404,7 +404,7 @@ query:
   commit_auto: "Confirmar (la confirmación automática está activada)"
   run: Ejecutar
   cancel: Cancelar
-  cancelling: Cancelando…
+  canceling: Cancelando…
   result: "Resultado %{index}"
   tab: "Consulta %{index}"
   empty: Escribe una sentencia y ejecútala.
@@ -428,7 +428,7 @@ query:
   hint_constraint: La sentencia infringe una restricción de la tabla.
   hint_auth: Esta conexión no tiene permiso para hacerlo.
   hint_network: Se perdió la conexión con la base de datos.
-  hint_cancelled: La sentencia se canceló.
+  hint_canceled: La sentencia se canceló.
   open_file_select: Elige un archivo SQL
 
 data:
@@ -529,9 +529,9 @@ extract:
   start: Extraer
   starting: iniciando…
   counters: "%{rows} filas, %{bytes}"
-  cancelling: Cancelando…
+  canceling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
-  cancelled: "Cancelado. No se escribió nada en %{path}."
+  canceled: "Cancelado. No se escribió nada en %{path}."
   failed: "La extracción falló: %{error}"
   failed_unknown: La extracción falló y el puente no dijo por qué.
 
@@ -554,10 +554,10 @@ transfer:
   starting: iniciando…
   counters: "%{rows} filas"
   skipped: "%{skipped} omitidas"
-  cancelling: Cancelando…
+  canceling: Cancelando…
   done: "Se transfirieron %{rows} filas a %{table}."
   done_skipped: "%{skipped} filas no se pudieron insertar y se omitieron."
-  cancelled: "Cancelado. %{rows} filas ya se habían confirmado en %{table} y siguen ahí."
+  canceled: "Cancelado. %{rows} filas ya se habían confirmado en %{table} y siguen ahí."
   failed: "La transferencia falló: %{error}"
   failed_unknown: La transferencia falló y el puente no dijo por qué.
 
@@ -576,9 +576,9 @@ backup:
   start: Crear copia de seguridad
   starting: iniciando…
   counters: "%{rows} filas, %{bytes}"
-  cancelling: Cancelando…
+  canceling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
-  cancelled: "Cancelado. No se escribió nada en %{path}."
+  canceled: "Cancelado. No se escribió nada en %{path}."
   failed: "La copia de seguridad falló: %{error}"
   failed_unknown: La copia de seguridad falló y el puente no dijo por qué.
 

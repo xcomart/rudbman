@@ -11,7 +11,7 @@
 //! a fact.
 //!
 //! So each test here drives `plan_create`/`plan_alter`, runs what comes back
-//! through a real `Session`, and then **reads the catalogue back** with
+//! through a real `Session`, and then **reads the catalog back** with
 //! `DescribeRequest`. The reading back is the point. A server that accepted a
 //! statement has not thereby done what §7.10 says it did — MySQL's
 //! `MODIFY COLUMN` accepts a definition that silently drops a `NOT NULL` just
@@ -77,10 +77,10 @@
 //!
 //! [`Dialect::quote_ident`](rudbman_sql::Dialect::quote_ident) quotes a name
 //! the server would otherwise change, so on Oracle a lower-case `note` is
-//! emitted as `"note"` and stored in that case. That is the right behaviour and
+//! emitted as `"note"` and stored in that case. That is the right behavior and
 //! these tests keep it — every **column** below is named in lower case on every
 //! product, so Oracle's generated DDL really does go out quoted and the
-//! catalogue really is read back at `note` rather than `NOTE`.
+//! catalog really is read back at `note` rather than `NOTE`.
 //!
 //! The **table** names are the exception: [`Server::table`] shouts them on
 //! Oracle. A table name is the one identifier this file also has to write into
@@ -168,7 +168,7 @@ fn find_in_gradle_cache(group: &str, artifact: &str) -> Option<PathBuf> {
     let mut newest: Option<(String, PathBuf)> = None;
     for version in std::fs::read_dir(&root).ok()?.flatten() {
         let number = version.file_name().to_string_lossy().into_owned();
-        // Only the binary artefact. The same directory also holds
+        // Only the binary artifact. The same directory also holds
         // `-javadoc.jar` and `-sources.jar`, and picking one of those gets a
         // class loader with no classes in it — a ClassNotFoundException a long
         // way from its cause.
@@ -294,19 +294,19 @@ impl Product {
         )
     }
 
-    /// The type a retyping test changes a column *to*, and what the catalogue
+    /// The type a retyping test changes a column *to*, and what the catalog
     /// calls it afterwards.
     ///
     /// Four products take `bigint` and answer three different names for it,
     /// which is the whole reason `ddl` has no type model: the string a user
-    /// types and the string the catalogue reports it back as are not even the
+    /// types and the string the catalog reports it back as are not even the
     /// same on one product.
     ///
     /// Oracle has no `bigint` at all, and the obvious substitute is worse than
     /// no test: `integer` and `number(19)` are both `NUMBER` to
     /// `getColumns`, so a retype between them would be a green assertion about
     /// a statement that could have done nothing. The retype there is to
-    /// `varchar(30)` — a change the catalogue cannot fail to show — and the
+    /// `varchar(30)` — a change the catalog cannot fail to show — and the
     /// answer is `VARCHAR2`, Oracle's own name for the type it was asked for by
     /// a synonym.
     fn widened(self) -> (&'static str, &'static str) {
@@ -378,7 +378,7 @@ impl Server {
         let session = connect(product, &url);
 
         // Asked of the server rather than parsed out of the URL: the URL may
-        // leave the database to the driver's default, and a catalogue request
+        // leave the database to the driver's default, and a catalog request
         // has to name the one the session really landed in.
         let (catalog, schema) = match product {
             Product::Postgres => (None, Some(scalar(&session, "select current_schema()"))),
@@ -470,7 +470,7 @@ impl Server {
         ))
     }
 
-    /// A table-shaped name in the case this product's catalogue will hold it,
+    /// A table-shaped name in the case this product's catalog will hold it,
     /// for the one name a test derives rather than asks for: a rename's target.
     fn name(&self, name: &str) -> String {
         if self.product.folds_upper() {
@@ -484,7 +484,7 @@ impl Server {
     /// SQL the generator wrote.
     ///
     /// Columns keep their lower-case names on every product, so on Oracle the
-    /// generator quotes them and the catalogue holds them lower-cased. An
+    /// generator quotes them and the catalog holds them lower-cased. An
     /// unquoted `qty` in a hand-written `CHECK` would then be looked up as
     /// `QTY` and not found; this is the one place that has to say so.
     fn col(&self, name: &str) -> String {
@@ -496,7 +496,7 @@ impl Server {
     }
 
     /// A constraint name built from `table`'s, in the case this product's
-    /// catalogue will hold it.
+    /// catalog will hold it.
     ///
     /// The suffix has to be shouted along with the table on Oracle, and not for
     /// tidiness: a mixed-case `RB_CHILD_1_2_ck` would be quoted by the
@@ -533,7 +533,7 @@ impl Server {
             .items
     }
 
-    /// One table's columns, as the catalogue holds them.
+    /// One table's columns, as the catalog holds them.
     ///
     /// All five products answer this through `DescribeRequest`. Oracle used to
     /// need a detour around it — see
@@ -600,7 +600,7 @@ impl Server {
             .unwrap_or_else(|| panic!("{table} has no column {name}: {columns:?}"))
     }
 
-    /// Just the column names, in the order the catalogue lists them.
+    /// Just the column names, in the order the catalog lists them.
     fn column_names(&self, table: &str) -> Vec<String> {
         self.columns(table)
             .into_iter()
@@ -698,7 +698,7 @@ fn connect(product: Product, url: &str) -> Session {
     })
 }
 
-/// A column as the catalogue reports it, which is the only reading these tests
+/// A column as the catalog reports it, which is the only reading these tests
 /// trust.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CatalogColumn {
@@ -714,7 +714,7 @@ struct CatalogColumn {
     /// `x` — so tests ask whether what they wrote survived rather than what it
     /// now looks like.
     default: Option<String>,
-    /// `REMARKS` — the column's comment — as [`remarks`] normalises it.
+    /// `REMARKS` — the column's comment — as [`remarks`] normalizes it.
     remarks: Option<String>,
 }
 
@@ -839,7 +839,7 @@ fn oracle_creates_a_table_with_its_keys_and_references() {
 }
 
 /// `plan_create` with every clause it can write, read back out of the
-/// catalogue.
+/// catalog.
 ///
 /// The two foreign keys are the pair worth having: one names the referenced
 /// columns and one leaves them out. An omitted list is how most products spell
@@ -941,7 +941,7 @@ fn create_with_constraints(server: &Server) {
         // key that was left unnamed. What they invent differs — PostgreSQL's
         // `<table>_pkey` is the only one a person would have guessed — and none
         // of it is a name the user typed, which is why §7.10 has the structure
-        // pane read a constraint's name out of the catalogue before offering to
+        // pane read a constraint's name out of the catalog before offering to
         // drop it.
         Product::Postgres | Product::MsSql | Product::Oracle => {
             assert_eq!(named.as_deref(), Some(parent_pk.as_str()));
@@ -991,7 +991,7 @@ fn create_with_constraints(server: &Server) {
         // one — so the constraint that took the trouble to name its referenced
         // column is the one JDBC hides. It is really there: the dictionary is
         // asked below, and answers two. This is a driver's reading of the
-        // catalogue rather than anything §7.10 claims, but it is the reading
+        // catalog rather than anything §7.10 claims, but it is the reading
         // the detail panel's references tab shows, so it is worth having
         // written down.
         Product::Oracle => {
@@ -1180,7 +1180,7 @@ fn add_drop_rename(server: &Server) {
 
     // The spellings §7.10 claims, before they are sent. The add comes first,
     // the drop last, and the rename in between names the column the way the
-    // catalogue still holds it.
+    // catalog still holds it.
     let expected = match server.product {
         Product::Postgres => [
             format!("ALTER TABLE {t} ADD COLUMN added varchar(20) NOT NULL DEFAULT 'z'"),
@@ -1485,7 +1485,7 @@ fn mssql_refuses_to_change_a_default() {
     // The reason, which is what makes this a refusal rather than a gap: the
     // default is a constraint of its own, under a name the server invented and
     // `getColumns` never reports, so changing one is a drop and an add of
-    // something the pane cannot name. The catalogue is asked here so the shape
+    // something the pane cannot name. The catalog is asked here so the shape
     // of that name is on the record.
     let invented = scalar(
         &server.session,
@@ -1516,7 +1516,7 @@ fn mysql_modify_column_restates_the_whole_definition() {
 #[test]
 fn mariadb_modify_column_restates_the_whole_definition() {
     // The claim §7.10 makes is about a grammar, and MariaDB speaks it. Whether
-    // it also shares the *behaviour* the grammar's restating exists to guard
+    // it also shares the *behavior* the grammar's restating exists to guard
     // against — the silent loss of a `NOT NULL` — is not something a shared
     // dialect can promise, so the counterfactual half of this test is run
     // against MariaDB too rather than assumed from MySQL.
@@ -1986,7 +1986,7 @@ fn oracle_renames_a_table() {
 
 /// `ALTER TABLE t RENAME TO n` — the same statement on four of the five, and
 /// `sp_rename` on the fifth. Whichever it is, §7.10 puts it last in a batch so
-/// that everything before it names the table the way the catalogue still holds
+/// that everything before it names the table the way the catalog still holds
 /// it.
 fn rename_table(server: &Server) {
     let before = server.table("rename");
@@ -2059,7 +2059,7 @@ fn rename_table(server: &Server) {
 //     with its defaults: `select b.id from t b` reports `t`. The alias comes
 //     back only with the legacy `useOldAliasMetadataBehavior=true`, which the
 //     second half of the MySQL test sets on a connection of its own to show
-//     that the document's "can" is a real behaviour and not the default one.
+//     that the document's "can" is a real behavior and not the default one.
 //     MariaDB's driver has no such property and always answers the real table.
 //   * **pgjdbc reports the column *alias* as the column name.** `getColumnName`
 //     and `getColumnLabel` both answer `label` for `note AS label`, where the
@@ -2224,7 +2224,7 @@ fn mysql_reports_a_catalog_but_no_schema_for_a_result_column() {
         "Connector/J 9.1.0 reports the real table by default"
     );
 
-    // ...and with `useOldAliasMetadataBehavior=true`, the 5.x behaviour the
+    // ...and with `useOldAliasMetadataBehavior=true`, the 5.x behavior the
     // document is describing, it really does answer the alias. Which is why
     // §7.9 makes the metadata a hint that can only ever *offer* editing: a
     // connection property nobody in this codebase sets can change what the
@@ -2287,7 +2287,7 @@ fn mariadb_answers_exactly_what_connector_j_does() {
     );
 
     // And the real table for an aliased one. MariaDB's driver has no
-    // `useOldAliasMetadataBehavior`, so this is the only behaviour it has —
+    // `useOldAliasMetadataBehavior`, so this is the only behavior it has —
     // where Connector/J's is the default of two.
     let sources = column_sources(&server.session, &format!("select b.id from {t} b"));
     assert_eq!(
@@ -2407,7 +2407,7 @@ fn oracle_reports_no_source_table_at_all() {
 //
 // A comment is the one piece of a table's documentation that lives in the
 // server, and the five products keep it in five places: PostgreSQL and Oracle
-// in a catalogue of their own that only `COMMENT ON` writes, MySQL and MariaDB
+// in a catalog of their own that only `COMMENT ON` writes, MySQL and MariaDB
 // inside the table definition, SQL Server in extended properties that are not
 // part of the schema at all. JDBC has one word for all of it — `REMARKS`,
 // answered by both `getTables` and `getColumns` — and the drivers answer it
@@ -2421,7 +2421,7 @@ fn oracle_reports_no_source_table_at_all() {
 // `describe`. The comments carry 한글 on purpose: a comment that survives the
 // round trip in ASCII proves the plumbing, and one that survives in Hangul
 // proves the plumbing is UTF-8 the whole way — through the driver's own
-// catalogue query, the bridge's JSON and this crate's decoder.
+// catalog query, the bridge's JSON and this crate's decoder.
 
 /// The table comment every test below writes.
 const TABLE_COMMENT: &str = "주문 테이블 / orders";
@@ -2446,7 +2446,7 @@ fn postgres_comments_come_back_as_remarks() {
 ///
 /// It was not a hypothetical: the first run of this assertion failed. Connector/J
 /// hands `TABLE_COMMENT` straight to `REMARKS`, so every view really did arrive
-/// commented `VIEW`, and the bridge normalises it away now.
+/// commented `VIEW`, and the bridge normalizes it away now.
 #[test]
 fn mysql_table_comment_survives_information_schema() {
     let server = server!(Product::MySql);
@@ -2568,7 +2568,7 @@ fn commented_table(server: &Server) -> String {
 ///
 /// The last is the one that catches an enrichment that works by joining rather
 /// than by matching — a comment lookup that lost its column name would put the
-/// table's comment, or the neighbouring column's, on every column of the table,
+/// table's comment, or the neighboring column's, on every column of the table,
 /// and both of those readings pass the first two assertions.
 fn assert_comments(server: &Server, table: &str) {
     assert_eq!(
@@ -3193,7 +3193,7 @@ fn every_kind(server: &Server) {
     }
 
     // PostgreSQL browses the database it connected to and no other, so that
-    // is the one catalogue it lists.
+    // is the one catalog it lists.
     if product == Product::Postgres {
         let catalogs = server
             .session

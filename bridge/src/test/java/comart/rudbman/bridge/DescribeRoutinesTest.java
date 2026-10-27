@@ -165,7 +165,7 @@ class DescribeRoutinesTest {
     }
 
     /**
-     * The catalogue layer needs a body to show. An alias bound to a Java method
+     * The catalog layer needs a body to show. An alias bound to a Java method
      * has none - {@code ROUTINE_DEFINITION} is NULL - and that is reported, not
      * papered over with a header and nothing under it.
      */

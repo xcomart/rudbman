@@ -19,16 +19,16 @@ import java.util.Map;
  * {@code DESCRIBE kind: "ddl"} for a view, a sequence or a trigger.
  *
  * <p>The layers are {@link Ddl}'s - the server's own text first - but what
- * comes after them differs per kind, because what a catalogue keeps differs:
+ * comes after them differs per kind, because what a catalog keeps differs:
  *
  * <ul>
  *   <li>A <b>view</b> is its query, and {@code INFORMATION_SCHEMA.VIEWS} keeps
  *       that on most products; the answer is then a {@code CREATE VIEW} around
- *       it, labelled {@code metadata}. A view is never answered with the
+ *       it, labeled {@code metadata}. A view is never answered with the
  *       {@code CREATE TABLE} that reconstructing its column list would give:
  *       that is a different object, and a reader would take it for this
  *       one.</li>
- *   <li>A <b>sequence</b> is nothing but its options, and the catalogue every
+ *   <li>A <b>sequence</b> is nothing but its options, and the catalog every
  *       product has for sequences holds all of them, so the statement rebuilt
  *       from it is complete. It says {@code catalog}, which carries no
  *       warning.</li>

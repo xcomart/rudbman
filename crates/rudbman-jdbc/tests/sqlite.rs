@@ -94,7 +94,7 @@ fn find_in_gradle_cache(group: &str, artifact: &str) -> Option<PathBuf> {
     let mut newest: Option<(String, PathBuf)> = None;
     for version in std::fs::read_dir(&root).ok()?.flatten() {
         let number = version.file_name().to_string_lossy().into_owned();
-        // Only the binary artefact: the same directory holds `-javadoc.jar` and
+        // Only the binary artifact: the same directory holds `-javadoc.jar` and
         // `-sources.jar`, and picking one of those gets a class loader with no
         // classes in it.
         let wanted = format!("{artifact}-{number}.jar");
@@ -282,7 +282,7 @@ fn sqlite_blob_file_parameters_and_stream_only_reads_round_trip() {
 }
 
 /// A describe item's `REMARKS`, with null and the empty string read alike —
-/// the same normalisation `tests/containers.rs` applies, for the same reason.
+/// the same normalization `tests/containers.rs` applies, for the same reason.
 fn remarks(item: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
     item.get("remarks")
         .and_then(serde_json::Value::as_str)

@@ -20,7 +20,7 @@ pub(super) fn preview(sql: &str) -> SharedString {
     }
 }
 
-/// A centred line of text, for the states that have no rows to draw.
+/// A centered line of text, for the states that have no rows to draw.
 ///
 /// Shared with the data pane, which has the same four states to say something
 /// in — loading, empty, failed, nothing run yet — and no reason to draw them
@@ -233,7 +233,7 @@ impl Render for QueryPane {
                     .child(notice)
             }))
             // After both halves, so it wins the hit test against the two it
-            // straddles. The band is centred on the seam by `at`, which pulls it
+            // straddles. The band is centered on the seam by `at`, which pulls it
             // back half its own thickness for us, and it carries the accent bar
             // that fades in under the pointer — the same widget, and so the same
             // bar, that [`rugpui::Splitter`] gives the dividers in the pane tree
@@ -241,7 +241,7 @@ impl Render for QueryPane {
             //
             // The entity id rides along in the element id as well as in the drag
             // payload, and for a related reason: the payload keeps a nested
-            // pane's drag from writing its neighbour's ratio, while the element
+            // pane's drag from writing its neighbor's ratio, while the element
             // id is what the handle files its fade under, and two panels showing
             // at once would otherwise share one bar between them.
             .child(

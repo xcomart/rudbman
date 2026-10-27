@@ -53,7 +53,7 @@ const MIN_EXPLORER_WIDTH: f32 = 140.0;
 
 /// Widest the explorer may be dragged.
 ///
-/// Not a taste judgement — a sidebar wider than this on a small display leaves
+/// Not a taste judgment — a sidebar wider than this on a small display leaves
 /// no work area at all, and the drag has no other floor to stop at.
 const MAX_EXPLORER_WIDTH: f32 = 720.0;
 /// Upper bound on the batch size: one batch crosses the JNI boundary as a
@@ -295,7 +295,7 @@ pub struct AppSettings {
     ///
     /// Stored as the tag rather than as a parsed version because the tag is what
     /// GitHub answers with and what the comparison already has in hand; nothing
-    /// here validates it, since an unrecognisable value can only ever fail to
+    /// here validates it, since an unrecognizable value can only ever fail to
     /// match a real tag, which is the harmless direction.
     pub ignored_update: Option<String>,
     /// Top-level keys this build does not know, kept verbatim.

@@ -84,11 +84,11 @@ final class ScriptOut implements Closeable {
      * @throws IOException if the file cannot be written
      */
     void block(String s) throws IOException {
-        String normalised = s.replace("\r\n", "\n");
+        String normalized = s.replace("\r\n", "\n");
         if ("\n".equals(newline)) {
-            writer.write(normalised);
+            writer.write(normalized);
         } else {
-            writer.write(normalised.replace("\n", newline));
+            writer.write(normalized.replace("\n", newline));
         }
     }
 

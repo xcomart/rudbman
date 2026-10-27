@@ -66,14 +66,14 @@ one after every call, clears it and reports it as a JNI error.
 | `0x21` | `FETCH` | cursor | max rows | — | binary `RDB1` batch |
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
-| `0x24` | `CANCEL` | session | — | — | JSON `{cancelled}` |
+| `0x24` | `CANCEL` | session | — | — | JSON `{canceled}` |
 | `0x25` | `LOB_READ` | cursor | — | JSON `{id, offset, length}` | binary |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
 | `0x40` | `JOB_START` | session | — | JSON `{kind, …}` | JSON `{job}` |
 | `0x41` | `JOB_POLL` | job | — | — | JSON progress |
-| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{cancelled}` |
+| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{canceled}` |
 | `0x50` | `PROBE_DRIVER` | — | — | JSON `{jars[]}` | JSON `{classes[], services[]}` |
 
 An unknown code returns an ERROR envelope with `kind: "protocol"` and a
@@ -378,7 +378,7 @@ a table on another).
 `JOB_START` answers `{"job": <handle>}`. `JOB_POLL` answers:
 
 ```json
-{ "state": "running | done | failed | cancelled",
+{ "state": "running | done | failed | canceled",
   "rows_done": 12000, "rows_skipped": 0, "rows_total": null,
   "bytes": 918273, "phase": "data:APP.ORDERS", "errors": [], "eta_s": null }
 ```
@@ -402,7 +402,7 @@ a table on another).
   cancel until the worker acknowledges it, because a cancel that lands in the
   sliver before the driver enters execution cancels nothing.
 - An extract or a backup writes to a hidden sibling of `output.path` and only
-  renames it over the target once the job is `done`. A `failed` or `cancelled`
+  renames it over the target once the job is `done`. A `failed` or `canceled`
   job deletes the sibling before it reports, so whatever was at the target —
   an earlier backup, say — is left exactly as it was, and no partial file
   remains.

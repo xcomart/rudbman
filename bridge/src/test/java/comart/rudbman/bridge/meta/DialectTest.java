@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DialectTest {
 
     @Test
-    void recognisesTheProductsWithVendorPaths() {
+    void recognizesTheProductsWithVendorPaths() {
         assertEquals(Dialect.H2, Dialect.byProductName("H2"));
         assertEquals(Dialect.POSTGRESQL, Dialect.byProductName("PostgreSQL"));
         assertEquals(Dialect.ORACLE, Dialect.byProductName("Oracle"));

@@ -221,7 +221,7 @@ connect:
   add_prop: Ajouter une propriété
 
   section:
-    behaviour: Comportement
+    behavior: Comportement
     tunnel: Tunnel SSH
 
   read_only: Ouvrir la connexion en lecture seule
@@ -300,7 +300,7 @@ driver:
   downloading: "Téléchargement de %{file}…"
   downloading_percent: "Téléchargement de %{file} — %{percent} %"
   downloaded: "%{file} a été téléchargé et ajouté."
-  download_cancelled: Le téléchargement a été annulé.
+  download_canceled: Le téléchargement a été annulé.
   bad_coordinate: "« %{coordinate} » n’est pas une coordonnée group:artifact:version."
   not_found: "Maven Central n’a rien à %{url}."
   network_failed: "Le téléchargement a échoué : %{error}"
@@ -404,7 +404,7 @@ query:
   commit_auto: "Valider la transaction (validation automatique activée)"
   run: Exécuter
   cancel: Interrompre
-  cancelling: Interruption…
+  canceling: Interruption…
   result: "Résultat %{index}"
   tab: "Requête %{index}"
   empty: Écrivez une instruction puis exécutez-la.
@@ -428,7 +428,7 @@ query:
   hint_constraint: L’instruction viole une contrainte de la table.
   hint_auth: Cette connexion n’y est pas autorisée.
   hint_network: La connexion à la base de données a été perdue.
-  hint_cancelled: L’instruction a été interrompue.
+  hint_canceled: L’instruction a été interrompue.
   open_file_select: Choisir un fichier SQL
 
 data:
@@ -529,9 +529,9 @@ extract:
   start: Extraire
   starting: démarrage…
   counters: "%{rows} lignes, %{bytes}"
-  cancelling: Annulation…
+  canceling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
-  cancelled: "Annulé. Rien n’a été écrit dans %{path}."
+  canceled: "Annulé. Rien n’a été écrit dans %{path}."
   failed: "L’extraction a échoué : %{error}"
   failed_unknown: L’extraction a échoué sans que le pont en donne la raison.
 
@@ -554,10 +554,10 @@ transfer:
   starting: démarrage…
   counters: "%{rows} lignes"
   skipped: "%{skipped} ignorées"
-  cancelling: Annulation…
+  canceling: Annulation…
   done: "%{rows} lignes transférées dans %{table}."
   done_skipped: "%{skipped} lignes ont été rejetées et ignorées."
-  cancelled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
+  canceled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
   failed: "Le transfert a échoué : %{error}"
   failed_unknown: Le transfert a échoué sans que le pont en donne la raison.
 
@@ -576,9 +576,9 @@ backup:
   start: Sauvegarder
   starting: démarrage…
   counters: "%{rows} lignes, %{bytes}"
-  cancelling: Annulation…
+  canceling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
-  cancelled: "Annulé. Rien n’a été écrit dans %{path}."
+  canceled: "Annulé. Rien n’a été écrit dans %{path}."
   failed: "La sauvegarde a échoué : %{error}"
   failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
 

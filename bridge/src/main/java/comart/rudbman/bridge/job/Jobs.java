@@ -46,18 +46,18 @@ import java.util.logging.Logger;
  *
  * <p>{@code JOB_CANCEL} sets a flag and calls {@link Statement#cancel()} on
  * whatever statement is in flight, exactly as {@code CANCEL} does for a cursor,
- * and for the same reason it takes no lock: the thread being cancelled is
+ * and for the same reason it takes no lock: the thread being canceled is
  * holding it. The worker notices the flag at the next row or phase boundary and
- * finishes in state {@code cancelled}. A job that writes a file writes it beside
+ * finishes in state {@code canceled}. A job that writes a file writes it beside
  * the target and only moves it into place on success (see {@link OutputFile}),
- * so a cancelled or failed job leaves whatever was at the target - an earlier
+ * so a canceled or failed job leaves whatever was at the target - an earlier
  * backup, say - exactly as it was, and no partial file behind.
  *
  * <h2>Handle lifetime</h2>
  *
  * <p><strong>A job handle dies on the first poll that reports a terminal
  * state.</strong> {@code JOB_POLL} answers {@code done}, {@code failed} or
- * {@code cancelled} exactly once and unregisters the job in the same call; a
+ * {@code canceled} exactly once and unregisters the job in the same call; a
  * second poll gets "unknown or already closed job handle". This is the rule the
  * Rust side has to code against: stop polling as soon as a terminal state
  * arrives, and never cancel a job whose terminal state has already been read.
@@ -146,14 +146,14 @@ public final class Jobs {
      * Answers {@code JOB_CANCEL}.
      *
      * @param handle a job handle
-     * @return an object carrying {@code cancelled}, whether the job was still
+     * @return an object carrying {@code canceled}, whether the job was still
      *         running when the request arrived
      */
     public static JsonObject cancel(long handle) {
         Job job = Registry.get(handle, Job.class, "job");
         boolean was = job.cancel();
         JsonObject o = new JsonObject();
-        o.addProperty("cancelled", was);
+        o.addProperty("canceled", was);
         return o;
     }
 
@@ -194,7 +194,7 @@ public final class Jobs {
      *
      * <p>A subclass implements {@link #run()} and nothing else. It reports
      * progress through {@link #addRows}, {@link #addBytes} and {@link #phase},
-     * checks {@link #cancelled()} at every row boundary, and wraps every piece of
+     * checks {@link #canceled()} at every row boundary, and wraps every piece of
      * work that touches the connection in {@link #runLocked}.
      */
     public abstract static class Job {
@@ -203,7 +203,7 @@ public final class Jobs {
         private static final String RUNNING = "running";
         private static final String DONE = "done";
         private static final String FAILED = "failed";
-        private static final String CANCELLED = "cancelled";
+        private static final String CANCELED = "canceled";
 
         /**
          * Cancellation slot for the statement a job reads from - the only one an
@@ -296,7 +296,7 @@ public final class Jobs {
          *
          * <p>Returning normally means {@code done}; throwing means {@code failed}
          * unless a cancel was requested, in which case the exception is assumed
-         * to be the cancel taking effect and the state is {@code cancelled}.
+         * to be the cancel taking effect and the state is {@code canceled}.
          *
          * @throws Exception whatever went wrong
          */
@@ -319,7 +319,7 @@ public final class Jobs {
          * Throws away the output of a job that is not ending {@code done}.
          *
          * <p>Runs before the terminal state is reported, so a client that sees
-         * {@code failed} or {@code cancelled} never sees the leftovers. It must
+         * {@code failed} or {@code canceled} never sees the leftovers. It must
          * not throw. The default does nothing.
          */
         protected void discard() {
@@ -355,16 +355,16 @@ public final class Jobs {
                 // and what is reported. A cancel that lands after it is too late:
                 // the job is reported done, and its output is there to match.
                 if (cancelRequested) {
-                    end = CANCELLED;
+                    end = CANCELED;
                 } else {
                     commit();
                     end = DONE;
                 }
             } catch (Throwable t) {
                 // With a cancel requested, the driver threw because the statement
-                // was cancelled. That is the cancel working, not a failure, but
+                // was canceled. That is the cancel working, not a failure, but
                 // the detail is kept so a confused user has something to read.
-                end = cancelRequested ? CANCELLED : FAILED;
+                end = cancelRequested ? CANCELED : FAILED;
                 error = Envelope.describe(t);
                 LOG.log(Level.FINE, "job " + handle + " ended abnormally", t);
             }
@@ -484,12 +484,12 @@ public final class Jobs {
         }
 
         /** @return whether cancellation has been requested. */
-        protected final boolean cancelled() {
+        protected final boolean canceled() {
             return cancelRequested;
         }
 
         /**
-         * @return whether the worker should stop: cancelled, or the session it
+         * @return whether the worker should stop: canceled, or the session it
          *         runs on has been closed underneath it
          */
         protected final boolean shouldStop() {
@@ -576,9 +576,9 @@ public final class Jobs {
             // acknowledges it. Statement.cancel only bites while a command is
             // actually executing, so a cancel that landed in the sliver between
             // the worker's last flag check and the driver entering execution
-            // cancelled nothing — and no flag check can close that sliver from
+            // canceled nothing — and no flag check can close that sliver from
             // the worker's side, because the worker is then blocked inside the
-            // very call that needed cancelling. The poller is already knocking
+            // very call that needed canceling. The poller is already knocking
             // every 200ms; each knock re-delivers the cancel until it lands.
             if (cancelRequested && !isTerminal()) {
                 cancelInFlight();

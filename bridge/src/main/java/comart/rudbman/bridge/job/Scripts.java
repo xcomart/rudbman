@@ -74,7 +74,7 @@ final class Scripts {
 
         // Oracle has no multi-row VALUES clause; asking for one there would
         // produce a script that cannot run, so the request is clamped rather
-        // than honoured into a broken file.
+        // than honored into a broken file.
         int batchRows = dialect == Dialect.ORACLE ? 1 : insertBatchRows;
 
         List<String> tuples = new ArrayList<>(batchRows);

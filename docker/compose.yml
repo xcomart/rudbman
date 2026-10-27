@@ -2,7 +2,7 @@
 #
 # `crates/rudbman-jdbc/tests/containers.rs` sends the SQL `rudbman-sql`'s `ddl`
 # module writes to a real PostgreSQL, MySQL, MariaDB, SQL Server, and Oracle,
-# and reads the catalogue back. Nothing in the workspace needs these to be up:
+# and reads the catalog back. Nothing in the workspace needs these to be up:
 # with the environment variables below unset every one of those tests passes
 # by doing nothing, which is what keeps `cargo test --workspace` green on a
 # machine with no Docker.

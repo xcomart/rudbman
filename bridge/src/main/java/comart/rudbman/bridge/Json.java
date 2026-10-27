@@ -22,7 +22,7 @@ import java.util.List;
 public final class Json {
 
     private static final Gson GSON = new GsonBuilder()
-            // Absent and null are two different things for a Rust deserialiser.
+            // Absent and null are two different things for a Rust deserializer.
             // Emitting nulls explicitly keeps every response shape uniform so
             // Option<T> fields need no #[serde(default)].
             .serializeNulls()
@@ -60,7 +60,7 @@ public final class Json {
 
     /**
      * @param elem a JSON tree
-     * @return the UTF-8 serialisation of {@code elem}
+     * @return the UTF-8 serialization of {@code elem}
      */
     public static byte[] bytes(JsonElement elem) {
         return GSON.toJson(elem).getBytes(StandardCharsets.UTF_8);

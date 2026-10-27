@@ -17,7 +17,7 @@
 //! is what the window is drawn from. They differ only while the settings dialog
 //! is showing unsaved edits — a palette being tried on, a font being compared —
 //! which it publishes through [`set_preview`]. Keeping the preview *beside* the
-//! persisted settings rather than writing it into them is what makes cancelling
+//! persisted settings rather than writing it into them is what makes canceling
 //! free: dropping the override is the revert, and a window closed mid-dialog
 //! still saves the settings the user last committed to.
 //!
@@ -87,7 +87,7 @@ fn matches(geometry: WindowGeometry, state: &WindowState) -> bool {
 /// The placement `state` records, or `None` when it carries no position.
 ///
 /// `None` is a first run, or a window that was never moved: the platform picks
-/// the placement then, and the caller centres the saved *size* on the active
+/// the placement then, and the caller centers the saved *size* on the active
 /// display rather than guessing at coordinates.
 pub fn saved_geometry(state: &WindowState) -> Option<WindowGeometry> {
     WindowGeometry::saved(state.x, state.y, state.width, state.height, state.maximized)
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn a_state_without_a_position_has_no_saved_placement() {
         // A first run: the size is known, the coordinates are not, and the
-        // caller has to centre rather than place.
+        // caller has to center rather than place.
         let state = WindowState::default();
         assert_eq!(state.x, None);
         assert_eq!(saved_geometry(&state), None);
@@ -325,7 +325,7 @@ mod tests {
             assert_eq!(current(cx).theme, "one-dark");
             assert_eq!(current(cx).ui_font_size, 14.0);
 
-            // Cancelling is the absence of the override, not a second copy.
+            // Canceling is the absence of the override, not a second copy.
             clear_preview(cx);
             assert_eq!(effective(cx).theme, "one-dark");
             assert_eq!(effective(cx).ui_font_size, 14.0);

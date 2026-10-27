@@ -7,7 +7,7 @@
 //! **This script never runs Gradle.** Building the JAR takes a Java toolchain
 //! and the better part of a minute, and wiring that into `cargo build` would
 //! mean a JVM start-up for every one-line change to a Rust file. The JAR is a
-//! separate artefact with its own build command, and the only thing Cargo needs
+//! separate artifact with its own build command, and the only thing Cargo needs
 //! to know is whether it is there.
 
 use std::path::{Path, PathBuf};
