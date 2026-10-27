@@ -18,8 +18,7 @@ use gpui::{App, ClipboardItem, Entity, Window};
 use rugpui_grid::{CopyFormat, GridSource, GridView, SortDirection};
 pub(crate) use rugpui_shell::menu_rows::{MenuRow, entries};
 #[cfg(test)]
-// rugpui spells it the British way; the app calls it `grayed`.
-pub(crate) use rugpui_shell::menu_rows::{greyed as grayed, labels, row};
+pub(crate) use rugpui_shell::menu_rows::{grayed, labels, row};
 
 use crate::SHORTCUT_MODIFIER;
 use crate::i18n::ts;

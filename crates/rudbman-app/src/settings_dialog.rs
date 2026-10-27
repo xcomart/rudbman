@@ -1816,7 +1816,7 @@ mod tests {
     /// exercised here — driving a management row's own "Delete" button needs a
     /// rendered window, and `rugpui_shell::catalog_ui` already proves
     /// `is_confirming`/`cancel_confirm` correct in isolation
-    /// (`a_confirmation_can_be_asked_about_and_cancelled_from_outside_the_row`);
+    /// (`a_confirmation_can_be_asked_about_and_canceled_from_outside_the_row`);
     /// what is left to check here is only that [`SettingsDialog::escape`] asks
     /// the editor and the open list first.
     #[gpui::test]

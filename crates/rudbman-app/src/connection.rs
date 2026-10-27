@@ -56,10 +56,7 @@ use rudbman_jdbc::{
 };
 use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
-// rudbkit spells it the British way; the app calls it `CATALOG_PLACEHOLDERS`.
-pub use rudbkit_core::url::{
-    CATALOGUE_PLACEHOLDERS as CATALOG_PLACEHOLDERS, placeholders_of, redirect_url, substitute,
-};
+pub use rudbkit_core::url::{CATALOG_PLACEHOLDERS, placeholders_of, redirect_url, substitute};
 
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
