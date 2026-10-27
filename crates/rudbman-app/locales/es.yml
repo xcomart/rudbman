@@ -18,13 +18,13 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Consultar el objeto seleccionado
-  view_data: Ver datos
+  view_data: Ver los datos
   view_structure: Editar la estructura
-  new_table: Tabla nueva
+  new_table: Nueva tabla
   open_sql_file: Abrir archivo SQL…
   extract_script: Extraer script…
   transfer_table: Transferir filas…
-  backup_schema: Copiar el esquema…
+  backup_schema: Copia de seguridad del esquema…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagrama ERD
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -43,7 +43,7 @@ menu:
     quit: Salir de rudbman
 
 tab:
-  close: Cerrar conexión
+  close: Cerrar la conexión
   tip_list: Todas las conexiones
   tip_new: "Nueva conexión (%{shortcut})"
   tip_pane_list: Todas las pestañas
@@ -65,7 +65,7 @@ statusbar:
   connected: conectado
   disconnected: desconectado
   failed: "error: %{error}"
-  tunnel_lost: "El túnel SSH se cerró: %{reason}"
+  tunnel_lost: "el túnel SSH se cerró: %{reason}"
 
 about:
   title: Acerca de rudbman
@@ -79,7 +79,7 @@ settings:
   title: Ajustes
   system_default: Usar el ajuste del sistema
   save_failed: "No se pudieron guardar los ajustes: %{error}"
-  load_failed: "No se pueden guardar los ajustes porque no se pudo leer el archivo de ajustes al iniciar rudbman: %{error}. Repare o mueva ese archivo y reinicie rudbman."
+  load_failed: "No se pueden guardar los ajustes porque no se pudo leer el archivo de ajustes al iniciar rudbman: %{error}. Repara o mueve ese archivo y reinicia rudbman."
 
   section:
     appearance: Apariencia
@@ -109,7 +109,7 @@ settings:
 
   fetch_batch_rows: Filas por lote
   fetch_batch_rows_hint: filas que se traen cada vez al desplazar la cuadrícula
-  query_timeout: Tiempo límite por sentencia
+  query_timeout: Tiempo de espera por sentencia
   query_timeout_hint: segundos — 0 significa sin límite
   confirm_writes_default: Preguntar antes de ejecutar una sentencia de escritura en una conexión nueva
 
@@ -141,7 +141,7 @@ settings:
     editor_theme_title: Editar el tema del editor
     name: Nombre
     dark: Esta es una paleta oscura
-    invalid: Cada color debe escribirse como #RRGGBB.
+    invalid: "Cada color debe escribirse como #RRGGBB."
     grid_group: Cuadrícula de resultados — sin un color indicado no se escribe en el archivo
     automatic: Automático
     automatic_slot: "%{name} (automático)"
@@ -184,13 +184,13 @@ settings:
       punctuation: Puntuación
       bracket_match: Paréntesis emparejado
       error: Errores
-      warning: Avisos
+      warning: Advertencias
 
 # El diálogo de conexiones.
 connect:
   title: Conexiones
   new: Nueva
-  new_name: Conexión nueva
+  new_name: Nueva conexión
   duplicate: Duplicar
   delete: Eliminar
   delete_confirm: "¿Eliminar la conexión «%{name}» y la contraseña guardada?"
@@ -205,7 +205,7 @@ connect:
   manage_drivers: Controladores…
   driver_has_no_jar: Este controlador todavía no tiene JAR. Añade o descarga uno en Controladores.
 
-  host: Servidor
+  host: Host
   port: Puerto
   database: Base de datos
   url: URL
@@ -238,7 +238,7 @@ connect:
   tunnel_auth_password: Contraseña
   tunnel_key: Archivo de clave
   tunnel_password: Contraseña del bastión
-  tunnel_passphrase: Frase de la clave
+  tunnel_passphrase: Frase de contraseña de la clave
   tunnel_remote: Base de datos
   tunnel_hint: La base de datos se nombra tal como la ve el bastión. rudbman abre un puerto local libre y conecta el controlador a ese puerto.
 
@@ -261,7 +261,7 @@ connect:
   hint_auth: revisa el usuario y la contraseña
   hint_driver: revisa el JAR y la clase del controlador
   hint_jvm: rudbman necesita un entorno Java; define RUDBMAN_JAVA_HOME o JAVA_HOME
-  hint_network: revisa el servidor, el puerto y si la base de datos es alcanzable
+  hint_network: revisa el host, el puerto y si la base de datos es alcanzable
   hint_host_key: la clave de host del bastión aún no es de confianza
 
   host_key_question: "%{host} presentó una clave %{algorithm} desconocida: %{fingerprint}"
@@ -285,14 +285,14 @@ driver:
   probe_jvm_failed: "No se pudo iniciar el entorno de ejecución de Java: %{error}"
   probe_failed: "No se pudieron examinar los archivos JAR: %{error}"
   url_template: Plantilla de URL
-  default_port: Puerto por omisión
+  default_port: Puerto predeterminado
   dialect: Dialecto
   maven: Coordenada Maven
   jars: Archivos JAR
   add_jar: Añadir un JAR…
   add_jar_select: Añadir
   remove_jar: Quitar
-  jar_missing: no está
+  jar_missing: falta
   no_jar: sin JAR
   no_jar_hint: Un controlador necesita al menos un JAR antes de que una conexión pueda usarlo.
   jar_count: "%{count} JAR"
@@ -308,7 +308,7 @@ driver:
   load_failed: "No se pudieron leer las definiciones de controlador: %{error}"
   save_failed: "No se pudieron guardar las definiciones de controlador: %{error}"
   new: Nuevo
-  new_name: Controlador nuevo
+  new_name: Nuevo controlador
   delete: Eliminar
   delete_confirm: "¿Eliminar la definición de controlador «%{name}»?"
   none_selected: Elige un controlador o añade uno.
@@ -321,7 +321,7 @@ driver:
 
 # La barra lateral del explorador.
 explorer:
-  refresh: Actualizar
+  refresh: Recargar
   title: Explorador
   empty: Abre una conexión para recorrerla.
   loading: cargando…
@@ -396,7 +396,7 @@ query:
   rolled_back: "Transacción revertida."
   rollback_failed: "Error al revertir: %{message}"
   rollback_auto: "Revertir (la confirmación automática está activada)"
-  uncommitted_pending: "Esta conexión tiene cambios sin confirmar de un editor de consultas. Confírmelos o reviértalos allí primero."
+  uncommitted_pending: "Esta conexión tiene cambios sin confirmar de un editor de consultas. Confírmalos o reviértelos allí primero."
   commit: "Confirmar transacción"
   committing: "Confirmando…"
   committed: "Transacción confirmada."
@@ -407,7 +407,7 @@ query:
   cancelling: Cancelando…
   result: "Resultado %{index}"
   tab: "Consulta %{index}"
-  empty: Escriba una sentencia y ejecútela.
+  empty: Escribe una sentencia y ejecútala.
   no_results: La sentencia no devolvió ningún resultado.
   running: ejecutando…
   rows_affected: "%{count} filas afectadas"
@@ -416,20 +416,20 @@ query:
   elapsed: "%{seconds} s"
   busy: Ya hay una sentencia ejecutándose en este panel.
   no_statement: No hay ninguna sentencia que ejecutar.
-  draft_too_large: "Este borrador supera los %{limit} MB, por lo que no se conservará al cerrar la aplicación. Guárdelo en un archivo para conservarlo."
-  row_limit: "Esta cuadrícula muestra como máximo %{limit} filas y el resultado tiene más. Acote la sentencia para ver el resto."
+  draft_too_large: "Este borrador supera los %{limit} MB, por lo que no se conservará al cerrar la aplicación. Guárdalo en un archivo para conservarlo."
+  row_limit: "Esta cuadrícula muestra como máximo %{limit} filas y el resultado tiene más. Acota la sentencia para ver el resto."
   read_only: Esta conexión es de solo lectura; la sentencia no se envió.
   confirm_title: "¿Ejecutar esta sentencia?"
   confirm_body: "Sentencias que modifican datos: %{count}"
   confirm_run: Ejecutar
   not_editable: Estas filas no provienen de una sola tabla con su clave primaria seleccionada, así que pueden leerse pero no modificarse.
   sql_state: "SQLSTATE %{state}"
-  hint_syntax: Revise la sintaxis de la sentencia y sus permisos de lectura.
+  hint_syntax: Revisa la sintaxis de la sentencia y que tengas permiso para leer los objetos que menciona.
   hint_constraint: La sentencia infringe una restricción de la tabla.
   hint_auth: Esta conexión no tiene permiso para hacerlo.
   hint_network: Se perdió la conexión con la base de datos.
   hint_cancelled: La sentencia se canceló.
-  open_file_select: Elija un archivo SQL
+  open_file_select: Elige un archivo SQL
 
 data:
   loading: cargando…
@@ -438,14 +438,14 @@ data:
   row_count: "%{count} filas"
   no_primary_key: "Esta tabla no tiene clave primaria; sus filas se pueden leer pero no modificar."
   read_only: "Esta conexión es de solo lectura; sus filas se pueden leer pero no modificar."
-  discard_first: Aplique o descarte primero los cambios pendientes.
+  discard_first: Aplica o descarta primero los cambios pendientes.
   pending: "%{changed} modificadas · %{inserted} insertadas · %{deleted} eliminadas"
   apply: Aplicar
   discard: Descartar
   discard_title: Descartar los cambios
   discard_body: "Se perderán %{changed} filas modificadas, %{inserted} insertadas y %{deleted} eliminadas. Esto no se puede deshacer."
   set_null: Poner en NULL
-  insert_row: Insertar fila
+  insert_row: Insertar una fila
   delete_row: Eliminar la fila
   undelete_row: Restaurar la fila
   discard_row: Descartar los cambios de esta fila
@@ -453,19 +453,19 @@ data:
   apply_no_rollback: "Esta base de datos no tiene transacciones; un fallo a mitad de camino no se podrá deshacer."
   applying: aplicando…
   applied: "%{count} sentencias aplicadas."
-  apply_stale: "Otra persona ha modificado o eliminado una fila. No se ha aplicado nada: recargue e inténtelo de nuevo."
-  apply_half_applied: Parte del lote puede estar ya en la tabla. Recargue y compruébelo antes de volver a aplicar.
-  apply_reconnect_required: El resultado es incierto porque falló la reversión. Vuelva a conectarse y verifique la tabla; no reintente automáticamente.
+  apply_stale: "Otra persona ha modificado o eliminado una fila. No se ha aplicado nada: recarga e inténtalo de nuevo."
+  apply_half_applied: Parte del lote puede estar ya en la tabla. Recarga y compruébalo antes de volver a aplicar.
+  apply_reconnect_required: El resultado es incierto porque falló la reversión. Vuelve a conectarte y verifica la tabla; no lo reintentes automáticamente.
   apply_bad_value: "%{column} no puede tomar el valor «%{value}»."
   apply_null_key: "El %{column} de esta fila es NULL, así que ninguna sentencia puede volver a encontrarla."
-  apply_unknown_key: "La columna clave %{column} no está entre las columnas leídas. Recargue e inténtelo de nuevo."
+  apply_unknown_key: "La columna clave %{column} no está entre las columnas leídas. Recarga e inténtalo de nuevo."
   apply_not_planned: "Estos cambios no se pueden escribir como sentencias: %{detail}"
 
 struct:
   loading: cargando…
   refresh: Recargar
   discard: Descartar
-  discard_first: Descarte primero los cambios pendientes.
+  discard_first: Descarta primero los cambios pendientes.
   read_only: "Esta conexión es de solo lectura; la estructura de esta tabla se puede leer pero no modificar."
   pending: "%{count} cambios pendientes"
   columns: Columnas
@@ -475,29 +475,29 @@ struct:
   default: Predeterminado
   state: Estado
   state_changed: modificada
-  state_dropped: a eliminar
+  state_dropped: por eliminar
   state_added: nueva
   drop: Eliminar
   keep: Conservar
   remove: Quitar
   add_column: Añadir columna
   edit_column: Columna seleccionada
-  no_selection: Elija arriba una columna para editarla.
+  no_selection: Elige arriba una columna para editarla.
   name: Nombre
   has_default: Tiene un valor predeterminado
   constraints: Restricciones
   kind: Clase
   empty: no hay nada
   no_constraint_drop: "%{dialect} no tiene ningún ALTER TABLE que elimine una restricción."
-  new_constraint: Restricción nueva
+  new_constraint: Nueva restricción
   constraint_name: Nombre (opcional)
   references: Tabla referenciada
   referenced_columns: Columnas referenciadas (opcional)
   add_constraint: Añadir restricción
-  rename_table: Renombrar la tabla
-  new_name: Nombre nuevo
-  new_table: Tabla nueva
-  new_table_in: "Tabla nueva en %{scope}"
+  rename_table: Cambiar el nombre de la tabla
+  new_name: Nuevo nombre
+  new_table: Nueva tabla
+  new_table_in: "Nueva tabla en %{scope}"
   table_name: Nombre de la tabla
   statements: Sentencias
   apply: Aplicar
@@ -514,8 +514,8 @@ extract:
   output: Archivo de salida
   output_none: Ningún archivo elegido
   browse: Examinar…
-  template_select: Elija un archivo de plantilla
-  ddl: Incluir el esquema
+  template_select: Elige un archivo de plantilla
+  ddl: Incluir las definiciones (DDL)
   drop: Anteponer sentencias DROP
   data: Incluir las filas
   mode: Formato de fila
@@ -546,7 +546,7 @@ transfer:
   mode_upsert: Insertar, o actualizar la fila existente
   mode_truncate: Vaciar primero la tabla de destino
   where: Cláusula WHERE
-  on_error: Ante una fila que no entra
+  on_error: Si una fila no se puede insertar
   on_error_abort: Detener la transferencia
   on_error_skip: Omitir la fila
   on_error_log: Omitir la fila y registrar por qué
@@ -556,31 +556,31 @@ transfer:
   skipped: "%{skipped} omitidas"
   cancelling: Cancelando…
   done: "Se transfirieron %{rows} filas a %{table}."
-  done_skipped: "%{skipped} filas no entraron y se omitieron."
+  done_skipped: "%{skipped} filas no se pudieron insertar y se omitieron."
   cancelled: "Cancelado. %{rows} filas ya se habían confirmado en %{table} y siguen ahí."
   failed: "La transferencia falló: %{error}"
   failed_unknown: La transferencia falló y el puente no dijo por qué.
 
 backup:
-  title: Copia del esquema
+  title: Copia de seguridad del esquema
   scope: Esquema
   scope_all: Toda la base de datos
   output: Archivo de salida
   output_none: Ningún archivo elegido
   browse: Examinar…
   compress: Comprimir el archivo con gzip
-  ddl: Incluir el esquema
+  ddl: Incluir las definiciones (DDL)
   drop: Anteponer sentencias DROP
   data: Incluir las filas
   batch_rows: Filas por INSERT
-  start: Copiar
+  start: Crear copia de seguridad
   starting: iniciando…
   counters: "%{rows} filas, %{bytes}"
   cancelling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
   cancelled: "Cancelado. No se escribió nada en %{path}."
-  failed: "La copia falló: %{error}"
-  failed_unknown: La copia falló y el puente no dijo por qué.
+  failed: "La copia de seguridad falló: %{error}"
+  failed_unknown: La copia de seguridad falló y el puente no dijo por qué.
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
@@ -596,14 +596,14 @@ erd:
   export_svg: Exportar SVG…
   export_done: "Escrito en %{path}."
   export_failed: "No se pudo escribir el diagrama: %{error}"
-  refresh: Actualizar
+  refresh: Recargar
 
 # The query builder: a canvas of tables, the form under it, and the SELECT the
 # two of them describe.
 builder:
   tab: "Generador %{index}"
-  canvas_hint: Seleccione una tabla en el explorador y añádala al generador.
-  joins: Uniones
+  canvas_hint: Selecciona una tabla en el explorador y añádela al generador.
+  joins: Combinaciones (JOIN)
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -617,7 +617,7 @@ builder:
   order_asc: Ascendente
   order_desc: Descendente
   sql: Sentencia
-  no_sql: Añada una tabla para generar una sentencia.
+  no_sql: Añade una tabla para generar una sentencia.
   open_editor: Abrir en el editor
 
 input:
@@ -627,7 +627,7 @@ input:
   menu_select_all: Seleccionar todo
 
 context:
-  rename_tab: Cambiar nombre de pestaña…
+  rename_tab: Cambiar el nombre de la pestaña…
   copy_as: "Copiar como %{format}"
   select_all: Seleccionar todo
   clear_selection: Anular la selección
@@ -654,7 +654,7 @@ context:
   close_others: Cerrar las demás pestañas
   close_right: Cerrar las pestañas de la derecha
   split_right: Dividir a la derecha
-  split_below: Dividir abajo
+  split_below: Dividir debajo
   close_pane: Cerrar el panel
   open_detail: Abrir los detalles
   zoom_in: Acercar
@@ -681,7 +681,7 @@ update:
   notes: Novedades
 
 tab_name:
-  title: Cambiar nombre de pestaña
+  title: Cambiar el nombre de la pestaña
   hint: Deja el campo vacío para restaurar el nombre predeterminado.
 
 completion:
@@ -690,7 +690,7 @@ completion:
   table: "Tabla"
   schema: "Esquema"
   keyword: "Palabra clave"
-  hint: "↑↓ elegir · Enter/Tab insertar · Esc cerrar"
+  hint: "↑↓ elegir · Intro/Tab insertar · Esc cerrar"
   function: "Función"
 
 lob:
@@ -703,13 +703,13 @@ lob:
   loading: "Cargando…"
   modified: "Modificado"
   size: "%{bytes} bytes"
-  truncated: "Solo se muestra el primer MiB. Guardar exporta el valor completo; reemplace los valores grandes desde un archivo."
-  read_only: "Solo lectura. Puede ver y guardar este valor."
-  hex_hint: "Edite pares de bytes hexadecimales. Añada a los cambios y después use Aplicar en la cuadrícula para escribir en la base de datos."
-  text_hint: "Los archivos de texto usan UTF-8. Añada a los cambios y luego aplíquelos en la cuadrícula para escribir en la base de datos."
+  truncated: "Solo se muestra el primer MiB. Guardar exporta el valor completo; reemplaza los valores grandes desde un archivo."
+  read_only: "Solo lectura. Puedes ver y guardar este valor."
+  hex_hint: "Edita pares de bytes hexadecimales. Pulsa «Añadir a los cambios» y después «Aplicar» en la cuadrícula para escribir en la base de datos."
+  text_hint: "Los archivos de texto usan UTF-8. Pulsa «Añadir a los cambios» y después «Aplicar» en la cuadrícula para escribir en la base de datos."
   import_error: "No se pudo importar el archivo (el texto CLOB debe ser UTF-8): %{error}"
   saved: "Archivo guardado."
   stage: "Añadir a los cambios"
   discard_question: "¿Descartar los cambios de este editor LOB?"
   keep_editing: "Seguir editando"
-  invalid_hex: "Introduzca pares de dígitos hexadecimales (00–FF) separados por espacios o saltos de línea."
+  invalid_hex: "Introduce pares de dígitos hexadecimales (00–FF) separados por espacios o saltos de línea."

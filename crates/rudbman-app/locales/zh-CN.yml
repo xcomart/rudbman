@@ -24,7 +24,7 @@ menu:
   open_sql_file: 打开 SQL 文件…
   extract_script: 提取脚本…
   transfer_table: 传输数据行…
-  backup_schema: 备份模式…
+  backup_schema: 备份模式（Schema）…
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER 图
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -45,7 +45,7 @@ menu:
 tab:
   close: 关闭连接
   tip_list: 所有连接
-  tip_new: "新建连接 (%{shortcut})"
+  tip_new: "新建连接（%{shortcut}）"
   tip_pane_list: 所有标签页
 
 welcome:
@@ -56,7 +56,7 @@ welcome:
 empty:
   hint: 添加一个连接，即可浏览数据库并执行 SQL。
   connected_title: 没有打开的内容
-  connected_hint: 在资源管理器中选择一张表，或打开查询窗口对该连接执行 SQL。
+  connected_hint: 在资源管理器中选择一张表，或打开查询标签页对该连接执行 SQL。
 
 statusbar:
   no_connection: 无连接
@@ -111,7 +111,7 @@ settings:
   fetch_batch_rows_hint: 滚动结果网格时每次取回的行数
   query_timeout: 语句超时
   query_timeout_hint: 秒 — 0 表示不限制
-  confirm_writes_default: 新建连接在执行写入语句前先确认
+  confirm_writes_default: 新连接默认在执行写入语句前先确认
 
   jvm_heap: Java 堆
   jvm_heap_hint: MB — 驱动运行时的 -Xmx
@@ -119,7 +119,7 @@ settings:
   jvm_hint: 取回大结果集时，数据先占满 Java 堆才会到达 rudbman，因此因内存不足而失败的查询通常需要在这里加大堆。两项设置都在 rudbman 下次启动时生效。附加参数以空格分隔。
 
   manage:
-    duplicate: 复制…
+    duplicate: 创建副本…
     edit: 编辑…
     delete: 删除
     import: 导入…
@@ -128,7 +128,7 @@ settings:
     import_unreadable: "无法读取“%{file}”：%{error}"
     import_not_a_theme: "“%{file}”是编辑器主题。请在“编辑器主题”中导入。"
     import_not_an_editor_theme: "“%{file}”是界面主题。请在“界面主题”中导入。"
-    import_bad_color: "“%{file}”中%{slot}的颜色无法使用。"
+    import_bad_color: "“%{file}”中“%{slot}”的颜色无法使用。"
     import_skipped: "已跳过 %{count} 个文件。"
     copy_name: "%{name}（副本）"
     delete_theme_confirm: "要删除主题“%{name}”吗？"
@@ -141,7 +141,7 @@ settings:
     editor_theme_title: 编辑编辑器主题
     name: 名称
     dark: 这是一套深色配色
-    invalid: 每种颜色都必须写成 #RRGGBB。
+    invalid: "每种颜色都必须写成 #RRGGBB。"
     grid_group: 结果网格 — 未指定颜色时不会写入文件
     automatic: 自动
     automatic_slot: "%{name}（自动）"
@@ -191,10 +191,10 @@ connect:
   title: 连接
   new: 新建
   new_name: 新建连接
-  duplicate: 复制
+  duplicate: 创建副本
   delete: 删除
-  delete_confirm: "删除连接“%{name}”及其保存的密码？"
-  unnamed: "(未命名)"
+  delete_confirm: "要删除连接“%{name}”及其保存的密码吗？"
+  unnamed: "（未命名）"
   copy_name: "%{name}（副本）"
 
   name: 名称
@@ -210,7 +210,7 @@ connect:
   database: 数据库
   url: URL
   url_hint: 由上面的字段拼装而成。直接编辑将保留你输入的内容。
-  url_overridden: 手动输入的 URL；上面的字段不再改动它。
+  url_overridden: 手动输入的 URL；上面的字段不再更改它。
   url_reset: 重新拼装
 
   username: 用户
@@ -232,7 +232,7 @@ connect:
   tunnel_enabled: 通过 SSH 堡垒机连接
   tunnel_host: 堡垒机
   tunnel_user: 堡垒机用户
-  tunnel_auth: 认证
+  tunnel_auth: 认证方式
   tunnel_auth_agent: SSH 代理
   tunnel_auth_key: 私钥
   tunnel_auth_password: 密码
@@ -251,12 +251,12 @@ connect:
   connect: 连接
   saved: 已保存。
 
-  name_required: 请为该连接取个名字。
+  name_required: 请为该连接命名。
   url_required: 该连接没有 URL。
   no_driver: "没有名为“%{driver}”的驱动定义。"
   load_failed: "无法读取已保存的连接，在修复或移走该文件之前无法保存或删除：%{error}"
   save_failed: "无法保存连接：%{error}"
-  keychain_failed: "无法把密码保存到密钥链：%{error}"
+  keychain_failed: "无法把密码保存到钥匙串：%{error}"
 
   hint_auth: 请检查用户名和密码
   hint_driver: 请检查驱动 JAR 和驱动类
@@ -279,7 +279,7 @@ driver:
   probe_found: "找到了 %{class}。"
   probe_choose: 该驱动包含多个类。请选择用于连接的那一个。
   probe_recommended: 推荐
-  probe_none: 这些文件里没有 JDBC 驱动。源码包或 javadoc 包就是这样；请确认选对了文件。
+  probe_none: 这些文件中没有 JDBC 驱动。选中源码包或 javadoc 包时会出现这种情况；请确认选择了正确的文件。
   probe_damaged: "文件已损坏，无法读完；请重新下载。（%{error}）"
   probe_missing: "找不到 JAR 文件：%{error}"
   probe_jvm_failed: "无法启动 Java 运行时：%{error}"
@@ -310,7 +310,7 @@ driver:
   new: 新建
   new_name: 新建驱动
   delete: 删除
-  delete_confirm: "删除驱动定义“%{name}”？"
+  delete_confirm: "要删除驱动定义“%{name}”吗？"
   none_selected: 请选择一个驱动，或新建一个。
   table_comments: 表注释
   use_table_comments: 用查询读取表注释
@@ -326,7 +326,7 @@ explorer:
   empty: 打开一个连接即可浏览。
   loading: 正在加载…
   disconnected: 连接已关闭。
-  unknown_connection: "(连接)"
+  unknown_connection: "（连接）"
   load_failed_unknown: 无法加载。
 
   tables: 表
@@ -396,7 +396,7 @@ query:
   rolled_back: "事务已回滚。"
   rollback_failed: "回滚失败：%{message}"
   rollback_auto: "回滚（自动提交已启用）"
-  uncommitted_pending: "此连接有来自查询编辑器的未提交更改。请先在查询选项卡中提交或回滚。"
+  uncommitted_pending: "此连接有来自查询编辑器的未提交更改。请先在该查询标签页中提交或回滚。"
   commit: "提交"
   committing: "正在提交…"
   committed: "事务已提交。"
@@ -407,9 +407,9 @@ query:
   cancelling: 正在取消…
   result: "结果 %{index}"
   tab: "查询 %{index}"
-  empty: 写一条语句然后执行。
+  empty: 请编写语句并执行。
   no_results: 该语句没有产生任何结果。
-  running: 执行中…
+  running: 正在执行…
   rows_affected: "影响 %{count} 行"
   executed: 语句已执行。
   row_count: "%{count} 行"
@@ -422,7 +422,7 @@ query:
   confirm_title: 执行这条语句吗？
   confirm_body: "会修改数据的语句：%{count} 条"
   confirm_run: 执行
-  not_editable: 这些行并非来自单一表且未选出其主键，因此只能读取，不能修改。
+  not_editable: 只有来自单张表且包含其主键列的结果才能修改；这些行不满足此条件，因此只能查看。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 请检查语句的语法，以及对其所引用对象的读取权限。
   hint_constraint: 语句违反了表上声明的约束。
@@ -443,7 +443,7 @@ data:
   apply: 应用
   discard: 放弃
   discard_title: 放弃更改
-  discard_body: "将丢弃已修改的 %{changed} 行、新增的 %{inserted} 行和标记删除的 %{deleted} 行。此操作无法撤销。"
+  discard_body: "将放弃对 %{changed} 行的修改、%{inserted} 行的新增和 %{deleted} 行的删除标记。此操作无法撤销。"
   set_null: 设为 NULL
   insert_row: 插入行
   delete_row: 删除行
@@ -489,7 +489,7 @@ struct:
   kind: 种类
   empty: 无
   no_constraint_drop: "%{dialect} 没有可删除约束的 ALTER TABLE。"
-  new_constraint: 新建约束
+  new_constraint: 添加约束
   constraint_name: 名称（可选）
   references: 引用的表
   referenced_columns: 引用的列（可选）
@@ -503,7 +503,7 @@ struct:
   apply: 应用
   create: 创建表
   apply_title: "应用 %{count} 条语句"
-  apply_no_undo: 此操作无法撤销。每条语句一经执行即提交，回滚也收不回来。
+  apply_no_undo: 此操作无法撤销。每条语句执行后即提交，无法通过回滚撤回。
   applying: 正在应用…
   applied: "已应用 %{count} 条语句。"
   apply_stopped: "第 %{number} 条语句（共 %{total} 条）失败。它之前的 %{committed} 条已提交，无法撤销。"
@@ -515,7 +515,7 @@ extract:
   output_none: 尚未选择文件
   browse: 浏览…
   template_select: 选择模板文件
-  ddl: 包含结构
+  ddl: 包含定义（DDL）
   drop: 先写入 DROP 语句
   data: 包含数据行
   mode: 行格式
@@ -539,14 +539,14 @@ transfer:
   title: 传输数据行
   object: 源对象
   target_connection: 目标连接
-  target_schema: 目标模式
+  target_schema: 目标模式（Schema）
   target_table: 目标表
   mode: 写入方式
   mode_insert: 插入每一行
   mode_upsert: 插入，已存在则更新
   mode_truncate: 先清空目标表再插入
   where: WHERE 子句
-  on_error: 遇到写不进去的行
+  on_error: 遇到无法写入的行时
   on_error_abort: 中止传输
   on_error_skip: 跳过该行
   on_error_log: 跳过该行并记录原因
@@ -556,20 +556,20 @@ transfer:
   skipped: "已跳过 %{skipped} 行"
   cancelling: 正在取消…
   done: "已将 %{rows} 行传输到 %{table}。"
-  done_skipped: "有 %{skipped} 行写不进去，已跳过。"
+  done_skipped: "有 %{skipped} 行无法写入，已跳过。"
   cancelled: "已取消。已经提交的 %{rows} 行仍留在 %{table} 中。"
   failed: "传输失败：%{error}"
   failed_unknown: 传输失败，桥接层没有给出原因。
 
 backup:
-  title: 备份模式
-  scope: 模式
+  title: 备份模式（Schema）
+  scope: 模式（Schema）
   scope_all: 整个数据库
   output: 输出文件
   output_none: 尚未选择文件
   browse: 浏览…
   compress: 用 gzip 压缩文件
-  ddl: 包含结构
+  ddl: 包含定义（DDL）
   drop: 先写入 DROP 语句
   data: 包含数据行
   batch_rows: 每条 INSERT 的行数
@@ -586,7 +586,7 @@ backup:
 erd:
   tab: "ER 图 — %{scope}"
   tab_all: ER 图
-  loading: 加载中…
+  loading: 正在加载…
   load_failed: "无法绘制图表：%{error}"
   empty: 该模式中没有表。
   auto_arrange: 自动布局
@@ -602,8 +602,8 @@ erd:
 # two of them describe.
 builder:
   tab: "构建器 %{index}"
-  canvas_hint: 在资源管理器中选择一个表并添加到构建器。
-  joins: 连接
+  canvas_hint: 在资源管理器中选择一张表并添加到构建器。
+  joins: 联接
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -617,7 +617,7 @@ builder:
   order_asc: 升序
   order_desc: 降序
   sql: 语句
-  no_sql: 添加一个表以生成语句。
+  no_sql: 添加一张表以生成语句。
   open_editor: 在编辑器中打开
 
 input:
@@ -660,9 +660,9 @@ context:
   zoom_in: 放大
   zoom_out: 缩小
   zoom_reset: 实际大小
-  remove_table: 移除表
-  select_column: 加入选择列表
-  clear_column: 从选择列表移除
+  remove_table: 从构建器中移除表
+  select_column: 加入 SELECT 列表
+  clear_column: 从 SELECT 列表移除
   connect: 连接
   edit: 编辑…
 
@@ -699,17 +699,17 @@ lob:
   open: "打开 LOB…"
   export: "保存到文件…"
   import: "从文件替换…"
-  empty: "空值内容"
+  empty: "清空内容"
   loading: "正在加载…"
   modified: "已修改"
   size: "%{bytes} 字节"
   truncated: "仅显示前 1 MiB。保存会导出完整内容；较大的值可通过文件替换。"
   read_only: "只读。可以查看并保存此值。"
-  hex_hint: "编辑十六进制字节对。添加到更改后，使用数据表格中的“应用”写入数据库。"
-  text_hint: "文本文件使用 UTF-8。添加到更改后，使用数据网格中的应用按钮写入数据库。"
+  hex_hint: "编辑十六进制字节对。添加到更改后，在数据网格中点击“应用”写入数据库。"
+  text_hint: "文本文件使用 UTF-8。添加到更改后，在数据网格中点击“应用”写入数据库。"
   import_error: "无法导入文件（CLOB 文本必须为 UTF-8）：%{error}"
   saved: "文件已保存。"
   stage: "添加到更改"
-  discard_question: "放弃此 LOB 编辑器中的更改？"
+  discard_question: "要放弃此 LOB 编辑器中的更改吗？"
   keep_editing: "继续编辑"
   invalid_hex: "请输入两位十六进制数字（00–FF），以空格或换行分隔。"

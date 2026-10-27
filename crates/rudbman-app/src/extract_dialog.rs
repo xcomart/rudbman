@@ -91,7 +91,7 @@ const DEFAULT_BATCH_ROWS: u32 = 1;
 mod tab {
     /// "Browse…" beside the output path.
     pub const OUTPUT: isize = 10;
-    /// "Include the schema".
+    /// "Include the definitions (DDL)".
     pub const DDL: isize = 20;
     /// "Precede it with DROP statements".
     pub const DROP: isize = 21;

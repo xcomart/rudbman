@@ -55,7 +55,7 @@ mod tab {
     pub const OUTPUT: isize = 10;
     /// "Compress the file with gzip".
     pub const COMPRESS: isize = 11;
-    /// "Include the schema".
+    /// "Include the definitions (DDL)".
     pub const DDL: isize = 20;
     /// "Precede it with DROP statements".
     pub const DROP: isize = 21;

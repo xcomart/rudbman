@@ -220,7 +220,7 @@ settings:
     import_not_a_theme: "“%{file}” is an editor theme. Import it under Editor theme."
     import_not_an_editor_theme: "“%{file}” is an interface theme. Import it under Interface theme."
     # The right kind of file, with a colour in it that is not #RRGGBB.
-    import_bad_color: "“%{file}” has no usable colour for %{slot}."
+    import_bad_color: "“%{file}” has no usable color for %{slot}."
     # Some of the chosen files were installed and some were not. Only the ones
     # that failed are counted; the ones that worked are already in the picker.
     import_skipped: "%{count} files were skipped."
@@ -238,9 +238,9 @@ settings:
     editor_theme_title: Edit editor theme
     name: Name
     dark: This is a dark palette
-    invalid: Every colour has to be written as #RRGGBB.
+    invalid: "Every color has to be written as #RRGGBB."
     # The five grid colours a theme file may leave out.
-    grid_group: Result grid — left out of the file unless a colour is given
+    grid_group: Result grid — left out of the file unless a color is given
     automatic: Automatic
     # How an automatic slot's own label reads while it is being derived.
     automatic_slot: "%{name} (automatic)"
@@ -334,7 +334,7 @@ connect:
   add_prop: Add a property
 
   section:
-    behaviour: Behaviour
+    behaviour: Behavior
     tunnel: SSH tunnel
 
   read_only: Open the connection read-only
@@ -831,7 +831,7 @@ extract:
   browse: Browse…
   template_select: Choose a template file
   # The two halves of a script, each with its own sub-option below it.
-  ddl: Include the schema
+  ddl: Include the definitions (DDL)
   drop: Precede it with DROP statements
   data: Include the rows
   mode: Row format
@@ -924,7 +924,7 @@ backup:
   browse: Browse…
   compress: Compress the file with gzip
   # The two halves of a script, with their own sub-options below them.
-  ddl: Include the schema
+  ddl: Include the definitions (DDL)
   drop: Precede it with DROP statements
   data: Include the rows
   # A backup writes INSERT statements and nothing else, so there is no row
