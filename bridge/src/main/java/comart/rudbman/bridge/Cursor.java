@@ -6,6 +6,7 @@ import comart.rudbman.bridge.codec.BatchWriter;
 import comart.rudbman.bridge.codec.ColumnKind;
 import comart.rudbman.bridge.codec.ColumnWriter;
 import comart.rudbman.bridge.codec.ColumnWriters;
+import comart.rudbman.bridge.meta.Dialect;
 import comart.rudbman.bridge.meta.SqlTypes;
 
 import java.sql.ResultSet;
@@ -95,6 +96,12 @@ public final class Cursor {
     private void describeColumns() throws SQLException {
         ResultSetMetaData md = rs.getMetaData();
         int n = md.getColumnCount();
+        // Db2's JCC answers getCatalogName with the database's name, while its
+        // getCatalogs lists no catalog at all and a metadata call handed that
+        // name answers nothing - so passed on, it would only ever turn the
+        // query pane's key lookup up empty. Dropped, the catalog is what the
+        // explorer has for the same table: none.
+        boolean catalogs = Dialect.of(session.connection().getMetaData()) != Dialect.DB2;
         colTypes = new int[n];
         colPrecision = new int[n];
         JsonArray arr = new JsonArray();
@@ -109,9 +116,10 @@ public final class Cursor {
             c.addProperty("index", i);
             c.addProperty("name", safeStr(() -> md.getColumnName(i)));
             c.addProperty("label", safeStr(() -> md.getColumnLabel(i)));
-            c.addProperty("table", safeStr(() -> md.getTableName(i)));
-            c.addProperty("schema", safeStr(() -> md.getSchemaName(i)));
-            c.addProperty("catalog", safeStr(() -> md.getCatalogName(i)));
+            c.addProperty("table", sourceName(safeStr(() -> md.getTableName(i))));
+            c.addProperty("schema", sourceName(safeStr(() -> md.getSchemaName(i))));
+            c.addProperty("catalog",
+                    catalogs ? sourceName(safeStr(() -> md.getCatalogName(i))) : null);
             c.addProperty("type", type);
             c.addProperty("type_name", safeStr(() -> md.getColumnTypeName(i)));
             c.addProperty("jdbc_type", SqlTypes.name(type));
@@ -328,6 +336,17 @@ public final class Cursor {
         } catch (SQLException | RuntimeException | AbstractMethodError e) {
             return dflt;
         }
+    }
+
+    /**
+     * A column's source table, schema or catalog without the blanks a
+     * {@code CHAR} catalog column pads it to. Db2's JCC reports the schema of
+     * an implicitly created one as {@code "RUDBMAN "}, eight characters wide;
+     * the query pane names the table it edits from these parts, and
+     * {@code UPDATE "RUDBMAN ".T} is not how anybody spells that table.
+     */
+    private static String sourceName(String name) {
+        return name == null ? null : name.stripTrailing();
     }
 
     private static String safeStr(StrCall c) {

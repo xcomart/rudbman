@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  * this is a catalog query per product: {@code pg_trigger},
  * {@code INFORMATION_SCHEMA.TRIGGERS} on MySQL, MariaDB, H2 and anything
  * unrecognized, {@code sys.triggers} on SQL Server, {@code ALL_TRIGGERS} on
- * Oracle and {@code sqlite_master} on SQLite. An empty list is a correct answer,
+ * Oracle, {@code SYSCAT.TRIGGERS} on Db2 and {@code sqlite_master} on SQLite. An empty list is a correct answer,
  * and so is a rejected query, via {@link Attempt}.
  *
  * <p>Each item: {@code catalog}, {@code schema}, {@code name}, {@code table} -
@@ -84,6 +84,28 @@ public final class Triggers {
             + " TRIGGER_TYPE, TRIGGERING_EVENT, NULL,"
             + " CASE WHEN STATUS = 'ENABLED' THEN 'Y' ELSE 'N' END, NULL"
             + " FROM ALL_TRIGGERS WHERE OWNER = ";
+
+    /**
+     * Db2 keeps one row per trigger with a letter each for timing, event and
+     * level. A trigger on several events says {@code M} and sets a flag per
+     * event; older releases have only single-event triggers. Whether one is
+     * enabled is not asked: the column is recent, and a query that named it
+     * would list nothing on a server without it. The schema is trimmed for the
+     * reason {@code Sequences} gives: an implicitly created one is
+     * blank-padded to eight characters.
+     * Source: Db2 12.1 documentation, "SYSCAT.TRIGGERS catalog view".
+     */
+    private static final String DB2_SQL = "SELECT CAST(NULL AS VARCHAR(1)), RTRIM(TRIGSCHEMA),"
+            + " TRIGNAME, TABNAME,"
+            + " CASE TRIGTIME WHEN 'B' THEN 'BEFORE' WHEN 'I' THEN 'INSTEAD OF'"
+            + " ELSE 'AFTER' END,"
+            + " CASE TRIGEVENT WHEN 'I' THEN 'INSERT' WHEN 'U' THEN 'UPDATE'"
+            + " WHEN 'D' THEN 'DELETE' ELSE SUBSTR("
+            + "CASE WHEN EVENTINSERT = 'Y' THEN ' OR INSERT' ELSE '' END"
+            + " || CASE WHEN EVENTUPDATE = 'Y' THEN ' OR UPDATE' ELSE '' END"
+            + " || CASE WHEN EVENTDELETE = 'Y' THEN ' OR DELETE' ELSE '' END, 5) END,"
+            + " CASE GRANULARITY WHEN 'R' THEN 'ROW' ELSE 'STATEMENT' END,"
+            + " CAST(NULL AS CHAR(1)), REMARKS FROM SYSCAT.TRIGGERS WHERE 1 = 1";
 
     /** SQLite keeps a trigger's statement and its table, and nothing else. */
     private static final String SQLITE_SQL = "SELECT name, tbl_name, sql FROM sqlite_master"
@@ -156,6 +178,12 @@ public final class Triggers {
                 sql.append(" ORDER BY 2, 3");
                 break;
             }
+            case DB2:
+                sql.append(DB2_SQL);
+                filter(sql, args, "TRIGSCHEMA", schema);
+                filter(sql, args, "TRIGNAME", name);
+                sql.append(" ORDER BY 2, 3");
+                break;
             case ORACLE:
                 sql.append(ORACLE_SQL).append(DdlText.owner(schema));
                 if (schema != null) {

@@ -138,6 +138,14 @@ public final class Session implements AutoCloseable {
                 // knows its driver can always set the real key in 'props'.
                 props.putIfAbsent("loginTimeout", Integer.toString(loginTimeout));
             }
+            if (driverClass.startsWith("com.ibm.db2.jcc.")) {
+                // IBM's JCC reports a failed statement as its codes and nothing
+                // else - "DB2 SQL Error: SQLCODE=-204, SQLSTATE=42704,
+                // SQLERRMC=..." - unless it is told to fetch the server's own
+                // text for it, which costs a round trip on the error path only.
+                // A caller that wants the codes alone sets it to false.
+                props.putIfAbsent("retrieveMessagesFromServerOnGetMessage", "true");
+            }
 
             conn = driver.connect(url, props);
             if (conn == null) {

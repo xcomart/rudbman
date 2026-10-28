@@ -34,7 +34,8 @@ import java.util.Map;
  * <p>Row shape is normalized across products by reading each output key from the
  * first metadata label that is present, so that one reader serves the SQL:2003
  * {@code INFORMATION_SCHEMA.SEQUENCES} layout and Oracle's older
- * {@code ALL_SEQUENCES} layout alike. MariaDB is read its own way; see
+ * {@code ALL_SEQUENCES} layout alike, and the catalogs of SQL Server and Db2
+ * are relabeled into the first. MariaDB is read its own way; see
  * {@link #mariadb}. Numbers stay strings: an Oracle sequence
  * maximum is {@code NUMBER(28)}, which does not fit a {@code long}, and the UI
  * only prints it.
@@ -98,6 +99,30 @@ public final class Sequences {
     private static final String ORACLE_OWN_SQL = "SELECT s.* FROM ALL_SEQUENCES s"
             + " WHERE NOT EXISTS (SELECT 1 FROM ALL_TAB_IDENTITY_COLS i"
             + " WHERE i.OWNER = s.SEQUENCE_OWNER AND i.SEQUENCE_NAME = s.SEQUENCE_NAME)";
+
+    /**
+     * Db2's {@code SYSCAT.SEQUENCES}, under the standard view's labels.
+     * {@code SEQTYPE} {@code 'I'} is the sequence behind an identity column,
+     * left out as PostgreSQL's and Oracle's are. A {@code DECIMAL} sequence
+     * keeps its precision in a column of its own, and is written back with it.
+     * {@code NEXTCACHEFIRSTVALUE} is where the next cache block starts, not the
+     * value last handed out, so there is no current value to report. A schema
+     * the server created implicitly is stored blank-padded to eight characters
+     * - {@code 'RUDBMAN '} - which SQL compares equal to the bare name and Java
+     * does not, so it is trimmed here, where the filter below reads it.
+     * Source: Db2 12.1 documentation, "SYSCAT.SEQUENCES catalog view".
+     */
+    private static final String DB2_SQL = "SELECT RTRIM(s.SEQSCHEMA) AS SEQUENCE_SCHEMA,"
+            + " s.SEQNAME AS SEQUENCE_NAME,"
+            + " CASE WHEN d.TYPENAME = 'DECIMAL'"
+            + " THEN 'DECIMAL(' || VARCHAR(s.PRECISION) || ', 0)' ELSE d.TYPENAME END"
+            + " AS DATA_TYPE,"
+            + " s.START AS START_VALUE, s.MINVALUE AS MINIMUM_VALUE,"
+            + " s.MAXVALUE AS MAXIMUM_VALUE, s.INCREMENT AS INCREMENT,"
+            + " s.CYCLE AS CYCLE_OPTION, s.CACHE AS CACHE, s.REMARKS AS REMARKS"
+            + " FROM SYSCAT.SEQUENCES s"
+            + " LEFT JOIN SYSCAT.DATATYPES d ON d.TYPEID = s.DATATYPEID"
+            + " WHERE s.SEQTYPE = 'S'";
 
     /**
      * MariaDB keeps a sequence as a one-row table, and every release since 10.3
@@ -180,6 +205,7 @@ public final class Sequences {
             case POSTGRESQL: return List.of(POSTGRESQL_CATALOG_SQL, POSTGRESQL_SQL);
             case ORACLE:     return List.of(ORACLE_OWN_SQL, ORACLE_SQL);
             case SQLSERVER:  return List.of(sqlServer(id, catalog));
+            case DB2:        return List.of(DB2_SQL);
             default:         return List.of();
         }
     }

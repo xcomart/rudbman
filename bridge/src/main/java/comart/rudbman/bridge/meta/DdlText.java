@@ -231,6 +231,31 @@ final class DdlText {
         }, null);
     }
 
+    /**
+     * The {@code TEXT} of one object in a Db2 catalog view - {@code SYSCAT.VIEWS},
+     * {@code SYSCAT.TRIGGERS} - which keeps the whole {@code CREATE} statement
+     * as it was sent, as {@code SYSCAT.ROUTINES} does for a routine. An unnamed
+     * schema is the session's {@code CURRENT SCHEMA}.
+     */
+    static String db2Text(Connection conn, String view, String schemaColumn, String nameColumn,
+                          String schema, String name) {
+        boolean scoped = schema != null && !schema.isEmpty();
+        String sql = "SELECT TEXT FROM " + view + " WHERE " + schemaColumn + " = "
+                + (scoped ? "?" : "CURRENT SCHEMA") + " AND " + nameColumn + " = ?";
+        return Attempt.<String>on(conn, view, c -> {
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                int i = 1;
+                if (scoped) {
+                    ps.setString(i++, schema);
+                }
+                ps.setString(i, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? terminated(rs.getString(1)) : null;
+                }
+            }
+        }, null);
+    }
+
     /** {@code sqlite_master.sql}: SQLite keeps every statement as it was typed. */
     static String sqlite(Connection conn, String type, String name) {
         return Attempt.<String>on(conn, "sqlite_master", c -> {

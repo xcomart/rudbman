@@ -103,6 +103,9 @@ public final class ObjectDdl {
                 return DdlText.sqlServerDefinition(conn, t.qualified());
             case SQLITE:
                 return DdlText.sqlite(conn, "view", t.name);
+            case DB2:
+                return DdlText.db2Text(conn, "SYSCAT.VIEWS", "VIEWSCHEMA", "VIEWNAME",
+                        t.schema, t.name);
             default:
                 return null;
         }
@@ -290,6 +293,9 @@ public final class ObjectDdl {
                 return DdlText.sqlite(conn, "trigger", t.name);
             case H2:
                 return DdlText.h2Script(conn, t.id, t.schema, "TRIGGER", t.name);
+            case DB2:
+                return DdlText.db2Text(conn, "SYSCAT.TRIGGERS", "TRIGSCHEMA", "TRIGNAME",
+                        t.schema, t.name);
             default:
                 return null;
         }

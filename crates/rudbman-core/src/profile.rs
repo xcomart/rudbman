@@ -657,6 +657,37 @@ const BUILTIN_DRIVERS: &[BuiltinDriver] = &[
         default_port: Some(1433),
         dialect: "mssql",
     },
+    BuiltinDriver {
+        id: "db2",
+        name: "IBM Db2",
+        icon: "db2",
+        class: "com.ibm.db2.jcc.DB2Driver",
+        // IBM's JCC, the type 4 driver: the one Maven Central carries, and the
+        // same JAR for Db2 on Linux, UNIX and Windows, z/OS and IBM i.
+        maven: "com.ibm.db2:jcc:12.1.5.0",
+        // The database is the one the server catalogs, not a schema: a schema
+        // is picked in the explorer after connecting, like everywhere else.
+        url_template: "jdbc:db2://{host}:{port}/{database}",
+        default_port: Some(50000),
+        dialect: "db2",
+    },
+];
+
+/// The ids [`BUILTIN_DRIVERS`] held before `drivers.json` began recording
+/// which built-ins it had been offered — see [`DriverStore::offered_builtins`].
+///
+/// Frozen: this is what a file written before then is read as having been
+/// offered, so a built-in added since appears in it once, and a built-in its
+/// user deleted from it stays deleted. A built-in added later belongs in the
+/// table above and never here.
+const FIRST_BUILTINS: &[&str] = &[
+    "h2",
+    "postgresql",
+    "mysql",
+    "mariadb",
+    "sqlite",
+    "oracle-thin",
+    "mssql",
 ];
 
 impl DriverDef {
@@ -717,14 +748,31 @@ pub struct DriverStore {
     /// Definitions in picker order.
     #[serde(default)]
     drivers: Vec<DriverDef>,
+    /// Ids of the built-in definitions this file has already been offered,
+    /// whether or not it still holds them.
+    ///
+    /// The difference between a built-in the user deleted and one released
+    /// after the file was written: both are absent from
+    /// [`DriverStore::drivers`], and only the second is missing from here. A
+    /// file from before this list existed is read as having been offered
+    /// [`FIRST_BUILTINS`], which is what there was to offer then.
+    #[serde(default = "first_builtins")]
+    offered_builtins: Vec<String>,
+}
+
+/// [`FIRST_BUILTINS`] as owned strings, for serde's default.
+fn first_builtins() -> Vec<String> {
+    FIRST_BUILTINS.iter().map(ToString::to_string).collect()
 }
 
 impl Default for DriverStore {
     /// The built-in definitions, which is what a machine without a
     /// `drivers.json` starts from.
     fn default() -> Self {
+        let drivers = DriverDef::builtins();
         Self {
-            drivers: DriverDef::builtins(),
+            offered_builtins: drivers.iter().map(|driver| driver.id.clone()).collect(),
+            drivers,
         }
     }
 }
@@ -734,7 +782,9 @@ impl DriverStore {
     ///
     /// A missing file yields [`DriverStore::default`] — the built-in
     /// definitions. An *existing* file is taken at its word, empty or not: a
-    /// user who deleted a driver they never use must not find it back.
+    /// user who deleted a driver they never use must not find it back. The one
+    /// thing added to it is a built-in released since it was written, which
+    /// it has never been offered — see [`DriverStore::offered_builtins`].
     ///
     /// # Errors
     ///
@@ -746,7 +796,8 @@ impl DriverStore {
 
     /// Load the store from an explicit path.
     ///
-    /// A missing file yields the built-in definitions.
+    /// A missing file yields the built-in definitions, and an existing one
+    /// gains the built-ins it has not been offered yet.
     ///
     /// # Errors
     ///
@@ -755,8 +806,30 @@ impl DriverStore {
         let Some(data) = read_optional(path)? else {
             return Ok(Self::default());
         };
-        serde_json::from_slice(strip_bom(&data))
-            .with_context(|| format!("failed to parse drivers from {}", path.display()))
+        let mut store: Self = serde_json::from_slice(strip_bom(&data))
+            .with_context(|| format!("failed to parse drivers from {}", path.display()))?;
+        store.offer_new_builtins();
+        Ok(store)
+    }
+
+    /// Appends every built-in this store has not been offered, and records
+    /// that it has been.
+    ///
+    /// Nothing is written back here: the next save records it, and until then
+    /// every load offers the same built-ins again and arrives at the same list.
+    /// A definition of the user's own that already took a built-in's id keeps
+    /// it — the id is what a connection profile refers to, and the user's is
+    /// the definition those profiles were made with.
+    fn offer_new_builtins(&mut self) {
+        for builtin in DriverDef::builtins() {
+            if self.offered_builtins.contains(&builtin.id) {
+                continue;
+            }
+            self.offered_builtins.push(builtin.id.clone());
+            if self.get(&builtin.id).is_none() {
+                self.drivers.push(builtin);
+            }
+        }
     }
 
     /// Write the store to the default configuration file.
@@ -1269,7 +1342,16 @@ mod tests {
     fn an_existing_driver_file_is_taken_at_its_word() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("drivers.json");
-        fs::write(&path, br#"{"drivers":[]}"#).expect("write");
+        let every_builtin = DriverDef::builtins()
+            .iter()
+            .map(|driver| format!("\"{}\"", driver.id))
+            .collect::<Vec<_>>()
+            .join(",");
+        fs::write(
+            &path,
+            format!(r#"{{"drivers":[],"offered_builtins":[{every_builtin}]}}"#),
+        )
+        .expect("write");
 
         let store = DriverStore::load_from(&path).expect("load");
         assert!(
@@ -1278,10 +1360,70 @@ mod tests {
         );
     }
 
+    /// A file from before the offered list existed gains the built-ins added
+    /// since, and only those: the seven it was written with, kept or
+    /// deleted, are left as the user left them.
+    #[test]
+    fn a_file_from_before_db2_gains_db2_and_nothing_it_deleted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("drivers.json");
+        let mut postgres = DriverDef::builtins()
+            .into_iter()
+            .find(|driver| driver.id == "postgresql")
+            .expect("built-in PostgreSQL");
+        postgres.jars = vec![PathBuf::from("/opt/jdbc/postgresql.jar")];
+        let legacy = serde_json::json!({ "drivers": [postgres] });
+        fs::write(&path, legacy.to_string()).expect("write");
+
+        let store = DriverStore::load_from(&path).expect("load");
+        let ids: Vec<&str> = store.drivers().iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["postgresql", "db2"]);
+        assert_eq!(
+            store.get("postgresql").expect("kept").jars,
+            [PathBuf::from("/opt/jdbc/postgresql.jar")],
+            "the user's own edits survive"
+        );
+
+        // Saved and loaded again, the list is what the user now has: deleting
+        // the new built-in is as final as deleting any other.
+        let mut store = store;
+        store.remove("db2");
+        store.save_to(&path).expect("save");
+        let again = DriverStore::load_from(&path).expect("reload");
+        let ids: Vec<&str> = again.drivers().iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["postgresql"]);
+    }
+
+    /// A definition of the user's own that took a new built-in's id is the one
+    /// their connection profiles were made with, and it stays.
+    #[test]
+    fn a_users_own_definition_keeps_a_built_in_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("drivers.json");
+        let mine = DriverDef {
+            id: "db2".to_string(),
+            name: "Db2 (company build)".to_string(),
+            class: "com.ibm.db2.jcc.DB2Driver".to_string(),
+            jars: vec![PathBuf::from("/opt/ibm/db2jcc4.jar")],
+            ..DriverDef::default()
+        };
+        let legacy = serde_json::json!({ "drivers": [mine] });
+        fs::write(&path, legacy.to_string()).expect("write");
+
+        let store = DriverStore::load_from(&path).expect("load");
+        assert_eq!(store.len(), 1);
+        assert_eq!(store.get("db2").expect("kept").name, "Db2 (company build)");
+    }
+
     #[test]
     fn builtin_drivers_are_complete_and_unique() {
         let builtins = DriverDef::builtins();
-        assert_eq!(builtins.len(), 7);
+        assert_eq!(builtins.len(), 8);
+        // Every id the first release offered is still a built-in: the list
+        // that reads an old file must not name a driver that no longer exists.
+        for id in FIRST_BUILTINS {
+            assert!(builtins.iter().any(|d| d.id == *id), "{id}");
+        }
 
         let mut ids: Vec<&str> = builtins.iter().map(|d| d.id.as_str()).collect();
         ids.sort_unstable();
@@ -1338,6 +1480,7 @@ mod tests {
         assert_eq!(port("mariadb"), Some(3306));
         assert_eq!(port("oracle-thin"), Some(1521));
         assert_eq!(port("mssql"), Some(1433));
+        assert_eq!(port("db2"), Some(50000));
         assert_eq!(port("h2"), Some(9092));
         // SQLite is a file, not a service.
         assert_eq!(port("sqlite"), None);
@@ -1365,6 +1508,7 @@ mod tests {
         assert_eq!(dialect("mariadb"), "mariadb");
         assert_eq!(dialect("oracle-thin"), "oracle");
         assert_eq!(dialect("mssql"), "mssql");
+        assert_eq!(dialect("db2"), "db2");
     }
 
     #[test]
