@@ -46,6 +46,13 @@ pub enum DialectId {
     Oracle,
     /// Microsoft SQL Server.
     MsSql,
+    /// IBM Db2.
+    ///
+    /// Written against Db2 for Linux, UNIX and Windows, which is what the
+    /// container tests run; the IBM i and z/OS members of the family share
+    /// everything this crate asks about except the page clause's minimum
+    /// version.
+    Db2,
 }
 
 impl DialectId {
@@ -62,6 +69,7 @@ impl DialectId {
             Self::Sqlite => "sqlite",
             Self::Oracle => "oracle",
             Self::MsSql => "mssql",
+            Self::Db2 => "db2",
         }
     }
 }
@@ -87,8 +95,8 @@ pub struct Syntax {
     pub dash_dash_needs_space: bool,
     /// `/* /* */ */` nests, so the first `*/` does not necessarily close.
     ///
-    /// PostgreSQL and SQL Server. Elsewhere the first `*/` wins, which is the
-    /// SQL standard's rule.
+    /// PostgreSQL, SQL Server and Db2. Elsewhere the first `*/` wins, which is
+    /// the SQL standard's rule.
     pub nested_block_comments: bool,
     /// A backslash escapes the next character inside `'...'`.
     ///
@@ -125,7 +133,8 @@ pub struct Syntax {
     pub dollar_quotes: bool,
     /// `0x1F` is a numeric literal.
     ///
-    /// Everywhere except Oracle, which spells it `HEXTORAW('1F')`.
+    /// Everywhere except Oracle, which spells it `HEXTORAW('1F')`, and Db2,
+    /// which answers SQL0103N for it and takes the standard `X'1F'` only.
     pub hex_literals: bool,
     /// `$1`, `$2` are bind parameters.
     ///
@@ -143,8 +152,9 @@ pub struct Syntax {
     pub at_parameters: bool,
     /// `#` may appear in an identifier, including as its first character.
     ///
-    /// SQL Server's `#temp` and `##global` tables, and Oracle, which allows `#`
-    /// inside a name. Mutually exclusive with [`Self::hash_line_comment`].
+    /// SQL Server's `#temp` and `##global` tables, and Oracle and Db2, which
+    /// allow `#` inside a name. Mutually exclusive with
+    /// [`Self::hash_line_comment`].
     pub hash_identifiers: bool,
 }
 
@@ -229,6 +239,15 @@ impl Syntax {
         bracket_identifiers: true,
         colon_parameters: false,
         at_parameters: true,
+        hash_identifiers: true,
+        ..Self::BASE
+    };
+
+    /// Db2: nested block comments, no hex literals, `#` inside identifiers,
+    /// and `:name` host variables.
+    const DB2: Self = Self {
+        nested_block_comments: true,
+        hex_literals: false,
         hash_identifiers: true,
         ..Self::BASE
     };
@@ -327,6 +346,12 @@ impl Dialect {
         syntax: &Syntax::MSSQL,
         words: WordTables::MSSQL,
     };
+    /// IBM Db2.
+    pub const DB2: Self = Self {
+        id: DialectId::Db2,
+        syntax: &Syntax::DB2,
+        words: WordTables::DB2,
+    };
 
     /// Resolve the `dialect` field of a driver definition.
     ///
@@ -358,6 +383,7 @@ impl Dialect {
             ("mssql", Dialect::MSSQL),
             ("sqlserver", Dialect::MSSQL),
             ("tsql", Dialect::MSSQL),
+            ("db2", Dialect::DB2),
         ];
         for (name, dialect) in ALIASES {
             if id.eq_ignore_ascii_case(name) {
@@ -405,6 +431,9 @@ impl Dialect {
     /// after skipping `offset`.
     ///
     /// Appended after any `ORDER BY`, as the last clause of the statement.
+    /// Db2 takes the standard `OFFSET … ROWS FETCH FIRST … ROWS ONLY`, which
+    /// Db2 for LUW has had since 11.1 and the IBM i and z/OS members spell the
+    /// same way, where `LIMIT` is a later addition on two of the three.
     /// `None` where this crate will not write one, which is a refusal rather
     /// than an oversight: Oracle has `OFFSET … FETCH` only from 12c on and
     /// `ROWNUM` before it, SQL Server's `OFFSET … FETCH` is an error without an
@@ -418,6 +447,9 @@ impl Dialect {
             | DialectId::MySql
             | DialectId::MariaDb
             | DialectId::Sqlite => Some(format!("LIMIT {limit} OFFSET {offset}")),
+            DialectId::Db2 => Some(format!(
+                "OFFSET {offset} ROWS FETCH FIRST {limit} ROWS ONLY"
+            )),
             DialectId::Generic | DialectId::Oracle | DialectId::MsSql => None,
         }
     }
@@ -451,6 +483,7 @@ mod tests {
             Dialect::SQLITE,
             Dialect::ORACLE,
             Dialect::MSSQL,
+            Dialect::DB2,
         ] {
             assert_eq!(Dialect::from_id(d.name()), d, "{}", d.name());
         }
@@ -478,7 +511,8 @@ mod tests {
         // whitespace and the capitals a hand-edited file comes with.
         assert_eq!(Dialect::from_id("  MariaDB "), Dialect::MARIADB);
         assert_eq!(Dialect::from_id("SqlServer"), Dialect::MSSQL);
-        assert_eq!(Dialect::from_id("db2"), Dialect::GENERIC);
+        assert_eq!(Dialect::from_id(" DB2"), Dialect::DB2);
+        assert_eq!(Dialect::from_id("informix"), Dialect::GENERIC);
         assert_eq!(Dialect::from_id(""), Dialect::GENERIC);
         assert_eq!(Dialect::default(), Dialect::GENERIC);
     }
@@ -493,6 +527,10 @@ mod tests {
         assert!(Dialect::ORACLE.is_keyword("rownum"));
         assert!(Dialect::MSSQL.is_keyword("nolock"));
         assert!(Dialect::MSSQL.is_keyword("top"));
+        assert!(Dialect::DB2.is_keyword("reorg"));
+        assert!(!Dialect::ORACLE.is_keyword("reorg"));
+        assert!(Dialect::DB2.is_type("vargraphic"));
+        assert!(Dialect::DB2.is_type("decfloat"));
 
         assert!(Dialect::ORACLE.is_type("varchar2"));
         assert!(!Dialect::POSTGRES.is_type("varchar2"));
@@ -532,6 +570,10 @@ mod tests {
         for d in [Dialect::GENERIC, Dialect::ORACLE, Dialect::MSSQL] {
             assert_eq!(d.page_clause(500, 0), None, "{}", d.name());
         }
+        assert_eq!(
+            Dialect::DB2.page_clause(100, 2_500).as_deref(),
+            Some("OFFSET 2500 ROWS FETCH FIRST 100 ROWS ONLY")
+        );
     }
 
     /// Only SQL Server asks for a server cursor; every other dialect either
@@ -546,6 +588,7 @@ mod tests {
             Dialect::MARIADB,
             Dialect::SQLITE,
             Dialect::ORACLE,
+            Dialect::DB2,
         ] {
             assert!(!d.reads_by_server_cursor(), "{}", d.name());
         }

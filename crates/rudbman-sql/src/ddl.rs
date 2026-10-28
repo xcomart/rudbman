@@ -100,6 +100,17 @@
 //! is `..Self::MYSQL` and a string, and no emitter below asks which of the two
 //! it is writing for.
 //!
+//! Db2 takes the standard clauses throughout and differs in two places, both
+//! found by sending the statements to a Db2 12.1. Its `ALTER TABLE` has no
+//! rename clause, and the table is renamed by `RENAME TABLE t TO n`. And a
+//! changed type, a changed nullability or a dropped column is applied to the
+//! catalog but leaves the rows to be rewritten, with the table in *reorg
+//! pending* — readable, but refusing every write with SQL0668N reason code 7 —
+//! until a `REORG TABLE` runs. So a Db2 batch that holds one of those ends
+//! with `CALL SYSPROC.ADMIN_CMD('REORG TABLE t')`, the only statement this
+//! module writes that changes no definition: an apply that left the table
+//! unwritable would be one the user has to finish by hand.
+//!
 //! # A refusal names the product and the reason
 //!
 //! SQLite can add, drop and rename a column and rename a table, and has no
@@ -785,6 +796,7 @@ const fn product(dialect: DialectId) -> &'static str {
         DialectId::Sqlite => "SQLite",
         DialectId::Oracle => "Oracle",
         DialectId::MsSql => "SQL Server",
+        DialectId::Db2 => "Db2",
     }
 }
 
@@ -852,6 +864,8 @@ enum DropStyle {
 enum TableRename {
     /// `ALTER TABLE t RENAME TO n`.
     RenameTo,
+    /// `RENAME TABLE t TO n`: Db2, whose `ALTER TABLE` has no rename clause.
+    RenameTable,
     /// `EXEC sp_rename '<table>', '<new name>'`: SQL Server.
     SpRename,
 }
@@ -895,6 +909,20 @@ struct AlterStyle {
     constraints: DropStyle,
     /// How the table is renamed.
     table_rename: TableRename,
+    /// A changed type, a changed nullability or a dropped column leaves the
+    /// table in *reorg pending*, and the batch ends with the `REORG` that
+    /// clears it.
+    ///
+    /// Db2 only. Its catalog takes the `ALTER` at once, but the rows are not
+    /// rewritten, and until a `REORG TABLE` rewrites them every `INSERT`,
+    /// `UPDATE` and `DELETE` on the table answers SQL0668N reason code 7 — a
+    /// structure edit that left the table unwritable would be a half-applied
+    /// one. `REORG` is a command rather than SQL, so it goes through
+    /// `SYSPROC.ADMIN_CMD`. A widened `VARCHAR` is one type change that does
+    /// not need it, but telling that apart would mean reading the type text
+    /// this module passes through unread, and an unneeded `REORG` costs time
+    /// where a missing one costs the table.
+    reorg: bool,
 }
 
 impl AlterStyle {
@@ -907,6 +935,7 @@ impl AlterStyle {
         attrs: AttrStyle::Clauses,
         constraints: DropStyle::Named,
         table_rename: TableRename::RenameTo,
+        reorg: false,
     };
 
     /// PostgreSQL: the standard form throughout.
@@ -970,6 +999,14 @@ impl AlterStyle {
         ..Self::GENERIC
     };
 
+    /// Db2: the standard clauses, `RENAME TABLE` for the table, and a
+    /// `REORG` after the changes that need one.
+    const DB2: Self = Self {
+        table_rename: TableRename::RenameTable,
+        reorg: true,
+        ..Self::GENERIC
+    };
+
     /// The row for `dialect`.
     const fn of(dialect: DialectId) -> &'static Self {
         match dialect {
@@ -981,6 +1018,7 @@ impl AlterStyle {
             DialectId::Sqlite => &Self::SQLITE,
             DialectId::Oracle => &Self::ORACLE,
             DialectId::MsSql => &Self::MSSQL,
+            DialectId::Db2 => &Self::DB2,
         }
     }
 }
@@ -1043,6 +1081,15 @@ pub fn plan_alter(alter: &TableAlter, dialect: &Dialect) -> Result<Vec<String>, 
         batch.push(format!(
             "ALTER TABLE {table} DROP COLUMN {}",
             dialect.quote_ident(name)
+        ));
+    }
+    // Before the table rename, so the command names the table the way every
+    // statement above it did; Db2 renames a table in reorg pending as readily
+    // as any other.
+    if style.reorg && needs_reorg(alter) {
+        batch.push(format!(
+            "CALL SYSPROC.ADMIN_CMD('REORG TABLE {}')",
+            quote_literal(&table)
         ));
     }
     if let Some(new_name) = &alter.rename_to {
@@ -1421,13 +1468,28 @@ fn rename_column(
     })
 }
 
-/// The table rename, which is the same statement everywhere but SQL Server.
+/// Whether `alter` holds a change that leaves a Db2 table in reorg pending:
+/// a type, a nullability, or a dropped column. Adds, defaults, renames and
+/// constraint drops are catalog changes only.
+fn needs_reorg(alter: &TableAlter) -> bool {
+    !alter.drops.is_empty()
+        || alter.changes.iter().any(|change| {
+            change.from.type_sql != change.to.type_sql || change.from.not_null != change.to.not_null
+        })
+}
+
+/// The table rename, which is an `ALTER TABLE` everywhere but Db2 and SQL
+/// Server.
 fn rename_table(table: &str, new_name: &str, style: &AlterStyle, dialect: &Dialect) -> String {
     match style.table_rename {
         TableRename::RenameTo => format!(
             "ALTER TABLE {table} RENAME TO {}",
             dialect.quote_ident(new_name)
         ),
+        // The new name is unqualified: a table stays in its schema.
+        TableRename::RenameTable => {
+            format!("RENAME TABLE {table} TO {}", dialect.quote_ident(new_name))
+        }
         TableRename::SpRename => format!(
             "EXEC sp_rename '{}', '{}'",
             quote_literal(table),
@@ -1516,6 +1578,57 @@ mod tests {
     /// The batch, or a panic naming the dialect that failed.
     fn sql(alter: &TableAlter, dialect: &Dialect) -> Vec<String> {
         plan_alter(alter, dialect).unwrap_or_else(|e| panic!("{}: {e}", dialect.name()))
+    }
+
+    /// Db2 takes the standard clauses, renames a table by a statement of its
+    /// own, and ends a batch that rewrote a type, a nullability or dropped a
+    /// column with the `REORG` that lets the table be written again — ahead
+    /// of the rename, so it names the table as everything before it did.
+    #[test]
+    fn db2_renames_by_statement_and_reorganizes_after_a_rewrite() {
+        let mut alter = TableAlter::new(["APP", "ORDERS"]);
+        alter.changes.push(ColumnChange {
+            from: ColumnDef::new("QTY", "integer"),
+            to: ColumnDef::new("QTY", "bigint").with_not_null(true),
+        });
+        alter.rename_to = Some("ORDERS_OLD".to_string());
+        assert_eq!(
+            sql(&alter, &Dialect::DB2),
+            [
+                "ALTER TABLE APP.ORDERS ALTER COLUMN QTY SET DATA TYPE bigint",
+                "ALTER TABLE APP.ORDERS ALTER COLUMN QTY SET NOT NULL",
+                "CALL SYSPROC.ADMIN_CMD('REORG TABLE APP.ORDERS')",
+                "RENAME TABLE APP.ORDERS TO ORDERS_OLD",
+            ]
+        );
+
+        // A default, an add and a rename are catalog changes only.
+        let mut alter = TableAlter::new(["ORDERS"]);
+        alter.adds.push(ColumnDef::new("NOTE", "varchar(10)"));
+        alter.changes.push(ColumnChange {
+            from: ColumnDef::new("QTY", "integer"),
+            to: ColumnDef::new("AMOUNT", "integer").with_default("0"),
+        });
+        assert_eq!(
+            sql(&alter, &Dialect::DB2),
+            [
+                "ALTER TABLE ORDERS ADD COLUMN NOTE varchar(10)",
+                "ALTER TABLE ORDERS ALTER COLUMN QTY SET DEFAULT 0",
+                "ALTER TABLE ORDERS RENAME COLUMN QTY TO AMOUNT",
+            ]
+        );
+
+        // The command names its table inside a string literal, so a quote in
+        // the name is doubled there and the identifier's own quotes survive.
+        let mut alter = TableAlter::new(["it's"]);
+        alter.drops.push("X".to_string());
+        assert_eq!(
+            sql(&alter, &Dialect::DB2),
+            [
+                r#"ALTER TABLE "it's" DROP COLUMN X"#,
+                r#"CALL SYSPROC.ADMIN_CMD('REORG TABLE "it''s"')"#,
+            ]
+        );
     }
 
     /// The five groups run in the order the catalog can survive: constraints,

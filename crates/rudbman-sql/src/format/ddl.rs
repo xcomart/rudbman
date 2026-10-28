@@ -115,7 +115,9 @@ const SEQUENCE_WORDS: &[&str] = &[
 /// The words of a trigger's header, in upper case where they stand there.
 const TRIGGER_WORDS: &[&str] = &[
     "AFTER",
+    "AS",
     "BEFORE",
+    "CASCADE",
     "CONSTRAINT",
     "CREATE",
     "DEFINER",
@@ -129,8 +131,14 @@ const TRIGGER_WORDS: &[&str] = &[
     "FUNCTION",
     "INSERT",
     "INSTEAD",
+    "MODE",
+    "NEW",
+    "NEW_TABLE",
+    "NO",
     "NONEDITIONABLE",
     "OF",
+    "OLD",
+    "OLD_TABLE",
     "ON",
     "OR",
     "PRECEDES",
@@ -139,6 +147,7 @@ const TRIGGER_WORDS: &[&str] = &[
     "REPLACE",
     "ROW",
     "STATEMENT",
+    "TABLE",
     "TRIGGER",
     "TRUNCATE",
     "UPDATE",
@@ -146,17 +155,33 @@ const TRIGGER_WORDS: &[&str] = &[
 ];
 
 /// Words that complete a characteristic: `NOT DETERMINISTIC`,
-/// `READS SQL DATA`, `SQL SECURITY INVOKER`, `CALLED ON NULL INPUT`.
+/// `READS SQL DATA`, `SQL SECURITY INVOKER`, `CALLED ON NULL INPUT`, and Db2's
+/// `NO EXTERNAL ACTION`, `INHERIT SPECIAL REGISTERS`,
+/// `DYNAMIC RESULT SETS 1`, `PARAMETER STYLE SQL`.
 const COMPANION_WORDS: &[&str] = &[
+    "ACTION",
     "DATA",
     "DEFINER",
     "DETERMINISTIC",
+    "EXTERNAL",
+    "FENCED",
     "INPUT",
     "INVOKER",
+    "LEVEL",
     "NULL",
     "ON",
+    "PARALLEL",
+    "REGISTERS",
+    "RESULT",
+    "RETURN",
+    "SAVEPOINT",
+    "SECURED",
     "SECURITY",
+    "SETS",
+    "SPECIAL",
     "SQL",
+    "STYLE",
+    "THREADSAFE",
 ];
 
 /// Words of a `DECLARE`'s own grammar, in upper case on its first line.
@@ -291,6 +316,10 @@ enum Family {
     Oracle,
     /// T-SQL: only the header is laid out.
     MsSql,
+    /// SQL PL: a routine's body starts where everything else's does, but a
+    /// trigger's follows its `FOR EACH ROW`, and the `AS` before it names a
+    /// transition variable.
+    Db2,
     /// Everything else: the body starts at `AS`, `IS`, `BEGIN` or `RETURN`.
     Other,
 }
@@ -301,6 +330,7 @@ impl Family {
             DialectId::MySql | DialectId::MariaDb => Family::MySql,
             DialectId::Oracle => Family::Oracle,
             DialectId::MsSql => Family::MsSql,
+            DialectId::Db2 => Family::Db2,
             _ => Family::Other,
         }
     }
@@ -659,6 +689,31 @@ impl<'a> Layout<'a> {
                 Family::MsSql => {
                     self.is_word(k, "AS") && !self.is_word(k.wrapping_sub(1), "EXECUTE")
                 }
+                // `FOR EACH ROW` or `STATEMENT`, the old `MODE DB2SQL`, a
+                // `WHEN (...)`, then one statement or a `BEGIN ATOMIC` block.
+                // `REFERENCING NEW AS n` is passed over on the way: its `AS`
+                // names a row, and starts nothing.
+                Family::Db2 => {
+                    if self.is_word(k, "FOR")
+                        && self.is_word(k + 1, "EACH")
+                        && (self.is_word(k + 2, "ROW") || self.is_word(k + 2, "STATEMENT"))
+                    {
+                        let mut body = k + 3;
+                        if self.is_word(body, "MODE") {
+                            body += 2;
+                        }
+                        if self.is_word(body, "WHEN")
+                            && self
+                                .items
+                                .get(body + 1)
+                                .is_some_and(|item| item.is_punct("("))
+                        {
+                            body = self.matching(body + 1) + 1;
+                        }
+                        return (body < self.items.len()).then_some(body);
+                    }
+                    false
+                }
                 Family::Other => self.is_word(k, "BEGIN") || self.is_word(k, "AS"),
             };
             if starts {
@@ -721,6 +776,12 @@ impl<'a> Layout<'a> {
                 }
                 Family::Oracle => matches!(upper.as_str(), "IS" | "AS" | "BEGIN" | "DECLARE"),
                 Family::MsSql => upper == "AS" && !self.is_word(k.wrapping_sub(1), "EXECUTE"),
+                // `COMMIT ON RETURN NO` is a procedure's option, not its body.
+                Family::Db2 => match upper.as_str() {
+                    "AS" | "IS" | "BEGIN" => true,
+                    "RETURN" => !self.is_word(k.wrapping_sub(1), "ON"),
+                    _ => false,
+                },
                 Family::Other => matches!(upper.as_str(), "AS" | "IS" | "BEGIN" | "RETURN"),
             };
             if starts {
@@ -823,14 +884,26 @@ impl<'a> Layout<'a> {
         let previous = |word| self.is_word(k.wrapping_sub(1), word);
         let next = |word| self.is_word(k + 1, word);
         match self.items[k].text.to_ascii_uppercase().as_str() {
-            "AUTHID" | "CALLED" | "COMMENT" | "CONTAINS" | "COST" | "DYNAMIC" | "EXTERNAL"
-            | "FENCED" | "IMMUTABLE" | "INHERIT" | "LANGUAGE" | "LEAKPROOF" | "MODIFIES"
-            | "PARALLEL" | "PARALLEL_ENABLE" | "PIPELINED" | "READS" | "RESULT_CACHE"
-            | "RETURNS" | "ROWS" | "SPECIFIC" | "STABLE" | "STRICT" | "SUPPORT" | "TRANSFORM"
-            | "VOLATILE" | "WINDOW" | "WITH" => true,
-            "DETERMINISTIC" => !previous("NOT"),
-            "NOT" => next("DETERMINISTIC") || next("FENCED"),
-            "NO" => next("SQL"),
+            "AUTHID" | "AUTONOMOUS" | "CALLED" | "COMMENT" | "CONTAINS" | "COST" | "DYNAMIC"
+            | "IMMUTABLE" | "INHERIT" | "LANGUAGE" | "LEAKPROOF" | "MODIFIES"
+            | "PARALLEL_ENABLE" | "PIPELINED" | "READS" | "RESULT_CACHE" | "RETURNS" | "ROWS"
+            | "SPECIFIC" | "STABLE" | "STRICT" | "SUPPORT" | "TRANSFORM" | "VOLATILE"
+            | "WINDOW" | "WITH" => true,
+            // Db2 spells several characteristics as a phrase whose first
+            // word means nothing on its own: `NO EXTERNAL ACTION`,
+            // `ALLOW PARALLEL`, `PARAMETER STYLE SQL`, `NOT SECURED`,
+            // `OLD SAVEPOINT LEVEL`, `COMMIT ON RETURN NO`.
+            "DETERMINISTIC" | "FENCED" | "SECURED" | "THREADSAFE" => !previous("NOT"),
+            "NOT" => {
+                next("DETERMINISTIC") || next("FENCED") || next("SECURED") || next("THREADSAFE")
+            }
+            "NO" => next("SQL") || next("EXTERNAL"),
+            "EXTERNAL" => !previous("NO"),
+            "PARALLEL" => !previous("ALLOW") && !previous("DISALLOW"),
+            "ALLOW" | "DISALLOW" => next("PARALLEL"),
+            "PARAMETER" => next("STYLE"),
+            "OLD" | "NEW" => next("SAVEPOINT"),
+            "COMMIT" => next("ON"),
             "SQL" => next("SECURITY"),
             "SECURITY" => !previous("SQL") && !previous("EXTERNAL"),
             "SET" => self.family != Family::MySql,
@@ -1984,6 +2057,42 @@ END p_hello;"
             format_ddl(ddl, &ms),
             "CREATE PROCEDURE dbo.p @a int, @b int\n    WITH RECOMPILE\nAS\nBEGIN\n  SET NOCOUNT \
              ON\n  SELECT @a\nEND"
+        );
+    }
+
+    /// What `SYSCAT.TRIGGERS` and `SYSCAT.ROUTINES` hand back on a Db2 12.1:
+    /// a trigger whose `AS` names its new row rather than opening a body, and
+    /// a function whose `NO EXTERNAL ACTION` is one characteristic, not two.
+    #[test]
+    fn db2_triggers_and_characteristics_keep_their_phrases() {
+        let db2 = Dialect::from_id("db2");
+        assert_eq!(
+            format_ddl(
+                "CREATE OR REPLACE TRIGGER t_upper no cascade BEFORE INSERT ON t \
+                 REFERENCING new AS n for each row SET n.\"note\" = upper(n.\"note\")",
+                &db2
+            ),
+            "CREATE OR REPLACE TRIGGER t_upper NO CASCADE BEFORE INSERT ON t REFERENCING NEW \
+             AS n FOR EACH ROW\nSET n.\"note\" = upper(n.\"note\")"
+        );
+        assert_eq!(
+            format_ddl(
+                "CREATE TRIGGER t_audit AFTER UPDATE ON t REFERENCING OLD AS o NEW AS n \
+                 FOR EACH ROW WHEN (o.qty <> n.qty) BEGIN ATOMIC \
+                 INSERT INTO audit VALUES (n.id); END",
+                &db2
+            ),
+            "CREATE TRIGGER t_audit AFTER UPDATE ON t REFERENCING OLD AS o NEW AS n FOR EACH ROW \
+             WHEN (o.qty <> n.qty)\nBEGIN ATOMIC\n    INSERT INTO audit\n    VALUES (n.id);\nEND"
+        );
+        assert_eq!(
+            format_ddl(
+                "CREATE PROCEDURE p (IN a int) LANGUAGE SQL dynamic result sets 1 \
+                 no external action not fenced commit on return no BEGIN SET a = 1; END",
+                &db2
+            ),
+            "CREATE PROCEDURE p (IN a int)\n    LANGUAGE SQL\n    DYNAMIC RESULT SETS 1\n    \
+             NO EXTERNAL ACTION\n    NOT FENCED\n    COMMIT ON RETURN no\nBEGIN\n    SET a = 1;\nEND"
         );
     }
 
