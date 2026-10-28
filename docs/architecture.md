@@ -1539,6 +1539,14 @@ A driver definition:
 `dialect` selects `rudbman-sql`'s keyword set, identifier quoting rules, DDL
 generator and paging syntax (`ROWNUM` vs `LIMIT` vs `FETCH FIRST`).
 
+The built-in definitions are H2, PostgreSQL, MySQL, MariaDB, SQLite, Oracle
+Thin, SQL Server and IBM Db2. They are written to `drivers.json` the first
+time, and afterwards the file is taken at its word — a deleted built-in stays
+deleted. Its `offered_builtins` list is what tells a deleted one from one
+released after the file was written: a built-in not on it is appended once on
+load and recorded, so Db2 reaches a configuration that predates it. A file
+without the list is read as having been offered the first seven.
+
 ---
 
 ## 9. SSH tunnels (`rudbkit-ssh`, via `rudbman-ssh`)
@@ -1833,11 +1841,13 @@ for "a usable tool".
 - The codec gets round-trip property tests across the Java encoder and the Rust
   decoder
 - Widgets use `gpui/test-support`'s headless platform, as in logman
-- PostgreSQL, MySQL, MariaDB, SQL Server and Oracle (plus SQLite, a file) get
-  opt-in container-backed tests (`crates/rudbman-jdbc/tests/containers.rs`,
-  `docker/compose.yml`). They pass by doing nothing unless `RUDBMAN_TEST_*_URL`
-  is set, so a plain `cargo test` skips them, and CI's `containers` job runs
-  them against service containers
+- PostgreSQL, MySQL, MariaDB, SQL Server, Oracle and Db2 (plus SQLite, a
+  file) get opt-in container-backed tests
+  (`crates/rudbman-jdbc/tests/containers.rs`, `docker/compose.yml`). They pass
+  by doing nothing unless `RUDBMAN_TEST_*_URL` is set, so a plain `cargo test`
+  skips them, and CI's `containers` job runs them against service containers —
+  Db2 in a `containers-db2` job of its own, whose image alone would crowd the
+  others off the runner's disk
 
 ---
 

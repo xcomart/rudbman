@@ -6,8 +6,8 @@ the work up. The design and the contracts all live in
 work has come, what is left, and how work is done in this repository**. It is
 updated whenever a milestone ends.
 
-Last updated: 2026-08-25 (after the widget kit, the grid, the editor and then
-the application shell moved to rugpui).
+Last updated: 2026-10-28 (IBM Db2 became a built-in driver with a dialect of
+its own, verified against a Db2 12.1 container).
 
 ## Where things stand
 
@@ -38,6 +38,7 @@ the application shell moved to rugpui).
 | First release, v0.1.0 (PR #8) | done | `release.yml` (every build job runs Gradle, then jlink, then cargo — in that order, because rudbman-jdbc's build script refuses to compile without the bridge JAR — plus a smoke step over the staged tree before anything is published), `packaging/` (a Linux desktop entry and an `install.sh` that installs the whole tree and symlinks it, a macOS `Info.plist`), `<exe_dir>/runtime` added to the bundled-runtime search, `jdk.charsets` in the jlink module list (with `--compress=2`, the JDK 17 spelling), and a README brought fully up to date with three screenshots (captured through the temporary env-gated hook, reverted before the commit) |
 | The widget kit extracted as rugpui | done | `rudbman-ui`, `rudbman-grid` and `rudbman-editor` are gone from this repository. They are [rugpui](https://github.com/xcomart/rugpui) — `rugpui`, `rugpui-grid`, `rugpui-editor` — extracted because rudbman was the third application carrying byte-identical copies of them, and the four vendored gpui crates went with them; rudbman's patch table now points at rugpui's `vendor/`, which is what keeps one gpui in the binary. The one seam that had to be cut is the editor's: it used to `use rudbman_sql` and hold a `Dialect`, and a widget three applications share cannot. So the call turned around. `crates/rudbman-app/src/sql_highlight.rs` is rudbman's `Highlighter` — `lex_line` in the session's dialect, `TokenKind` onto the palette's twelve slots, `--` for the comment toggle — and `rudbman-sql`'s new `state` module packs the lexer's sixteen-byte `LineState` into the four bytes the widget keeps per line (a dollar quote's tag is 96 bits, hence a codec with a side table rather than a pair of shifts). `statement_at` did not travel: the editor cuts statements out of the spans it is drawing, stepping over a `;` the highlighter called part of a string or a comment, and `sql_highlight`'s tests hold that against `rudbman_sql::statement_at` across H2, MySQL's `#`, PostgreSQL's `$$` and SQL Server's `[..]`. **One disagreement is known and pinned by a test**: a `;` inside a *quoted identifier* (`"a;b"`, `` `a;b` ``, `[a;b]`) splits a statement in the editor and not in the splitter, because the palette has no quoted-identifier slot for the editor to step over. The fix belongs in rugpui. All seven dependencies (three crates, four patched gpui) are now `git`+`rev` dependencies on `https://github.com/xcomart/rugpui`, at the same revision, so CI runs green on a fresh runner with no sibling checkout |
 | The application shell taken from rugpui-shell | done | One layer above the widget kit, and for the same reason: `caption.rs`, `about_dialog.rs`, `update.rs`, `update_dialog.rs`, `theme_editor.rs`, `main.rs`'s window-chrome block, `pane_tree.rs`'s generic core, `context_menu.rs`'s `MenuRow`, `icons.rs`'s asset source and the four caption glyphs, `app_settings.rs`'s geometry/monospace/tint helpers, `i18n.rs`'s tag arithmetic and `settings_dialog.rs`'s catalog management and form pieces are all gone from this repository. They are `rugpui-shell`, at the same revision as the other three rugpui crates — eight `git`+`rev` entries that move together. What rudbman hands it is three calls in the new `crates/rudbman-app/src/app_identity.rs`: `init` (name, version — the *application's* `CARGO_PKG_VERSION`, never the shell's — release endpoints, payload, the Windows uninstall GUID, and `must_defer`, which is `cfg!(windows) && Jvm::get().is_some()` because a loaded JVM holds the files a swap renames), `set_strings` (one line over `rust-i18n`; the shell looks its words up by the keys `locales/*.yml` already carried, so no translation changed — only `update.available` did, from a literal "rudbman" to `%{app}`, and two new editor-palette slots arrived with the shell's `Token::{Key,Variable}`), and `set_update_policy` (`ignored_update` in `settings.json`). What stayed: the `Workspace`, `PaneItem` and the `PaneLookup` extension over `Pane::position`, the settings form itself, rudbman's own icon table, the `i18n!` invocation, the grid's context-menu rows, and the `.iss` comparison test. Two seams are worth knowing. The restart after an update is the application's: the shell emits `UpdateDialogEvent::Installed` and the `Workspace` calls `cx.restart()`. And `apply_pending` now runs as the *first* statement inside `app.run` rather than before it, because every path in the updater reads the injected identity and the only way to install one is with an `App` in hand |
+| IBM Db2 as a built-in driver | done | A ninth dialect id, `db2`, and an eighth built-in definition (`com.ibm.db2:jcc:12.1.5.0`, `jdbc:db2://{host}:{port}/{database}`, port 50000). `drivers.json` gained `offered_builtins`, so a configuration written before Db2 existed gains it once and keeps every built-in its user deleted. The dialect folds up like Oracle's, nests block comments, has no `0x` literals and pages with `OFFSET … ROWS FETCH FIRST … ROWS ONLY`. Everything else was found by sending it to `icr.io/db2_community/db2:12.1.2.0` (`docker/compose.yml`, port 55000) and reading the catalog back, 15 container tests in all: `ALTER TABLE` has no rename clause (`RENAME TABLE t TO n`); a changed type, a changed nullability or a dropped column leaves the table in *reorg pending*, readable but refusing writes with SQL0668N reason code 7, so such a batch ends with `CALL SYSPROC.ADMIN_CMD('REORG TABLE t')` (a widened `VARCHAR`, an add, a default, a rename or a constraint drop do not need it); `DEFAULT VALUES` is a syntax error, so a row of defaults is `INSERT INTO t (c) VALUES (DEFAULT)`; a `UNIQUE` column must be `NOT NULL`; `DROP VIEW IF EXISTS` is a syntax error where `DROP TABLE IF EXISTS` is not. The bridge gained Db2's sequences (`SYSCAT.SEQUENCES`, identity sequences left out), triggers (`SYSCAT.TRIGGERS`) and the native text of views and triggers (`TEXT`), and the routine DDL it already had was confirmed. **Three driver habits turned up and were fixed**: an implicitly created schema is stored blank-padded to eight characters (`'RUDBMAN '`), which SQL compares equal and Java does not, so the catalog queries trim it and so does the result metadata; JCC reports the database as a result column's catalog while its own metadata calls find nothing under that name, so the bridge drops it and the query pane's edit gate finds the key; and JCC's error text is codes only (`SQLCODE=-204, SQLSTATE=42704, SQLERRMC=…`) unless `retrieveMessagesFromServerOnGetMessage` is set, which the bridge now sets on every JCC session that has not. The DDL layout learned SQL PL's trigger shape (`REFERENCING NEW AS n FOR EACH ROW`, whose `AS` opens nothing) and the multi-word characteristics (`NO EXTERNAL ACTION`, `ALLOW PARALLEL`, `PARAMETER STYLE SQL`), and the query pane stopped appending a page clause after a top-level `WITH` — Db2's `WITH UR` |
 
 - Repository: <https://github.com/xcomart/rudbman> (public, MIT).
 - The branch flow is logman's: **work on dev, main takes PR merge commits
@@ -50,8 +51,9 @@ the application shell moved to rugpui).
   more when the shell followed: the updater's 38, the theme editor's 20, the
   pane tree's 24 mechanics tests, and the locale, geometry and management-row
   tests that went with their code. The Rust figure still includes the
-  integration tests, which boot a real JVM and a real H2, and the 38 opt-in
-  container tests (`crates/rudbman-jdbc/tests/containers.rs`).
+  integration tests, which boot a real JVM and a real H2, and the opt-in
+  container tests (`crates/rudbman-jdbc/tests/containers.rs`), 71 of them
+  since Db2 joined.
 
 ## What is next
 
@@ -71,12 +73,12 @@ out. What remains can be taken in any order:
    above for the two bugs that surfaced only once Oracle and MariaDB joined
    the suite — a syntax error MariaDB throws that MySQL does not, and a
    metadata-ordering bug in the bridge that only Oracle's driver was strict
-   enough to expose. What is still unverified against a live server: the
-   **transfer and backup** paths (no container test drives `TransferJob` or
-   `BackupJob` against any of the five yet), and **DB2**, which has no
-   container in the suite and no built-in driver definition at all — how it,
-   Oracle and SQL Server spell the upsert `MERGE` remains a known gap, named
-   in the bridge README.
+   enough to expose. **Db2** joined as a sixth product (see the Db2 entry
+   above), in a CI job of its own. What is still unverified against a live
+   server: the **transfer and backup** paths on the first five (only Db2's
+   upsert `MERGE` is driven through a `TransferJob` against a server; how
+   Oracle and SQL Server spell theirs remains a known gap, named in the bridge
+   README), and `BackupJob` on all six.
 2. **Open features**: the list below.
 
 BLOB/CLOB viewing, full file export, text/hex editing and file replacement now

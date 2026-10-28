@@ -24,7 +24,9 @@ JVM bridge.
 
 - **Any JDBC driver.** Drivers are downloaded from Maven Central by
   coordinate or picked from disk, the driver class is auto-detected from the
-  JAR, and each connection gets its own isolated class loader. Row data
+  JAR, and each connection gets its own isolated class loader. H2,
+  PostgreSQL, MySQL, MariaDB, SQLite, Oracle, SQL Server and IBM Db2 come
+  predefined, with their SQL dialects. Row data
   crosses the JNI boundary in a compact columnar batch format — not as one
   JSON string per row.
 - **Connections as tabs**, each with its own work area: split panes, tabbed

@@ -674,16 +674,17 @@ tripping rather than by asserting on strings:
 
 ## Known gaps
 
-- The `upsert` statements for Oracle, SQL Server and Db2 are written from the
-  products' documentation and are not covered by a test; only the H2 form is
-  executed here.
+- The `upsert` statements for Oracle and SQL Server are written from the
+  products' documentation and are not covered by a test; the H2 form is
+  executed here, and Db2's by `db2_upserts_through_a_merge` in
+  `crates/rudbman-jdbc/tests/containers.rs` against a real Db2 12.1.
 - A transfer binds with `getObject` / `setObject`. Arrays and vendor structured
   types often do not survive that between two different products; those rows take
   the `on_error` path.
 - Only MySQL, MariaDB and H2 have a native `ddl` path; every other product gets
   the reverse-generated form with the limits listed above.
-- `sequences` covers H2, PostgreSQL, Oracle and MariaDB. SQL Server
-  (`sys.sequences`) and Db2 (`SYSCAT.SEQUENCES`) have sequences and are not
-  wired up; they return the empty list.
+- `sequences` covers H2, PostgreSQL, Oracle, MariaDB, SQL Server
+  (`sys.sequences`) and Db2 (`SYSCAT.SEQUENCES`); any other product returns
+  the empty list.
 - Reverse-generated DDL emits a `CREATE TABLE` for a view, because JDBC metadata
   does not carry the view's query text.
