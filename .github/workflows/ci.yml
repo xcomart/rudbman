@@ -273,6 +273,71 @@ jobs:
         # missing would otherwise be a green job that tested nothing.
         run: cargo test -p rudbman-jdbc --test containers --test sqlite --locked -- --nocapture
 
+  # Db2 runs the same file on a runner of its own. Its image unpacks to almost
+  # seven gigabytes, which beside Oracle's and SQL Server's would leave the
+  # runner's disk too short for the Rust build, and its first start creates
+  # the database, which takes minutes the job above should not wait for. The
+  # `db2` filter picks its tests; the ones named for the other five skip here
+  # for want of a URL, as Db2's skip in the job above.
+  containers-db2:
+    name: Db2
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      # docker/compose.yml says why the instance is named `rudbman` and why
+      # the container is privileged.
+      db2:
+        image: icr.io/db2_community/db2:12.1.2.0
+        env:
+          LICENSE: accept
+          DB2INSTANCE: rudbman
+          DB2INST1_PASSWORD: rudbman
+          DBNAME: RUDBMAN
+          ARCHIVE_LOGS: "false"
+          AUTOCONFIG: "false"
+          PERSISTENT_HOME: "false"
+        ports: ['55000:50000']
+        options: >-
+          --privileged
+          --health-cmd "su - rudbman -c 'db2 connect to RUDBMAN >/dev/null && db2 terminate >/dev/null'"
+          --health-interval 10s --health-timeout 30s --health-start-period 300s
+          --health-retries 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install JDK
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: bridge/*.gradle
+
+      - name: Build the bridge JAR and fetch the drivers
+        working-directory: bridge
+        shell: bash
+        run: ./gradlew jar drivers --no-daemon
+
+      - name: Locate the JDBC driver
+        shell: bash
+        run: |
+          jar=$(find ~/.gradle/caches/modules-2/files-2.1/com.ibm.db2/jcc \
+                  -name "jcc-*.jar" ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -1)
+          test -f "$jar"
+          echo "RUDBMAN_TEST_DB2_JAR=$jar" >> "$GITHUB_ENV"
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: test
+        env:
+          RUDBMAN_TEST_DB2_URL: jdbc:db2://127.0.0.1:55000/RUDBMAN
+        run: cargo test -p rudbman-jdbc --test containers --locked db2 -- --nocapture
+
   # What the next toolchain bump will bring, ahead of time: the same lints on
   # whatever `stable` is today. Non-blocking, because a lint added upstream is
   # news, not a regression in the commit under test.

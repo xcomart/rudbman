@@ -1,5 +1,5 @@
-//! Opt-in end-to-end tests against real PostgreSQL, MySQL, MariaDB, SQL Server
-//! and Oracle servers.
+//! Opt-in end-to-end tests against real PostgreSQL, MySQL, MariaDB, SQL Server,
+//! Oracle and Db2 servers.
 //!
 //! `tests/h2.rs` proves that Rust reads what Java wrote, and its editing
 //! section proves that the `UPDATE`s `rudbman-sql` plans and the parameters
@@ -47,13 +47,14 @@
 //! export RUDBMAN_TEST_MARIADB_URL='jdbc:mariadb://127.0.0.1:53306/rudbman'
 //! export RUDBMAN_TEST_MSSQL_URL='jdbc:sqlserver://127.0.0.1:51433;encrypt=false'
 //! export RUDBMAN_TEST_ORACLE_URL='jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1'
+//! export RUDBMAN_TEST_DB2_URL='jdbc:db2://127.0.0.1:55000/RUDBMAN'
 //! cargo test -p rudbman-jdbc --test containers
 //! ```
 //!
 //! The user and password default to `rudbman`/`rudbman`, which is what
-//! `docker/compose.yml` sets up for four of the five; `RUDBMAN_TEST_PG_USER`,
-//! `RUDBMAN_TEST_PG_PASSWORD` and their `MYSQL`, `MARIADB`, `MSSQL` and
-//! `ORACLE` counterparts override them. SQL Server is the exception, and not by
+//! `docker/compose.yml` sets up for five of the six; `RUDBMAN_TEST_PG_USER`,
+//! `RUDBMAN_TEST_PG_PASSWORD` and their `MYSQL`, `MARIADB`, `MSSQL`, `ORACLE`
+//! and `DB2` counterparts override them. SQL Server is the exception, and not by
 //! choice: its `sa` password has a complexity rule that `rudbman` fails, so the
 //! default there is `sa`/`Rudbman!Passw0rd` and the URL names no database at
 //! all — the image ships none but `master`, and every table here is named
@@ -73,7 +74,7 @@
 //! run, and a test that passes because it could not find its driver is the
 //! thing this file exists to avoid.
 //!
-//! # Case folding, and why Oracle's tables are shouted at
+//! # Case folding, and why Oracle's and Db2's tables are shouted at
 //!
 //! [`Dialect::quote_ident`](rudbman_sql::Dialect::quote_ident) quotes a name
 //! the server would otherwise change, so on Oracle a lower-case `note` is
@@ -83,7 +84,7 @@
 //! catalog really is read back at `note` rather than `NOTE`.
 //!
 //! The **table** names are the exception: [`Server::table`] shouts them on
-//! Oracle. A table name is the one identifier this file also has to write into
+//! Oracle, and on Db2, which folds the same way. A table name is the one identifier this file also has to write into
 //! raw SQL of its own — the `insert` that proves a foreign key bites, the
 //! `DROP TABLE IF EXISTS` that cleans up — and hand-written SQL is unquoted, so
 //! a lower-case table would be looked up folded and never found. Shouting it
@@ -104,16 +105,16 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use rudbman_jdbc::{
-    Batch, ConnectionSpec, DdlSource, DescribeRequest, Jvm, JvmConfig, ObjectKind, Session,
-    StatementSpec, Value, default_bridge_jar,
+    Batch, ConnectionSpec, DdlSource, DescribeRequest, JobState, Jvm, JvmConfig, ObjectKind,
+    ObjectRef, Session, StatementSpec, TransferMode, TransferSpec, Value, default_bridge_jar,
 };
 // The generator under test. `rudbman-sql` is already a dev-dependency of this
 // crate for the editing tests in `h2.rs`, and for the same reason: writing the
 // `ALTER TABLE`s out by hand here would prove something about a different
 // string than the one the application sends.
 use rudbman_sql::{
-    ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, Dialect, TableAlter, TableConstraint,
-    TableCreate, format_ddl, plan_alter, plan_create,
+    ColumnChange, ColumnDef, ConstraintDrop, ConstraintKind, Dialect, InsertCell, TableAlter,
+    TableConstraint, TableCreate, TableEdits, format_ddl, plan_alter, plan_create, plan_edits,
 };
 
 /// The process-wide JVM, started by whichever test needs it first.
@@ -202,6 +203,10 @@ enum Product {
     MariaDb,
     MsSql,
     Oracle,
+    /// Db2 for Linux, UNIX and Windows. The newest of the six, and the one
+    /// whose `ALTER` leaves work behind: see
+    /// [`db2_reorganizes_after_a_change_that_leaves_the_table_pending`].
+    Db2,
 }
 
 impl Product {
@@ -214,6 +219,7 @@ impl Product {
             Product::MariaDb => "RUDBMAN_TEST_MARIADB_URL",
             Product::MsSql => "RUDBMAN_TEST_MSSQL_URL",
             Product::Oracle => "RUDBMAN_TEST_ORACLE_URL",
+            Product::Db2 => "RUDBMAN_TEST_DB2_URL",
         }
     }
 
@@ -224,6 +230,7 @@ impl Product {
             Product::MariaDb => "org.mariadb.jdbc.Driver",
             Product::MsSql => "com.microsoft.sqlserver.jdbc.SQLServerDriver",
             Product::Oracle => "oracle.jdbc.OracleDriver",
+            Product::Db2 => "com.ibm.db2.jcc.DB2Driver",
         }
     }
 
@@ -248,6 +255,7 @@ impl Product {
                 "com.oracle.database.jdbc",
                 "ojdbc11",
             ),
+            Product::Db2 => driver_jar("RUDBMAN_TEST_DB2_JAR", "com.ibm.db2", "jcc"),
         }
     }
 
@@ -263,13 +271,14 @@ impl Product {
             Product::MariaDb => &Dialect::MARIADB,
             Product::MsSql => &Dialect::MSSQL,
             Product::Oracle => &Dialect::ORACLE,
+            Product::Db2 => &Dialect::DB2,
         }
     }
 
     /// Whether this product folds an unquoted identifier to upper case, and so
     /// wants its table names shouted — see the module documentation.
     fn folds_upper(self) -> bool {
-        self == Product::Oracle
+        matches!(self, Product::Oracle | Product::Db2)
     }
 
     /// `(user, password)`, from the environment or the compose file's defaults.
@@ -280,6 +289,7 @@ impl Product {
             Product::MariaDb => ("RUDBMAN_TEST_MARIADB_USER", "RUDBMAN_TEST_MARIADB_PASSWORD"),
             Product::MsSql => ("RUDBMAN_TEST_MSSQL_USER", "RUDBMAN_TEST_MSSQL_PASSWORD"),
             Product::Oracle => ("RUDBMAN_TEST_ORACLE_USER", "RUDBMAN_TEST_ORACLE_PASSWORD"),
+            Product::Db2 => ("RUDBMAN_TEST_DB2_USER", "RUDBMAN_TEST_DB2_PASSWORD"),
         };
         // SQL Server's `sa` password has a complexity rule `rudbman` fails, so
         // that one image gets a login of its own; `docker/compose.yml` says the
@@ -312,7 +322,9 @@ impl Product {
     fn widened(self) -> (&'static str, &'static str) {
         match self {
             Product::Postgres => ("bigint", "int8"),
-            Product::MySql | Product::MariaDb | Product::MsSql => ("bigint", "bigint"),
+            Product::MySql | Product::MariaDb | Product::MsSql | Product::Db2 => {
+                ("bigint", "bigint")
+            }
             Product::Oracle => ("varchar(30)", "varchar2"),
         }
     }
@@ -350,10 +362,18 @@ impl Drop for Server {
         // a parent goes first. Every drop is `IF EXISTS` and every failure is
         // ignored: this runs on the way out of a panicking test too, and a
         // cleanup that panicked would replace the real failure with its own.
+        // Db2 takes `IF EXISTS` on a table and answers SQL0104N for it on a
+        // view, so its views are dropped bare; the error a missing one raises
+        // is ignored like every other here.
+        let if_exists = if self.product == Product::Db2 {
+            ""
+        } else {
+            "IF EXISTS "
+        };
         for view in self.views.borrow().iter().rev() {
             let _ = self
                 .session
-                .execute(&StatementSpec::new(format!("DROP VIEW IF EXISTS {view}")));
+                .execute(&StatementSpec::new(format!("DROP VIEW {if_exists}{view}")));
         }
         for table in self.tables.borrow().iter().rev() {
             let _ = self
@@ -401,6 +421,17 @@ impl Server {
                     &session,
                     "select sys_context('userenv', 'current_schema') from dual",
                 )),
+            ),
+            // Db2's JCC reports no catalog, and the schema is the session's
+            // `CURRENT SCHEMA` — the connecting user's name until a
+            // `SET SCHEMA` moves it.
+            Product::Db2 => (
+                None,
+                Some(
+                    scalar(&session, "values current schema")
+                        .trim_end()
+                        .to_string(),
+                ),
             ),
         };
         Some(Server {
@@ -676,6 +707,10 @@ impl Server {
                 "select count(*) from user_constraints \
                  where constraint_type = 'C' and constraint_name = '{name}'"
             ),
+            // Nor has Db2: its catalog views are `SYSCAT`'s.
+            Product::Db2 => {
+                format!("select count(*) from syscat.checks where constname = '{name}'")
+            }
             _ => format!(
                 "select count(*) from information_schema.check_constraints \
                  where constraint_name = '{name}'"
@@ -838,6 +873,12 @@ fn oracle_creates_a_table_with_its_keys_and_references() {
     create_with_constraints(&server);
 }
 
+#[test]
+fn db2_creates_a_table_with_its_keys_and_references() {
+    let server = server!(Product::Db2);
+    create_with_constraints(&server);
+}
+
 /// `plan_create` with every clause it can write, read back out of the
 /// catalog.
 ///
@@ -897,7 +938,7 @@ fn create_with_constraints(server: &Server) {
             // PostgreSQL, SQL Server and Oracle resolve the omitted list to the
             // parent's own key, which is the form that stays correct when that
             // key is later re-ordered.
-            Product::Postgres | Product::MsSql | Product::Oracle => {
+            Product::Postgres | Product::MsSql | Product::Oracle | Product::Db2 => {
                 TableConstraint::foreign_key(["parent_id"], [parent.as_str()])
             }
             // MySQL and MariaDB resolve nothing, so `plan_create` refuses the
@@ -943,13 +984,15 @@ fn create_with_constraints(server: &Server) {
         // of it is a name the user typed, which is why §7.10 has the structure
         // pane read a constraint's name out of the catalog before offering to
         // drop it.
-        Product::Postgres | Product::MsSql | Product::Oracle => {
+        Product::Postgres | Product::MsSql | Product::Oracle | Product::Db2 => {
             assert_eq!(named.as_deref(), Some(parent_pk.as_str()));
             let invented = invented.expect("the server named the unnamed key");
             let looks_generated = match server.product {
                 Product::Postgres => invented == format!("{child}_pkey"),
                 // `PK__rb_child__<16 hex digits>`, truncating the table name.
                 Product::MsSql => invented.starts_with("PK__"),
+                // `SQL<timestamp>`, the moment the key was created.
+                Product::Db2 => invented.starts_with("SQL"),
                 // `SYS_C0011234`, naming nothing at all.
                 _ => invented.starts_with("SYS_C"),
             };
@@ -1151,6 +1194,12 @@ fn oracle_adds_drops_and_renames_a_column() {
     add_drop_rename(&server);
 }
 
+#[test]
+fn db2_adds_drops_and_renames_a_column() {
+    let server = server!(Product::Db2);
+    add_drop_rename(&server);
+}
+
 /// One batch that adds, renames and drops, in the order §7.10 fixes.
 fn add_drop_rename(server: &Server) {
     let t = server.table("cols");
@@ -1182,14 +1231,14 @@ fn add_drop_rename(server: &Server) {
     // the drop last, and the rename in between names the column the way the
     // catalog still holds it.
     let expected = match server.product {
-        Product::Postgres => [
+        Product::Postgres => vec![
             format!("ALTER TABLE {t} ADD COLUMN added varchar(20) NOT NULL DEFAULT 'z'"),
             format!("ALTER TABLE {t} RENAME COLUMN old_name TO new_name"),
             format!("ALTER TABLE {t} DROP COLUMN gone"),
         ],
         // `CHANGE COLUMN old new <definition>`, the form that works before
         // MySQL 8.0 as well as after — which is why it restates the type.
-        Product::MySql | Product::MariaDb => [
+        Product::MySql | Product::MariaDb => vec![
             format!("ALTER TABLE {t} ADD COLUMN added varchar(20) NOT NULL DEFAULT 'z'"),
             format!("ALTER TABLE {t} CHANGE COLUMN old_name new_name integer"),
             format!("ALTER TABLE {t} DROP COLUMN gone"),
@@ -1197,7 +1246,7 @@ fn add_drop_rename(server: &Server) {
         // A bare `ADD`, and a rename that is not `ALTER TABLE` at all: SQL
         // Server's is a stored procedure taking the old column qualified by its
         // table and the new one bare, as a name rather than an identifier.
-        Product::MsSql => [
+        Product::MsSql => vec![
             format!("ALTER TABLE {t} ADD added varchar(20) NOT NULL DEFAULT 'z'"),
             format!("EXEC sp_rename '{t}.old_name', 'new_name', 'COLUMN'"),
             format!("ALTER TABLE {t} DROP COLUMN gone"),
@@ -1206,10 +1255,19 @@ fn add_drop_rename(server: &Server) {
         // grammar puts it in the datatype clause — and every column quoted,
         // because a lower-case name reaching this server unquoted would be
         // stored shouted.
-        Product::Oracle => [
+        Product::Oracle => vec![
             format!(r#"ALTER TABLE {t} ADD "added" varchar(20) DEFAULT 'z' NOT NULL"#),
             format!(r#"ALTER TABLE {t} RENAME COLUMN "old_name" TO "new_name""#),
             format!(r#"ALTER TABLE {t} DROP COLUMN "gone""#),
+        ],
+        // Db2 folds up as Oracle does, so every column is quoted, but it takes
+        // the standard `ADD COLUMN` and the default in either place. The drop
+        // leaves the table in reorg pending, and the batch says so.
+        Product::Db2 => vec![
+            format!(r#"ALTER TABLE {t} ADD COLUMN "added" varchar(20) NOT NULL DEFAULT 'z'"#),
+            format!(r#"ALTER TABLE {t} RENAME COLUMN "old_name" TO "new_name""#),
+            format!(r#"ALTER TABLE {t} DROP COLUMN "gone""#),
+            format!("CALL SYSPROC.ADMIN_CMD('REORG TABLE {t}')"),
         ],
     };
     assert_eq!(batch, expected, "{:?}", server.product);
@@ -1250,6 +1308,12 @@ fn mariadb_changes_a_type_a_nullability_and_a_default() {
 #[test]
 fn oracle_changes_a_type_a_nullability_and_a_default() {
     let server = server!(Product::Oracle);
+    attribute_changes(&server);
+}
+
+#[test]
+fn db2_changes_a_type_a_nullability_and_a_default() {
+    let server = server!(Product::Db2);
     attribute_changes(&server);
 }
 
@@ -1341,6 +1405,16 @@ fn attribute_changes(server: &Server) {
             format!(r#"ALTER TABLE {t} MODIFY ("loses_default" DEFAULT NULL)"#),
             format!(r#"ALTER TABLE {t} MODIFY ("widens" {wider})"#),
         ],
+        // The standard clauses, quoted because Db2 folds up, and the `REORG`
+        // that three of the five changes leave the table waiting for.
+        Product::Db2 => vec![
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "to_not_null" SET NOT NULL"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "to_nullable" DROP NOT NULL"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "gains_default" SET DEFAULT 'd'"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "loses_default" DROP DEFAULT"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "widens" SET DATA TYPE {wider}"#),
+            format!("CALL SYSPROC.ADMIN_CMD('REORG TABLE {t}')"),
+        ],
         Product::MsSql => unreachable!("SQL Server cannot express half of this batch"),
     };
     assert_eq!(batch, expected, "{:?}", server.product);
@@ -1366,6 +1440,267 @@ fn attribute_changes(server: &Server) {
         "the default was dropped, not set to something: {loses:?}"
     );
     assert_eq!(server.column(&t, "widens").type_name, wider_catalog);
+}
+
+// --- Db2, whose ALTER leaves work behind ----------------------------------
+
+/// A changed type and a changed nullability leave a Db2 table in *reorg
+/// pending*, and the `REORG` the generator ends the batch with is what clears
+/// it.
+///
+/// Both halves are sent, the batch without its last statement first: the
+/// catalog already shows the new column, reads still work, and an `INSERT` is
+/// refused with SQLSTATE 57007 — SQL0668N reason code 7. Then the `REORG`, and
+/// the same `INSERT` goes through. The second table carries a name only a
+/// quoted identifier can hold, because the `REORG` names its table inside a
+/// string literal handed to `SYSPROC.ADMIN_CMD`, and the quotes have to survive
+/// the trip.
+#[test]
+fn db2_reorganizes_after_a_change_that_leaves_the_table_pending() {
+    let server = server!(Product::Db2);
+    let t = server.table("reorg");
+    let mut create = TableCreate::new([t.as_str()]);
+    create
+        .columns
+        .push(ColumnDef::new("id", "integer").with_not_null(true));
+    create.columns.push(ColumnDef::new("qty", "integer"));
+    server.run(&plan_create(&create, server.dialect()).expect("plans"));
+    let (id, qty) = (server.col("id"), server.col("qty"));
+    server.exec(&format!("insert into {t} ({id}, {qty}) values (1, 1)"));
+
+    let mut alter = TableAlter::new([t.as_str()]);
+    alter.changes.push(ColumnChange {
+        from: ColumnDef::new("qty", "integer"),
+        to: ColumnDef::new("qty", "bigint").with_not_null(true),
+    });
+    let batch = plan_alter(&alter, server.dialect()).expect("plans");
+    let (reorg, changes) = batch.split_last().expect("a batch");
+    assert_eq!(reorg, &format!("CALL SYSPROC.ADMIN_CMD('REORG TABLE {t}')"));
+
+    server.run(changes);
+    let qty_column = server.column(&t, "qty");
+    assert_eq!(qty_column.type_name, "bigint");
+    assert_eq!(qty_column.nullable, Some(false));
+    let insert = format!("insert into {t} ({id}, {qty}) values (2, 2)");
+    let refused = server
+        .session
+        .execute(&StatementSpec::new(insert.clone()))
+        .expect_err("a table in reorg pending refuses a write");
+    assert!(refused.to_string().contains("57007"), "{refused}");
+    assert_eq!(
+        scalar(&server.session, &format!("select count(*) from {t}")),
+        "1",
+        "and still answers a read"
+    );
+
+    server.run(std::slice::from_ref(reorg));
+    server.exec(&insert);
+    assert_eq!(
+        scalar(&server.session, &format!("select count(*) from {t}")),
+        "2"
+    );
+
+    // A lower-case name, qualified by the schema: quoted inside the literal.
+    let lower = server.fresh("reorg").to_lowercase();
+    server.also_drop(&format!("\"{lower}\""));
+    let schema = server.schema.clone().expect("Db2 reports a schema");
+    let mut create = TableCreate::new([schema.as_str(), lower.as_str()]);
+    create
+        .columns
+        .push(ColumnDef::new("id", "integer").with_not_null(true));
+    create.columns.push(ColumnDef::new("gone", "integer"));
+    server.run(&plan_create(&create, server.dialect()).expect("plans"));
+    let mut alter = TableAlter::new([schema.as_str(), lower.as_str()]);
+    alter.drops.push("gone".to_string());
+    let batch = plan_alter(&alter, server.dialect()).expect("plans");
+    assert_eq!(
+        batch.last().map(String::as_str),
+        Some(format!("CALL SYSPROC.ADMIN_CMD('REORG TABLE {schema}.\"{lower}\"')").as_str())
+    );
+    server.run(&batch);
+    server.exec(&format!(
+        r#"insert into {schema}."{lower}" ("id") values (1)"#
+    ));
+}
+
+/// A change that only touches the catalog — an added column, a default, a
+/// rename — ends with no `REORG`: Db2 takes it without rewriting a row, and a
+/// `REORG` of a large table is not free.
+#[test]
+fn db2_needs_no_reorg_for_a_catalog_only_change() {
+    let server = server!(Product::Db2);
+    let t = server.table("noreorg");
+    let mut create = TableCreate::new([t.as_str()]);
+    create
+        .columns
+        .push(ColumnDef::new("id", "integer").with_not_null(true));
+    create
+        .columns
+        .push(ColumnDef::new("note", "varchar(10)").with_default("'a'"));
+    server.run(&plan_create(&create, server.dialect()).expect("plans"));
+
+    let mut alter = TableAlter::new([t.as_str()]);
+    alter
+        .adds
+        .push(ColumnDef::new("added", "integer").with_default("0"));
+    alter.changes.push(ColumnChange {
+        from: ColumnDef::new("note", "varchar(10)").with_default("'a'"),
+        to: ColumnDef::new("remark", "varchar(10)").with_default("'b'"),
+    });
+    let batch = plan_alter(&alter, server.dialect()).expect("plans");
+    assert!(
+        batch.iter().all(|sql| !sql.contains("ADMIN_CMD")),
+        "{batch:#?}"
+    );
+    server.run(&batch);
+    server.exec(&format!(
+        "insert into {t} ({}) values (1)",
+        server.col("id")
+    ));
+    assert_eq!(
+        server.column_names(&t),
+        ["id", "remark", "added"],
+        "a rename keeps its place and an add goes to the end"
+    );
+}
+
+/// The page clause the grid and the query pane append on Db2, against a real
+/// server: `OFFSET … ROWS FETCH FIRST … ROWS ONLY` after an `ORDER BY`.
+#[test]
+fn db2_reads_a_page_with_offset_and_fetch_first() {
+    let server = server!(Product::Db2);
+    let t = metadata_fixture(&server, "page");
+    let (id, note) = (server.col("id"), server.col("note"));
+    for n in 1..=5 {
+        server.exec(&format!(
+            "insert into {t} ({id}, {note}) values ({n}, 'n{n}')"
+        ));
+    }
+    let clause = server.dialect().page_clause(2, 2).expect("Db2 pages");
+    let page = fetch(
+        &server.session,
+        &format!("select {id}, {note} from {t} order by {id} {clause}"),
+    );
+    assert_eq!(page.rows(), 2);
+    assert_eq!(text(&page, 0, 0).as_deref(), Some("3"));
+    assert_eq!(text(&page, 1, 1).as_deref(), Some("n4"));
+}
+
+/// A grid row with every cell left unset: Db2 has no `DEFAULT VALUES`, and one
+/// column set to `DEFAULT` is the row of defaults it does take.
+#[test]
+fn db2_inserts_a_row_of_nothing_but_defaults() {
+    let server = server!(Product::Db2);
+    let t = server.table("defaults");
+    server.exec(&format!(
+        "create table {t} (id int not null generated always as identity primary key, \
+         note varchar(10) default 'x', qty int)"
+    ));
+    let mut edits = TableEdits::new([t.as_str()], ["ID", "NOTE", "QTY"]).with_key([0]);
+    edits.inserts.push(vec![
+        InsertCell::Unset,
+        InsertCell::Unset,
+        InsertCell::Unset,
+    ]);
+    let batch = plan_edits(&edits, server.dialect()).expect("plans");
+    assert_eq!(
+        batch[0].sql,
+        format!("INSERT INTO {t} (ID) VALUES (DEFAULT)")
+    );
+    assert!(batch[0].values.is_empty());
+    server.exec(&batch[0].sql);
+    let row = fetch(&server.session, &format!("select id, note, qty from {t}"));
+    assert_eq!(row.rows(), 1);
+    assert_eq!(text(&row, 0, 0).as_deref(), Some("1"));
+    assert_eq!(text(&row, 0, 1).as_deref(), Some("x"));
+    assert_eq!(text(&row, 0, 2), None);
+}
+
+/// A refused statement says what was wrong in words, not only in codes.
+///
+/// IBM's JCC answers `getMessage` with `SQLCODE=-204, SQLSTATE=42704,
+/// SQLERRMC=...` and nothing a person reads, unless the connection asks it to
+/// fetch the server's own text; the bridge asks on every JCC session that has
+/// not said otherwise.
+#[test]
+fn db2_errors_carry_the_servers_own_message() {
+    let server = server!(Product::Db2);
+    let error = server
+        .session
+        .execute(&StatementSpec::new("select * from rb_no_such_table"))
+        .expect_err("there is no such table");
+    let text = error.to_string();
+    assert!(text.contains("42704"), "{text}");
+    assert!(text.contains("is an undefined name"), "{text}");
+}
+
+/// A transfer into a Db2 table in upsert mode: the bridge's `MERGE` over a
+/// one-row `VALUES` of bind parameters, which was written from Db2's manual
+/// and had never met a server. Row 1 is updated, row 2 inserted, and row 9,
+/// which the source says nothing about, is left alone.
+#[test]
+fn db2_upserts_through_a_merge() {
+    let server = server!(Product::Db2);
+    let url = std::env::var(Product::Db2.url_var()).expect("the server is up");
+    let target = connect(Product::Db2, &url);
+    let (source_table, target_table) = (server.table("upsrc"), server.table("updst"));
+    for table in [&source_table, &target_table] {
+        server.exec(&format!(
+            "create table {table} (id int not null primary key, note varchar(20), \
+             amount decimal(10, 2), day date)"
+        ));
+    }
+    server.exec(&format!(
+        "insert into {source_table} values (1, 'updated', 1.50, '2026-10-28'), \
+         (2, 'inserted', null, null)"
+    ));
+    server.exec(&format!(
+        "insert into {target_table} values (1, 'old', 9.99, '2000-01-01'), \
+         (9, 'untouched', 0, null)"
+    ));
+
+    let schema = server.schema.clone().expect("Db2 reports a schema");
+    let mut job = server
+        .session
+        .start_transfer(
+            &TransferSpec::new(
+                format!("select id, note, amount, day from {source_table}"),
+                target.handle(),
+                ObjectRef::new(target_table.clone()).with_schema(schema),
+            )
+            .with_mode(TransferMode::Upsert),
+        )
+        .expect("Db2 has a MERGE and the target has a primary key");
+    let end = (0..1200)
+        .find_map(|_| {
+            let progress = job.poll().expect("the job answers a poll");
+            if progress.is_terminal() {
+                return Some(progress);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            None
+        })
+        .expect("the job reaches a terminal state");
+    assert_eq!(end.state, JobState::Done, "{end:?}");
+    assert_eq!((end.rows_done, end.rows_skipped), (2, 0), "{end:?}");
+
+    let rows = fetch(
+        &server.session,
+        &format!("select id, note, amount, day from {target_table} order by id"),
+    );
+    let row = |n: usize| (0..4).map(|c| text(&rows, n, c)).collect::<Vec<_>>();
+    assert_eq!(rows.rows(), 3);
+    assert_eq!(row(0)[..2], [Some("1".into()), Some("updated".into())]);
+    assert!(
+        row(0)[2]
+            .as_deref()
+            .is_some_and(|amount| amount.contains("1.5")),
+        "{:?}",
+        row(0)
+    );
+    assert_eq!(row(1)[..2], [Some("2".into()), Some("inserted".into())]);
+    assert_eq!(row(1)[2..], [None, None]);
+    assert_eq!(row(2)[..2], [Some("9".into()), Some("untouched".into())]);
 }
 
 // --- SQL Server, whose defaults are constraints ----------------------------
@@ -1812,6 +2147,12 @@ fn oracle_drops_a_constraint_of_every_kind() {
     drop_every_constraint(&server);
 }
 
+#[test]
+fn db2_drops_a_constraint_of_every_kind() {
+    let server = server!(Product::Db2);
+    drop_every_constraint(&server);
+}
+
 /// The four kinds, dropped in one batch.
 ///
 /// This is the test MySQL was in scope for. §7.10 claims that everywhere but
@@ -1849,7 +2190,11 @@ fn drop_every_constraint(server: &Server) {
         .columns
         .push(ColumnDef::new("id", "integer").with_not_null(true));
     create.columns.push(ColumnDef::new("parent_id", "integer"));
-    create.columns.push(ColumnDef::new("code", "varchar(10)"));
+    // Db2 refuses a unique constraint over a column that admits NULL
+    // (SQL0542N), where the others let it hold any number of them.
+    create
+        .columns
+        .push(ColumnDef::new("code", "varchar(10)").with_not_null(server.product == Product::Db2));
     create
         .columns
         .push(ColumnDef::new("qty", "integer").with_not_null(true));
@@ -1900,7 +2245,7 @@ fn drop_every_constraint(server: &Server) {
     let expected = match server.product {
         // One spelling, whatever the kind — the kind is carried only because
         // MySQL needs it.
-        Product::Postgres | Product::MsSql | Product::Oracle => vec![
+        Product::Postgres | Product::MsSql | Product::Oracle | Product::Db2 => vec![
             format!("ALTER TABLE {child} DROP CONSTRAINT {fk}"),
             format!("ALTER TABLE {child} DROP CONSTRAINT {pk}"),
             format!("ALTER TABLE {child} DROP CONSTRAINT {uq}"),
@@ -1984,6 +2329,12 @@ fn oracle_renames_a_table() {
     rename_table(&server);
 }
 
+#[test]
+fn db2_renames_a_table() {
+    let server = server!(Product::Db2);
+    rename_table(&server);
+}
+
 /// `ALTER TABLE t RENAME TO n` — the same statement on four of the five, and
 /// `sp_rename` on the fifth. Whichever it is, §7.10 puts it last in a batch so
 /// that everything before it names the table the way the catalog still holds
@@ -2010,6 +2361,8 @@ fn rename_table(server: &Server) {
         // Not `ALTER TABLE` at all: the old name is a string literal and the
         // new one is a bare name, so neither goes through `quote_ident`.
         Product::MsSql => format!("EXEC sp_rename '{before}', '{after}'"),
+        // Db2's `ALTER TABLE` has no rename clause; the statement is its own.
+        Product::Db2 => format!("RENAME TABLE {before} TO {after}"),
         _ => format!("ALTER TABLE {before} RENAME TO {after}"),
     };
     assert_eq!(batch, [expected]);
@@ -2403,6 +2756,69 @@ fn oracle_reports_no_source_table_at_all() {
     assert_eq!(sources[0].2, "", "ojdbc11 started naming a table");
 }
 
+/// IBM's JCC is the driver here that answers the most: the real table under
+/// an alias, and the schema. A computed column names no table, as everywhere.
+///
+/// Two of the answers arrive as the bridge reworked them, and both for the
+/// sake of §7.9's gate, which builds the `UPDATE` it offers from these parts
+/// and looks the table's key up with them. JCC reports an implicitly created
+/// schema blank-padded to eight characters — `"RUDBMAN "` — which the bridge
+/// trims; and it reports the database as every column's catalog, while its
+/// own metadata calls, handed that name, find nothing, so the bridge drops it.
+/// So the gate opens on Db2, and the key lookup it then makes finds the key:
+/// the result is editable.
+#[test]
+fn db2_reports_a_source_table_the_edit_gate_can_use() {
+    let server = server!(Product::Db2);
+    let t = metadata_fixture(&server, "meta");
+    let (id, note) = (server.col("id"), server.col("note"));
+    let schema = server.schema.clone().expect("Db2 reports a schema");
+
+    let sources = column_sources(
+        &server.session,
+        &format!("select {id}, {note} as label, {id} + 1 as computed from {t}"),
+    );
+    assert_eq!(
+        sources,
+        [
+            (
+                "id".into(),
+                "id".into(),
+                t.clone(),
+                schema.clone(),
+                String::new()
+            ),
+            (
+                "note".into(),
+                "LABEL".into(),
+                t.clone(),
+                schema.clone(),
+                String::new()
+            ),
+            (
+                "COMPUTED".into(),
+                "COMPUTED".into(),
+                String::new(),
+                String::new(),
+                String::new()
+            ),
+        ],
+        "JCC's answers changed"
+    );
+    let sources = column_sources(&server.session, &format!("select b.{id} from {t} b"));
+    assert_eq!(sources[0].2, t, "JCC reports the table, not the alias");
+
+    let mut request = DescribeRequest::new("primary_keys").with_table(&t);
+    request.schema = Some(schema);
+    let keys = server
+        .session
+        .describe(&request)
+        .expect("the key lookup the gate makes")
+        .items;
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert_eq!(string(&keys[0], "column"), "id");
+}
+
 // --- comments, and the `remarks` they have to come back as -----------------
 //
 // A comment is the one piece of a table's documentation that lives in the
@@ -2491,6 +2907,13 @@ fn oracle_comments_come_back_without_remarks_reporting() {
     assert_comments(&server, &t);
 }
 
+#[test]
+fn db2_comments_come_back_as_remarks() {
+    let server = server!(Product::Db2);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+}
+
 /// A two-column table carrying a table comment and one column comment, written
 /// the way this product spells them.
 ///
@@ -2520,10 +2943,11 @@ fn commented_table(server: &Server) -> String {
             server.run(&plan_create(&create, server.dialect()).expect("plans"));
 
             match server.product {
-                // The SQL-standard spelling, which PostgreSQL and Oracle both
-                // take. The column has to be named the way it was stored, so it
-                // goes through `Server::col` — quoted on Oracle, bare elsewhere.
-                Product::Postgres | Product::Oracle => {
+                // The SQL-standard spelling, which PostgreSQL, Oracle and Db2
+                // all take. The column has to be named the way it was stored,
+                // so it goes through `Server::col` — quoted where the product
+                // folds up, bare elsewhere.
+                Product::Postgres | Product::Oracle | Product::Db2 => {
                     server.exec(&format!("comment on table {t} is '{TABLE_COMMENT}'"));
                     server.exec(&format!(
                         "comment on column {t}.{} is '{COLUMN_COMMENT}'",
@@ -2694,12 +3118,14 @@ fn a_server_cursor_request_is_a_plain_read_everywhere_else() {
         Product::MySql,
         Product::MariaDb,
         Product::Oracle,
+        Product::Db2,
     ] {
         let Some(server) = Server::open(product) else {
             continue;
         };
         let sql = match product {
             Product::Oracle => "select 1 from dual",
+            Product::Db2 => "select 1 from sysibm.sysdummy1",
             _ => "select 1",
         };
         let batch = server
@@ -2753,6 +3179,11 @@ fn mssql_lists_each_routine_once_and_quotes_its_ddl() {
 #[test]
 fn oracle_lists_each_routine_once_and_quotes_its_ddl() {
     routines(&server!(Product::Oracle));
+}
+
+#[test]
+fn db2_lists_each_routine_once_and_quotes_its_ddl() {
+    routines(&server!(Product::Db2));
 }
 
 /// One function and one procedure: each listed under its own kind only, and
@@ -2813,6 +3244,22 @@ fn routines(server: &Server) {
             format!(
                 "create or replace procedure {procedure}(who in varchar2) is \
                  begin null; end;"
+            ),
+            format!("drop function {function}"),
+            format!("drop procedure {procedure}"),
+        ),
+        // SQL PL: a compound body with a declaration and a branch in it, so
+        // that the layout has more than a header to work on.
+        Product::Db2 => (
+            format!(
+                "create or replace function {function}(a int, b int) returns int \
+                 language sql deterministic no external action \
+                 begin declare x int default 0; if a > b then set x = a; end if; \
+                 return a + b + x; end"
+            ),
+            format!(
+                "create or replace procedure {procedure}(in who varchar(20), out msg varchar(100)) \
+                 language sql begin set msg = 'hi ' || who; end"
             ),
             format!("drop function {function}"),
             format!("drop procedure {procedure}"),
@@ -3007,6 +3454,11 @@ fn oracle_lists_and_quotes_every_kind_of_object() {
     every_kind(&server!(Product::Oracle));
 }
 
+#[test]
+fn db2_lists_and_quotes_every_kind_of_object() {
+    every_kind(&server!(Product::Db2));
+}
+
 /// A table, a view, a sequence and a trigger, each listed by the request the
 /// explorer's folder sends and each answered with its own `CREATE` — the
 /// procedure and the function are [`routines`]'.
@@ -3025,8 +3477,10 @@ fn every_kind(server: &Server) {
     let sequence = server.fresh("objseq");
     let trigger = server.fresh("objtrg");
     let note = server.col("note");
+    // `not null` spelled out: Db2 refuses a key column that is not, where the
+    // others imply it.
     server.exec(&format!(
-        "create table {table} (id int primary key, {note} varchar(20))"
+        "create table {table} (id int not null primary key, {note} varchar(20))"
     ));
     server.exec(&format!(
         "create view {view} as select id from {table} where id > 0"
@@ -3070,6 +3524,10 @@ fn every_kind(server: &Server) {
         Product::Oracle => format!(
             "create or replace trigger {trigger} before insert on {table} for each row \
              begin :new.{note} := upper(:new.{note}); end;"
+        ),
+        Product::Db2 => format!(
+            "create or replace trigger {trigger} no cascade before insert on {table} \
+             referencing new as n for each row set n.{note} = upper(n.{note})"
         ),
     };
     let has_trigger = match server
