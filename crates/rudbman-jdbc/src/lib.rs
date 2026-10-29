@@ -50,7 +50,7 @@
 //!   caches the single `jmethodID` the whole protocol goes through. It also
 //!   carries [`Jvm::probe_drivers`], the one question that has to be answerable
 //!   before any connection exists: what driver does this JAR contain?
-//! * [`Session`] owns a connection and the worker thread that serialises every
+//! * [`Session`] owns a connection and the worker thread that serializes every
 //!   command for it. [`Canceller`] is the one path that does not queue.
 //! * [`Cursor`] executes and fetches; [`Batch`] decodes what comes back.
 //! * [`Job`] is the data plane: a script extraction ([`ExtractSpec`]) whose rows
@@ -84,7 +84,7 @@
 //!
 //! # Building the bridge JAR
 //!
-//! The Java side is a separate artefact:
+//! The Java side is a separate artifact:
 //!
 //! ```text
 //! cd bridge && ./gradlew jar
@@ -110,13 +110,13 @@ pub use jvm::{BRIDGE_JAR_ENV, JAVA_HOME_ENV, Jvm, JvmConfig, default_bridge_jar}
 pub use lob::LobFile;
 pub use protocol::Op;
 pub use response::{
-    Cancelled, ColumnInfo, DdlResult, DescribeResult, DriverProbe, ExecuteResult, JobProgress,
+    Canceled, ColumnInfo, DdlResult, DescribeResult, DriverProbe, ExecuteResult, JobProgress,
     JobState, Ping, SQL_TYPE_REAL, SessionInfo,
 };
 pub use session::{Canceller, Cursor, Job, Session};
 pub use spec::{
     BackupDataOptions, BackupSpec, ColumnMapping, Compression, ConnectionSpec, Constraints,
     DataMode, DataOptions, DdlOptions, DdlSource, DescribeRequest, ExtractSpec, KeepAliveSpec,
-    Newline, ObjectRef, OnError, OutputSpec, Param, ProbeRequest, ScopeRef, StatementSpec,
-    TransferMode, TransferSpec,
+    Newline, ObjectKind, ObjectRef, OnError, OutputSpec, Param, ProbeRequest, ScopeRef,
+    StatementSpec, TransferMode, TransferSpec,
 };

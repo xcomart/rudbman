@@ -126,7 +126,7 @@ impl fmt::Display for BridgeErrorKind {
 
 /// The ERROR envelope of architecture document §4.5, as the bridge sends it.
 ///
-/// Every member is always present on the wire — the bridge serialises nulls
+/// Every member is always present on the wire — the bridge serializes nulls
 /// explicitly — so no field here needs a serde default.
 #[derive(Clone, Deserialize)]
 pub struct BridgeError {
@@ -182,7 +182,7 @@ impl BridgeError {
         self.kind == BridgeErrorKind::Protocol && self.message.contains("not implemented")
     }
 
-    /// Whether the bridge did not recognise the operation code at all.
+    /// Whether the bridge did not recognize the operation code at all.
     ///
     /// A build mismatch between this crate and the bridge JAR.
     pub fn is_unknown_operation(&self) -> bool {
@@ -270,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognised_kind_deserialises_instead_of_failing() {
+    fn an_unrecognized_kind_deserializes_instead_of_failing() {
         let error: BridgeError = serde_json::from_str(
             r#"{"kind":"quantum","sql_state":null,"vendor_code":0,
                 "message":"m","causes":[],"stack":null}"#,

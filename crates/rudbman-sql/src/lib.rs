@@ -99,7 +99,7 @@
 //!
 //! * **Oracle PL/SQL blocks and MySQL `DELIMITER`** are not understood by
 //!   [`split_statements`]. A `BEGIN ... END;` block splits into pieces, the `/`
-//!   terminator means nothing, and `DELIMITER //` is not honoured. See the
+//!   terminator means nothing, and `DELIMITER //` is not honored. See the
 //!   [`mod@statement`] module documentation for why a half-working version would
 //!   be worse, and when the question gets answered.
 //! * **Oracle's `q'[...]'` quote operator** is lexed as the identifier `q`
@@ -110,7 +110,7 @@
 //!   a color would change.
 //! * **Read classification is conservative, not an authorization boundary.**
 //!   Vendor-specific executable comments are unknown, and a `SELECT` that calls
-//!   a side-effecting user function cannot be recognised without server help.
+//!   a side-effecting user function cannot be recognized without server help.
 //! * **A word is a function when `(` follows it** on the same line, which calls
 //!   `t (x)` in a join a function. Context enough to do better is a parser.
 //!
@@ -119,7 +119,10 @@
 //! * [`mod@dialect`] — [`Dialect`], [`DialectId`], and the [`Syntax`] record of
 //!   what the vendors disagree about.
 //! * [`mod@format`] — [`format_sql`], the editor's "Format SQL": whitespace
-//!   between tokens re-laid out, every literal and comment copied unchanged.
+//!   between tokens re-laid out, every literal and comment copied unchanged;
+//!   and [`format_ddl`], the same terms applied to the `CREATE` text the object
+//!   panel shows — a table's columns one to a line, a routine's body indented
+//!   by block.
 //! * [`mod@ident`] — [`Dialect::quote_ident`] and [`Dialect::qualify`], for the
 //!   callers that write SQL rather than read it.
 //! * [`mod@ddl`] — [`plan_alter`], [`TableAlter`], [`ColumnDef`],
@@ -162,7 +165,7 @@ pub use dialect::{Dialect, DialectId, Syntax};
 pub use dml::{
     DmlError, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
-pub use format::format_sql;
+pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
 pub use state::LineStateCodec;
 pub use statement::{StatementSpan, split_statements, statement_at};

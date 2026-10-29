@@ -29,8 +29,9 @@
 //! (appendix C), MySQL 8.4 "Keywords and Reserved Words", Oracle Database SQL
 //! Language Reference appendix D plus the PL/SQL reserved words, the SQL Server
 //! "Reserved Keywords (Transact-SQL)" page plus the table hints of
-//! `WITH (...)`, the SQLite "SQL Keywords" page, and H2's `Keywords / Reserved
-//! Words`. They are trimmed to what a person actually types: a word nobody has
+//! `WITH (...)`, Db2's "Reserved schema names and reserved words" plus the SQL
+//! PL control statements, the SQLite "SQL Keywords" page, and H2's
+//! `Keywords / Reserved Words`. They are trimmed to what a person actually types: a word nobody has
 //! written since SQL-92 costs a comparison on every identifier in the buffer.
 
 use std::cmp::Ordering;
@@ -538,6 +539,79 @@ const MSSQL_TYPES: &[&str] = &[
     "XML",
 ];
 
+/// Db2 keywords, SQL and SQL PL together.
+///
+/// The SQL PL words (`ELSEIF`, `HANDLER`, `LEAVE`, `SIGNAL`) are here for the
+/// reason Oracle's PL/SQL words are: a procedure body is read in the editor
+/// even though the splitter does not understand its blocks. `REORG` and
+/// `RUNSTATS` are commands rather than SQL, and are here because a Db2 user
+/// sends them through `SYSPROC.ADMIN_CMD` often enough to read them colored.
+const DB2_KEYWORDS: &[&str] = &[
+    "ATOMIC",
+    "CALL",
+    "CONCURRENT",
+    "CONTINUE",
+    "DATA",
+    "DETERMINISTIC",
+    "DO",
+    "EACH",
+    "ELSEIF",
+    "EXCLUSIVE",
+    "EXIT",
+    "GENERATED",
+    "GET",
+    "GLOBAL",
+    "HANDLER",
+    "IDENTITY",
+    "IMMEDIATE",
+    "INCLUDE",
+    "INOUT",
+    "ITERATE",
+    "LANGUAGE",
+    "LEAVE",
+    "LIMIT",
+    "LOCK",
+    "LOOP",
+    "MERGE",
+    "MODE",
+    "MODIFIES",
+    "NOCACHE",
+    "NOCYCLE",
+    "OFFSET",
+    "OPTIMIZE",
+    "ORGANIZE",
+    "OUT",
+    "READS",
+    "REFERENCING",
+    "REORG",
+    "REPEAT",
+    "RESIGNAL",
+    "RESULT",
+    "RETURNS",
+    "RUNSTATS",
+    "SIGNAL",
+    "SPECIFIC",
+    "SQL",
+    "SQLSTATE",
+    "STATEMENT",
+    "SYSIBM",
+    "TABLESPACE",
+    "UNTIL",
+    "VARIABLE",
+    "VOLATILE",
+];
+
+/// Db2 type names.
+const DB2_TYPES: &[&str] = &[
+    "DBCLOB",
+    "DECFLOAT",
+    "GRAPHIC",
+    "LONG",
+    "NCLOB",
+    "VARGRAPHIC",
+    "XML",
+];
+
 /// SQLite keywords.
 const SQLITE_KEYWORDS: &[&str] = &[
     "ABORT",
@@ -672,6 +746,11 @@ impl WordTables {
         keywords: MSSQL_KEYWORDS,
         types: MSSQL_TYPES,
     };
+    /// Db2.
+    pub(crate) const DB2: Self = Self {
+        keywords: DB2_KEYWORDS,
+        types: DB2_TYPES,
+    };
     /// SQLite.
     pub(crate) const SQLITE: Self = Self {
         keywords: SQLITE_KEYWORDS,
@@ -744,6 +823,8 @@ mod tests {
         ("ORACLE_TYPES", ORACLE_TYPES),
         ("MSSQL_KEYWORDS", MSSQL_KEYWORDS),
         ("MSSQL_TYPES", MSSQL_TYPES),
+        ("DB2_KEYWORDS", DB2_KEYWORDS),
+        ("DB2_TYPES", DB2_TYPES),
         ("SQLITE_KEYWORDS", SQLITE_KEYWORDS),
         ("SQLITE_TYPES", SQLITE_TYPES),
         ("H2_KEYWORDS", H2_KEYWORDS),

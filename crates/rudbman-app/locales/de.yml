@@ -46,9 +46,10 @@ tab:
   close: Verbindung schließen
   tip_list: Alle Verbindungen
   tip_new: "Neue Verbindung (%{shortcut})"
+  tip_pane_list: Alle Tabs
 
 welcome:
-  hint: Drücke %{shortcut}, um Verbindungen zu verwalten.
+  hint: Drücken Sie %{shortcut}, um Verbindungen zu verwalten.
   new_connection: Verbindungen verwalten…
   saved: Gespeicherte Verbindungen
 
@@ -60,7 +61,7 @@ empty:
 statusbar:
   no_connection: keine Verbindung
   idle: bereit
-  connecting: verbinde …
+  connecting: Verbindung wird hergestellt…
   connected: verbunden
   disconnected: getrennt
   failed: "fehlgeschlagen: %{error}"
@@ -87,9 +88,9 @@ settings:
     database: Datenbank
     jvm: Java-VM
 
-  ui_theme: Oberflächen-Thema
-  editor_theme: Editor-Thema
-  editor_follows_ui: Editor-Thema an das Oberflächen-Thema anpassen
+  ui_theme: Oberflächendesign
+  editor_theme: Editor-Design
+  editor_follows_ui: Editor-Design an das Oberflächendesign anpassen
   ui_font_size: Schriftgröße der Oberfläche
   editor_font: Editor-Schriftart
   editor_font_size: Schriftgröße im Editor
@@ -97,8 +98,8 @@ settings:
   editor_word_wrap: Lange Zeilen im Editor umbrechen
 
   opacity: Deckkraft
-  opacity_hint: "% — unter 100 scheint der Schreibtisch durch"
-  blur: Hintergrund hinter dem Fenster weichzeichnen
+  opacity_hint: "% — unter 100 scheint der Desktop durch"
+  blur: Desktop hinter dem Fenster weichzeichnen
   titlebar: Titelleiste
   titlebar_custom: Von rudbman gezeichnet
   titlebar_system: Vom System gezeichnet
@@ -125,30 +126,30 @@ settings:
     export: Exportieren…
     import_select: Importieren
     import_unreadable: "„%{file}“ konnte nicht gelesen werden: %{error}"
-    import_not_a_theme: "„%{file}“ ist ein Editor-Thema. Importieren Sie es unter „Editor-Thema“."
-    import_not_an_editor_theme: "„%{file}“ ist ein Oberflächen-Thema. Importieren Sie es unter „Oberflächen-Thema“."
+    import_not_a_theme: "„%{file}“ ist ein Editor-Design. Importieren Sie es unter „Editor-Design“."
+    import_not_an_editor_theme: "„%{file}“ ist ein Oberflächendesign. Importieren Sie es unter „Oberflächendesign“."
     import_bad_color: "„%{file}“ hat keine brauchbare Farbe für %{slot}."
     import_skipped: "%{count} Dateien wurden übersprungen."
     copy_name: "%{name} (Kopie)"
-    delete_theme_confirm: "Thema „%{name}“ löschen?"
-    delete_editor_theme_confirm: "Editor-Thema „%{name}“ löschen?"
+    delete_theme_confirm: "Design „%{name}“ löschen?"
+    delete_editor_theme_confirm: "Editor-Design „%{name}“ löschen?"
     write_failed: "Die Datei konnte nicht geschrieben werden: %{error}"
     delete_failed: "Die Datei konnte nicht entfernt werden: %{error}"
 
   editor:
-    theme_title: Oberflächen-Thema bearbeiten
-    editor_theme_title: Editor-Thema bearbeiten
+    theme_title: Oberflächendesign bearbeiten
+    editor_theme_title: Editor-Design bearbeiten
     name: Name
     dark: Dies ist eine dunkle Palette
-    invalid: Jede Farbe muss als #RRGGBB geschrieben werden.
-    grid_group: Ergebnisraster — ohne angegebene Farbe bleibt es aus der Datei heraus
+    invalid: "Jede Farbe muss als #RRGGBB geschrieben werden."
+    grid_group: Ergebnisraster — wird nur mit angegebener Farbe in die Datei geschrieben
     automatic: Automatisch
     automatic_slot: "%{name} (automatisch)"
 
     slot:
       background: Fenster
-      surface: Bereiche
-      surface_hover: Überfahren
+      surface: Flächen
+      surface_hover: Hover
       surface_active: Gedrückt
       border: Trennlinien
       text: Text
@@ -202,15 +203,15 @@ connect:
   driver: Treiber
   pick_driver: Treiber wählen
   manage_drivers: Treiber…
-  driver_has_no_jar: Dieser Treiber hat noch kein JAR. Unter „Treiber“ eines hinzufügen oder herunterladen.
+  driver_has_no_jar: Dieser Treiber hat noch kein JAR. Fügen Sie unter „Treiber“ eines hinzu oder laden Sie eines herunter.
 
   host: Host
   port: Port
   database: Datenbank
   url: URL
-  url_hint: Wird aus den Feldern darüber zusammengesetzt. Wer sie direkt bearbeitet, behält das Getippte.
+  url_hint: Wird aus den Feldern darüber zusammengesetzt. Wenn Sie die URL direkt bearbeiten, bleibt Ihre Eingabe erhalten.
   url_overridden: Von Hand eingetragen; die Felder darüber ändern sie nicht mehr.
-  url_reset: Neu aufbauen
+  url_reset: Neu zusammensetzen
 
   username: Benutzer
   password: Passwort
@@ -220,29 +221,29 @@ connect:
   add_prop: Eigenschaft hinzufügen
 
   section:
-    behaviour: Verhalten
+    behavior: Verhalten
     tunnel: SSH-Tunnel
 
   read_only: Verbindung schreibgeschützt öffnen
-  auto_commit: Jede Anweisung sofort bestätigen
+  auto_commit: Jede Anweisung beim Ausführen sofort festschreiben
   confirm_writes: Vor schreibenden Anweisungen nachfragen
   keep_alive: Verbindung mit einer regelmäßigen Abfrage offen halten
 
   tunnel_enabled: Über einen SSH-Bastion-Host verbinden
-  tunnel_host: Bastion
-  tunnel_user: Bastion-Benutzer
+  tunnel_host: Bastion-Host
+  tunnel_user: Benutzer des Bastion-Hosts
   tunnel_auth: Authentifizierung
   tunnel_auth_agent: SSH-Agent
   tunnel_auth_key: Privater Schlüssel
   tunnel_auth_password: Passwort
   tunnel_key: Schlüsseldatei
-  tunnel_password: Bastion-Passwort
+  tunnel_password: Passwort des Bastion-Hosts
   tunnel_passphrase: Passphrase des Schlüssels
   tunnel_remote: Datenbank
   tunnel_hint: Die Datenbank wird so benannt, wie der Bastion-Host sie sieht. rudbman bindet einen freien lokalen Port und verbindet den Treiber damit.
 
   test: Testen
-  testing: Verbinde …
+  testing: Verbindung wird hergestellt…
   test_ok: "Mit %{product} verbunden."
   test_ok_unnamed: Die Verbindung funktioniert.
   test_failed: "Verbindung nicht möglich: %{error}"
@@ -250,7 +251,7 @@ connect:
   connect: Verbinden
   saved: Gespeichert.
 
-  name_required: Der Verbindung einen Namen geben.
+  name_required: Geben Sie der Verbindung einen Namen.
   url_required: Die Verbindung hat keine URL.
   no_driver: "Keine Treiberdefinition namens „%{driver}“."
   load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden; bis die Datei repariert oder verschoben ist, kann nichts gespeichert oder gelöscht werden: %{error}"
@@ -265,7 +266,7 @@ connect:
 
   host_key_question: "%{host} hat einen unbekannten %{algorithm}-Schlüssel vorgelegt: %{fingerprint}"
   trust_host_key: Diesem Schlüssel vertrauen
-  host_key_trusted: Der Hostschlüssel wurde als vertrauenswürdig eingetragen. Bitte erneut verbinden.
+  host_key_trusted: Der Hostschlüssel wurde als vertrauenswürdig eingetragen. Versuchen Sie erneut, sich zu verbinden.
 
 # Die Treiberverwaltung.
 driver:
@@ -274,7 +275,7 @@ driver:
   class: Treiberklasse
   class_hint: Der voll qualifizierte Klassenname, wie ihn die Dokumentation des Treibers angibt — zum Beispiel org.postgresql.Driver.
   detect: Ermitteln
-  detecting: Die JAR-Dateien werden durchgesehen …
+  detecting: Die JAR-Dateien werden durchgesehen…
   probe_found: "%{class} gefunden."
   probe_choose: Dieser Treiber bringt mehrere Klassen mit. Wählen Sie die aus, mit der verbunden werden soll.
   probe_recommended: empfohlen
@@ -296,10 +297,10 @@ driver:
   no_jar_hint: Ein Treiber braucht mindestens ein JAR, bevor eine Verbindung ihn nutzen kann.
   jar_count: "%{count} JAR(s)"
   download: Herunterladen
-  downloading: "%{file} wird geladen …"
-  downloading_percent: "%{file} wird geladen — %{percent} %"
-  downloaded: "%{file} wurde geladen und hinzugefügt."
-  download_cancelled: Der Download wurde abgebrochen.
+  downloading: "%{file} wird heruntergeladen…"
+  downloading_percent: "%{file} wird heruntergeladen — %{percent} %"
+  downloaded: "%{file} wurde heruntergeladen und hinzugefügt."
+  download_canceled: Der Download wurde abgebrochen.
   bad_coordinate: "„%{coordinate}“ ist keine Koordinate der Form group:artifact:version."
   not_found: "Maven Central hat nichts unter %{url}."
   network_failed: "Der Download ist fehlgeschlagen: %{error}"
@@ -310,7 +311,7 @@ driver:
   new_name: Neuer Treiber
   delete: Löschen
   delete_confirm: "Die Treiberdefinition „%{name}“ löschen?"
-  none_selected: Einen Treiber auswählen oder einen neuen anlegen.
+  none_selected: Wählen Sie einen Treiber aus oder legen Sie einen neuen an.
   table_comments: Tabellenkommentare
   use_table_comments: Tabellenkommentare mit einer Abfrage lesen
   table_comments_hint: "Wird verwendet, wenn der Treiber keinen Kommentar meldet. ${catalog} und ${schema} werden eingesetzt; die Abfrage muss den Tabellennamen und den Kommentar liefern, in dieser Reihenfolge."
@@ -323,7 +324,7 @@ explorer:
   refresh: Aktualisieren
   title: Explorer
   empty: Öffnen Sie eine Verbindung, um sie zu durchsuchen.
-  loading: wird geladen …
+  loading: wird geladen…
   disconnected: Die Verbindung ist geschlossen.
   unknown_connection: "(Verbindung)"
   load_failed_unknown: Das konnte nicht geladen werden.
@@ -333,6 +334,7 @@ explorer:
   procedures: Prozeduren
   functions: Funktionen
   sequences: Sequenzen
+  triggers: Trigger
 
 # Die Detailansicht eines Objekts.
 detail:
@@ -342,12 +344,13 @@ detail:
   tab_ddl: DDL
   tab_properties: Eigenschaften
 
-  loading: wird geladen …
-  refresh: Neu laden
+  loading: wird geladen…
+  refresh: Aktualisieren
   copy: Kopieren
   empty: nichts vorhanden
   no_ddl: Für dieses Objekt gibt es keine CREATE-Anweisung zu zeigen.
-  ddl_reconstructed: Aus Metadaten rekonstruiert, als Anhaltspunkt. CHECK-Bedingungen, Trigger, Partitionierung und Sortierungen fehlen darin.
+  ddl_reconstructed: Aus Metadaten rekonstruiert, als Anhaltspunkt. CHECK-Constraints, Trigger, Partitionierung und Sortierungen fehlen darin.
+  ddl_reconstructed_object: Aus dem Katalog rekonstruiert, als Anhaltspunkt. Was der Katalog nicht festhält – etwa die Eigenschaften einer Routine – fehlt darin.
 
   column: Spalte
   type: Typ
@@ -378,6 +381,11 @@ detail:
   current_value: Aktuell
   cycle: Zyklus
   cache: Cache
+  trigger_table: Tabelle
+  timing: Zeitpunkt
+  events: Ereignisse
+  level: Ebene
+  status: Status
 
 query:
   result_log: "Ausführungsprotokoll"
@@ -385,31 +393,31 @@ query:
   total_execution_time: "Gesamte Ausführungszeit: %{seconds} s"
   rollback: "Rollback"
   rolling_back: "Rollback läuft…"
-  rolled_back: "Transaktion zurückgesetzt."
+  rolled_back: "Transaktion zurückgerollt."
   rollback_failed: "Rollback fehlgeschlagen: %{message}"
   rollback_auto: "Rollback (automatisches Commit ist aktiviert)"
   uncommitted_pending: "Diese Verbindung hat nicht festgeschriebene Änderungen aus einem Abfrageeditor. Führen Sie dort zuerst Commit oder Rollback aus."
   commit: "Commit"
   committing: "Commit läuft…"
-  committed: "Transaktion bestätigt."
+  committed: "Transaktion festgeschrieben."
   commit_failed: "Commit fehlgeschlagen: %{message}"
   commit_auto: "Commit (automatisches Commit ist aktiviert)"
   run: Ausführen
   cancel: Abbrechen
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   result: "Ergebnis %{index}"
   tab: "Abfrage %{index}"
   empty: Schreiben Sie eine Anweisung und führen Sie sie aus.
   no_results: Die Anweisung lieferte kein Ergebnis.
   running: läuft…
-  rows_affected: "%{count} Zeilen geändert"
+  rows_affected: "%{count} Zeilen betroffen"
   executed: Anweisung ausgeführt.
   row_count: "%{count} Zeilen"
   elapsed: "%{seconds} s"
   busy: In diesem Bereich läuft bereits eine Anweisung.
   no_statement: Es gibt keine Anweisung zum Ausführen.
   draft_too_large: "Dieser Entwurf ist größer als %{limit} MB und wird beim Schließen der App nicht aufbewahrt. Speichern Sie ihn in einer Datei, um ihn zu behalten."
-  row_limit: "Dieses Raster zeigt höchstens %{limit} Zeilen, das Ergebnis enthält mehr. Schränken Sie die Anweisung ein, um den Rest zu sehen."
+  row_limit: "Dieses Ergebnisraster zeigt höchstens %{limit} Zeilen, das Ergebnis enthält mehr. Schränken Sie die Anweisung ein, um den Rest zu sehen."
   read_only: Diese Verbindung ist schreibgeschützt; die Anweisung wurde nicht gesendet.
   confirm_title: Diese Anweisung ausführen?
   confirm_body: "Anweisungen, die Daten ändern: %{count}"
@@ -417,15 +425,15 @@ query:
   not_editable: Diese Zeilen stammen nicht aus einer Tabelle samt ausgewähltem Primärschlüssel; sie lassen sich lesen, aber nicht ändern.
   sql_state: "SQLSTATE %{state}"
   hint_syntax: Prüfen Sie die Syntax der Anweisung und Ihre Leserechte auf das Genannte.
-  hint_constraint: Die Anweisung verletzt eine Bedingung der Tabelle.
+  hint_constraint: Die Anweisung verletzt ein Constraint der Tabelle.
   hint_auth: Diese Verbindung darf das nicht.
   hint_network: Die Verbindung zur Datenbank ging verloren.
-  hint_cancelled: Die Anweisung wurde abgebrochen.
+  hint_canceled: Die Anweisung wurde abgebrochen.
   open_file_select: SQL-Datei auswählen
 
 data:
-  loading: wird geladen …
-  refresh: Neu laden
+  loading: wird geladen…
+  refresh: Aktualisieren
   empty: Diese Tabelle hat keine Zeilen.
   row_count: "%{count} Zeilen"
   no_primary_key: "Diese Tabelle hat keinen Primärschlüssel; ihre Zeilen lassen sich lesen, aber nicht ändern."
@@ -443,19 +451,19 @@ data:
   discard_row: Änderungen dieser Zeile verwerfen
   apply_title: "%{count} Anweisungen anwenden"
   apply_no_rollback: "Diese Datenbank kennt keine Transaktionen; ein Fehler mittendrin lässt sich nicht rückgängig machen."
-  applying: wird angewendet …
+  applying: wird angewendet…
   applied: "%{count} Anweisungen angewendet."
-  apply_stale: Eine Zeile wurde von jemand anderem geändert oder gelöscht. Es wurde nichts angewendet – laden Sie neu und versuchen Sie es erneut.
-  apply_half_applied: Ein Teil des Stapels steht möglicherweise schon in der Tabelle. Laden Sie neu und prüfen Sie ihn, bevor Sie erneut anwenden.
-  apply_reconnect_required: Das Ergebnis ist wegen eines Rollback-Fehlers ungewiss. Stellen Sie die Verbindung neu her und prüfen Sie die Tabelle; nicht automatisch wiederholen.
+  apply_stale: Eine Zeile wurde von jemand anderem geändert oder gelöscht. Es wurde nichts angewendet – aktualisieren Sie die Ansicht und versuchen Sie es erneut.
+  apply_half_applied: Ein Teil des Stapels steht möglicherweise schon in der Tabelle. Aktualisieren Sie die Ansicht und prüfen Sie die Tabelle, bevor Sie erneut anwenden.
+  apply_reconnect_required: Das Ergebnis ist wegen eines Rollback-Fehlers ungewiss. Stellen Sie die Verbindung neu her und prüfen Sie die Tabelle; wiederholen Sie den Vorgang nicht automatisch.
   apply_bad_value: "%{column} kann nicht auf „%{value}“ gesetzt werden."
-  apply_null_key: "Das %{column} dieser Zeile ist NULL, daher kann keine Anweisung sie wiederfinden."
-  apply_unknown_key: "Die Schlüsselspalte %{column} ist nicht unter den gelesenen Spalten. Laden Sie neu und versuchen Sie es erneut."
+  apply_null_key: "In dieser Zeile ist %{column} NULL, daher kann keine Anweisung die Zeile wiederfinden."
+  apply_unknown_key: "Die Schlüsselspalte %{column} ist nicht unter den gelesenen Spalten. Aktualisieren Sie die Ansicht und versuchen Sie es erneut."
   apply_not_planned: "Diese Änderungen lassen sich nicht als Anweisungen schreiben: %{detail}"
 
 struct:
-  loading: wird geladen …
-  refresh: Neu laden
+  loading: wird geladen…
+  refresh: Aktualisieren
   discard: Verwerfen
   discard_first: Verwerfen Sie die ausstehenden Änderungen zuerst.
   read_only: "Diese Verbindung ist schreibgeschützt; die Struktur dieser Tabelle lässt sich lesen, aber nicht ändern."
@@ -496,7 +504,7 @@ struct:
   create: Tabelle anlegen
   apply_title: "%{count} Anweisungen anwenden"
   apply_no_undo: "Das lässt sich nicht rückgängig machen: Jede Anweisung wird beim Ausführen sofort festgeschrieben, und kein Rollback holt sie zurück."
-  applying: wird angewendet …
+  applying: wird angewendet…
   applied: "%{count} Anweisungen angewendet."
   apply_stopped: "Anweisung %{number} von %{total} ist fehlgeschlagen. Die %{committed} davor wurden festgeschrieben und lassen sich nicht rückgängig machen."
 
@@ -507,7 +515,7 @@ extract:
   output_none: Keine Datei gewählt
   browse: Durchsuchen…
   template_select: Vorlagendatei auswählen
-  ddl: Schema einschließen
+  ddl: Definitionen (DDL) einschließen
   drop: DROP-Anweisungen voranstellen
   data: Zeilen einschließen
   mode: Zeilenformat
@@ -521,9 +529,9 @@ extract:
   start: Extrahieren
   starting: wird gestartet…
   counters: "%{rows} Zeilen, %{bytes}"
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Extraktion schlug fehl: %{error}"
   failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.
 
@@ -533,12 +541,12 @@ transfer:
   target_connection: Zielverbindung
   target_schema: Zielschema
   target_table: Zieltabelle
-  mode: Schreibweise
+  mode: Schreibmodus
   mode_insert: Jede Zeile einfügen
   mode_upsert: Einfügen oder vorhandene Zeile aktualisieren
   mode_truncate: Zieltabelle zuerst leeren
   where: WHERE-Klausel
-  on_error: Bei einer Zeile, die nicht hineingeht
+  on_error: Bei einer Zeile, die nicht eingefügt werden kann
   on_error_abort: Übertragung abbrechen
   on_error_skip: Zeile überspringen
   on_error_log: Zeile überspringen und Grund festhalten
@@ -546,10 +554,10 @@ transfer:
   starting: wird gestartet…
   counters: "%{rows} Zeilen"
   skipped: "%{skipped} übersprungen"
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   done: "%{rows} Zeilen nach %{table} übertragen."
-  done_skipped: "%{skipped} Zeilen gingen nicht hinein und wurden übersprungen."
-  cancelled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} bestätigt und bleiben dort."
+  done_skipped: "%{skipped} Zeilen konnten nicht eingefügt werden und wurden übersprungen."
+  canceled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
   failed: "Die Übertragung schlug fehl: %{error}"
   failed_unknown: Die Übertragung schlug fehl; die Bridge nannte keinen Grund.
 
@@ -561,16 +569,16 @@ backup:
   output_none: Keine Datei gewählt
   browse: Durchsuchen…
   compress: Die Datei mit gzip komprimieren
-  ddl: Schema einschließen
+  ddl: Definitionen (DDL) einschließen
   drop: DROP-Anweisungen voranstellen
   data: Zeilen einschließen
   batch_rows: Zeilen pro INSERT
   start: Sichern
   starting: wird gestartet…
   counters: "%{rows} Zeilen, %{bytes}"
-  cancelling: Wird abgebrochen…
+  canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
-  cancelled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
 
@@ -644,7 +652,7 @@ context:
   replace: Ersetzen…
   close_tab: Tab schließen
   close_others: Andere Tabs schließen
-  close_right: Tabs rechts schließen
+  close_right: Tabs rechts davon schließen
   split_right: Rechts teilen
   split_below: Unten teilen
   close_pane: Bereich schließen
@@ -662,7 +670,7 @@ update:
   title: Update verfügbar
   available: "%{app} %{version} ist verfügbar."
   installed: "Sie verwenden derzeit %{version}."
-  update: Aktualisieren
+  update: Update installieren
   ignore: Diese Version ignorieren
   checking: Suche nach Updates…
   up_to_date: Sie verwenden die neueste Version.
@@ -674,7 +682,7 @@ update:
 
 tab_name:
   title: Tab umbenennen
-  hint: Leer lassen, um den Standardnamen wiederherzustellen.
+  hint: Lassen Sie das Feld leer, um den Standardnamen wiederherzustellen.
 
 completion:
   trigger: "SQL-Vervollständigung"
@@ -697,11 +705,11 @@ lob:
   size: "%{bytes} Bytes"
   truncated: "Nur die ersten 1 MiB werden angezeigt. Speichern exportiert den gesamten Wert; größere Werte können durch eine Datei ersetzt werden."
   read_only: "Schreibgeschützt. Sie können den Wert ansehen und speichern."
-  hex_hint: "Hexadezimale Bytepaare bearbeiten. Zu Änderungen hinzufügen und danach im Datenraster Anwenden wählen, um die Datenbank zu ändern."
-  text_hint: "Textdateien verwenden UTF-8. Zu den Änderungen hinzufügen und dann im Datenraster anwenden, um in die Datenbank zu schreiben."
+  hex_hint: "Bearbeiten Sie hexadezimale Bytepaare. Fügen Sie sie zu den Änderungen hinzu und wählen Sie danach im Ergebnisraster „Anwenden“, um in die Datenbank zu schreiben."
+  text_hint: "Textdateien verwenden UTF-8. Fügen Sie den Text zu den Änderungen hinzu und wählen Sie danach im Ergebnisraster „Anwenden“, um in die Datenbank zu schreiben."
   import_error: "Datei konnte nicht importiert werden (CLOB-Text muss UTF-8 sein): %{error}"
   saved: "Datei gespeichert."
-  stage: "Zu Änderungen hinzufügen"
+  stage: "Zu den Änderungen hinzufügen"
   discard_question: "Änderungen in diesem LOB-Editor verwerfen?"
   keep_editing: "Weiter bearbeiten"
-  invalid_hex: "Hexadezimale Ziffernpaare (00–FF), getrennt durch Leerzeichen oder Zeilenumbrüche, eingeben."
+  invalid_hex: "Geben Sie hexadezimale Ziffernpaare (00–FF) ein, getrennt durch Leerzeichen oder Zeilenumbrüche."

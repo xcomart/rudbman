@@ -39,7 +39,7 @@ impl Workspace {
             self.apply_preview(window, cx);
         }
         if self.extract.read(cx).is_open() {
-            // A job still running is cancelled by the close, through the drop
+            // A job still running is canceled by the close, through the drop
             // chain `extract_dialog` documents. That is the honest reading of
             // "the card is gone": a job whose progress nobody can see is one
             // nobody can stop either.
@@ -456,7 +456,7 @@ impl Workspace {
     ///
     /// The unsaved half of [`Workspace::apply_settings`], and deliberately much
     /// smaller: only the two palettes and the fonts are previewed, so this
-    /// touches no platform state beyond the native caption's colours, which have
+    /// touches no platform state beyond the native caption's colors, which have
     /// to follow the chrome theme or the window would be half repainted.
     ///
     /// Reads [`app_settings::effective`], which answers the preview while one is

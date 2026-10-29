@@ -20,7 +20,7 @@ import java.util.logging.Logger;
  * Soungjin Park), extended with reference counting.
  *
  * <p>Sessions that use the same jars share one loader. Building a fresh loader
- * per session re-runs the driver's static initialisers every time and leaks the
+ * per session re-runs the driver's static initializers every time and leaks the
  * old loader together with everything it ever loaded. The loader is closed when
  * its last session goes away.
  */

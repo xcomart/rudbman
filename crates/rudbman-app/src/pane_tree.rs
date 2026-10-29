@@ -151,7 +151,7 @@ impl PaneItem {
         }
     }
 
-    /// The connection this tab belongs to, which is the colour its dot takes.
+    /// The connection this tab belongs to, which is the color its dot takes.
     ///
     /// One tree belongs to one connection, so every tab of a strip answers the
     /// same — which is what makes the dot readable as "this pane is on staging"

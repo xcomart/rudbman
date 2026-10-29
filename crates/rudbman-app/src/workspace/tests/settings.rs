@@ -37,7 +37,7 @@ fn following_the_ui_prefers_the_chrome_themes_namesake() {
 #[test]
 fn following_the_ui_keeps_the_configured_pick_when_the_chrome_has_no_namesake() {
     // A chrome theme of the user's own, which no editor theme is named
-    // after: there is no pair to honour, so the configured editor theme
+    // after: there is no pair to honor, so the configured editor theme
     // stands as long as its cast fits the window.
     assert_eq!(
         editor_theme_for("tokyo-night", true, "my-chrome", true, &entries()),
@@ -191,8 +191,8 @@ fn the_two_titlebar_spellings_are_one_setting() {
     ] {
         assert_eq!(chrome_titlebar(mine), theirs);
         assert_eq!(
-            serde_json::to_string(&mine).expect("a style serialises"),
-            serde_json::to_string(&theirs).expect("a style serialises"),
+            serde_json::to_string(&mine).expect("a style serializes"),
+            serde_json::to_string(&theirs).expect("a style serializes"),
         );
     }
     // And the default is the same one on both sides, which is what a

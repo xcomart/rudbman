@@ -192,7 +192,7 @@ fn an_aliased_key_column_still_opens_the_grid(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, window, cx| pane.apply(window, cx))
         .expect("the window is open");
-    // The `WHERE` clause names the catalogue's column and not the heading:
+    // The `WHERE` clause names the catalog's column and not the heading:
     // `PK` is what the grid draws, `ID` is what the table has.
     assert_eq!(
         planned(&window, cx),
@@ -436,7 +436,7 @@ fn an_editable_result_offers_no_insert(cx: &mut TestAppContext) {
     for label in [ts!("data.set_null"), ts!("data.delete_row")] {
         assert!(
             context_menu::row(&rows, &label).is_enabled(),
-            "{label} was greyed over an editable result"
+            "{label} was grayed over an editable result"
         );
     }
 

@@ -89,7 +89,7 @@ pub enum ErdEvent {
     ///
     /// The diagram has already taken the focus and moved the selection if it
     /// had to; what is left — which items exist, what they are called, which
-    /// are greyed out and what they do — is the host's, because this layer
+    /// are grayed out and what they do — is the host's, because this layer
     /// holds no strings (architecture document, §7.8). Everything such a menu
     /// needs is on [`ErdView`] already: [`ErdView::selected`] to name the
     /// table, [`ErdView::auto_arrange`], [`ErdView::export_svg`] and the zoom
@@ -265,13 +265,13 @@ impl ErdView {
         cx.notify();
     }
 
-    /// The diagram as an SVG document, in the colours it is being drawn in.
+    /// The diagram as an SVG document, in the colors it is being drawn in.
     ///
     /// The theme is read here, at the edge, and converted to the CSS strings
     /// [`to_svg`] takes — which is what keeps [`crate::svg`] free of gpui.
     pub fn export_svg(&self, cx: &App) -> String {
         let palette = theme(cx);
-        let colours = SvgPalette {
+        let colors = SvgPalette {
             background: to_hex(palette.background),
             box_fill: to_hex(palette.surface),
             header_fill: to_hex(palette.grid_header),
@@ -281,7 +281,7 @@ impl ErdView {
             line: to_hex(palette.text_muted),
             pk: to_hex(palette.grid_pk),
         };
-        to_svg(&self.model, &self.rects, &colours, self.name_mode)
+        to_svg(&self.model, &self.rects, &colors, self.name_mode)
     }
 
     /// The current scale, where 1.0 is one logical unit to one pixel.
@@ -627,7 +627,7 @@ impl Render for ErdView {
             .size_full()
             .overflow_hidden()
             // Nothing, while the window is translucent. The pane behind the
-            // canvas already tints these same pixels with the very same colour,
+            // canvas already tints these same pixels with the very same color,
             // and a second fill over them would either hide the blur or saturate
             // the surface alpha back to opaque; see `app_settings::window_tint`.
             // The boxes and the joins the canvas draws are unaffected — they sit
@@ -866,7 +866,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn saved_positions_are_honoured_and_the_rest_fall_into_the_grid(cx: &mut TestAppContext) {
+    fn saved_positions_are_honored_and_the_rest_fall_into_the_grid(cx: &mut TestAppContext) {
         let mut saved = HashMap::new();
         saved.insert("customers".to_string(), (500., 300.));
         let (erd, mut cx) = open(model(), saved, cx);
@@ -1164,7 +1164,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_export_is_written_in_the_theme_s_colours(cx: &mut TestAppContext) {
+    fn the_export_is_written_in_the_theme_s_colors(cx: &mut TestAppContext) {
         let (erd, mut cx) = open(model(), HashMap::new(), cx);
         let svg = cx.update(|_, cx| erd.erd.read(cx).export_svg(cx));
 

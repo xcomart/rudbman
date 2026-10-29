@@ -12,7 +12,7 @@ import java.util.Arrays;
  * helpers and a logging dependency into a jar whose whole design goal is to stay
  * small.
  *
- * <p>Every method reproduces jdbgen's behaviour exactly, quirks included,
+ * <p>Every method reproduces jdbgen's behavior exactly, quirks included,
  * because existing template assets depend on those quirks. {@link #trim(String)}
  * stripping a surrounding quote pair is the sharpest example: it is what makes
  * {@code inStr="\n,"} arrive at the renderer as a newline and a comma rather

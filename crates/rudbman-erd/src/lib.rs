@@ -7,7 +7,7 @@
 //! drawn between them by hand. What they have in common is [`canvas`], the
 //! viewport, the gestures and the frame assembly neither of them owns
 //! (architecture document, §7.7), so that panning, zooming, dragging and
-//! virtualising are one implementation rather than two that drift.
+//! virtualizing are one implementation rather than two that drift.
 //!
 //! Under both of them are three pure modules. [`model`] is what a diagram *is*,
 //! [`layout`] is where the boxes go and how the lines get between them, and

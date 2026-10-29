@@ -59,7 +59,7 @@ use uuid::Uuid;
 
 use crate::app_settings;
 use crate::connection::{
-    self, CATALOGUE_PLACEHOLDERS, ConnectError, Credentials, placeholders_of, substitute,
+    self, CATALOG_PLACEHOLDERS, ConnectError, Credentials, placeholders_of, substitute,
 };
 use crate::driver_manager::{DriverManager, DriverManagerEvent};
 use crate::i18n::ts;
@@ -120,11 +120,11 @@ enum Surface {
     Body,
 }
 
-/// Colour tags a profile may be marked with.
+/// Color tags a profile may be marked with.
 ///
 /// Fixed rather than free-form: the tag's job is to make a production
-/// connection recognisable at a glance in the tab strip, and a palette of six
-/// does that better than a colour picker, which invites two profiles a shade
+/// connection recognizable at a glance in the tab strip, and a palette of six
+/// does that better than a color picker, which invites two profiles a shade
 /// apart. `None` — the first swatch — is "no tag".
 const COLORS: [&str; 6] = [
     "#e06c75", "#e5c07b", "#98c379", "#56b6c2", "#61afef", "#c678dd",
@@ -141,7 +141,7 @@ mod tab {
     pub const NAME: isize = 100;
     /// Folder.
     pub const FOLDER: isize = 105;
-    /// First index of the colour swatches.
+    /// First index of the color swatches.
     pub const COLOR: isize = 110;
     /// Driver picker.
     pub const DRIVER: isize = 120;
@@ -300,7 +300,7 @@ pub struct ConnectionDialog {
     auto_commit: bool,
     /// Whether a write statement is confirmed first.
     confirm_writes: bool,
-    /// The colour tag, or `None`.
+    /// The color tag, or `None`.
     color: Option<SharedString>,
     /// Whether the URL field has been edited away from the assembled one.
     ///
@@ -488,7 +488,7 @@ impl ConnectionDialog {
         self.driver_list_open = false;
         // Dropping the task detaches from the connection attempt; the session it
         // may still open is closed by its own `Drop` when the future is
-        // cancelled at its next await point.
+        // canceled at its next await point.
         self.test = None;
         cx.notify();
     }
@@ -1307,7 +1307,7 @@ impl ConnectionDialog {
             )
     }
 
-    /// The colour tag swatches.
+    /// The color tag swatches.
     fn render_colors(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let swatch = |index: usize, value: Option<&'static str>| {
@@ -1724,8 +1724,8 @@ impl ConnectionDialog {
             .children(body)
     }
 
-    /// The behaviour switches and the keep-alive settings.
-    fn render_behaviour(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The behavior switches and the keep-alive settings.
+    fn render_behavior(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let toggle = |id: &'static str,
                       label: SharedString,
@@ -1805,7 +1805,7 @@ impl ConnectionDialog {
         let driver = self.render_driver(chrome, cx);
         let url = self.render_url(chrome, cx);
         let props = self.render_props(cx);
-        let behaviour = self.render_behaviour(cx);
+        let behavior = self.render_behavior(cx);
         let tunnel = self.render_tunnel(chrome, cx);
 
         div()
@@ -1841,7 +1841,7 @@ impl ConnectionDialog {
                         self.password_input.clone(),
                     ))
                     .child(form_row(ts!("connect.props"), props))
-                    .child(section(ts!("connect.section.behaviour"), chrome, behaviour))
+                    .child(section(ts!("connect.section.behavior"), chrome, behavior))
                     // No `section` title over this one: the collapsible's own
                     // header is the heading, and a second copy of the words
                     // above it would only say them twice.
@@ -2107,7 +2107,7 @@ impl Render for ConnectionDialog {
 
         // The driver manager replaces the form rather than covering it, so the
         // window's tab ring only ever holds controls that are on screen — the
-        // same rule the settings dialog's colour editor follows.
+        // same rule the settings dialog's color editor follows.
         let (title, body) = match self.manager.clone() {
             Some(manager) => (manager.read(cx).title(), manager.into_any_element()),
             None => {
@@ -2200,15 +2200,15 @@ fn profile_to_show(store: &ConnectionStore, wanted: Option<Uuid>) -> Option<Uuid
 /// The saved profiles as rows, grouped under the folder each is filed in.
 ///
 /// Shared by this dialog's list and the welcome screen the shell draws while no
-/// connection is open, so a profile is recognised the same way wherever it is
-/// offered: filed under its folder, marked with its colour, named by its name.
+/// connection is open, so a profile is recognized the same way wherever it is
+/// offered: filed under its folder, marked with its color, named by its name.
 /// Groups keep the order the folders first appear in, which is the order the
 /// user arranged the profiles in — sorting them would move a row the moment it
 /// is renamed.
 ///
 /// Only the rows. The box they scroll inside belongs to whoever draws them: the
 /// dialog gives them a fixed column beside the form, the welcome screen a
-/// centred one under a button, and neither shape suits the other.
+/// centered one under a button, and neither shape suits the other.
 ///
 /// `selected` marks the row the dialog is editing; a list with no selection to
 /// show — the welcome screen's — passes `None`. `on_click` is handed the
@@ -2419,14 +2419,14 @@ fn section<E: IntoElement>(
 
 /// The label of one URL part field.
 ///
-/// The four catalogue spellings share one label — what a product calls the thing
+/// The four catalog spellings share one label — what a product calls the thing
 /// you connect to differs, but the question does not — while anything a
 /// hand-written template invents is shown under its own name.
 fn label_for(placeholder: &str) -> SharedString {
     match placeholder {
         "host" => ts!("connect.host"),
         "port" => ts!("connect.port"),
-        name if CATALOGUE_PLACEHOLDERS.contains(&name) => ts!("connect.database"),
+        name if CATALOG_PLACEHOLDERS.contains(&name) => ts!("connect.database"),
         other => SharedString::from(other.to_owned()),
     }
 }
@@ -3089,7 +3089,7 @@ mod tests {
     #[test]
     fn every_url_hole_of_every_built_in_driver_has_a_label() {
         // A driver whose template names something the form has no label for
-        // would draw a field headed `{service}`. The four catalogue spellings
+        // would draw a field headed `{service}`. The four catalog spellings
         // share one label; `host` and `port` have their own.
         for driver in DriverDef::builtins() {
             for name in placeholders_of(&driver.url_template) {
@@ -3133,7 +3133,7 @@ mod tests {
             ts!("connect.prop_key"),
             ts!("connect.prop_value"),
             ts!("connect.add_prop"),
-            ts!("connect.section.behaviour"),
+            ts!("connect.section.behavior"),
             ts!("connect.section.tunnel"),
             ts!("connect.read_only"),
             ts!("connect.auto_commit"),
@@ -3193,7 +3193,7 @@ mod tests {
     }
 
     #[test]
-    fn the_colour_tags_are_all_parseable() {
+    fn the_color_tags_are_all_parseable() {
         // A swatch whose value the theme layer cannot read would draw as the
         // fallback and two tags would look the same.
         for color in COLORS {
@@ -3202,7 +3202,7 @@ mod tests {
         let mut unique = COLORS.to_vec();
         unique.sort_unstable();
         unique.dedup();
-        assert_eq!(unique.len(), COLORS.len(), "two tags share a colour");
+        assert_eq!(unique.len(), COLORS.len(), "two tags share a color");
     }
 
     #[test]

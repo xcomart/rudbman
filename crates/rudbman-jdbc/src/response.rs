@@ -1,6 +1,6 @@
 //! Response bodies: what the bridge answers with.
 //!
-//! The bridge serialises nulls explicitly, so a member the driver had nothing
+//! The bridge serializes nulls explicitly, so a member the driver had nothing
 //! to say about arrives as JSON `null` rather than missing. That is why the
 //! `Option` fields here need no `#[serde(default)]` — an absent member would be
 //! a protocol change, not a driver quirk, and should fail loudly.
@@ -118,11 +118,13 @@ pub struct SessionInfo {
 
 /// `CANCEL` (`0x24`).
 #[derive(Clone, Debug, Deserialize)]
-pub struct Cancelled {
+pub struct Canceled {
     /// How many running statements a cancel was issued for.
     ///
     /// Zero on an idle session, which is not an error: nothing was running.
-    pub cancelled: u32,
+    /// Older bridge JARs spell the key the British way.
+    #[serde(alias = "cancelled")]
+    pub canceled: u32,
 }
 
 /// `PROBE_DRIVER` (`0x50`): the JDBC drivers a set of JARs offers.
@@ -142,7 +144,7 @@ pub struct Cancelled {
 ///
 /// [`DriverProbe::recommended`] applies that preference.
 ///
-/// The scan never runs a static initialiser (`Class.forName(…, false, …)`): a
+/// The scan never runs a static initializer (`Class.forName(…, false, …)`): a
 /// driver's can open sockets or load native libraries, and looking at a file
 /// must not do either.
 #[derive(Clone, Debug, Deserialize)]
@@ -296,7 +298,7 @@ impl ExecuteResult {
 ///
 /// Item shapes differ per kind and are documented in `bridge/README.md`. They
 /// are left as JSON objects here on purpose: the explorer tree maps the two or
-/// three members it needs per kind, and modelling fourteen metadata shapes in
+/// three members it needs per kind, and modeling fourteen metadata shapes in
 /// Rust would be a second copy of the same table to keep in step.
 #[derive(Clone, Debug, Deserialize)]
 pub struct DescribeResult {
@@ -307,7 +309,7 @@ pub struct DescribeResult {
     pub items: Vec<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// The response to `DESCRIBE` with `kind: "ddl"`: one table's `CREATE` text.
+/// The response to `DESCRIBE` with `kind: "ddl"`: one object's `CREATE` text.
 ///
 /// The one metadata kind that answers with a document instead of a list, which
 /// is why it has [`Session::describe_ddl`](crate::Session::describe_ddl) to
@@ -317,9 +319,12 @@ pub struct DescribeResult {
 pub struct DdlResult {
     /// The statement text, ready to show. One `CREATE TABLE`, possibly followed
     /// by `CREATE INDEX` statements for indexes that do not merely back a
-    /// declared key.
+    /// declared key; for a routine, one `CREATE` per overload of the name; for
+    /// a view, a sequence or a trigger, its own `CREATE`.
     pub ddl: String,
-    /// Which layer produced it: `"native"` or `"metadata"`.
+    /// Which layer produced it: `"native"`, `"metadata"`, or `"catalog"` — a
+    /// statement rebuilt from a catalog that holds everything the object is,
+    /// as the sequence catalogs do, and so complete without being quoted.
     ///
     /// Kept as a string rather than an enum so that a bridge which learns a
     /// third path does not fail to parse here. Use [`DdlResult::is_native`] and
@@ -342,7 +347,7 @@ impl DdlResult {
     /// enough to run, but `CHECK` constraints, triggers, partitioning,
     /// collations and generated-column expressions are not in JDBC metadata at
     /// all and are therefore not in this text either. It is not a migration
-    /// artefact.
+    /// artifact.
     pub fn is_reconstructed(&self) -> bool {
         self.source == "metadata"
     }
@@ -397,7 +402,7 @@ pub struct JobProgress {
     ///
     /// Full error envelopes, the same ones a failed call answers with, so a
     /// job's failure can be rendered by whatever already renders those. A
-    /// `failed` state always leaves one here; a `cancelled` one often does,
+    /// `failed` state always leaves one here; a `canceled` one often does,
     /// carrying the driver's account of the statement being aborted, which is
     /// the cancel working rather than a fault.
     ///
@@ -442,8 +447,10 @@ pub enum JobState {
     Failed,
     /// Stopped by a cancel. Nothing was written to the output path: the bridge
     /// writes beside it and only renames on success, so whatever was there
-    /// before the job is left as it was.
-    Cancelled,
+    /// before the job is left as it was. Older bridge JARs spell it the
+    /// British way.
+    #[serde(alias = "cancelled")]
+    Canceled,
 }
 
 impl JobState {
@@ -609,7 +616,7 @@ mod tests {
             ("running", JobState::Running),
             ("done", JobState::Done),
             ("failed", JobState::Failed),
-            ("cancelled", JobState::Cancelled),
+            ("canceled", JobState::Canceled),
         ] {
             // The wire spelling is the bridge's; a rename here would silently
             // turn a finished job into one that is polled forever.
@@ -642,7 +649,7 @@ mod tests {
         // A layer this version has not heard of still parses — the text is the
         // wire's to name, and failing here would break on a bridge upgrade.
         let future: DdlResult =
-            serde_json::from_str(r#"{"kind":"ddl","ddl":"x","source":"catalogue"}"#)
+            serde_json::from_str(r#"{"kind":"ddl","ddl":"x","source":"catalog"}"#)
                 .expect("an unknown source is not a parse failure");
         assert!(!future.is_native() && !future.is_reconstructed());
     }

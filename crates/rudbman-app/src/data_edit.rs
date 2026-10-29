@@ -244,7 +244,7 @@ impl EditSet {
     ///
     /// The edits staged against the row are left alone either way. Undeleting a
     /// row the user had also typed into gives them back what they typed, which
-    /// is the only behaviour that does not punish a mis-click.
+    /// is the only behavior that does not punish a mis-click.
     pub fn toggle_deleted(&mut self, row: usize) -> bool {
         if self.deleted.remove(&row) {
             return false;
@@ -357,7 +357,7 @@ impl EditSet {
 pub enum TableSource {
     /// The caller knows the table independently of the result.
     ///
-    /// The data pane, which read its [`ObjectTarget`] off the catalogue before
+    /// The data pane, which read its [`ObjectTarget`] off the catalog before
     /// it ran its `SELECT` and hands those same name parts to
     /// [`plan_apply`]. The statement names *that* table whatever the columns
     /// say, so a column the driver would not name a table for is still that
@@ -372,7 +372,7 @@ pub enum TableSource {
     /// the table. A column that named none is a computed one — an expression, a
     /// literal, an aggregate — and there is nothing for a `SET` clause to
     /// assign to: [`column_name`] falls back to the label for a column with no
-    /// catalogue name, so a statement built from one would try to assign to
+    /// catalog name, so a statement built from one would try to assign to
     /// something spelled `name || '!'`. Read-only whatever else the column
     /// says, and §7.9 lets it stand in an otherwise editable result rather than
     /// refusing the result over it.
@@ -398,7 +398,7 @@ struct ColumnRules {
     /// query pane's alone, and deliberately not global — see [`TableSource`]
     /// for why the same column is writable in the data pane.
     writable: bool,
-    /// Whether the catalogue allows NULL.
+    /// Whether the catalog allows NULL.
     ///
     /// `ResultSetMetaData.isNullable` answers 0 no, 1 yes, 2 unknown, and
     /// unknown is taken as yes: refusing "Set NULL" on a column the driver
@@ -609,7 +609,7 @@ impl EditableSource {
         }
     }
 
-    /// Whether the column at `column` will take a NULL, as the catalogue
+    /// Whether the column at `column` will take a NULL, as the catalog
     /// described it.
     pub fn nullable(&self, column: usize) -> bool {
         self.columns.get(column).is_some_and(|rules| rules.nullable)
@@ -661,14 +661,14 @@ impl EditableSource {
     ///
     /// For the caller whose key arrives *after* the rows do. The data pane
     /// reads its key before it runs its `SELECT`, so it marks the base and then
-    /// wraps it; a query result cannot — the table is only recognisable from
-    /// the columns the result came back with, and asking the catalogue about it
+    /// wraps it; a query result cannot — the table is only recognizable from
+    /// the columns the result came back with, and asking the catalog about it
     /// is a second round trip §7.9 refuses to make the rows wait for. So the
     /// grid is built read-only and this is what the answer does to it.
     ///
     /// The two halves are one call rather than two on purpose: a source that
     /// became writable without its key marked would draw an editable grid with
-    /// nothing emphasised as the thing an `UPDATE` will find the row by, and
+    /// nothing emphasized as the thing an `UPDATE` will find the row by, and
     /// one marked without becoming writable would say the opposite. They are
     /// the same decision.
     pub fn make_editable(&mut self, keys: &[String]) {
@@ -755,6 +755,13 @@ impl GridSource for EditableSource {
             CellEditor::Text
         }
     }
+
+    /// Text columns offer the multiline viewer from their one-line field: a
+    /// value that is one line today is often the one about to become two. A
+    /// number or a date has no use for a paragraph.
+    fn cell_expandable(&self, _row: usize, column: usize) -> bool {
+        self.kind(column) == DmlKind::Str
+    }
 }
 
 /// One statement of an apply: ready to send, and ready to show.
@@ -801,7 +808,7 @@ pub enum PlanError {
     NoKey,
     /// A key column the metadata named is not among the result's columns.
     UnknownKeyColumn {
-        /// The key column's name, as the catalogue spelled it.
+        /// The key column's name, as the catalog spelled it.
         column: String,
     },
     /// What is in a cell cannot be bound to that column's type.
@@ -847,7 +854,7 @@ impl std::error::Error for PlanError {}
 /// in a string, and "the third parameter of statement two" is not something to
 /// show anybody. What is checked is only whether the text can *become* the bound
 /// form — an integer that parses, hex of an even length — and never whether the
-/// server will like it. That judgement is the server's, and its refusal says
+/// server will like it. That judgment is the server's, and its refusal says
 /// more than a guess made here would.
 pub fn plan_apply(
     source: &EditableSource,
@@ -1453,7 +1460,7 @@ mod tests {
 
         assert!(!source.cell_editable(0, 0), "an auto-increment key");
         assert!(!source.cell_editable(0, 2), "a read-only column");
-        assert!(!source.nullable(1), "the catalogue forbids NULL");
+        assert!(!source.nullable(1), "the catalog forbids NULL");
         assert!(source.nullable(0), "unknown nullability is taken as yes");
     }
 

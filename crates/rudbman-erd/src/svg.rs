@@ -8,13 +8,13 @@
 //! end. Two renderers over one geometry is the only arrangement in which the
 //! picture on screen and the picture in the file cannot drift apart.
 //!
-//! ## Self-contained, and colour-injected
+//! ## Self-contained, and color-injected
 //!
 //! The output references nothing: no stylesheet, no font file, no image. It
 //! names `sans-serif` and lets the viewer resolve it, which is the one external
 //! thing an SVG cannot avoid and the one every viewer has.
 //!
-//! The colours arrive as a [`SvgPalette`] of CSS strings rather than being read
+//! The colors arrive as a [`SvgPalette`] of CSS strings rather than being read
 //! from a theme, which is what keeps this module pure: the view converts the
 //! active [`Theme`](rugpui::Theme) with
 //! [`to_hex`](rugpui::to_hex) and hands the result in, and a test hands in
@@ -47,9 +47,9 @@ const TITLE_SIZE: f32 = 13.;
 /// Where a row's baseline sits inside its row, as a fraction of the row height.
 const BASELINE: f32 = 0.72;
 
-/// The colours an exported diagram is drawn in.
+/// The colors an exported diagram is drawn in.
 ///
-/// Every field is a CSS colour — in practice the `#rrggbb` that
+/// Every field is a CSS color — in practice the `#rrggbb` that
 /// [`to_hex`](rugpui::to_hex) produces — because this module has no opinion
 /// about themes and no way to read one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -230,7 +230,7 @@ fn write_table(
     for (index, column) in table.columns.iter().enumerate() {
         let baseline = row_top(rect, index) + ROW_HEIGHT * BASELINE;
         let (name_text, type_text) = split_row(column.display_name(mode), &column.type_name, room);
-        let name_colour = if column.primary_key {
+        let name_color = if column.primary_key {
             &palette.pk
         } else {
             &palette.text
@@ -243,7 +243,7 @@ fn write_table(
             num(rect.x + BOX_PADDING),
             num(baseline),
             num(FONT_SIZE),
-            escape(name_colour),
+            escape(name_color),
             escape(&name_text)
         );
         let _ = writeln!(
@@ -307,7 +307,7 @@ mod tests {
     use crate::layout::{auto_layout, grid_layout};
     use crate::model::{ErdColumn, ErdRelation, ErdTable};
 
-    /// A palette whose values are recognisable in the output.
+    /// A palette whose values are recognizable in the output.
     fn palette() -> SvgPalette {
         SvgPalette {
             background: "#101010".into(),
@@ -362,7 +362,7 @@ mod tests {
         ] {
             assert!(out.contains(name), "{name} is missing from the export");
         }
-        // The injected colours, and no others hard-coded.
+        // The injected colors, and no others hard-coded.
         assert!(out.contains("#101010"));
         assert!(out.contains("#e5c07b"));
     }

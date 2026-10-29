@@ -344,7 +344,8 @@ pub enum DmlError {
         found: usize,
     },
     /// Every column of an inserted row is [`InsertCell::Unset`] and this dialect
-    /// has no way to say so. Oracle only — see [`plan_edits`].
+    /// has no way to say so: Oracle, and Db2 for a table of no columns — see
+    /// [`plan_edits`].
     NoEmptyInsert {
         /// The dialect that cannot express it.
         dialect: DialectId,
@@ -398,7 +399,8 @@ impl std::error::Error for DmlError {}
 /// A row whose every cell is [`InsertCell::Unset`] — the user asked for a row of
 /// nothing but defaults — becomes the dialect's empty insert: `INSERT INTO t
 /// DEFAULT VALUES` for everything that takes the standard form, `INSERT INTO t
-/// () VALUES ()` for MySQL, which does not. Oracle has neither and is
+/// () VALUES ()` for MySQL, which does not, and `INSERT INTO t (c) VALUES
+/// (DEFAULT)` for Db2, which has neither. Oracle has none of them and is
 /// [`DmlError::NoEmptyInsert`]; the alternative would be to invent a column list
 /// out of the catalog's defaults, which is a guess this module is in no position
 /// to make.
@@ -521,7 +523,7 @@ fn insert(
 
     if values.is_empty() {
         return Ok(DmlStatement {
-            sql: empty_insert(table, dialect)?,
+            sql: empty_insert(table, edits, dialect)?,
             values,
         });
     }
@@ -532,7 +534,7 @@ fn insert(
 }
 
 /// The dialect's way of saying "a row of nothing but defaults".
-fn empty_insert(table: &str, dialect: &Dialect) -> Result<String, DmlError> {
+fn empty_insert(table: &str, edits: &TableEdits, dialect: &Dialect) -> Result<String, DmlError> {
     match dialect.id() {
         // The MySQL family rejects `DEFAULT VALUES` and spells it with two
         // empty lists. MariaDB is named beside MySQL rather than left to the
@@ -547,6 +549,20 @@ fn empty_insert(table: &str, dialect: &Dialect) -> Result<String, DmlError> {
         DialectId::Oracle => Err(DmlError::NoEmptyInsert {
             dialect: DialectId::Oracle,
         }),
+        // Db2 answers SQL0104N for `DEFAULT VALUES` and has no empty lists
+        // either, but it takes the keyword `DEFAULT` as a value, and every
+        // column a statement leaves out gets its default anyway — so one
+        // column set to its default is a row of nothing but defaults, without
+        // the catalog having to be asked which columns have one.
+        DialectId::Db2 => match edits.columns.first() {
+            Some(column) => Ok(format!(
+                "INSERT INTO {table} ({}) VALUES (DEFAULT)",
+                dialect.quote_ident(column)
+            )),
+            None => Err(DmlError::NoEmptyInsert {
+                dialect: DialectId::Db2,
+            }),
+        },
         // The standard form: PostgreSQL, SQLite, H2, SQL Server, and generic.
         _ => Ok(format!("INSERT INTO {table} DEFAULT VALUES")),
     }
@@ -779,6 +795,11 @@ mod tests {
             Err(DmlError::NoEmptyInsert {
                 dialect: DialectId::Oracle
             })
+        );
+        // One column set to its default leaves every other to its own.
+        assert_eq!(
+            sql(&edits, &Dialect::DB2),
+            [r#"INSERT INTO "app"."orders" ("id") VALUES (DEFAULT)"#]
         );
     }
 

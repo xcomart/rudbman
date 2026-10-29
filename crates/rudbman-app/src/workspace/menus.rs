@@ -6,9 +6,9 @@ impl Workspace {
     /// The menu of one explorer row.
     ///
     /// Node-kind driven, and the rows a kind cannot answer are left *out*
-    /// rather than greyed: a schema has no "extract script" the way a table
-    /// with no rows selected has no "copy", and offering one greyed for ever
-    /// would be describing a command that never applies here. What *is* greyed
+    /// rather than grayed: a schema has no "extract script" the way a table
+    /// with no rows selected has no "copy", and offering one grayed for ever
+    /// would be describing a command that never applies here. What *is* grayed
     /// is everything on a connection that is not open — the tree can still be
     /// read after a session dies, and none of these commands can run without
     /// one.
@@ -85,11 +85,11 @@ impl Workspace {
         }
 
         // The places a table would appear, which is where §7.10's create path
-        // is offered: a schema, a catalogue on a product whose schema level was
+        // is offered: a schema, a catalog on a product whose schema level was
         // skipped, and the Tables folder under either. Left out entirely on the
         // rest — a table is not made inside another table, and the connection
         // root names no scope to make one in — because a row a kind cannot
-        // answer is left out rather than greyed.
+        // answer is left out rather than grayed.
         let creatable = match node {
             NodeId::Schema { .. } | NodeId::Catalog { .. } => scope.clone(),
             NodeId::Folder {
@@ -113,8 +113,8 @@ impl Workspace {
             );
         }
 
-        // The connection root names no scope — a diagram of every catalogue at
-        // once is not a diagram — so its rows are drawn and greyed: the menu of
+        // The connection root names no scope — a diagram of every catalog at
+        // once is not a diagram — so its rows are drawn and grayed: the menu of
         // a row that offered nothing at all would read as a broken right-click.
         let scoped = |run: fn(
             &mut Workspace,

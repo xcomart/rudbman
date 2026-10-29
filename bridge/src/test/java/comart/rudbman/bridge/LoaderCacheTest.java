@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The class loader cache.
  *
  * <p>A fresh {@link java.net.URLClassLoader} per session re-runs the driver's
- * static initialisers every time and leaks the old loader with everything it
+ * static initializers every time and leaks the old loader with everything it
  * ever loaded, so sessions sharing a jar list must share a loader, and the
  * loader must go away with the last of them.
  */

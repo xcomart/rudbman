@@ -141,7 +141,7 @@ class DescribeTest {
     }
 
     /**
-     * Comments are topped up from the vendor catalogue only on the products
+     * Comments are topped up from the vendor catalog only on the products
      * whose drivers hide them - Oracle, SQL Server, MySQL, MariaDB. H2 reports
      * REMARKS itself, so DESCRIBE has to answer exactly what the driver said,
      * both where there is a comment and where there is none.

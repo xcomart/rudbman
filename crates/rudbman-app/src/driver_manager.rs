@@ -20,7 +20,7 @@
 //! [`DriverManager::detect_class`] asks the bridge which `java.sql.Driver`
 //! implementations the registered JARs hold ([`Jvm::probe_drivers`][probe]), so
 //! the user does not have to find a fully qualified class name in a vendor's
-//! documentation. The scan never runs a static initialiser, so looking at a file
+//! documentation. The scan never runs a static initializer, so looking at a file
 //! opens no socket and loads no native library.
 //!
 //! [probe]: rudbman_jdbc::Jvm::probe_drivers
@@ -34,7 +34,7 @@
 //! # The download does not block the window
 //!
 //! [`maven::download`] is synchronous and runs on a background task; progress
-//! arrives on a channel that a `cx.spawn` drains into the view. Cancelling sets
+//! arrives on a channel that a `cx.spawn` drains into the view. Canceling sets
 //! a flag the download checks once per chunk, so the button takes effect within
 //! one read rather than at the end of the transfer.
 
@@ -136,7 +136,7 @@ enum Probe {
     /// The scan is running. The task is held rather than detached so that
     /// closing the manager abandons it.
     Running {
-        /// Dropped, and so cancelled, with the manager.
+        /// Dropped, and so canceled, with the manager.
         _task: Task<()>,
     },
     /// Several drivers were found and the user has to say which.
@@ -650,10 +650,10 @@ impl DriverManager {
                 self.install_jars(vec![path], cx);
                 self.report(ts!("driver.downloaded", file = name), false, cx);
             }
-            // A cancelled download is a thing the user did, not a failure, so it
-            // is reported in the neutral colour.
-            Err(DownloadError::Cancelled) => {
-                self.report(ts!("driver.download_cancelled"), false, cx);
+            // A canceled download is a thing the user did, not a failure, so it
+            // is reported in the neutral color.
+            Err(DownloadError::Canceled) => {
+                self.report(ts!("driver.download_canceled"), false, cx);
             }
             Err(error) => {
                 let message = match error {
@@ -669,7 +669,7 @@ impl DriverManager {
                         )
                     }
                     DownloadError::Io(message) => ts!("driver.save_failed", error = message),
-                    DownloadError::Cancelled => unreachable!("handled above"),
+                    DownloadError::Canceled => unreachable!("handled above"),
                 };
                 self.report(message, true, cx);
             }
@@ -1264,7 +1264,7 @@ impl DriverManager {
     ///
     /// Inherited from jdbgen, and for the same reason: several products answer
     /// `DatabaseMetaData` with an empty `REMARKS` and keep their comments in a
-    /// catalogue view instead, so the only way to see them is to name the query.
+    /// catalog view instead, so the only way to see them is to name the query.
     /// The flag is separate from the text on purpose — turning a query off must
     /// not mean deleting it.
     ///
@@ -1977,7 +1977,7 @@ mod tests {
             ts!("driver.downloading", file = "x.jar"),
             ts!("driver.downloading_percent", file = "x.jar", percent = 40),
             ts!("driver.downloaded", file = "x.jar"),
-            ts!("driver.download_cancelled"),
+            ts!("driver.download_canceled"),
             ts!("driver.bad_coordinate", coordinate = "x"),
             ts!("driver.not_found", url = "u"),
             ts!("driver.network_failed", error = "e"),

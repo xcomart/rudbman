@@ -3,7 +3,7 @@
 //! A [`DriverDef`](rudbman_core::DriverDef) carries a `group:artifact:version`
 //! coordinate rather than a JAR, because none of the drivers rudbman knows about
 //! are redistributable. This module turns that coordinate into the two URLs
-//! Maven Central publishes — the artefact and its `.sha1` — fetches both, checks
+//! Maven Central publishes — the artifact and its `.sha1` — fetches both, checks
 //! one against the other, and lands the result in
 //! [`drivers_dir`](rudbman_core::drivers_dir).
 //!
@@ -18,12 +18,12 @@
 //! A truncated download is a JAR whose class loader fails halfway through
 //! resolving a driver, and the error that reaches the user then names a missing
 //! class rather than a broken file. Central publishes a `.sha1` beside every
-//! artefact; comparing against it turns that into "the download was corrupted",
+//! artifact; comparing against it turns that into "the download was corrupted",
 //! which is a thing the user can act on by pressing the button again.
 //!
-//! SHA-1 is what Central offers for every artefact ever published, so it is what
+//! SHA-1 is what Central offers for every artifact ever published, so it is what
 //! is checked. It is used here as an integrity check against a truncated or
-//! garbled transfer, not as a defence against a forged artefact — TLS to
+//! garbled transfer, not as a defense against a forged artifact — TLS to
 //! `repo1.maven.org` is what covers that.
 
 use std::fs;
@@ -35,7 +35,7 @@ use std::time::Duration;
 
 /// Base URL of the Maven Central repository.
 ///
-/// Straight out of jdbgen's `MavenREST`: the artefact path under this host is
+/// Straight out of jdbgen's `MavenREST`: the artifact path under this host is
 /// `group/with/slashes/artifact/version/artifact-version.jar`, and the checksum
 /// is the same path with `.sha1` appended.
 const CENTRAL: &str = "https://repo1.maven.org/maven2";
@@ -49,7 +49,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// download is abandoned within one chunk of the button being pressed.
 const CHUNK: usize = 64 * 1024;
 
-/// Largest artefact this will accept.
+/// Largest artifact this will accept.
 ///
 /// Oracle's `ojdbc11` is about 7 MB and is the biggest driver in the built-in
 /// list by a wide margin; the cap is a guard against a coordinate that resolves
@@ -61,7 +61,7 @@ const MAX_BYTES: u64 = 256 * 1024 * 1024;
 pub struct Coordinate {
     /// Group id, e.g. `org.postgresql`.
     pub group: String,
-    /// Artefact id, e.g. `postgresql`.
+    /// Artifact id, e.g. `postgresql`.
     pub artifact: String,
     /// Version, e.g. `42.7.4`.
     pub version: String,
@@ -96,12 +96,12 @@ impl Coordinate {
         })
     }
 
-    /// The file name the artefact is saved under: `artifact-version.jar`.
+    /// The file name the artifact is saved under: `artifact-version.jar`.
     pub fn file_name(&self) -> String {
         format!("{}-{}.jar", self.artifact, self.version)
     }
 
-    /// The artefact's URL on Maven Central.
+    /// The artifact's URL on Maven Central.
     pub fn jar_url(&self) -> String {
         format!(
             "{CENTRAL}/{}/{}/{}/{}",
@@ -112,7 +112,7 @@ impl Coordinate {
         )
     }
 
-    /// The URL of the artefact's SHA-1 checksum.
+    /// The URL of the artifact's SHA-1 checksum.
     pub fn sha1_url(&self) -> String {
         format!("{}.sha1", self.jar_url())
     }
@@ -125,7 +125,7 @@ impl Coordinate {
 /// that says the bytes are wrong, and a disk that would not take the file.
 #[derive(Debug)]
 pub enum DownloadError {
-    /// Maven Central answered, but not with the artefact.
+    /// Maven Central answered, but not with the artifact.
     NotFound(String),
     /// The transfer failed, or never started.
     Network(String),
@@ -139,7 +139,7 @@ pub enum DownloadError {
     /// The file could not be written.
     Io(String),
     /// The user pressed cancel.
-    Cancelled,
+    Canceled,
 }
 
 /// How far a download has got.
@@ -178,7 +178,7 @@ impl Cancel {
     }
 
     /// Whether the flag has been raised.
-    pub fn is_cancelled(&self) -> bool {
+    pub fn is_canceled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
 }
@@ -188,9 +188,9 @@ impl Cancel {
 /// `on_progress` is called once per chunk, on the calling thread.
 ///
 /// The download goes to a temporary sibling first and is renamed over the
-/// destination only after the checksum matches, so a failed or cancelled
+/// destination only after the checksum matches, so a failed or canceled
 /// attempt can never leave a half-written JAR where a driver would load it
-/// from. An artefact that is already there is not re-fetched: the file name
+/// from. An artifact that is already there is not re-fetched: the file name
 /// carries the version, so the only way to get a different JAR is to ask for a
 /// different coordinate.
 pub fn download(
@@ -215,8 +215,8 @@ pub fn download(
         return Err(DownloadError::Checksum { expected, actual });
     }
 
-    // Named after the artefact rather than randomly, so a crash mid-download
-    // leaves something a user can recognise and delete.
+    // Named after the artifact rather than randomly, so a crash mid-download
+    // leaves something a user can recognize and delete.
     let temporary = directory.join(format!("{}.part", coordinate.file_name()));
     fs::write(&temporary, &bytes).map_err(|error| DownloadError::Io(error.to_string()))?;
     fs::rename(&temporary, &destination).map_err(|error| {
@@ -245,7 +245,7 @@ fn fetch_sha1(url: &str) -> Result<String, DownloadError> {
     Ok(digest.to_ascii_lowercase())
 }
 
-/// Streams the artefact, reporting progress and honouring the cancel flag.
+/// Streams the artifact, reporting progress and honoring the cancel flag.
 fn fetch_jar(
     url: &str,
     cancel: &Cancel,
@@ -265,8 +265,8 @@ fn fetch_jar(
     on_progress(Progress { received: 0, total });
 
     loop {
-        if cancel.is_cancelled() {
-            return Err(DownloadError::Cancelled);
+        if cancel.is_canceled() {
+            return Err(DownloadError::Canceled);
         }
         let read = body
             .read(&mut chunk)
@@ -409,7 +409,7 @@ mod tests {
     /// offline test can.
     #[test]
     #[ignore = "reaches Maven Central over the network"]
-    fn a_real_artefact_downloads_and_matches_its_published_checksum() {
+    fn a_real_artifact_downloads_and_matches_its_published_checksum() {
         let directory = tempfile::tempdir().expect("tempdir");
         let coordinate = Coordinate::parse("com.h2database:h2:2.3.232").expect("parses");
         let cancel = Cancel::new();
@@ -438,7 +438,7 @@ mod tests {
         // A second call finds the file already there and does not refetch.
         assert_eq!(
             download(&coordinate, directory.path(), &cancel, |_| {
-                panic!("an artefact already on disk must not be fetched again")
+                panic!("an artifact already on disk must not be fetched again")
             })
             .expect("already there"),
             path
@@ -558,8 +558,8 @@ mod tests {
     fn a_raised_cancel_flag_is_seen_through_every_clone() {
         let cancel = Cancel::new();
         let copy = cancel.clone();
-        assert!(!copy.is_cancelled());
+        assert!(!copy.is_canceled());
         cancel.cancel();
-        assert!(copy.is_cancelled());
+        assert!(copy.is_canceled());
     }
 }

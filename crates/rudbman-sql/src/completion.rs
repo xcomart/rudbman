@@ -136,7 +136,7 @@ pub fn request(
         }
     }
     let prefix = unquote(&source[replace.start..caret]);
-    // Do not use names or aliases from neighbouring statements.
+    // Do not use names or aliases from neighboring statements.
     let start = tokens
         .iter()
         .filter(|t| t.end <= replace.start && t.text(source) == ";")
@@ -562,6 +562,7 @@ mod tests {
             Dialect::SQLITE,
             Dialect::ORACLE,
             Dialect::MSSQL,
+            Dialect::DB2,
         ] {
             for name in ["COUNT", "SUM", "AVG", "MIN", "MAX"] {
                 let source = format!("SELECT {}(*)", name.to_lowercase());
@@ -588,6 +589,7 @@ mod tests {
             (Dialect::SQLITE, "IFNULL", "NVL"),
             (Dialect::ORACLE, "NVL", "IFNULL"),
             (Dialect::MSSQL, "ISNULL", "IFNULL"),
+            (Dialect::DB2, "POSSTR", "ISNULL"),
             (Dialect::H2, "FORMATDATETIME", "DATE_FORMAT"),
         ] {
             let request = request("SELECT ", 7..7, dialect, true).unwrap();

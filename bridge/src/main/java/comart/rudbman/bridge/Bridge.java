@@ -244,7 +244,7 @@ public final class Bridge {
         // very statement this call is meant to interrupt.
         Session s = Registry.session(handle);
         JsonObject o = new JsonObject();
-        o.addProperty("cancelled", s.cancel());
+        o.addProperty("canceled", s.cancel());
         return Envelope.ok(o);
     }
 

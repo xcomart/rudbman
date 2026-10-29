@@ -17,7 +17,7 @@
 //!
 //! The alternative, one tree shared by every connection, was tried first and
 //! reads badly: a split arranged for one database follows the user into the
-//! next, and a strip of tabs from three connections at once needs a colour dot
+//! next, and a strip of tabs from three connections at once needs a color dot
 //! per tab to be legible at all. Scoping the whole area is what makes the tab
 //! mean something.
 //!
@@ -116,7 +116,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 /// traffic lights, in the custom title bar style.
 ///
 /// The buttons are 14 pt tall, so half the difference to [`TOOLBAR_HEIGHT`]
-/// centres them in the toolbar band.
+/// centers them in the toolbar band.
 const TRAFFIC_LIGHT_ORIGIN: Point<Pixels> = Point {
     x: px(12.),
     y: px(11.),
@@ -156,7 +156,7 @@ const PANE_SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
 
 /// [`PANE_SHORTCUT_MODIFIER`] as a menu hint writes it.
 ///
-/// The same key, capitalised: gpui's binding syntax is lower case and the name
+/// The same key, capitalized: gpui's binding syntax is lower case and the name
 /// printed on the key is not. Never translated, for [`SHORTCUT_MODIFIER`]'s
 /// reason.
 const PANE_SHORTCUT_LABEL: &str = if cfg!(target_os = "macos") {
@@ -175,20 +175,17 @@ const PANE_SHORTCUT_LABEL: &str = if cfg!(target_os = "macos") {
 /// same six pixels [`rugpui::Splitter`] gives the dividers inside the pane tree
 /// — and, since both are the same [`rugpui::ResizeHandle`], the same accent bar
 /// under the pointer too, so the two resize gestures of one window are equally
-/// easy to find and equally easy to recognise.
+/// easy to find and equally easy to recognize.
 const SPLIT_HANDLE: f32 = 6.;
 
 /// A surface of the workspace that scrolls, and so wears an overlay bar.
 ///
-/// Two of them, on different axes and never on screen together in the way that
-/// matters: the tab strip runs sideways once the tabs outgrow it, the welcome
-/// screen runs down once its column outgrows the window. Naming them lets one
-/// set of handlers answer for both instead of one set each — the shape logman
-/// uses for the same pair of surfaces.
+/// One of them: the welcome screen runs down once its column outgrows the
+/// window. The tab strips are not on the list — [`TabBar`] runs the bar along
+/// each of them itself. Naming the surface keeps the handlers below in the
+/// shape logman uses for its own, ready for a second one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Surface {
-    /// The tab strip.
-    Tabs,
     /// The welcome screen shown while no tab is open.
     Welcome,
 }
@@ -197,7 +194,6 @@ impl Surface {
     /// Which way the surface scrolls, and so which way its bar lies.
     fn axis(self) -> ScrollbarAxis {
         match self {
-            Self::Tabs => ScrollbarAxis::Horizontal,
             Self::Welcome => ScrollbarAxis::Vertical,
         }
     }
@@ -205,15 +201,11 @@ impl Surface {
 
 /// Every scrolling surface, with the element id its bar is drawn under.
 ///
-/// The ids live here rather than inside the elements they overlay — [`TabBar`]
-/// would be the obvious home for the first — because a drag of a thumb is
-/// answered by the workspace, and the id is what tells one bar's drag from any
-/// other bar's in the window. Iterating this is how the drag and release paths
-/// find which bar an event belongs to.
-const SCROLLBARS: [(&str, Surface); 2] = [
-    ("tab-scrollbar", Surface::Tabs),
-    ("welcome-scrollbar", Surface::Welcome),
-];
+/// The ids live here rather than inside the elements they overlay because a
+/// drag of a thumb is answered by the workspace, and the id is what tells one
+/// bar's drag from any other bar's in the window. Iterating this is how the
+/// drag and release paths find which bar an event belongs to.
+const SCROLLBARS: [(&str, Surface); 1] = [("welcome-scrollbar", Surface::Welcome)];
 
 /// Placeholder for a status bar cell with nothing to report.
 ///
@@ -224,7 +216,7 @@ const NOTHING: SharedString = SharedString::new_static("—");
 ///
 /// Fixed rather than fluid, and the width logman gives the same column: wide
 /// enough for a profile's name beside its host, narrow enough to read as one
-/// card in a maximised window rather than a screen-wide smear of rows.
+/// card in a maximized window rather than a screen-wide smear of rows.
 const WELCOME_WIDTH: f32 = 320.;
 
 /// Element id of the welcome screen's scrolling box.
@@ -246,7 +238,7 @@ const WELCOME_NEW_TAB: isize = 1;
 /// Debug selector of the welcome screen's "new connection" button.
 ///
 /// Compiled away outside a test build; it saves a test working the button's
-/// position out from the centred column's layout.
+/// position out from the centered column's layout.
 const WELCOME_NEW_SELECTOR: &str = "welcome-new";
 
 /// Marker for a drag of the explorer's right edge.
@@ -435,7 +427,7 @@ enum ConnectionState {
     /// The connect task is in flight.
     ///
     /// The task is held rather than detached so that closing the tab abandons
-    /// the attempt: a `Task` that is dropped is cancelled at its next await
+    /// the attempt: a `Task` that is dropped is canceled at its next await
     /// point, and the half-opened session that may be in flight behind it is
     /// closed by `Connected`'s own `Drop`.
     Connecting { _task: Task<()> },
@@ -573,10 +565,6 @@ struct Workspace {
     /// up. Nothing else reads this: opening a session goes through the profile
     /// this hands over, not through the file.
     profiles: ConnectionStore,
-    /// Horizontal scroll of the tab strip, used to reveal the active tab.
-    tab_scroll: ScrollHandle,
-    /// Whether the tab strip's overlay scroll indicator is on screen.
-    tab_scrollbar: ScrollbarState,
     /// Vertical scroll of the welcome screen.
     welcome_scroll: ScrollHandle,
     /// Whether the welcome screen's overlay scroll indicator is on screen.
@@ -611,7 +599,7 @@ struct Workspace {
     context_menu: Option<OpenContextMenu>,
     /// The write confirmation, while a query pane is waiting on it.
     ///
-    /// Held here rather than in the pane because a modal centres itself in its
+    /// Held here rather than in the pane because a modal centers itself in its
     /// nearest positioned ancestor, and inside a pane that is the wrong box.
     confirm: Option<PendingConfirm>,
     /// Where a dragged tab would land, while a drag is over a strip.
@@ -732,8 +720,6 @@ impl Workspace {
             connections: Vec::new(),
             active_connection: 0,
             profiles: load_profiles(),
-            tab_scroll: ScrollHandle::new(),
-            tab_scrollbar: ScrollbarState::new(),
             welcome_scroll: ScrollHandle::new(),
             welcome_scrollbar: ScrollbarState::new(),
             about,
@@ -765,7 +751,7 @@ impl Workspace {
 /// What every pane of one frame is drawn against.
 ///
 /// Gathered once by [`Workspace::render_body`] and handed down the recursion
-/// rather than recomputed per leaf: the palette and the connection colours are
+/// rather than recomputed per leaf: the palette and the connection colors are
 /// the same for every pane on screen, and the alternative is a `render_pane`
 /// with seven parameters, most of them constants of the frame.
 struct PaneChrome {
@@ -776,10 +762,10 @@ struct PaneChrome {
     frame: bool,
     /// The palette.
     theme: Theme,
-    /// The colour tag of every connection that has one, for the tab dots.
+    /// The color tag of every connection that has one, for the tab dots.
     ///
-    /// A profile with no colour is simply absent, and its tabs draw no dot: an
-    /// invented colour would read as a tag the user chose.
+    /// A profile with no color is simply absent, and its tabs draw no dot: an
+    /// invented color would read as a tag the user chose.
     colors: HashMap<ConnectionId, Hsla>,
     /// Where a dragged tab would land, while a drag is over a strip.
     ///

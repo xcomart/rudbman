@@ -145,7 +145,7 @@ struct JoinDrag {
     start: (f32, f32),
     /// Where the pointer is now, in logical units.
     at: (f32, f32),
-    /// Whether it has travelled far enough to be a drag rather than a click.
+    /// Whether it has traveled far enough to be a drag rather than a click.
     moved: bool,
 }
 
@@ -780,7 +780,7 @@ impl Render for BuilderView {
             .size_full()
             .overflow_hidden()
             // Nothing, while the window is translucent. The pane behind the
-            // canvas already tints these same pixels with the very same colour,
+            // canvas already tints these same pixels with the very same color,
             // and a second fill over them would either hide the blur or saturate
             // the surface alpha back to opaque; see `app_settings::window_tint`.
             // The boxes and the joins the canvas draws are unaffected — they sit

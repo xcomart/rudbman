@@ -63,7 +63,7 @@ final class RsView {
      * Reads several string columns of the current row in ascending column order.
      *
      * <p>For a result set whose column order is not fixed by JDBC - a vendor
-     * catalogue view, where the same output field lives at a different position
+     * catalog view, where the same output field lives at a different position
      * per product - the caller cannot put its reads in a safe order by hand.
      * This does it for them: the labels this result set actually has are sorted
      * by position and read left to right, and the caller composes its output

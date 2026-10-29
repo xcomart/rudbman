@@ -40,7 +40,7 @@ import java.util.Base64;
  * double and arrive rounded, which is the same mistake the batch codec refuses
  * to make in the other direction.
  *
- * <p>Recognised type names: {@code null}, {@code bool}, {@code i64},
+ * <p>Recognized type names: {@code null}, {@code bool}, {@code i64},
  * {@code f64}, {@code string}, {@code decimal}, {@code date}, {@code time},
  * {@code timestamp}, {@code bytes} (base64), {@code blob_file} and
  * {@code clob_file} (an immutable local snapshot; the latter is UTF-8).

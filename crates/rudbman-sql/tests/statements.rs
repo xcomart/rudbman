@@ -202,7 +202,7 @@ fn known_limitations_are_what_the_documentation_says() {
         "PL/SQL blocks are not supported; see the `statement` module docs"
     );
 
-    // `DELIMITER` is not honoured, so the trigger body is cut at the `;` inside
+    // `DELIMITER` is not honored, so the trigger body is cut at the `;` inside
     // it and the `//` that really ends it is read as two operators.
     let delimited = "delimiter //\ncreate trigger t before insert on x for each row\n\
                      begin\n  set @a = 1;\nend//\ndelimiter ;";
@@ -210,7 +210,7 @@ fn known_limitations_are_what_the_documentation_says() {
     assert_eq!(
         spans.len(),
         2,
-        "DELIMITER is not honoured; see the `statement` module docs"
+        "DELIMITER is not honored; see the `statement` module docs"
     );
     assert!(
         spans[0].sql(delimited).ends_with("set @a = 1"),

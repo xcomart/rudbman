@@ -39,7 +39,8 @@
 use std::path::PathBuf;
 
 use rudbman_jdbc::{
-    ConnectionSpec, DescribeRequest, Jvm, JvmConfig, Session, StatementSpec, default_bridge_jar,
+    ConnectionSpec, DdlSource, DescribeRequest, Jvm, JvmConfig, ObjectKind, Session, StatementSpec,
+    default_bridge_jar,
 };
 
 /// The environment variable that both enables this test and says where the
@@ -93,7 +94,7 @@ fn find_in_gradle_cache(group: &str, artifact: &str) -> Option<PathBuf> {
     let mut newest: Option<(String, PathBuf)> = None;
     for version in std::fs::read_dir(&root).ok()?.flatten() {
         let number = version.file_name().to_string_lossy().into_owned();
-        // Only the binary artefact: the same directory holds `-javadoc.jar` and
+        // Only the binary artifact: the same directory holds `-javadoc.jar` and
         // `-sources.jar`, and picking one of those gets a class loader with no
         // classes in it.
         let wanted = format!("{artifact}-{number}.jar");
@@ -281,11 +282,91 @@ fn sqlite_blob_file_parameters_and_stream_only_reads_round_trip() {
 }
 
 /// A describe item's `REMARKS`, with null and the empty string read alike —
-/// the same normalisation `tests/containers.rs` applies, for the same reason.
+/// the same normalization `tests/containers.rs` applies, for the same reason.
 fn remarks(item: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
     item.get("remarks")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_string)
+}
+
+/// Every kind of object SQLite has — a table, its index, a view and a trigger —
+/// each with the `CREATE` SQLite keeps for it, and the kinds it does not have
+/// answered as empty rather than failed.
+///
+/// The table's text is SQLite's own: the reconstruction from metadata wrote
+/// `AUTOINCREMENT` without its `PRIMARY KEY`, which SQLite refuses, and lost
+/// the `CHECK`. The view's was a `CREATE TABLE`. The functions folder was an
+/// error, because the driver refuses `getFunctions` outright.
+#[test]
+fn sqlite_answers_every_object_with_its_own_text() {
+    let Some(mut db) = Db::open() else { return };
+    // Its own table: the other test here runs beside it on the same file.
+    db.table = format!("rb_objects_{}", std::process::id());
+    let view = format!("{}_v", db.table);
+    let trigger = format!("{}_t", db.table);
+    let _ = db
+        .session
+        .execute(&StatementSpec::new(format!("drop view if exists {view}")));
+    db.exec(&format!("drop table if exists {}", db.table));
+    db.exec(&format!(
+        "create table {} (id integer primary key autoincrement, \
+         amount numeric default 0 check (amount >= 0), note varchar(20))",
+        db.table
+    ));
+    db.exec(&format!(
+        "create index {}_ix on {} (note)",
+        db.table, db.table
+    ));
+    db.exec(&format!(
+        "create view {view} as select id from {} where amount > 0",
+        db.table
+    ));
+    db.exec(&format!(
+        "create trigger {trigger} after insert on {} begin \
+         update {} set note = upper(note) where id = new.id; end",
+        db.table, db.table
+    ));
+
+    let ddl = |name: &str, kind: ObjectKind| {
+        let answer = db
+            .session
+            .describe_object_ddl(None, None, name, kind, DdlSource::Auto)
+            .unwrap_or_else(|error| panic!("ddl of {kind:?} {name}: {error}"));
+        assert!(answer.is_native(), "{kind:?}: {}", answer.source);
+        answer.ddl
+    };
+    let table = ddl(&db.table, ObjectKind::Table);
+    assert!(table.contains("primary key autoincrement"), "{table}");
+    assert!(table.contains("check (amount >= 0)"), "{table}");
+    assert!(table.contains(&format!("{}_ix", db.table)), "{table}");
+    let text = ddl(&view, ObjectKind::View);
+    assert!(text.starts_with("CREATE VIEW"), "{text}");
+    let text = ddl(&trigger, ObjectKind::Trigger);
+    assert!(text.starts_with("CREATE TRIGGER"), "{text}");
+
+    let triggers = db
+        .session
+        .describe(&DescribeRequest::new("triggers").with_name(&trigger))
+        .expect("triggers are listed")
+        .items;
+    assert_eq!(triggers.len(), 1, "{triggers:?}");
+    assert_eq!(triggers[0].get("table"), Some(&serde_json::json!(db.table)));
+    assert_eq!(triggers[0].get("timing"), Some(&serde_json::json!("AFTER")));
+    assert_eq!(
+        triggers[0].get("events"),
+        Some(&serde_json::json!("INSERT"))
+    );
+
+    for kind in ["functions", "procedures", "sequences"] {
+        let answer = db
+            .session
+            .describe(&DescribeRequest::new(kind))
+            .unwrap_or_else(|error| panic!("{kind} must be empty, not refused: {error}"));
+        assert!(answer.items.is_empty(), "{kind}: {:?}", answer.items);
+    }
+    let _ = db
+        .session
+        .execute(&StatementSpec::new(format!("drop view if exists {view}")));
 }

@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Where the two theme catalogues live, for `rugpui`'s theme store.
+/// Where the two theme catalogs live, for `rugpui`'s theme store.
 ///
 /// The widget kit is shared with applications that put their configuration
 /// somewhere else, so it takes the directories rather than guessing at them:
@@ -143,7 +143,7 @@ pub(super) fn min_window_size() -> gpui::Size<Pixels> {
 ///
 /// Two identical enums, deliberately: `rudbman-core` reads and writes
 /// `settings.json` and is free of gpui, which the shell's chrome is not, so
-/// neither can be the other's. Both serialise to the same two `snake_case`
+/// neither can be the other's. Both serialize to the same two `snake_case`
 /// words — the test below is what says so — and this is the one line between
 /// them.
 pub(super) fn chrome_titlebar(style: TitlebarStyle) -> rugpui_shell::TitlebarStyle {

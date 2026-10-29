@@ -9,12 +9,12 @@
 //!
 //! # Live preview
 //!
-//! Colours and fonts are shown before they are saved, because judging a palette
+//! Colors and fonts are shown before they are saved, because judging a palette
 //! from a swatch is not the same as living in it. The dialog does that without
 //! persisting anything: every change to one of those controls publishes the form
 //! through [`crate::app_settings::set_preview`] and emits
 //! [`SettingsDialogEvent::Previewed`], and the shell re-applies the palettes from
-//! whatever that call left in place. Cancelling drops the preview, at which point
+//! whatever that call left in place. Canceling drops the preview, at which point
 //! the same code path resolves back to the saved settings — the revert is the
 //! absence of an override rather than a second copy of the settings kept around
 //! to restore from.
@@ -57,34 +57,11 @@ use crate::app_settings;
 use crate::i18n::{self, ts};
 use crate::icons;
 
-/// The dialog's five scrolling surfaces, and the element id of each one's
-/// overlay scroll indicator.
+/// Element id of the dialog body's overlay scroll indicator.
 ///
-/// One drag listener answers all of them, so it has to be able to say which bar
-/// a drag belongs to; these ids are how, and pairing each with the handle and
-/// the state it goes with keeps them from being wired up crosswise.
-const SCROLLBARS: [(&str, Surface); 5] = [
-    ("settings-body-scrollbar", Surface::Body),
-    ("settings-font-scrollbar", Surface::Font),
-    ("settings-language-scrollbar", Surface::Language),
-    ("settings-ui-theme-scrollbar", Surface::UiTheme),
-    ("settings-editor-theme-scrollbar", Surface::EditorTheme),
-];
-
-/// Which of the dialog's scrolling surfaces is meant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Surface {
-    /// The dialog body, which scrolls behind the footer.
-    Body,
-    /// The open font list.
-    Font,
-    /// The open language list.
-    Language,
-    /// The open chrome theme list.
-    UiTheme,
-    /// The open editor theme list.
-    EditorTheme,
-}
+/// The drag listener on the dialog root tells this bar's drags from any other
+/// by it. The dropdowns' lists run bars of their own.
+const BODY_SCROLLBAR: &str = "settings-body-scrollbar";
 
 /// Width of the dialog panel.
 const DIALOG_WIDTH: f32 = 760.;
@@ -194,7 +171,7 @@ pub enum SettingsDialogEvent {
 
 /// Which of the dialog's two palette pickers is meant.
 ///
-/// The catalogues themselves are [`rugpui_shell::catalog`]'s; what stays here is
+/// The catalogs themselves are [`rugpui_shell::catalog`]'s; what stays here is
 /// the *form field* each one is attached to, because the selected id is a
 /// setting and the dialog is what owns those.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,7 +279,7 @@ type FontChoices = (
 /// root. It renders nothing while [`SettingsDialog::is_open`] is `false`, so it
 /// is safe to render unconditionally.
 pub struct SettingsDialog {
-    // Invalidated when opening the dialog or changing a palette catalogue.
+    // Invalidated when opening the dialog or changing a palette catalog.
     palette_choices: RefCell<Option<PaletteChoices>>,
     font_choices: RefCell<Option<FontChoices>>,
     /// Whether the dialog is currently visible.
@@ -337,7 +314,7 @@ pub struct SettingsDialog {
     editor_theme_actions: Entity<CatalogActions>,
     /// Keeps both rows' subscriptions alive.
     catalog_events: Vec<Subscription>,
-    /// The colour editor, while one is open. The dialog renders it *instead of*
+    /// The color editor, while one is open. The dialog renders it *instead of*
     /// the form rather than over it; see [`rugpui_shell::theme_editor`].
     editor: Option<Entity<ThemeEditor>>,
     /// Keeps the open editor's subscription alive.
@@ -353,14 +330,6 @@ pub struct SettingsDialog {
     body_scroll: ScrollHandle,
     /// Whether the body's overlay scroll indicator is on screen.
     body_scrollbar: ScrollbarState,
-    /// Whether the font list's overlay scroll indicator is on screen.
-    font_scrollbar: ScrollbarState,
-    /// Whether the language list's overlay scroll indicator is on screen.
-    language_scrollbar: ScrollbarState,
-    /// Whether the chrome theme list's overlay scroll indicator is on screen.
-    ui_theme_scrollbar: ScrollbarState,
-    /// Whether the editor theme list's overlay scroll indicator is on screen.
-    editor_theme_scrollbar: ScrollbarState,
     /// Index of the section currently scrolled into view. Kept so that tabbing
     /// between two controls of the same section does not re-scroll it.
     visible_section: usize,
@@ -439,7 +408,7 @@ impl SettingsDialog {
         let jvm_args_input = field(cx, "-Dfoo=bar".into(), tab::JVM_ARGS);
 
         // Numeric fields have no input filter of their own, so each one is
-        // sanitised after the fact by an observer.
+        // sanitized after the fact by an observer.
         restrict_to_number(cx, &ui_font_size_input, true, 5);
         restrict_to_number(cx, &editor_font_size_input, true, 5);
         restrict_to_number(cx, &opacity_input, false, 3);
@@ -455,7 +424,7 @@ impl SettingsDialog {
         }
 
         let defaults = AppSettings::default();
-        // One pair of catalogues for the life of the dialog: they hold the
+        // One pair of catalogs for the life of the dialog: they hold the
         // directories and the id to fall back on, both of which are fixed.
         let dirs = crate::theme_dirs().unwrap_or_else(|err| {
             log::warn!("cannot locate the theme directories: {err:#}");
@@ -500,10 +469,6 @@ impl SettingsDialog {
             pending_focus: false,
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
-            font_scrollbar: ScrollbarState::new(),
-            language_scrollbar: ScrollbarState::new(),
-            ui_theme_scrollbar: ScrollbarState::new(),
-            editor_theme_scrollbar: ScrollbarState::new(),
             visible_section: 0,
             open_list: None,
             fonts: Vec::new(),
@@ -523,108 +488,64 @@ impl SettingsDialog {
         }
     }
 
-    /// The handle and bar state of one scrolling surface.
-    fn surface(&mut self, surface: Surface) -> (&ScrollHandle, &mut ScrollbarState) {
-        match surface {
-            Surface::Body => (&self.body_scroll, &mut self.body_scrollbar),
-            Surface::Font => (&self.font_scroll, &mut self.font_scrollbar),
-            Surface::Language => (&self.language_scroll, &mut self.language_scrollbar),
-            Surface::UiTheme => (&self.ui_theme_scroll, &mut self.ui_theme_scrollbar),
-            Surface::EditorTheme => (&self.editor_theme_scroll, &mut self.editor_theme_scrollbar),
-        }
-    }
-
-    /// The same pair, for the renders that only read them.
-    fn surface_ref(&self, surface: Surface) -> (&ScrollHandle, &ScrollbarState) {
-        match surface {
-            Surface::Body => (&self.body_scroll, &self.body_scrollbar),
-            Surface::Font => (&self.font_scroll, &self.font_scrollbar),
-            Surface::Language => (&self.language_scroll, &self.language_scrollbar),
-            Surface::UiTheme => (&self.ui_theme_scroll, &self.ui_theme_scrollbar),
-            Surface::EditorTheme => (&self.editor_theme_scroll, &self.editor_theme_scrollbar),
-        }
-    }
-
-    /// The overlay scroll indicator of one surface, as it stands.
-    fn scrollbar(&self, id: &'static str, surface: Surface) -> Scrollbar {
-        let (handle, state) = self.surface_ref(surface);
-        Scrollbar::for_handle(id, ScrollbarAxis::Vertical, handle).fade(state.fade())
+    /// The body's overlay scroll indicator, as it stands.
+    fn body_bar(&self) -> Scrollbar {
+        Scrollbar::for_handle(BODY_SCROLLBAR, ScrollbarAxis::Vertical, &self.body_scroll)
+            .fade(self.body_scrollbar.fade())
     }
 
     /// The same bar, listening for the pointer reaching the edge it rides.
     ///
-    /// Only the bars that are drawn need it: the one the drag path builds is
+    /// Only the bar that is drawn needs it: the one the drag path builds is
     /// there to be measured, and never reaches an element tree.
-    fn hovering_scrollbar(
-        &self,
-        id: &'static str,
-        surface: Surface,
-        cx: &mut Context<Self>,
-    ) -> Scrollbar {
-        self.scrollbar(id, surface).on_hover(cx.listener(
-            move |dialog, hovered: &bool, _window, cx| {
-                dialog.hover_scrollbar(surface, *hovered, cx);
-            },
-        ))
+    fn hovering_body_bar(&self, cx: &mut Context<Self>) -> Scrollbar {
+        self.body_bar()
+            .on_hover(cx.listener(|dialog, hovered: &bool, _window, cx| {
+                dialog.hover_scrollbar(*hovered, cx);
+            }))
     }
 
-    /// Puts each surface's bar up whenever it has been scrolled, and starts the
+    /// Puts the body's bar up whenever it has been scrolled, and starts the
     /// clock that takes it down again.
     fn watch_scroll(&mut self, cx: &mut Context<Self>) {
-        for (_, surface) in SCROLLBARS {
-            let (handle, state) = self.surface(surface);
-            let scrolled = scrolled(handle, ScrollbarAxis::Vertical);
-            if let Some(epoch) = state.moved(scrolled) {
-                hide_later(epoch, cx, move |dialog| Some(dialog.surface(surface).1));
-            }
+        let scrolled = scrolled(&self.body_scroll, ScrollbarAxis::Vertical);
+        if let Some(epoch) = self.body_scrollbar.moved(scrolled) {
+            hide_later(epoch, cx, |dialog| Some(&mut dialog.body_scrollbar));
         }
     }
 
-    /// Scrolls whichever surface's thumb has been dragged.
+    /// Scrolls the body when its thumb is dragged.
     fn drag_scrollbar(&mut self, event: &DragMoveEvent<DraggedThumb>, cx: &mut Context<Self>) {
-        for (id, surface) in SCROLLBARS {
-            let Some(progress) = self.scrollbar(id, surface).dragged(event, cx) else {
-                continue;
-            };
-
-            let (handle, state) = self.surface(surface);
-            state.hold();
-            scroll_to(handle, ScrollbarAxis::Vertical, progress);
-            cx.notify();
-            return;
-        }
-    }
-
-    /// Lets go of whichever thumb was being held, and starts its clock again.
-    fn release_scrollbars(&mut self, cx: &mut Context<Self>) {
-        for (_, surface) in SCROLLBARS {
-            if let Some(epoch) = self.surface(surface).1.release() {
-                hide_later(epoch, cx, move |dialog| Some(dialog.surface(surface).1));
-                cx.notify();
-            }
-        }
-    }
-
-    /// Puts one surface's bar up while the pointer rests on the edge it rides,
-    /// and starts it going the moment the pointer leaves.
-    ///
-    /// Told which surface rather than asked to work it out: three bars are on
-    /// screen at once at most, and each strip knows only its own.
-    fn hover_scrollbar(&mut self, surface: Surface, hovered: bool, cx: &mut Context<Self>) {
-        let state = self.surface(surface).1;
-        if hovered {
-            if state.hover_enter() {
-                cx.notify();
-            }
-            return;
-        }
-
-        let Some(epoch) = state.hover_leave() else {
+        let Some(progress) = self.body_bar().dragged(event, cx) else {
             return;
         };
-        hide_now(self, epoch, cx, move |dialog| {
-            Some(dialog.surface(surface).1)
-        });
+        self.body_scrollbar.hold();
+        scroll_to(&self.body_scroll, ScrollbarAxis::Vertical, progress);
+        cx.notify();
+    }
+
+    /// Lets go of the body's thumb, if it was held, and starts its clock again.
+    fn release_scrollbar(&mut self, cx: &mut Context<Self>) {
+        if let Some(epoch) = self.body_scrollbar.release() {
+            hide_later(epoch, cx, |dialog| Some(&mut dialog.body_scrollbar));
+            cx.notify();
+        }
+    }
+
+    /// Puts the body's bar up while the pointer rests on the edge it rides,
+    /// and starts it going the moment the pointer leaves.
+    fn hover_scrollbar(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.body_scrollbar.hover_enter() {
+                cx.notify();
+            }
+            return;
+        }
+
+        let Some(epoch) = self.body_scrollbar.hover_leave() else {
+            return;
+        };
+        hide_now(self, epoch, cx, |dialog| Some(&mut dialog.body_scrollbar));
     }
 
     /// Show the dialog, re-reading the current settings into the form.
@@ -712,7 +633,7 @@ impl SettingsDialog {
             }
             CatalogActionEvent::Select(id) => dialog.select(which, id.clone(), cx),
             // Files were written or removed and the registries reloaded, so a
-            // palette already in use has to repaint under its new colours
+            // palette already in use has to repaint under its new colors
             // without the settings themselves having been saved.
             CatalogActionEvent::Changed => {
                 dialog.palette_choices.get_mut().take();
@@ -722,7 +643,7 @@ impl SettingsDialog {
         (row, events)
     }
 
-    /// The row under one catalogue's picker.
+    /// The row under one catalog's picker.
     fn actions(&self, catalog: Catalog) -> &Entity<CatalogActions> {
         match catalog {
             Catalog::UiTheme => &self.ui_theme_actions,
@@ -730,7 +651,7 @@ impl SettingsDialog {
         }
     }
 
-    /// The id currently highlighted in one catalogue's picker.
+    /// The id currently highlighted in one catalog's picker.
     fn selection(&self, catalog: Catalog) -> SharedString {
         match catalog {
             Catalog::UiTheme => self.ui_theme.clone(),
@@ -741,7 +662,7 @@ impl SettingsDialog {
     /// Tells both rows which entry their picker is showing.
     ///
     /// Everything a row offers is about the selection, so a row that had not
-    /// been told would grey the wrong buttons out.
+    /// been told would gray the wrong buttons out.
     fn push_selections(&mut self, cx: &mut Context<Self>) {
         for catalog in [Catalog::UiTheme, Catalog::EditorTheme] {
             let id = self.selection(catalog).to_string();
@@ -751,10 +672,10 @@ impl SettingsDialog {
         }
     }
 
-    /// Highlights `id` in one catalogue's picker and previews it.
+    /// Highlights `id` in one catalog's picker and previews it.
     ///
     /// Nothing is persisted; the preview is dropped again if the dialog is
-    /// cancelled, exactly as when the user picks a row of the dropdown.
+    /// canceled, exactly as when the user picks a row of the dropdown.
     fn select(&mut self, catalog: Catalog, id: impl Into<SharedString>, cx: &mut Context<Self>) {
         match catalog {
             Catalog::UiTheme => self.ui_theme = id.into(),
@@ -786,7 +707,7 @@ impl SettingsDialog {
     /// Takes the editor back down and returns to the form.
     ///
     /// When something was written the preview is refreshed, so that a palette
-    /// already in use repaints under its new colours without the settings
+    /// already in use repaints under its new colors without the settings
     /// themselves having to be saved.
     fn close_editor(&mut self, saved: bool, cx: &mut Context<Self>) {
         self.editor = None;
@@ -964,7 +885,7 @@ impl SettingsDialog {
     ///
     /// Anything layered on top of the form takes the key first and only undoes
     /// itself, so that backing out of a list, a delete confirmation or the
-    /// colour editor does not also throw away the whole form. The editor is
+    /// color editor does not also throw away the whole form. The editor is
     /// checked before the dropdowns because it replaces the form outright:
     /// while it is up there is no list to close. A management row's delete
     /// confirmation is checked last, ahead of dismissing the dialog outright,
@@ -1146,7 +1067,7 @@ impl SettingsDialog {
     /// resolved theme keeps the row informative, since that answer moves with
     /// the chrome theme picked in the row above — and the disabled trigger is
     /// the same line in the same place as the live one, so ticking the box
-    /// shifts nothing on screen but the colours.
+    /// shifts nothing on screen but the colors.
     fn render_editor_theme(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
 
@@ -1175,8 +1096,6 @@ impl SettingsDialog {
                 .into_any_element();
         }
 
-        let bar = self.hovering_scrollbar(SCROLLBARS[4].0, Surface::EditorTheme, cx);
-
         SchemeSelect::new("settings-editor-theme")
             .chevron_icon(icons::CHEVRON_DOWN)
             .options_shared(self.cached_palettes(cx).1)
@@ -1184,7 +1103,6 @@ impl SettingsDialog {
             .open(self.open_list == Some(OpenList::EditorTheme))
             .tab_index(tab::EDITOR_THEME)
             .scroll_handle(self.editor_theme_scroll.clone())
-            .scrollbar(bar)
             .on_select({
                 let this = this.clone();
                 move |id, _window, cx| {
@@ -1205,8 +1123,6 @@ impl SettingsDialog {
     /// The "Appearance" section: both palettes and both fonts.
     fn render_appearance(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
-        let font_bar = self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Font, cx);
-        let ui_theme_bar = self.hovering_scrollbar(SCROLLBARS[3].0, Surface::UiTheme, cx);
         // Built before the section is assembled, because `section` borrows the
         // context to read the theme and these borrow it mutably to listen.
         let theme_actions = self.ui_theme_actions.clone();
@@ -1220,7 +1136,6 @@ impl SettingsDialog {
             .open(self.open_list == Some(OpenList::UiTheme))
             .tab_index(tab::UI_THEME)
             .scroll_handle(self.ui_theme_scroll.clone())
-            .scrollbar(ui_theme_bar)
             .on_select({
                 let this = this.clone();
                 move |id, _window, cx| {
@@ -1278,7 +1193,6 @@ impl SettingsDialog {
             .open(self.open_list == Some(OpenList::Font))
             .tab_index(tab::EDITOR_FONT_FAMILY)
             .scroll_handle(self.font_scroll.clone())
-            .scrollbar(font_bar)
             .on_select({
                 let this = this.clone();
                 // Row 0 is the "leave it to the OS" entry; comparing its label
@@ -1405,7 +1319,6 @@ impl SettingsDialog {
     /// The "Language" section.
     fn render_language(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
-        let language_bar = self.hovering_scrollbar(SCROLLBARS[2].0, Surface::Language, cx);
 
         let language = Select::new("settings-language")
             .chevron_icon(icons::CHEVRON_DOWN)
@@ -1415,7 +1328,6 @@ impl SettingsDialog {
             .open(self.open_list == Some(OpenList::Language))
             .tab_index(tab::LANGUAGE)
             .scroll_handle(self.language_scroll.clone())
-            .scrollbar(language_bar)
             .on_select({
                 let this = this.clone();
                 // By index, not by label: row 0 is "follow the system" and the
@@ -1640,9 +1552,9 @@ impl Render for SettingsDialog {
         self.apply_pending_focus(window, cx);
         self.watch_scroll(cx);
         let chrome = theme(cx);
-        let body_bar = self.hovering_scrollbar(SCROLLBARS[0].0, Surface::Body, cx);
+        let body_bar = self.hovering_body_bar(cx);
 
-        // While a colour is being edited the form steps aside entirely rather
+        // While a color is being edited the form steps aside entirely rather
         // than being covered up, so that the window's tab ring holds only the
         // controls that are actually on screen; see
         // [`rugpui_shell::theme_editor`]. The form is not even built in that
@@ -1681,11 +1593,9 @@ impl Render for SettingsDialog {
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_prev))
             .on_key_down(cx.listener(Self::on_key_down))
-            // All three overlay bars are answered from here: gpui hands a drag
-            // move to every listener of that type wherever it sits, and this is
-            // the one element mounted for the whole of any of them — the open
-            // list a thumb belongs to is torn down the moment the pointer picks
-            // an option, and the body scrolls away under its own.
+            // The body's bar is answered from here: gpui hands a drag move to
+            // every listener of that type wherever it sits, and the body scrolls
+            // away under its own bar. The dropdowns answer for their lists' bars.
             .on_drag_move::<DraggedThumb>(cx.listener(
                 |dialog, event: &DragMoveEvent<DraggedThumb>, _window, cx| {
                     dialog.drag_scrollbar(event, cx);
@@ -1694,13 +1604,13 @@ impl Render for SettingsDialog {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|dialog, _: &MouseUpEvent, _window, cx| {
-                    dialog.release_scrollbars(cx);
+                    dialog.release_scrollbar(cx);
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|dialog, _: &MouseUpEvent, _window, cx| {
-                    dialog.release_scrollbars(cx);
+                    dialog.release_scrollbar(cx);
                 }),
             )
             .child(modal(
@@ -1811,7 +1721,7 @@ mod tests {
 
     /// The word-wrap switch is the one appearance control the dialog does not
     /// preview — the editors are handed the change on save — so it has to reach
-    /// `collect` on its own, and cancelling has to leave the saved answer alone.
+    /// `collect` on its own, and canceling has to leave the saved answer alone.
     #[gpui::test]
     fn the_word_wrap_switch_reaches_the_settings_without_a_preview(cx: &mut gpui::TestAppContext) {
         let saved = AppSettings::default();
@@ -1875,7 +1785,7 @@ mod tests {
     /// Nothing typed into the form may reach the disk on its own, and closing
     /// the dialog has to leave the window drawn from the saved settings again.
     #[gpui::test]
-    fn a_cancelled_edit_leaves_nothing_behind(cx: &mut gpui::TestAppContext) {
+    fn a_canceled_edit_leaves_nothing_behind(cx: &mut gpui::TestAppContext) {
         let saved = AppSettings::default();
         let dialog = cx.update(|cx| {
             app_settings::replace(saved.clone(), cx);
@@ -1906,7 +1816,7 @@ mod tests {
     /// exercised here — driving a management row's own "Delete" button needs a
     /// rendered window, and `rugpui_shell::catalog_ui` already proves
     /// `is_confirming`/`cancel_confirm` correct in isolation
-    /// (`a_confirmation_can_be_asked_about_and_cancelled_from_outside_the_row`);
+    /// (`a_confirmation_can_be_asked_about_and_canceled_from_outside_the_row`);
     /// what is left to check here is only that [`SettingsDialog::escape`] asks
     /// the editor and the open list first.
     #[gpui::test]
@@ -1929,7 +1839,7 @@ mod tests {
             });
         });
 
-        // The colour editor up: `escape` cancels it in place. `cancel` reports
+        // The color editor up: `escape` cancels it in place. `cancel` reports
         // itself through an emitted event rather than a direct field write —
         // see `ThemeEditor::cancel` — so the close it causes only lands once
         // this update's effects flush, which is why the two checks below are
@@ -2078,27 +1988,6 @@ mod tests {
             section_of(tab::EDITOR_THEME_ACTIONS + CatalogActions::TAB_SPAN - 1),
             0
         );
-    }
-
-    #[test]
-    fn every_scrolling_surface_has_a_bar_of_its_own() {
-        // One drag listener tells the bars apart by id and looks the surface up
-        // in this table, so a duplicate on either side would scroll the wrong
-        // thing — and a surface listed twice would give two lists one bar.
-        let mut ids: Vec<&str> = SCROLLBARS.iter().map(|(id, _)| *id).collect();
-        let count = ids.len();
-        ids.sort_unstable();
-        ids.dedup();
-        assert_eq!(ids.len(), count, "two bars share an element id");
-
-        for (index, (_, surface)) in SCROLLBARS.iter().enumerate() {
-            assert!(
-                !SCROLLBARS[..index]
-                    .iter()
-                    .any(|(_, earlier)| earlier == surface),
-                "{surface:?} is listed twice"
-            );
-        }
     }
 
     #[test]

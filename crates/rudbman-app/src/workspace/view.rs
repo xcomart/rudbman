@@ -32,7 +32,7 @@ impl Workspace {
 
     /// Takes down the drop bar, if one is up.
     ///
-    /// A drag cancelled with a release outside any drop target never reaches a
+    /// A drag canceled with a release outside any drop target never reaches a
     /// drop handler, so the root's own release clears whatever is left; a
     /// drop already took it, which makes this a no-op.
     pub(super) fn clear_tab_drop(&mut self, cx: &mut Context<Self>) {
@@ -45,11 +45,13 @@ impl Workspace {
 /// Renders one pane's tab strip.
 ///
 /// The same widget as the connection strip at the top of the window, minus the
-/// dropdown and the "+": a pane's tabs are opened from the explorer and the
-/// query commands, so a "new tab" button here would have nothing to open.
+/// "+": a pane's tabs are opened from the explorer and the query commands, so a
+/// "new tab" button here would have nothing to open. The dropdown listing the
+/// pane's tabs, the bar along the strip once they overflow it and bringing the
+/// active tab into view are all the widget's own.
 ///
 /// Every tab of the strip belongs to the connection whose tab is on top — the
-/// work area is that connection's — so the dots all carry one colour, the one
+/// work area is that connection's — so the dots all carry one color, the one
 /// the explorer marks that connection's root with. That is the point of keeping
 /// them: with several connections open, a glance at a pane says which database
 /// its panels are about without reading the strip above the window.
@@ -84,9 +86,11 @@ pub(super) fn render_tab_strip(
         .tabs(tabs)
         .active(pane.active_index())
         .scroll_handle(pane.scroll_handle())
-        // Only the third slot can ever be read: this strip carries neither the
-        // dropdown nor the "+" the first two label.
-        .tooltips("", "", ts!("tab.close"))
+        .menu_icon(icons::TAB_LIST)
+        // The second slot is never read: this strip carries no "+". The close
+        // button reuses the right-click menu's own row, as the connection
+        // strip's does.
+        .tooltips(ts!("tab.tip_pane_list"), "", ts!("context.close_tab"))
         .drag_source(id.as_u64())
         .drop_indicator(chrome.drop.indicator(id.as_u64()))
         .on_drag_over({
@@ -170,11 +174,11 @@ pub(super) fn gpui_axis(axis: Axis) -> gpui::Axis {
 /// the seam and the guards on the number.
 ///
 /// When `frame` is set — the work area holds more than one pane — every leaf is
-/// framed with a hairline, accent coloured on the active one. The frames double
-/// as the divider between neighbours, which is why there is no separate divider
+/// framed with a hairline, accent colored on the active one. The frames double
+/// as the divider between neighbors, which is why there is no separate divider
 /// element: a third hairline squeezed between two of them would only thicken the
 /// seam. Every pane is framed, not just the active one, so that moving the
-/// marker recolours a frame without shifting the layout by a pixel. It is a
+/// marker recolors a frame without shifting the layout by a pixel. It is a
 /// border rather than a fill because a translucent window allows only one tinted
 /// fill per pixel and the body already owns it. They are also why every
 /// splitter here is `seamless`: a split only exists where there is more than
@@ -337,10 +341,10 @@ pub(super) fn render_placeholder(theme: &Theme) -> AnyElement {
 /// scrolled from the top once it does not.
 ///
 /// `justify_center` does the first half and ruins the second. With more content
-/// than room, a centred column hangs off both ends of its box, and scrolling
+/// than room, a centered column hangs off both ends of its box, and scrolling
 /// only ever reaches what lies past the *end* of one — so the head of the column
 /// goes off the top edge and stays there, unreachable. Automatic margins share
-/// out whatever room is spare, which centres the column exactly as `justify_center`
+/// out whatever room is spare, which centers the column exactly as `justify_center`
 /// would, and collapse to nothing when there is none, which leaves the column at
 /// the top with all of it below the fold and so all of it reachable.
 ///
@@ -481,7 +485,7 @@ impl Render for Workspace {
                 cx.listener(|workspace, _: &MouseUpEvent, _window, cx| {
                     workspace.release_scrollbars(cx);
                     workspace.release_explorer(cx);
-                    // A drag cancelled outside any drop target never reaches a
+                    // A drag canceled outside any drop target never reaches a
                     // drop handler; a drop already took the bar, making this a
                     // no-op.
                     workspace.clear_tab_drop(cx);
@@ -646,7 +650,7 @@ impl Workspace {
         // them has to reach the drag area underneath and move the window.
         let title = custom.then(|| {
             // Use the shipped PNG so the title bar preserves the icon's
-            // colours on every platform instead of tinting its alpha mask.
+            // colors on every platform instead of tinting its alpha mask.
             let icon = (!cfg!(target_os = "macos")).then(|| {
                 let icon = img(icons::APP_ICON).size(px(16.)).flex_none();
                 if !titlebar_active {
@@ -725,7 +729,7 @@ impl Workspace {
     /// something it cannot deliver; the shortcuts stay bound so that the layout
     /// code is exercised, and the rows arrive with the panels in M2.
     ///
-    /// Every other row is greyed exactly when the action behind it would return
+    /// Every other row is grayed exactly when the action behind it would return
     /// without doing anything — the welcome screen has no session, so all but
     /// the connection, settings and about rows arrive muted. Drawn rather than
     /// dropped, for the reason the explorer's menu draws its own: a command that
@@ -898,8 +902,6 @@ impl Workspace {
                     });
                 }
             })
-            .scroll_handle(&self.tab_scroll)
-            .scrollbar(self.hovering_scrollbar(SCROLLBARS[0].0, Surface::Tabs, cx))
             .menu_icon(icons::TAB_LIST)
             .new_icon(icons::NEW_TAB)
             // The close button reuses the tab menu's own row: it is the same
@@ -1022,7 +1024,7 @@ impl Workspace {
     /// the two are the same author's tools and greet an empty window the same
     /// way: the application's name over one line of hint, then a fixed-width
     /// column carrying the button and, under its own small heading, the saved
-    /// list. The column sits centred while it fits and scrolls from the top
+    /// list. The column sits centered while it fits and scrolls from the top
     /// once it does not — [`centered_scroll`] says why those are one
     /// arrangement — under the same overlay bar the tab strip wears.
     ///
@@ -1074,7 +1076,7 @@ impl Workspace {
                 .child(div().flex().flex_col().gap(px(1.)).children(rows))
         });
 
-        let bar = self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Welcome, cx);
+        let bar = self.hovering_scrollbar(SCROLLBARS[0].0, Surface::Welcome, cx);
 
         let content = div()
             .flex()
@@ -1144,7 +1146,6 @@ impl Workspace {
     /// One surface's scroll offset and the state of the bar over it.
     pub(super) fn surface(&mut self, surface: Surface) -> (&ScrollHandle, &mut ScrollbarState) {
         match surface {
-            Surface::Tabs => (&self.tab_scroll, &mut self.tab_scrollbar),
             Surface::Welcome => (&self.welcome_scroll, &mut self.welcome_scrollbar),
         }
     }
@@ -1152,7 +1153,6 @@ impl Workspace {
     /// The same pair, for the paths that only read.
     pub(super) fn surface_ref(&self, surface: Surface) -> (&ScrollHandle, &ScrollbarState) {
         match surface {
-            Surface::Tabs => (&self.tab_scroll, &self.tab_scrollbar),
             Surface::Welcome => (&self.welcome_scroll, &self.welcome_scrollbar),
         }
     }
@@ -1188,8 +1188,7 @@ impl Workspace {
     /// the clock that takes it down again.
     ///
     /// Called from `render` because that is where every way of scrolling them
-    /// meets: a wheel over the tabs or the welcome screen, and the jump that
-    /// brings a newly activated tab back into view.
+    /// meets: a wheel over the welcome screen, and a drag of its thumb.
     pub(super) fn watch_scroll(&mut self, cx: &mut Context<Self>) {
         for (_, surface) in SCROLLBARS {
             let (handle, state) = self.surface(surface);
@@ -1245,8 +1244,8 @@ impl Workspace {
     /// Puts one surface's bar up while the pointer rests on the edge it rides,
     /// and starts it going the moment the pointer leaves.
     ///
-    /// Told which surface rather than asked to work it out: each strip carries
-    /// this listener already and knows only its own.
+    /// Told which surface rather than asked to work it out: each surface's bar
+    /// carries this listener already and knows only its own.
     pub(super) fn hover_scrollbar(
         &mut self,
         surface: Surface,

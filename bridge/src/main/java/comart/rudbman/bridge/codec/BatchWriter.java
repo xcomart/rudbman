@@ -54,7 +54,7 @@ public final class BatchWriter {
     }
 
     /**
-     * Serialises the batch.
+     * Serializes the batch.
      *
      * @param last whether this is the final batch of the cursor
      * @return the encoded batch

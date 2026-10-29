@@ -35,7 +35,7 @@
 //!
 //! "Open in editor" emits [`BuilderPaneEvent::OpenSql`] and the workspace puts
 //! the text through `open_query`, the one gate every new query pane comes
-//! through. Running, cancelling, paging and the write confirmation are that
+//! through. Running, canceling, paging and the write confirmation are that
 //! pane's, already built and already tested; a second execution path inside the
 //! builder would be a second set of all of them.
 
@@ -352,7 +352,7 @@ impl BuilderPane {
     /// Every part of the query is written in `(table, column)` pairs whose
     /// first half is an index into [`BuilderPane::tables`], so removing an
     /// entry from the middle would silently re-point every term above it at its
-    /// neighbour. Each of them is therefore filtered for the table that is
+    /// neighbor. Each of them is therefore filtered for the table that is
     /// going and then shifted down — the joins, the select list, the grouping
     /// and the sorting alike. The `WHERE` rows are free text and are left
     /// exactly as they are: they are the user's own words, and a condition that
@@ -960,9 +960,9 @@ impl Render for BuilderPane {
         // The resting border is drawn transparent rather than dropped, so that
         // lighting it up while something is held over the canvas moves no pixel
         // of what is inside. Transparent and not the chrome background it used to
-        // be: whatever is behind the border is that colour already, so the two
+        // be: whatever is behind the border is that color already, so the two
         // look identical while the window is opaque — and while it is
-        // translucent, a background-coloured border would be an opaque hairline
+        // translucent, a background-colored border would be an opaque hairline
         // around a see-through canvas. See `app_settings::window_tint`.
         let empty = self.tables.is_empty();
         let accent = chrome.accent;
@@ -1055,7 +1055,7 @@ fn sort_label(direction: Option<SortDir>) -> SharedString {
     }
 }
 
-/// One labelled block of the form.
+/// One labeled block of the form.
 fn section(title: SharedString, chrome: &Theme) -> gpui::Div {
     div().flex().flex_col().gap(px(6.)).child(
         div()
@@ -1065,7 +1065,7 @@ fn section(title: SharedString, chrome: &Theme) -> gpui::Div {
     )
 }
 
-/// Reads one table's columns, in catalogue order.
+/// Reads one table's columns, in catalog order.
 ///
 /// **Blocks**, and is called from `cx.background_spawn` with a
 /// [`SessionHandle`](crate::connection::SessionHandle).
@@ -1073,7 +1073,7 @@ fn section(title: SharedString, chrome: &Theme) -> gpui::Div {
 /// One round trip, as §7.7 asks for: a builder is used by adding several tables
 /// in a row, and a key lookup per table would make each of those additions
 /// three calls instead of one. The primary-key and foreign-key marks a diagram
-/// draws are therefore absent here, which costs a colour on a row and nothing
+/// draws are therefore absent here, which costs a color on a row and nothing
 /// about the statement.
 pub fn load_columns(session: &Session, target: &ObjectTarget) -> Result<Vec<ErdColumn>, String> {
     let mut request = DescribeRequest::new("columns");
@@ -1387,9 +1387,9 @@ mod tests {
     }
 
     /// The loader against a real product: the column list comes back in
-    /// catalogue order, typed the way the diagram types it.
+    /// catalog order, typed the way the diagram types it.
     #[test]
-    fn one_tables_columns_load_in_catalogue_order() {
+    fn one_tables_columns_load_in_catalog_order() {
         let connected = crate::explorer::tests::h2_fixture("builder-columns");
         let mut wanted = target("PERSON");
         wanted.name = "PERSON".to_string();
@@ -1407,7 +1407,7 @@ mod tests {
     /// The whole of the risk is in the indices: every part of the query is a
     /// `(table, column)` pair whose first half is a position in the table list,
     /// so a removal that only deleted the entry would silently re-point every
-    /// term above it at its neighbour.
+    /// term above it at its neighbor.
     #[gpui::test]
     fn removing_a_table_takes_its_joins_and_its_picks_with_it(cx: &mut TestAppContext) {
         let window = open(cx);

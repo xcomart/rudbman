@@ -125,7 +125,7 @@ fn lob_file_picker_exports_the_complete_value_and_imports_an_immutable_replaceme
         .update(cx, |dialog, _, cx| {
             assert!(
                 !dialog.changed,
-                "cancelled picker leaves the original intact"
+                "canceled picker leaves the original intact"
             );
             dialog.import(cx);
         })
@@ -204,4 +204,49 @@ fn lob_character_imports_are_strict_and_empty_values_differ_from_null(cx: &mut T
         !cx.did_prompt_for_paths(),
         "read-only values cannot be replaced"
     );
+}
+
+/// Opens the viewer seeded with `seed` over row `row` of a one-column
+/// `VARCHAR` result holding "same" and then NULL — the way the grid's expand
+/// button opens it.
+fn seeded_window(row: usize, seed: &str, cx: &mut TestAppContext) -> WindowHandle<LobDialog> {
+    cx.update(|cx| {
+        crate::app_settings::init(cx);
+        rugpui::init(cx);
+        rugpui_editor::init(cx);
+        rugpui_grid::init(cx);
+    });
+    let columns = vec![info(1, "NAME", 12, 30)];
+    let mut base = ResultSource::new(&columns);
+    // One column, two rows: `batch` takes its values column by column.
+    base.push(render_batch(&batch(&[&[Some("same"), None]]), &columns));
+    let source = EditableSource::new(base, &columns, true, TableSource::Known);
+    let grid = cx.new(|cx| GridView::new(source, cx));
+    let seed = seed.to_owned();
+    let window = cx.add_window(move |window, cx| {
+        window.activate_window();
+        LobDialog::seeded(grid, row, 0, true, seed, window, cx)
+    });
+    cx.run_until_parked();
+    window
+}
+
+#[gpui::test]
+fn a_seed_is_an_edit_only_when_it_differs_from_the_cell(cx: &mut TestAppContext) {
+    for (row, seed, changed, null) in [
+        (0, "same", false, false),
+        (0, "other", true, false),
+        // The field over a null cell, left empty: still the null it was.
+        (1, "", false, true),
+        (1, "typed", true, false),
+    ] {
+        let handle = seeded_window(row, seed, cx);
+        handle
+            .update(cx, |dialog, _, cx| {
+                assert_eq!(dialog.changed, changed, "{row}: {seed:?}");
+                assert_eq!(dialog.is_null, null, "{row}: {seed:?}");
+                assert_eq!(dialog.editor.read(cx).text(), seed, "{row}: {seed:?}");
+            })
+            .unwrap();
+    }
 }

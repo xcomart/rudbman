@@ -102,7 +102,7 @@ impl QueryPane {
         self.generation += 1;
         let generation = self.generation;
         // Dropping the old tabs drops their cursors, and `Cursor::drop` closes
-        // them — which is the `CLOSE_CURSOR` a cancelled run still owes.
+        // them — which is the `CLOSE_CURSOR` a canceled run still owes.
         self.results.clear();
         self.active_result = 0;
         self.error = None;
@@ -127,7 +127,7 @@ impl QueryPane {
             generation,
             started: Instant::now(),
             canceller: session.session().canceller(),
-            cancelling: false,
+            canceling: false,
         }));
 
         let fetch_rows = self.fetch_rows;
@@ -360,17 +360,17 @@ impl QueryPane {
         let RunState::Running(running) = &mut self.run else {
             return;
         };
-        if running.cancelling {
+        if running.canceling {
             return;
         }
-        running.cancelling = true;
+        running.canceling = true;
         let canceller = running.canceller.clone();
         // On a thread of its own: `Canceller::cancel` attaches to the JVM and
         // blocks, and the thread it must not block is the one drawing the
         // button that was just pressed.
         cx.background_spawn(async move {
             if let Err(error) = canceller.cancel() {
-                log::warn!("cancelling the statement failed: {error}");
+                log::warn!("canceling the statement failed: {error}");
             }
         })
         .detach();

@@ -83,6 +83,10 @@ pub(crate) struct LobDialog {
     message: Option<SharedString>,
     confirm_close: bool,
     context_menu: Option<Point<Pixels>>,
+    /// Whether the text the dialog was opened on differs from the cell's, and
+    /// so has to count as a change once it has loaded — see
+    /// [`LobDialog::seeded`].
+    seeded_change: bool,
     _events: Subscription,
 }
 
@@ -94,6 +98,38 @@ impl LobDialog {
         row: usize,
         column: usize,
         attached: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::open(grid, row, column, attached, None, window, cx)
+    }
+
+    /// The dialog over a text cell, starting from `text` rather than from the
+    /// value the cell holds: what the grid's one-line field had in it when its
+    /// expand button was pressed.
+    ///
+    /// A text that differs from the cell's is an edit already, so the dialog
+    /// opens changed — `Add to changes` stages it, and closing asks first. An
+    /// empty text over a null cell is the field left as it was found, and the
+    /// cell stays null.
+    pub(crate) fn seeded(
+        grid: Entity<GridView<EditableSource>>,
+        row: usize,
+        column: usize,
+        attached: bool,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::open(grid, row, column, attached, Some(text), window, cx)
+    }
+
+    fn open(
+        grid: Entity<GridView<EditableSource>>,
+        row: usize,
+        column: usize,
+        attached: bool,
+        seed: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -110,7 +146,7 @@ impl LobDialog {
         let kind = source.lob_kind(column);
         let binary = kind.unwrap_or(false);
         let scalar = kind.is_none();
-        let text = if scalar {
+        let original = if scalar {
             match source.cell(row, column) {
                 GridCell::Text(text) => Some(text.to_owned()),
                 _ => None,
@@ -118,6 +154,11 @@ impl LobDialog {
         } else {
             None
         };
+        let seed = seed.filter(|seed| scalar && (original.is_some() || !seed.is_empty()));
+        let seeded_change = seed
+            .as_ref()
+            .is_some_and(|seed| original.as_deref() != Some(seed.as_str()));
+        let text = seed.or(original);
         let writable = attached && source.cell_editable(row, column);
         let nullable = source.nullable(column);
         let file = source.lob(row, column).cloned();
@@ -174,6 +215,7 @@ impl LobDialog {
             message: None,
             confirm_close: false,
             context_menu: None,
+            seeded_change,
             _events: events,
         };
         if let Some(text) = text {
@@ -212,7 +254,13 @@ impl LobDialog {
                     match result {
                         Ok((text, truncated)) => {
                             dialog.truncated = truncated;
-                            dialog.text_changed = false;
+                            // Loaded from a seed that is already an edit: what is
+                            // in the editor now is the value to stage.
+                            let seeded = std::mem::take(&mut dialog.seeded_change)
+                                && dialog.writable
+                                && !truncated;
+                            dialog.changed |= seeded;
+                            dialog.text_changed = seeded;
                             dialog.editor.update(cx, |editor, cx| {
                                 editor.set_text(&text, cx);
                                 editor.set_read_only(!dialog.writable || truncated, cx);

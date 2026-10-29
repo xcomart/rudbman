@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * generated script only proves that this build generates what this build
  * generates; running the script into a fresh database and reading the rows back
  * out proves that what was extracted is what was there. Everything else here -
- * the CSV quoting, the template rendering, the progress and cancel behaviour -
+ * the CSV quoting, the template rendering, the progress and cancel behavior -
  * pins a contract the Rust side codes against.
  */
 class ExtractJobTest {
@@ -154,10 +154,10 @@ class ExtractJobTest {
     // -------------------------------------------------------- cancel, progress
 
     @Test
-    void cancellingMidFlightKeepsThePreviousFileAndAUsableSession() throws Exception {
+    void cancelingMidFlightKeepsThePreviousFileAndAUsableSession() throws Exception {
         generateBigTable();
 
-        Path out = tmp.resolve("cancelled.sql");
+        Path out = tmp.resolve("canceled.sql");
         Files.write(out, PREVIOUS);
         long job = start(spec(out, objects(obj("PUBLIC", "BIG")), null,
                 data(true, "insert", 1, null, null)));
@@ -165,11 +165,11 @@ class ExtractJobTest {
         long seen = awaitRows(job, 1);
         assertTrue(seen > 0);
 
-        JsonObject cancelled = H2.call(Ops.JOB_CANCEL, job, 0, null).json();
-        assertTrue(cancelled.get("cancelled").getAsBoolean(), cancelled.toString());
+        JsonObject canceled = H2.call(Ops.JOB_CANCEL, job, 0, null).json();
+        assertTrue(canceled.get("canceled").getAsBoolean(), canceled.toString());
 
         JsonObject end = await(job);
-        assertEquals("cancelled", end.get("state").getAsString(), end.toString());
+        assertEquals("canceled", end.get("state").getAsString(), end.toString());
         assertTrue(end.get("rows_done").getAsLong() < BIG_ROWS,
                 "a cancel that only arrived after the last row proves nothing: " + end);
 
@@ -178,7 +178,7 @@ class ExtractJobTest {
         assertArrayEquals(PREVIOUS, Files.readAllBytes(out));
         assertEquals(List.of(out), listing(tmp));
 
-        // And the session survived having a statement cancelled underneath it.
+        // And the session survived having a statement canceled underneath it.
         assertEquals(String.valueOf(BIG_ROWS), one(session, "select count(*) from big"));
     }
 
@@ -422,7 +422,7 @@ class ExtractJobTest {
         assertFalse(H2.call(Ops.JOB_POLL, job, 0, null).ok);
         awaitWorker("extract", job);
         // A job that lost the race finished and moved its file into place; one
-        // that was cancelled left nothing at all. Either way no unfinished
+        // that was canceled left nothing at all. Either way no unfinished
         // sibling survives the worker.
         List<Path> left = listing(tmp);
         assertTrue(left.isEmpty() || left.equals(List.of(out)), left.toString());

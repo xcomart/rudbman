@@ -6,6 +6,7 @@ import comart.rudbman.bridge.Json;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -20,14 +21,16 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * {@code DESCRIBE kind: "ddl"}: the {@code CREATE} text of one table.
+ * {@code DESCRIBE kind: "ddl"}: the {@code CREATE} text of one table, and the
+ * dispatch to {@link ObjectDdl} and {@link RoutineDdl} for every other kind.
  *
  * <p>Answered in two layers, because no single layer is both faithful and
  * universal.
  *
  * <ol>
  *   <li><b>Native.</b> Some servers will quote their own DDL back
- *       ({@code SHOW CREATE TABLE} on MySQL, {@code SCRIPT TABLE} on H2). When
+ *       ({@code SHOW CREATE TABLE} on MySQL, {@code SCRIPT TABLE} on H2,
+ *       {@code DBMS_METADATA} on Oracle, {@code sqlite_master} on SQLite). When
  *       that is available it <em>is</em> the truth, down to storage clauses,
  *       {@code CHECK} constraints and vendor syntax, and nothing reconstructed
  *       here can improve on it.</li>
@@ -57,7 +60,7 @@ import java.util.logging.Logger;
  *       column is generated but never says from what;</li>
  *   <li>{@code UNIQUE} constraints as constraints - they arrive as unique
  *       indexes and are emitted as {@code CREATE UNIQUE INDEX};</li>
- *   <li>view, materialised view and typed-table definitions - a view reaches
+ *   <li>view, materialized view and typed-table definitions - a view reaches
  *       this path as a bare column list.</li>
  * </ul>
  *
@@ -94,13 +97,18 @@ public final class Ddl {
     }
 
     /**
-     * Builds the DDL for one table.
+     * Builds the DDL for one object.
      *
      * <p>Request members: {@code catalog}, {@code schema}, {@code table}
      * (required) and {@code source}, one of {@code auto} (default, native then
-     * reverse generation), {@code native} or {@code metadata}.
+     * reverse generation), {@code native} or {@code metadata}. {@code object}
+     * says what kind of object is asked for - {@code table} when absent, or
+     * {@code view}, {@code sequence}, {@code trigger}, {@code procedure},
+     * {@code function} - and names it in {@code name} rather than
+     * {@code table}. The kinds other than a table are answered by
+     * {@link ObjectDdl} and {@link RoutineDdl}.
      *
-     * @param conn    the live connection, for the native catalogue queries
+     * @param conn    the live connection, for the native catalog queries
      * @param dbm     the connection metadata
      * @param req     the request body
      * @return an object carrying {@code ddl} and {@code source}
@@ -108,10 +116,6 @@ public final class Ddl {
      */
     public static JsonObject of(Connection conn, DatabaseMetaData dbm, JsonObject req)
             throws SQLException {
-        String table = Json.str(req, "table");
-        if (table == null || table.isEmpty()) {
-            throw new BridgeException("protocol", "describe kind 'ddl' requires an exact 'table'");
-        }
         String want = Json.str(req, "source");
         if (want == null || want.isEmpty()) {
             want = "auto";
@@ -120,6 +124,24 @@ public final class Ddl {
             throw new BridgeException("protocol",
                     "describe kind 'ddl' accepts source 'auto', 'native' or 'metadata', not '"
                             + want + "'");
+        }
+        String object = Json.str(req, "object");
+        if (object != null && !"table".equals(object)) {
+            switch (object) {
+                case "view":      return ObjectDdl.view(conn, dbm, req, want);
+                case "sequence":  return ObjectDdl.sequence(conn, dbm, req, want);
+                case "trigger":   return ObjectDdl.trigger(conn, dbm, req, want);
+                case "procedure": return RoutineDdl.of(conn, dbm, req, want, false);
+                case "function":  return RoutineDdl.of(conn, dbm, req, want, true);
+                default:
+                    throw new BridgeException("protocol", "describe kind 'ddl' accepts object "
+                            + "'table', 'view', 'sequence', 'trigger', 'procedure' or "
+                            + "'function', not '" + object + "'");
+            }
+        }
+        String table = Json.str(req, "table");
+        if (table == null || table.isEmpty()) {
+            throw new BridgeException("protocol", "describe kind 'ddl' requires an exact 'table'");
         }
 
         String catalog = Json.str(req, "catalog");
@@ -212,7 +234,23 @@ public final class Ddl {
         return new Script("metadata", creates, alters);
     }
 
-    private static JsonObject result(String ddl, String source) {
+    /**
+     * The exact object name of a request about something other than a table:
+     * {@code name}, or {@code table} from a caller that still says that.
+     */
+    static String objectName(JsonObject req) {
+        String name = Json.str(req, "name");
+        if (name == null || name.isEmpty()) {
+            name = Json.str(req, "table");
+        }
+        if (name == null || name.isEmpty()) {
+            throw new BridgeException("protocol",
+                    "describe kind 'ddl' for this object requires an exact 'name'");
+        }
+        return name;
+    }
+
+    static JsonObject result(String ddl, String source) {
         JsonObject o = new JsonObject();
         o.addProperty("ddl", ddl);
         o.addProperty("source", source);
@@ -241,7 +279,85 @@ public final class Ddl {
             return Attempt.<String>run(conn, "SCRIPT TABLE",
                     st -> h2Script(st, qualified, schema, table), null);
         }
+        if (dialect == Dialect.ORACLE) {
+            return oracle(conn, schema, table);
+        }
+        if (dialect == Dialect.SQLITE) {
+            return sqlite(conn, table);
+        }
         return null;
+    }
+
+    /**
+     * Oracle's own {@code CREATE TABLE}, check constraints and all, then the
+     * indexes that do not merely back a key - the ones that do are created by
+     * the table's own constraints - and the comments.
+     */
+    private static String oracle(Connection conn, String schema, String table) {
+        String create = DdlText.oracleMetadata(conn, "TABLE", schema, table);
+        if (create == null) {
+            return null;
+        }
+        List<String> parts = new ArrayList<>();
+        parts.add(create);
+        List<String> indexes = Attempt.<List<String>>on(conn, "ALL_INDEXES", c -> {
+            String sql = "SELECT i.INDEX_NAME FROM ALL_INDEXES i WHERE i.TABLE_OWNER = "
+                    + DdlText.owner(schema) + " AND i.TABLE_NAME = ? AND i.INDEX_TYPE <> 'LOB'"
+                    + " AND NOT EXISTS (SELECT 1 FROM ALL_CONSTRAINTS k"
+                    + " WHERE k.OWNER = i.OWNER AND k.INDEX_NAME = i.INDEX_NAME"
+                    + " AND k.CONSTRAINT_TYPE IN ('P', 'U')) ORDER BY i.INDEX_NAME";
+            List<String> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                int i = 1;
+                if (schema != null && !schema.isEmpty()) {
+                    ps.setString(i++, schema);
+                }
+                ps.setString(i, table);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(rs.getString(1));
+                    }
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+        for (String index : indexes) {
+            String text = DdlText.oracleMetadata(conn, "INDEX", schema, index);
+            if (text != null) {
+                parts.add(text);
+            }
+        }
+        String comments = DdlText.oracleDependent(conn, "COMMENT", schema, table);
+        if (comments != null) {
+            parts.add(comments);
+        }
+        return DdlText.joined(parts);
+    }
+
+    /**
+     * SQLite keeps the {@code CREATE TABLE} exactly as typed, and each
+     * {@code CREATE INDEX} beside it; an index with no text is the one the
+     * table's own {@code UNIQUE} or key made.
+     */
+    private static String sqlite(Connection conn, String table) {
+        return Attempt.<String>on(conn, "sqlite_master", c -> {
+            List<String> parts = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT sql FROM sqlite_master"
+                    + " WHERE tbl_name = ? AND type IN ('table', 'index') AND sql IS NOT NULL"
+                    + " ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name")) {
+                ps.setString(1, table);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String text = DdlText.terminated(rs.getString(1));
+                        if (text != null) {
+                            parts.add(text);
+                        }
+                    }
+                }
+            }
+            return parts.isEmpty() || !parts.get(0).toUpperCase(Locale.ROOT)
+                    .startsWith("CREATE") ? null : DdlText.joined(parts);
+        }, null);
     }
 
     private static String mysqlShowCreate(Statement st, String qualified) throws SQLException {
@@ -250,7 +366,7 @@ public final class Ddl {
             // the label is "Create Table" for tables and "Create View" for
             // views, and MariaDB adds two more columns for views.
             if (rs.next() && rs.getMetaData().getColumnCount() >= 2) {
-                String ddl = rs.getString(2);
+                String ddl = DdlText.withoutDefiner(rs.getString(2));
                 if (ddl != null && !ddl.isBlank()) {
                     return ddl.endsWith(";") ? ddl : ddl + ";";
                 }
@@ -364,7 +480,10 @@ public final class Ddl {
         List<Idx> indexes = readIndexes(dbm, catalog, schema, table, pkCols, fks);
         String tableRemarks = readTableRemarks(dbm, catalog, schema, table);
 
-        String qualified = id.qualify(catalog, schema, table);
+        // A PostgreSQL connection sees one database, and a name qualified by it
+        // reads as a cross-database reference, which PostgreSQL does not have.
+        String nameCatalog = dialect == Dialect.POSTGRESQL ? null : catalog;
+        String qualified = id.qualify(nameCatalog, schema, table);
         StringBuilder sb = new StringBuilder();
         sb.append("CREATE TABLE ").append(qualified).append(" (\n");
 
@@ -380,7 +499,7 @@ public final class Ddl {
             pk.append("PRIMARY KEY (").append(columnList(pkCols, id)).append(')');
             body.add(pk.toString());
         }
-        boolean catalogQualified = catalog != null && !catalog.isEmpty();
+        boolean catalogQualified = nameCatalog != null && !nameCatalog.isEmpty();
         for (Fk fk : fks) {
             if (alterOut == null) {
                 body.add("    " + foreignKey(fk, id, catalogQualified));
@@ -467,13 +586,19 @@ public final class Ddl {
     private static String typeText(Col c) {
         String name = c.typeName == null ? "UNKNOWN" : c.typeName.trim();
         if (name.indexOf('(') >= 0) {
-            // Some drivers hand back a fully parameterised name already.
+            // Some drivers hand back a fully parameterized name already.
             return name;
         }
         // MySQL appends attributes to TYPE_NAME ("DECIMAL UNSIGNED"), and the
         // parameters belong before them.
         String suffix = "";
         String upper = name.toUpperCase(Locale.ROOT);
+        // SQL Server reports an identity column's type as "int identity"; the
+        // IDENTITY clause is written once, where the column says it is one.
+        if (upper.endsWith(" IDENTITY")) {
+            name = name.substring(0, name.length() - " IDENTITY".length());
+            upper = upper.substring(0, upper.length() - " IDENTITY".length());
+        }
         for (String attr : new String[]{" UNSIGNED ZEROFILL", " UNSIGNED", " ZEROFILL"}) {
             if (upper.endsWith(attr)) {
                 suffix = name.substring(name.length() - attr.length());
@@ -633,7 +758,7 @@ public final class Ddl {
             while (rs.next()) {
                 if (!table.equals(v.str("TABLE_NAME"))) {
                     // TABLE_NAME is a pattern argument: a name holding _ or %
-                    // matches its neighbours too.
+                    // matches its neighbors too.
                     continue;
                 }
                 // getColumns column order, which the reads have to follow - see

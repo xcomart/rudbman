@@ -84,7 +84,7 @@ fn find_in_gradle_cache() -> Option<PathBuf> {
     let mut newest: Option<(String, PathBuf)> = None;
     for version in std::fs::read_dir(&root).ok()?.flatten() {
         let number = version.file_name().to_string_lossy().into_owned();
-        // Only the binary artefact. The same version directory also holds
+        // Only the binary artifact. The same version directory also holds
         // `h2-<version>-javadoc.jar` and `-sources.jar`, and picking one of
         // those gets a class loader with no classes in it — which surfaces as a
         // ClassNotFoundException for the driver, a long way from the cause.
@@ -180,7 +180,7 @@ fn the_jvm_is_one_per_process_however_often_it_is_asked_for() {
 #[test]
 fn two_sessions_work_at_the_same_time_on_their_own_threads() {
     // One worker thread per connection is the whole thread model; this is what
-    // it buys. Both sessions are used concurrently and neither serialises
+    // it buys. Both sessions are used concurrently and neither serializes
     // against the other.
     std::thread::scope(|scope| {
         let handles: Vec<_> = (0..2)
@@ -275,7 +275,7 @@ fn a_wrong_password_is_a_sql_error_carrying_a_sqlstate() {
     assert_eq!(
         error.sql_state_class(),
         Some("28"),
-        "invalid authorisation specification: {error:?}"
+        "invalid authorization specification: {error:?}"
     );
     assert_ne!(error.vendor_code, 0, "H2 numbers this one: {error:?}");
 
@@ -497,7 +497,7 @@ fn routines_arrive_with_their_signatures_attached() {
 }
 
 #[test]
-fn sequences_come_from_the_vendor_catalogue() {
+fn sequences_come_from_the_vendor_catalog() {
     let session = session();
     exec(&session, "create schema app");
     exec(
@@ -527,7 +527,7 @@ fn sequences_come_from_the_vendor_catalogue() {
     );
     assert_eq!(sequence.get("cycle").and_then(|v| v.as_bool()), Some(true));
 
-    // A product the bridge has no catalogue query for answers an empty list,
+    // A product the bridge has no catalog query for answers an empty list,
     // and so does a schema that holds no sequences. Neither is an error.
     let none = session
         .describe(&DescribeRequest::new("sequences").with_schema("NO_SUCH_SCHEMA"))
@@ -866,30 +866,30 @@ fn cancel_reaches_a_statement_the_worker_is_blocked_in() {
 
         // The statement has to reach the driver before a cancel can bite, and
         // there is no way to observe that from outside — so keep asking.
-        let mut cancelled = 0;
+        let mut canceled = 0;
         for _ in 0..150 {
             if running.is_finished() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
-            cancelled += canceller.cancel().expect("cancel is answered");
+            canceled += canceller.cancel().expect("cancel is answered");
         }
 
         let result = running.join().expect("the worker thread survived");
-        assert!(cancelled > 0, "no statement was ever reached by a cancel");
+        assert!(canceled > 0, "no statement was ever reached by a cancel");
 
-        let error = result.expect_err("a cancelled statement comes back as an error");
+        let error = result.expect_err("a canceled statement comes back as an error");
         let Error::Bridge(error) = error else {
             panic!("expected an error envelope, got {error:?}")
         };
         assert_eq!(error.kind, BridgeErrorKind::Sql);
         assert!(
             error.sql_state.is_some(),
-            "a cancelled statement still carries a SQLSTATE: {error:?}"
+            "a canceled statement still carries a SQLSTATE: {error:?}"
         );
     });
 
-    // The session is still usable: cancelling aborts a statement, not a
+    // The session is still usable: canceling aborts a statement, not a
     // connection.
     assert!(session.ping().expect("still alive").ok);
     assert_eq!(
@@ -1100,12 +1100,12 @@ fn create_big_table(session: &Session) {
 const PREVIOUS: &[u8] = b"-- previous extract\n";
 
 #[test]
-fn cancelling_a_job_mid_flight_keeps_the_previous_file_and_the_session() {
+fn canceling_a_job_mid_flight_keeps_the_previous_file_and_the_session() {
     let session = session();
     create_big_table(&session);
 
     let dir = tempfile::tempdir().expect("a temp directory");
-    let path = dir.path().join("cancelled.sql");
+    let path = dir.path().join("canceled.sql");
     std::fs::write(&path, PREVIOUS).expect("the previous file is written");
     let mut job = session
         .start_job(
@@ -1115,7 +1115,7 @@ fn cancelling_a_job_mid_flight_keeps_the_previous_file_and_the_session() {
         )
         .expect("the specification is accepted");
 
-    // Wait for the job to be moving rows before cancelling it: a cancel that
+    // Wait for the job to be moving rows before canceling it: a cancel that
     // arrived after the last row would prove nothing.
     let mut seen = 0;
     for _ in 0..2000 {
@@ -1140,7 +1140,7 @@ fn cancelling_a_job_mid_flight_keeps_the_previous_file_and_the_session() {
     );
 
     let end = drain(&mut job);
-    assert_eq!(end.state, JobState::Cancelled, "{end:?}");
+    assert_eq!(end.state, JobState::Canceled, "{end:?}");
     assert!(
         end.rows_done < BIG_ROWS,
         "a cancel that only landed after the last row proves nothing: {end:?}"
@@ -1159,11 +1159,11 @@ fn cancelling_a_job_mid_flight_keeps_the_previous_file_and_the_session() {
         .collect();
     assert_eq!(
         left,
-        ["cancelled.sql"],
+        ["canceled.sql"],
         "no unfinished output is left behind"
     );
 
-    // And the session survived having a statement cancelled underneath it.
+    // And the session survived having a statement canceled underneath it.
     let batch = fetch_one(&session, "select count(*) from big", 1);
     assert_eq!(batch.value(0, 0), Some(Value::I64(BIG_ROWS as i64)));
 }
@@ -1191,7 +1191,7 @@ fn dropping_a_job_nobody_polled_stops_it_instead_of_leaving_it_writing() {
     // Read through `call_raw`, because the typed path needs a live `Job` and
     // this test is about one that no longer exists. Two answers are correct:
     // the drop's own reading retired the handle, or the job had not stopped in
-    // time and the next reading finds it cancelled. What must not happen is a
+    // time and the next reading finds it canceled. What must not happen is a
     // job that keeps writing a file nobody is waiting for.
     for _ in 0..200 {
         match session.call_raw(Op::JobPoll, handle, 0, None) {
@@ -1208,7 +1208,7 @@ fn dropping_a_job_nobody_polled_stops_it_instead_of_leaving_it_writing() {
                     JobState::Done,
                     "an abandoned job ran to completion: {progress:?}"
                 );
-                if progress.state == JobState::Cancelled {
+                if progress.state == JobState::Canceled {
                     assert!(progress.rows_done < BIG_ROWS, "{progress:?}");
                     return;
                 }
@@ -1483,7 +1483,7 @@ fn a_transfer_that_cannot_work_is_refused_at_the_start_rather_than_run() {
 }
 
 #[test]
-fn cancelling_a_transfer_stops_it_and_leaves_both_sessions_usable() {
+fn canceling_a_transfer_stops_it_and_leaves_both_sessions_usable() {
     let source = session();
     create_big_table(&source);
 
@@ -1522,13 +1522,13 @@ fn cancelling_a_transfer_stops_it_and_leaves_both_sessions_usable() {
     );
 
     let end = drain(&mut job);
-    assert_eq!(end.state, JobState::Cancelled, "{end:?}");
+    assert_eq!(end.state, JobState::Canceled, "{end:?}");
     assert!(
         end.rows_done < BIG_ROWS,
         "a cancel that only landed after the last row proves nothing: {end:?}"
     );
 
-    // Both sessions survived: the source had a SELECT cancelled underneath it
+    // Both sessions survived: the source had a SELECT canceled underneath it
     // and the target a batch, and the job let go of both connection locks.
     let batch = fetch_one(&source, "select count(*) from big", 1);
     assert_eq!(batch.value(0, 0), Some(Value::I64(BIG_ROWS as i64)));

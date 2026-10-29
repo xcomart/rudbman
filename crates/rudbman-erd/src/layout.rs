@@ -459,7 +459,7 @@ pub fn auto_layout(model: &ErdModel, mode: NameMode) -> Vec<NodeRect> {
         }
     }
 
-    normalise(&mut rects);
+    normalize(&mut rects);
     rects
 }
 
@@ -487,7 +487,7 @@ fn acyclic_edges(model: &ErdModel) -> Vec<(usize, usize)> {
     // 0 = untouched, 1 = on the stack, 2 = finished. An edge into a node that
     // is still on the stack closes a cycle, and is the one to turn around.
     const WHITE: u8 = 0;
-    const GREY: u8 = 1;
+    const GRAY: u8 = 1;
     const BLACK: u8 = 2;
     let mut state = vec![WHITE; count];
     let mut reversed = vec![false; raw.len()];
@@ -500,7 +500,7 @@ fn acyclic_edges(model: &ErdModel) -> Vec<(usize, usize)> {
         if state[start] != WHITE {
             continue;
         }
-        state[start] = GREY;
+        state[start] = GRAY;
         stack.push((start, 0));
         while let Some(&(node, cursor)) = stack.last() {
             if cursor >= out_edges[node].len() {
@@ -515,10 +515,10 @@ fn acyclic_edges(model: &ErdModel) -> Vec<(usize, usize)> {
             let target = raw[edge].1;
             match state[target] {
                 WHITE => {
-                    state[target] = GREY;
+                    state[target] = GRAY;
                     stack.push((target, 0));
                 }
-                GREY => reversed[edge] = true,
+                GRAY => reversed[edge] = true,
                 _ => {}
             }
         }
@@ -654,13 +654,13 @@ fn reduce_crossings(
 }
 
 /// One median pass: every rank is reordered by the middle position of its
-/// neighbours in the rank before it (`downwards`) or after it.
+/// neighbors in the rank before it (`downwards`) or after it.
 ///
-/// A table with no neighbour on that side keeps its place, which is what stops
+/// A table with no neighbor on that side keeps its place, which is what stops
 /// the isolated-looking members of a rank from being swept to one end.
 fn median_sweep(
     layers: &mut [Vec<usize>],
-    neighbours: &[Vec<usize>],
+    neighbors: &[Vec<usize>],
     count: usize,
     downwards: bool,
 ) {
@@ -676,7 +676,7 @@ fn median_sweep(
             .iter()
             .enumerate()
             .map(|(slot, node)| {
-                let mut of: Vec<usize> = neighbours[*node].iter().map(|next| pos[*next]).collect();
+                let mut of: Vec<usize> = neighbors[*node].iter().map(|next| pos[*next]).collect();
                 of.sort_unstable();
                 let median = if of.is_empty() {
                     slot as f32
@@ -695,7 +695,7 @@ fn median_sweep(
     }
 }
 
-/// Swaps neighbours within a rank while doing so removes crossings.
+/// Swaps neighbors within a rank while doing so removes crossings.
 fn transpose(
     layers: &mut [Vec<usize>],
     predecessors: &[Vec<usize>],
@@ -795,22 +795,22 @@ fn place_layers(layers: &[Vec<usize>], predecessors: &[Vec<usize>], rects: &mut 
         let mut cursor = 0f32;
         for node in layer {
             // Every predecessor sits in an earlier rank, so it has already been
-            // placed and its centre is the one it will keep.
+            // placed and its center is the one it will keep.
             let mut wanted: Vec<f32> = predecessors[*node]
                 .iter()
                 .map(|before| rects[*before].center_y())
                 .collect();
             wanted.sort_by(f32::total_cmp);
-            let centre = match wanted.len() {
+            let center = match wanted.len() {
                 0 => f32::MIN,
                 odd if odd % 2 == 1 => wanted[odd / 2],
                 even => (wanted[even / 2 - 1] + wanted[even / 2]) / 2.,
             };
 
-            let top = if centre == f32::MIN {
+            let top = if center == f32::MIN {
                 cursor
             } else {
-                cursor.max(centre - rects[*node].h / 2.)
+                cursor.max(center - rects[*node].h / 2.)
             };
             rects[*node].x = x;
             rects[*node].y = top;
@@ -821,7 +821,7 @@ fn place_layers(layers: &[Vec<usize>], predecessors: &[Vec<usize>], rects: &mut 
 }
 
 /// Slides the whole layout so its top-left corner is the origin.
-fn normalise(rects: &mut [NodeRect]) {
+fn normalize(rects: &mut [NodeRect]) {
     let left = rects.iter().fold(f32::MAX, |least, rect| least.min(rect.x));
     let top = rects.iter().fold(f32::MAX, |least, rect| least.min(rect.y));
     if left == f32::MAX || top == f32::MAX {
@@ -861,7 +861,7 @@ pub fn route(from: &NodeRect, to: &NodeRect) -> Vec<(f32, f32)> {
 /// kinds of line turn differently reads as two diagrams.
 ///
 /// The heights only choose where the line meets each box: which edge it leaves
-/// by is still judged from the two centres, so a line does not flip sides when
+/// by is still judged from the two centers, so a line does not flip sides when
 /// a join is drawn from a lower row.
 pub fn route_between(from: &NodeRect, from_y: f32, to: &NodeRect, to_y: f32) -> Vec<(f32, f32)> {
     if from == to {
@@ -882,7 +882,7 @@ pub fn route_between(from: &NodeRect, from_y: f32, to: &NodeRect, to_y: f32) -> 
         ];
     }
 
-    // Which way out: towards `to`, judged by the two centres so that a box
+    // Which way out: towards `to`, judged by the two centers so that a box
     // directly above another still picks a side rather than flickering between
     // them as it is dragged.
     let rightwards = to.center_x() >= from.center_x();
@@ -913,7 +913,7 @@ pub fn route_between(from: &NodeRect, from_y: f32, to: &NodeRect, to_y: f32) -> 
 
 /// The polyline with every repeated point dropped.
 ///
-/// Two boxes whose centres line up produce a turn that turns through nothing,
+/// Two boxes whose centers line up produce a turn that turns through nothing,
 /// and a zero-length segment is not merely redundant: it is what a stroke
 /// tessellator chokes on, and it would put a cardinality mark's direction at
 /// the mercy of a division by zero.
@@ -943,7 +943,7 @@ pub(crate) fn tail_direction(points: &[(f32, f32)]) -> (f32, f32) {
     unit(points[len - 1], points[len - 2])
 }
 
-/// `to - from`, normalised, or the identity when the two coincide.
+/// `to - from`, normalized, or the identity when the two coincide.
 fn unit(from: (f32, f32), to: (f32, f32)) -> (f32, f32) {
     let (dx, dy) = (to.0 - from.0, to.1 - from.1);
     let length = (dx * dx + dy * dy).sqrt();
@@ -976,14 +976,14 @@ pub(crate) fn crow_foot(at: (f32, f32), direction: (f32, f32)) -> [[(f32, f32); 
 
 /// The single bar that marks the "one" end.
 pub(crate) fn key_bar(at: (f32, f32), direction: (f32, f32)) -> [(f32, f32); 2] {
-    let centre = (
+    let center = (
         at.0 + direction.0 * BAR_OFFSET,
         at.1 + direction.1 * BAR_OFFSET,
     );
     let (px, py) = (-direction.1 * BAR_HALF, direction.0 * BAR_HALF);
     [
-        (centre.0 + px, centre.1 + py),
-        (centre.0 - px, centre.1 - py),
+        (center.0 + px, center.1 + py),
+        (center.0 - px, center.1 - py),
     ]
 }
 
@@ -1338,7 +1338,7 @@ mod tests {
     }
 
     #[test]
-    fn a_route_is_the_generalised_route_at_the_two_centres() {
+    fn a_route_is_the_generalized_route_at_the_two_centers() {
         let from = rows_rect();
         let elsewhere = [
             (400., 0.),
@@ -1360,7 +1360,7 @@ mod tests {
                 route_between(&from, from.center_y(), &to, to.center_y())
             );
         }
-        // Including the self-reference, whose loop the generalisation must not
+        // Including the self-reference, whose loop the generalization must not
         // have moved.
         assert_eq!(
             route(&from, &from),

@@ -24,7 +24,9 @@ JVM bridge.
 
 - **Any JDBC driver.** Drivers are downloaded from Maven Central by
   coordinate or picked from disk, the driver class is auto-detected from the
-  JAR, and each connection gets its own isolated class loader. Row data
+  JAR, and each connection gets its own isolated class loader. H2,
+  PostgreSQL, MySQL, MariaDB, SQLite, Oracle, SQL Server and IBM Db2 come
+  predefined, with their SQL dialects. Row data
   crosses the JNI boundary in a compact columnar batch format — not as one
   JSON string per row.
 - **Connections as tabs**, each with its own work area: split panes, tabbed
@@ -47,10 +49,13 @@ JVM bridge.
   and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
   OS keychain, never on disk, and credentials are masked out of logs and
   JDBC URLs.
-- **A schema explorer** — catalogs, schemas, tables, views, sequences,
-  routines — and a table detail panel with columns, keys, references in both
-  directions, and DDL in a read-only, highlighted editor (the server's own text
-  where the dialect offers it, reconstructed from metadata where it does not).
+- **A schema explorer** — catalogs, schemas, tables, views (materialized ones
+  too), procedures, functions, sequences and triggers — and a detail panel with
+  columns, keys, references in both directions, and DDL in a read-only,
+  highlighted editor (the server's own text where the dialect offers it,
+  rebuilt from the catalog where it does not). Every kind of object shows its
+  `CREATE`, laid out for reading: one column to a line, a view's query as Format
+  SQL writes it, a routine's or a trigger's body indented by block.
 - **A SQL workbench**: an editor with incremental dialect-aware highlighting
   and IME support, SQL keyword/function/table/column completion (including table aliases),
   statement splitting, run-one/run-selection/run-all,
@@ -232,7 +237,7 @@ lifecycle, and the milestone plan — lives in
 [docs/architecture.md](docs/architecture.md). Current progress and
 open items are tracked in [docs/status.md](docs/status.md).
 
-The widget kit, the virtualised result grid and the code editor are not in this
+The widget kit, the virtualized result grid and the code editor are not in this
 repository. They are [rugpui](https://github.com/xcomart/rugpui), extracted so that
 the three desktop applications built on them stop carrying byte-identical
 copies of the same code. Nothing there knows what a database is: rudbman hands
@@ -243,7 +248,7 @@ JDBC cursor.
 Neither is the layer *above* the widgets. `rugpui-shell`, from the same
 repository, is the window that draws its own title bar, the self-updater that
 replaces the installed copy with the one GitHub published, the about and update
-dialogs, the split-pane tree, the palette catalogue and its editor, and the
+dialogs, the split-pane tree, the palette catalog and its editor, and the
 pieces the settings form is built out of — each of them written once here and
 then copied twice. It knows nothing about rudbman either: the name, the version,
 the release endpoints, the words and the ignored-release tag are handed to it by

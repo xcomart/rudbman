@@ -1,7 +1,7 @@
 //! The script extraction dialog: one explorer object, out to a file.
 //!
 //! Opened over the object selected in the explorer ([`crate::QueryObject`]'s
-//! neighbour in the menu), it collects what the bridge's `JOB_START` needs —
+//! neighbor in the menu), it collects what the bridge's `JOB_START` needs —
 //! an output file, whether the schema goes in, whether the rows go in and in
 //! what shape — starts the job, and then turns into a progress card until the
 //! job ends one way or another.
@@ -91,7 +91,7 @@ const DEFAULT_BATCH_ROWS: u32 = 1;
 mod tab {
     /// "Browse…" beside the output path.
     pub const OUTPUT: isize = 10;
-    /// "Include the schema".
+    /// "Include the definitions (DDL)".
     pub const DDL: isize = 20;
     /// "Precede it with DROP statements".
     pub const DROP: isize = 21;
@@ -211,7 +211,7 @@ pub fn build_spec(target: &ObjectTarget, form: &ExtractForm) -> Option<ExtractSp
     // `ExtractSpec::new` already builds the `OutputSpec`, and its defaults —
     // UTF-8 and `\n` — are the two the dialog does not offer: a SQL script read
     // back by this same application has no reason to be anything else, and a
-    // charset picker in a script dialogue is a way to write a file that looks
+    // charset picker in a script dialog is a way to write a file that looks
     // fine until someone replays it.
     let mut spec = ExtractSpec::new(output).with_object(object);
 
@@ -220,7 +220,7 @@ pub fn build_spec(target: &ObjectTarget, form: &ExtractForm) -> Option<ExtractSp
             DdlOptions::included()
                 .with_drop(form.include_drop)
                 // Always `Alter`, and deliberately not offered: the point of
-                // this dialogue is a script that can be replayed, and two
+                // this dialog is a script that can be replayed, and two
                 // tables that reference each other cannot be created in any
                 // order with their keys inline. `Inline` would be the faithful
                 // rendering of one table's own DDL, which is what the detail
@@ -261,7 +261,7 @@ pub fn non_empty(value: Option<&str>) -> Option<&str> {
 
 /// Renders a byte count the way a file manager does.
 ///
-/// The unit symbols are not translated, for the same reason the licence
+/// The unit symbols are not translated, for the same reason the license
 /// identifier is not: `kB` is a symbol, not a word, and the decimal multiples
 /// are what every file manager on every platform shows.
 ///
@@ -305,7 +305,7 @@ struct Running {
     /// Bytes written so far.
     bytes: u64,
     /// Whether a cancel has been issued and the job has not stopped yet.
-    cancelling: bool,
+    canceling: bool,
 }
 
 /// How a job ended.
@@ -319,8 +319,8 @@ enum Ended {
     },
     /// The job failed. The message is the first error's, as the bridge wrote it.
     Failed(SharedString),
-    /// The job was cancelled. The file at the path is left as it was.
-    Cancelled,
+    /// The job was canceled. The file at the path is left as it was.
+    Canceled,
 }
 
 /// Modal dialog that extracts one object to a script file.
@@ -449,7 +449,7 @@ impl ExtractDialog {
 
     /// Hides the dialog without emitting an event.
     ///
-    /// **A job still running is cancelled**, by the drop chain the module
+    /// **A job still running is canceled**, by the drop chain the module
     /// documentation describes: the stage goes back to [`Stage::Form`] and the
     /// polling task is dropped, which leaves nobody holding the `Job` and its
     /// `Drop` asks the bridge to stop. The file at the path is left as it was,
@@ -673,7 +673,7 @@ impl ExtractDialog {
             phase: SharedString::default(),
             rows_done: 0,
             bytes: 0,
-            cancelling: false,
+            canceling: false,
         });
         cx.notify();
     }
@@ -721,7 +721,7 @@ impl ExtractDialog {
                 rows: progress.rows_done,
                 bytes: progress.bytes,
             },
-            JobState::Cancelled => Ended::Cancelled,
+            JobState::Canceled => Ended::Canceled,
             // `Running` cannot reach here — `is_terminal` excluded it — and a
             // failure without an error envelope is a bridge that broke its own
             // contract, so the fallback says so rather than showing nothing.
@@ -746,15 +746,15 @@ impl ExtractDialog {
         let Stage::Running(running) = &mut self.stage else {
             return;
         };
-        if running.cancelling {
+        if running.canceling {
             return;
         }
-        running.cancelling = true;
+        running.canceling = true;
         // Detached inside the bridge and quick — it sets a flag and interrupts
         // the statement in flight — so it is taken here rather than handed to a
         // task that would arrive after the work it was meant to stop.
         if let Err(error) = running.job.lock().cancel() {
-            log::warn!("cancelling the extraction failed: {error}");
+            log::warn!("canceling the extraction failed: {error}");
         }
         cx.notify();
     }
@@ -986,8 +986,8 @@ impl ExtractDialog {
                 div()
                     .text_size(px(12.))
                     .text_color(chrome.text_muted)
-                    .child(if running.cancelling {
-                        ts!("extract.cancelling")
+                    .child(if running.canceling {
+                        ts!("extract.canceling")
                     } else {
                         phase
                     }),
@@ -1018,7 +1018,7 @@ impl ExtractDialog {
                 ),
                 chrome.success,
             ),
-            Ended::Cancelled => (ts!("extract.cancelled", path = path), chrome.text),
+            Ended::Canceled => (ts!("extract.canceled", path = path), chrome.text),
             Ended::Failed(message) => (
                 ts!("extract.failed", error = message.as_ref()),
                 chrome.danger,
@@ -1081,7 +1081,7 @@ impl ExtractDialog {
             Stage::Running(running) => div().flex().flex_row().gap(px(8.)).child(
                 Button::new("extract-stop", ts!("common.cancel"))
                     .variant(ButtonVariant::Secondary)
-                    .disabled(running.cancelling)
+                    .disabled(running.canceling)
                     .tab_index(tab::DISMISS)
                     .on_click({
                         let this = this.clone();
@@ -1277,7 +1277,7 @@ mod tests {
             cx.executor().advance_clock(POLL_INTERVAL);
             // The clock above is virtual and advancing it costs no wall time,
             // but the job lives on a real bridge thread: noticing a cancel,
-            // closing the statement and finalising the file take real
+            // closing the statement and finalizing the file take real
             // milliseconds. Two thousand instantaneous polls can all fire
             // inside that window, so each turn yields one real millisecond —
             // a two-second ceiling — to let the bridge actually move.
@@ -1380,11 +1380,11 @@ mod tests {
             1
         );
 
-        // A catalogue on the target reaches the object reference; a blank one
-        // does not, because "" is not a catalogue name.
-        let mut catalogued = target.clone();
-        catalogued.catalog = Some("TESTDB".to_string());
-        let spec = build_spec(&catalogued, &ddl_only).expect("a path and the schema are enough");
+        // A catalog on the target reaches the object reference; a blank one
+        // does not, because "" is not a catalog name.
+        let mut cataloged = target.clone();
+        cataloged.catalog = Some("TESTDB".to_string());
+        let spec = build_spec(&cataloged, &ddl_only).expect("a path and the schema are enough");
         assert_eq!(spec.objects[0].catalog.as_deref(), Some("TESTDB"));
         let mut blank = target.clone();
         blank.schema = Some("   ".to_string());
@@ -1470,7 +1470,7 @@ mod tests {
                 rows: 12,
                 bytes: 3_400,
             },
-            Ended::Cancelled,
+            Ended::Canceled,
             Ended::Failed(SharedString::from("the table went away")),
         ] {
             window
@@ -1578,10 +1578,10 @@ mod tests {
         );
     }
 
-    /// Cancelling ends the job as cancelled, leaves the file at the path as it
+    /// Canceling ends the job as canceled, leaves the file at the path as it
     /// was, and hands the session back in one piece.
     #[gpui::test]
-    fn cancelling_stops_the_job_and_leaves_the_session_usable(cx: &mut TestAppContext) {
+    fn canceling_stops_the_job_and_leaves_the_session_usable(cx: &mut TestAppContext) {
         // Not a big table but a slow one. A big table only loses the race on a
         // fast enough disk — one CI runner finished 400k rows before the first
         // poll — whereas a view that sleeps a millisecond per row cannot reach
@@ -1626,8 +1626,8 @@ mod tests {
         window
             .update(cx, |dialog, _window, _cx| {
                 assert!(
-                    matches!(dialog.stage, Stage::Ended(Ended::Cancelled)),
-                    "a cancelled job ends as cancelled, not as done or failed"
+                    matches!(dialog.stage, Stage::Ended(Ended::Canceled)),
+                    "a canceled job ends as canceled, not as done or failed"
                 );
             })
             .expect("the window is open");
@@ -1654,7 +1654,7 @@ mod tests {
             .execute(&StatementSpec::new(
                 "SELECT COUNT(*) FROM SYSTEM_RANGE(1, 10)",
             ))
-            .expect("the session survived the cancelled job");
+            .expect("the session survived the canceled job");
         drop(cursor);
     }
 }

@@ -66,14 +66,14 @@ one after every call, clears it and reports it as a JNI error.
 | `0x21` | `FETCH` | cursor | max rows | — | binary `RDB1` batch |
 | `0x22` | `MORE_RESULTS` | cursor | — | — | JSON, same shape as `EXECUTE` |
 | `0x23` | `CLOSE_CURSOR` | cursor | — | — | — |
-| `0x24` | `CANCEL` | session | — | — | JSON `{cancelled}` |
+| `0x24` | `CANCEL` | session | — | — | JSON `{canceled}` |
 | `0x25` | `LOB_READ` | cursor | — | JSON `{id, offset, length}` | binary |
 | `0x30` | `SET_AUTOCOMMIT` | session | 0/1 | — | — |
 | `0x31` | `COMMIT` | session | — | — | — |
 | `0x32` | `ROLLBACK` | session | — | — | — |
 | `0x40` | `JOB_START` | session | — | JSON `{kind, …}` | JSON `{job}` |
 | `0x41` | `JOB_POLL` | job | — | — | JSON progress |
-| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{cancelled}` |
+| `0x42` | `JOB_CANCEL` | job | — | — | JSON `{canceled}` |
 | `0x50` | `PROBE_DRIVER` | — | — | JSON `{jars[]}` | JSON `{classes[], services[]}` |
 
 An unknown code returns an ERROR envelope with `kind: "protocol"` and a
@@ -218,7 +218,7 @@ something"*. Keep calling `MORE_RESULTS` until it answers `has_more: false`
 | `type_info` | — | |
 | `procedures` | — | each item carries its `parameters[]` |
 | `functions` | — | same shape as `procedures` |
-| `sequences` | — | vendor catalogue query; empty list on products without sequences |
+| `sequences` | — | vendor catalog query; empty list on products without sequences |
 | `ddl` | exact `table` | answers `{ddl, source}`, not `items[]` |
 
 Every response except `ddl` is `{ "kind": "...", "items": [ … ] }`. Item keys are
@@ -236,7 +236,7 @@ asking for a missing one and catching the exception per cell.
   (default **true** — a statistics refresh on a large schema is the difference
   between instant and a minute).
 - `tables` and `columns` fill `remarks` the driver left blank from the vendor
-  catalogue (Oracle, SQL Server, MySQL, MariaDB), or from the session's
+  catalog (Oracle, SQL Server, MySQL, MariaDB), or from the session's
   `table_comments_sql` / `column_comments_sql`, and clear MySQL's `VIEW`
   placeholder. A failed lookup leaves the driver's answer as it was.
 
@@ -265,8 +265,8 @@ server files them elsewhere", not "there are none".
 
 #### `sequences`
 
-JDBC has no sequence accessor — sequences were standardised in SQL:2003, long
-after `DatabaseMetaData` was fixed — so this kind is a vendor catalogue query.
+JDBC has no sequence accessor — sequences were standardized in SQL:2003, long
+after `DatabaseMetaData` was fixed — so this kind is a vendor catalog query.
 
 | product | source |
 |---|---|
@@ -276,7 +276,7 @@ after `DatabaseMetaData` was fixed — so this kind is a vendor catalogue query.
 | MariaDB | `information_schema.SEQUENCES`, probed; empty list where the build has no such view |
 | everything else | empty list |
 
-**An empty list is a correct answer.** MySQL, SQLite and any unrecognised product
+**An empty list is a correct answer.** MySQL, SQLite and any unrecognized product
 are simply not asked, and a query that is attempted and rejected — no privilege,
 no such view — lands in the same place. Items are
 `{catalog, schema, name, data_type, start_value, min_value, max_value, increment,
@@ -378,7 +378,7 @@ a table on another).
 `JOB_START` answers `{"job": <handle>}`. `JOB_POLL` answers:
 
 ```json
-{ "state": "running | done | failed | cancelled",
+{ "state": "running | done | failed | canceled",
   "rows_done": 12000, "rows_skipped": 0, "rows_total": null,
   "bytes": 918273, "phase": "data:APP.ORDERS", "errors": [], "eta_s": null }
 ```
@@ -402,7 +402,7 @@ a table on another).
   cancel until the worker acknowledges it, because a cancel that lands in the
   sliver before the driver enters execution cancels nothing.
 - An extract or a backup writes to a hidden sibling of `output.path` and only
-  renames it over the target once the job is `done`. A `failed` or `cancelled`
+  renames it over the target once the job is `done`. A `failed` or `canceled`
   job deletes the sibling before it reports, so whatever was at the target —
   an earlier backup, say — is left exactly as it was, and no partial file
   remains.
@@ -446,7 +446,7 @@ the original error, with the rollback failure attached.
 - `upsert` reads its conflict key from the target's primary key and spells the
   statement per product: `ON CONFLICT` (PostgreSQL, SQLite), `ON DUPLICATE KEY`
   (MySQL, MariaDB), H2's `MERGE … KEY (…)`, standard `MERGE` (Oracle, SQL Server,
-  Db2). An unrecognised product has no portable form and is rejected rather than
+  Db2). An unrecognized product has no portable form and is rejected rather than
   guessed at.
 - `on_error: "abort"` (the default) fails the job on the first bad row. `skip`
   and `log` roll the failed batch back to a savepoint and replay it a row at a
@@ -495,7 +495,7 @@ Points a decoder has to get right:
 - **`row_count` may be 0.** The bitmap is then 0 bytes, and every column is
   kind 0 with an empty payload. A cursor that produced no result set at all
   yields `col_count: 0` too.
-- The last batch is only recognised as such when the driver runs out of rows. A
+- The last batch is only recognized as such when the driver runs out of rows. A
   batch that filled its row limit exactly reports `flags = 0`; the next `FETCH`
   returns a 0-row batch with bit0 set.
 
@@ -556,7 +556,7 @@ The viewer displays up to 1 MiB; export and file replacement use the entire body
 ## Concurrency
 
 - One JDBC connection per session, one Rust worker thread per session. The worker
-  serialises commands, which is what makes a non-thread-safe `Connection` safe.
+  serializes commands, which is what makes a non-thread-safe `Connection` safe.
 - The session still holds a `ReentrantLock` around every use of the connection,
   because the keep-alive timer runs concurrently with the worker. The timer uses
   `tryLock` and skips its round rather than queueing — a statement already in
@@ -584,14 +584,14 @@ the same URL prefix produce an undefined winner.
 
 Loaders are cached by the JAR path list and reference counted; the loader closes
 when its last session does. A fresh loader per session re-runs the driver's
-static initialisers and leaks everything they loaded.
+static initializers and leaks everything they loaded.
 
 The cache key preserves the caller's JAR order, because classpath order decides
 which JAR wins when two ship the same class — two orderings are genuinely two
 different class paths.
 
 `PROBE_DRIVER` uses a throwaway loader and `Class.forName(cls, false, …)`:
-probing must not run a driver's static initialiser, which may open sockets or
+probing must not run a driver's static initializer, which may open sockets or
 load native libraries, and must not pin a JAR the user is about to replace.
 
 ## Layout
@@ -624,7 +624,7 @@ src/main/java/comart/rudbman/bridge/
 └── meta/
     ├── Describe.java      DESCRIBE dispatch, the DatabaseMetaData kinds
     ├── Routines.java      procedures and functions with their parameters
-    ├── Sequences.java     sequences, per-product catalogue queries
+    ├── Sequences.java     sequences, per-product catalog queries
     ├── Ddl.java           native DDL, and reverse generation as the fallback
     ├── Comments.java      comment repair for tables and columns
     ├── Dialect.java       product name → the vendor paths that apply
@@ -674,16 +674,17 @@ tripping rather than by asserting on strings:
 
 ## Known gaps
 
-- The `upsert` statements for Oracle, SQL Server and Db2 are written from the
-  products' documentation and are not covered by a test; only the H2 form is
-  executed here.
+- The `upsert` statements for Oracle and SQL Server are written from the
+  products' documentation and are not covered by a test; the H2 form is
+  executed here, and Db2's by `db2_upserts_through_a_merge` in
+  `crates/rudbman-jdbc/tests/containers.rs` against a real Db2 12.1.
 - A transfer binds with `getObject` / `setObject`. Arrays and vendor structured
   types often do not survive that between two different products; those rows take
   the `on_error` path.
 - Only MySQL, MariaDB and H2 have a native `ddl` path; every other product gets
   the reverse-generated form with the limits listed above.
-- `sequences` covers H2, PostgreSQL, Oracle and MariaDB. SQL Server
-  (`sys.sequences`) and Db2 (`SYSCAT.SEQUENCES`) have sequences and are not
-  wired up; they return the empty list.
+- `sequences` covers H2, PostgreSQL, Oracle, MariaDB, SQL Server
+  (`sys.sequences`) and Db2 (`SYSCAT.SEQUENCES`); any other product returns
+  the empty list.
 - Reverse-generated DDL emits a `CREATE TABLE` for a view, because JDBC metadata
   does not carry the view's query text.

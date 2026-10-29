@@ -37,7 +37,7 @@ impl Workspace {
     /// Closes the tab `index` of `pane`.
     ///
     /// Dropping the tab drops the view in it, which closes whatever cursor or
-    /// fetch it was holding. The neighbour that takes its place inherits the
+    /// fetch it was holding. The neighbor that takes its place inherits the
     /// keyboard when the closed tab had it, because the tab strip is a place a
     /// user closes several tabs in a row from and a focus that fell back to the
     /// shell every time would swallow the editor shortcuts in between.
@@ -205,7 +205,7 @@ impl Workspace {
     /// Unlike a close this destroys no work, so the dirty-tab guard stays out
     /// of it — and `tab_names` rides along untouched, being keyed by the view
     /// rather than by any index. An emptied source collapses exactly as a
-    /// closed last tab leaves it: away while a neighbour grows into its space,
+    /// closed last tab leaves it: away while a neighbor grows into its space,
     /// standing while it is the only pane of the area. The keyboard follows
     /// the moved tab when it had it, and the marker follows the tab to its
     /// new pane either way.
@@ -597,7 +597,7 @@ impl Workspace {
     /// Closes the active pane, unless it is the last one of its work area.
     ///
     /// The marker moves to the pane that follows the closed one in layout order,
-    /// which is the neighbour that grew into the freed space.
+    /// which is the neighbor that grew into the freed space.
     pub(super) fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.active_pane() else {
             return;

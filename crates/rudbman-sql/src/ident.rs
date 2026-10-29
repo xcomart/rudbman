@@ -52,8 +52,8 @@
 //! # Case folding
 //!
 //! An unquoted identifier is normalized by the server before it is looked up:
-//! Oracle and H2 (and the generic profile, which follows the SQL standard) fold
-//! to upper case, PostgreSQL folds to lower case, and MySQL, MariaDB, SQL
+//! Oracle, Db2 and H2 (and the generic profile, which follows the SQL standard)
+//! fold to upper case, PostgreSQL folds to lower case, and MySQL, MariaDB, SQL
 //! Server and SQLite preserve what they were given. So a name with a lower-case
 //! letter in it is quoted for Oracle, a name with an upper-case letter is quoted
 //! for PostgreSQL, and case is never a reason to quote for the other four.
@@ -199,7 +199,9 @@ impl Dialect {
     /// What this dialect does to an unquoted identifier.
     fn folding(&self) -> Folding {
         match self.id() {
-            DialectId::Generic | DialectId::H2 | DialectId::Oracle => Folding::Upper,
+            DialectId::Generic | DialectId::H2 | DialectId::Oracle | DialectId::Db2 => {
+                Folding::Upper
+            }
             DialectId::Postgres => Folding::Lower,
             DialectId::MySql | DialectId::MariaDb | DialectId::MsSql | DialectId::Sqlite => {
                 Folding::Preserve
@@ -216,7 +218,7 @@ mod tests {
     /// leave a name alone — the only reason an ordinary name is ever quoted.
     #[test]
     fn case_folding_decides_for_ordinary_names() {
-        for d in [Dialect::ORACLE, Dialect::H2, Dialect::GENERIC] {
+        for d in [Dialect::ORACLE, Dialect::DB2, Dialect::H2, Dialect::GENERIC] {
             assert_eq!(d.quote_ident("ORDERS"), "ORDERS", "{}", d.name());
             assert_eq!(d.quote_ident("orders"), "\"orders\"", "{}", d.name());
             assert_eq!(d.quote_ident("Orders"), "\"Orders\"", "{}", d.name());

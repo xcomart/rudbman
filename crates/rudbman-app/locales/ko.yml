@@ -46,6 +46,7 @@ tab:
   close: 연결 닫기
   tip_list: 모든 연결
   tip_new: "새 연결 (%{shortcut})"
+  tip_pane_list: 모든 탭
 
 welcome:
   hint: "%{shortcut} 키를 누르면 연결 관리를 열 수 있습니다."
@@ -88,17 +89,17 @@ settings:
     jvm: 자바 가상 머신
 
   ui_theme: 인터페이스 테마
-  editor_theme: 에디터 테마
-  editor_follows_ui: 에디터 테마를 인터페이스 테마에 맞춤
+  editor_theme: 편집기 테마
+  editor_follows_ui: 편집기 테마를 인터페이스 테마에 맞춤
   ui_font_size: 인터페이스 크기
-  editor_font: 에디터 글꼴
-  editor_font_size: 에디터 크기
+  editor_font: 편집기 글꼴
+  editor_font_size: 편집기 크기
   font_size_hint: 6 – 32 pt
-  editor_word_wrap: 에디터에서 긴 줄 자동 줄바꿈
+  editor_word_wrap: 편집기에서 긴 줄 자동 줄바꿈
 
   opacity: 불투명도
   opacity_hint: "% — 100 미만이면 바탕 화면이 비칩니다"
-  blur: 창 뒤의 바탕 화면을 흐리게
+  blur: 창 뒤의 바탕 화면을 흐리게 표시
   titlebar: 제목 표시줄
   titlebar_custom: rudbman이 그림
   titlebar_system: 시스템이 그림
@@ -108,9 +109,9 @@ settings:
 
   fetch_batch_rows: 배치당 행 수
   fetch_batch_rows_hint: 그리드를 스크롤할 때 한 번에 가져오는 행 수
-  query_timeout: 문 실행 제한 시간
+  query_timeout: SQL 문 실행 제한 시간
   query_timeout_hint: 초 — 0이면 제한 없음
-  confirm_writes_default: 새 연결에서 쓰기 문을 실행하기 전에 확인
+  confirm_writes_default: 새 연결에서 쓰기 SQL 문을 실행하기 전에 확인
 
   jvm_heap: 자바 힙
   jvm_heap_hint: MB — 드라이버가 사용하는 -Xmx
@@ -125,23 +126,23 @@ settings:
     export: 내보내기…
     import_select: 가져오기
     import_unreadable: "“%{file}”을(를) 읽지 못했습니다: %{error}"
-    import_not_a_theme: "“%{file}”은(는) 에디터 테마입니다. 에디터 테마에서 가져오세요."
+    import_not_a_theme: "“%{file}”은(는) 편집기 테마입니다. 편집기 테마에서 가져오세요."
     import_not_an_editor_theme: "“%{file}”은(는) 인터페이스 테마입니다. 인터페이스 테마에서 가져오세요."
     import_bad_color: "“%{file}”의 %{slot} 색을 쓸 수 없습니다."
-    import_skipped: "%{count}개 파일을 건너뛰었습니다."
+    import_skipped: "파일 %{count}개를 건너뛰었습니다."
     copy_name: "%{name} (복사본)"
     delete_theme_confirm: "테마 “%{name}”을(를) 삭제할까요?"
-    delete_editor_theme_confirm: "에디터 테마 “%{name}”을(를) 삭제할까요?"
+    delete_editor_theme_confirm: "편집기 테마 “%{name}”을(를) 삭제할까요?"
     write_failed: "파일을 쓰지 못했습니다: %{error}"
-    delete_failed: "파일을 지우지 못했습니다: %{error}"
+    delete_failed: "파일을 삭제하지 못했습니다: %{error}"
 
   editor:
     theme_title: 인터페이스 테마 편집
-    editor_theme_title: 에디터 테마 편집
+    editor_theme_title: 편집기 테마 편집
     name: 이름
     dark: 어두운 팔레트입니다
-    invalid: 모든 색은 #RRGGBB 형식으로 써야 합니다.
-    grid_group: 결과 그리드 — 색을 지정하지 않으면 파일에서 생략됩니다
+    invalid: "모든 색은 #RRGGBB 형식으로 입력해야 합니다."
+    grid_group: 결과 그리드 — 색을 지정한 항목만 파일에 저장됩니다
     automatic: 자동
     automatic_slot: "%{name} (자동)"
 
@@ -165,7 +166,7 @@ settings:
 
     code:
       foreground: 텍스트
-      cursor: 캐럿
+      cursor: 커서
       selection: 선택 영역
       line_highlight: 현재 줄
       gutter: 줄 번호
@@ -187,7 +188,7 @@ settings:
 
 # 연결 대화 상자.
 connect:
-  title: 연결
+  title: 연결 관리
   new: 새로 만들기
   new_name: 새 연결
   duplicate: 복제
@@ -202,7 +203,7 @@ connect:
   driver: 드라이버
   pick_driver: 드라이버 선택
   manage_drivers: 드라이버…
-  driver_has_no_jar: 이 드라이버에는 아직 JAR이 없습니다. 드라이버 화면에서 추가하거나 내려받으세요.
+  driver_has_no_jar: 이 드라이버에는 아직 JAR이 없습니다. 드라이버 화면에서 추가하거나 다운로드하세요.
 
   host: 호스트
   port: 포트
@@ -220,13 +221,13 @@ connect:
   add_prop: 속성 추가
 
   section:
-    behaviour: 동작
+    behavior: 동작
     tunnel: SSH 터널
 
   read_only: 읽기 전용으로 연결
   auto_commit: 실행할 때마다 자동으로 커밋
-  confirm_writes: 쓰기 구문을 실행하기 전에 확인
-  keep_alive: 주기적인 질의로 연결 유지
+  confirm_writes: 쓰기 SQL 문을 실행하기 전에 확인
+  keep_alive: 주기적인 쿼리로 연결 유지
 
   tunnel_enabled: SSH 배스천을 거쳐 연결
   tunnel_host: 배스천
@@ -237,12 +238,12 @@ connect:
   tunnel_auth_password: 비밀번호
   tunnel_key: 키 파일
   tunnel_password: 배스천 비밀번호
-  tunnel_passphrase: 키 암호구
+  tunnel_passphrase: 키 암호 구절
   tunnel_remote: 데이터베이스
   tunnel_hint: 데이터베이스 주소는 배스천에서 보이는 이름으로 적습니다. rudbman이 비어 있는 로컬 포트를 잡아 드라이버를 그 포트에 연결합니다.
 
   test: 연결 테스트
-  testing: 연결하는 중…
+  testing: 연결 중…
   test_ok: "%{product}에 연결했습니다."
   test_ok_unnamed: 연결이 정상입니다.
   test_failed: "연결하지 못했습니다: %{error}"
@@ -276,10 +277,10 @@ driver:
   detect: 자동 검출
   detecting: JAR 파일 안을 살펴보는 중…
   probe_found: "%{class}을(를) 찾았습니다."
-  probe_choose: 이 드라이버에는 클래스가 여럿 있습니다. 접속에 쓸 것을 고르세요.
+  probe_choose: 이 드라이버에는 클래스가 여럿 있습니다. 연결에 쓸 클래스를 고르세요.
   probe_recommended: 권장
   probe_none: 이 파일에는 JDBC 드라이버가 없습니다. 소스나 자바독 JAR이 이렇게 보입니다. 올바른 파일을 골랐는지 확인하세요.
-  probe_damaged: "파일이 손상되어 끝까지 읽지 못했습니다. 다시 내려받으세요. (%{error})"
+  probe_damaged: "파일이 손상되어 끝까지 읽지 못했습니다. 다시 다운로드하세요. (%{error})"
   probe_missing: "JAR 파일을 찾을 수 없습니다: %{error}"
   probe_jvm_failed: "자바 런타임을 시작하지 못했습니다: %{error}"
   probe_failed: "JAR 파일을 검사하지 못했습니다: %{error}"
@@ -295,15 +296,15 @@ driver:
   no_jar: JAR 없음
   no_jar_hint: 연결에 쓰려면 드라이버에 JAR이 하나 이상 있어야 합니다.
   jar_count: "JAR %{count}개"
-  download: 내려받기
-  downloading: "%{file} 내려받는 중…"
-  downloading_percent: "%{file} 내려받는 중 — %{percent}%"
-  downloaded: "%{file}을(를) 내려받아 추가했습니다."
-  download_cancelled: 내려받기를 취소했습니다.
+  download: 다운로드
+  downloading: "%{file} 다운로드 중…"
+  downloading_percent: "%{file} 다운로드 중 — %{percent}%"
+  downloaded: "%{file}을(를) 다운로드해 추가했습니다."
+  download_canceled: 다운로드를 취소했습니다.
   bad_coordinate: "“%{coordinate}”은(는) group:artifact:version 형식의 좌표가 아닙니다."
   not_found: "메이븐 센트럴의 %{url}에 아무것도 없습니다."
-  network_failed: "내려받지 못했습니다: %{error}"
-  checksum_failed: "내려받은 파일이 손상됐습니다. SHA-1이 %{expected}여야 하는데 %{actual}입니다."
+  network_failed: "다운로드하지 못했습니다: %{error}"
+  checksum_failed: "다운로드한 파일이 손상됐습니다. SHA-1이 %{expected}여야 하는데 %{actual}입니다."
   load_failed: "드라이버 정의를 읽지 못했습니다: %{error}"
   save_failed: "드라이버 정의를 저장하지 못했습니다: %{error}"
   new: 새로 만들기
@@ -333,6 +334,7 @@ explorer:
   procedures: 프로시저
   functions: 함수
   sequences: 시퀀스
+  triggers: 트리거
 
 # 객체 상세 패널.
 detail:
@@ -346,8 +348,9 @@ detail:
   refresh: 새로 고침
   copy: 복사
   empty: 없음
-  no_ddl: 이 객체에는 보여줄 CREATE 구문이 없습니다.
+  no_ddl: 이 객체에는 보여줄 CREATE 문이 없습니다.
   ddl_reconstructed: 메타데이터에서 재구성한 참고용입니다. CHECK 제약, 트리거, 파티션, 콜레이션은 포함되지 않습니다.
+  ddl_reconstructed_object: 카탈로그에서 재구성한 참고용입니다. 루틴의 특성처럼 카탈로그에 없는 내용은 포함되지 않습니다.
 
   column: 열
   type: 타입
@@ -378,11 +381,16 @@ detail:
   current_value: 현재값
   cycle: 순환
   cache: 캐시
+  trigger_table: 테이블
+  timing: 실행 시점
+  events: 이벤트
+  level: 수준
+  status: 상태
 
 query:
   result_log: "결과 로그"
-  execution_time: "실행시간: %{seconds}초"
-  total_execution_time: "전체 실행시간: %{seconds}초"
+  execution_time: "실행 시간: %{seconds}초"
+  total_execution_time: "전체 실행 시간: %{seconds}초"
   rollback: "롤백"
   rolling_back: "롤백 중…"
   rolled_back: "트랜잭션을 롤백했습니다."
@@ -396,31 +404,31 @@ query:
   commit_auto: "커밋 (자동 커밋이 켜져 있습니다)"
   run: 실행
   cancel: 취소
-  cancelling: 취소하는 중…
+  canceling: 취소하는 중…
   result: "결과 %{index}"
   tab: "쿼리 %{index}"
-  empty: 문장을 작성한 뒤 실행하세요.
-  no_results: 문장이 아무 결과도 내지 않았습니다.
+  empty: SQL 문을 작성한 뒤 실행하세요.
+  no_results: SQL 문이 결과를 반환하지 않았습니다.
   running: 실행 중…
-  rows_affected: "%{count}행 변경됨"
-  executed: 문장을 실행했습니다.
+  rows_affected: "%{count}행 처리됨"
+  executed: SQL 문을 실행했습니다.
   row_count: "%{count}행"
   elapsed: "%{seconds}초"
-  busy: 이 창에서 이미 문장이 실행 중입니다.
-  no_statement: 실행할 문장이 없습니다.
+  busy: 이 분할 창에서 이미 SQL 문이 실행 중입니다.
+  no_statement: 실행할 SQL 문이 없습니다.
   draft_too_large: "이 초안은 %{limit} MB보다 커서 앱을 닫을 때 보관되지 않습니다. 보관하려면 파일로 저장하세요."
-  row_limit: "이 그리드는 최대 %{limit}행까지 표시하며, 결과에는 더 많은 행이 있습니다. 나머지를 보려면 문장의 조건을 좁히세요."
-  read_only: 읽기 전용 접속이라 문장을 보내지 않았습니다.
-  confirm_title: 이 문장을 실행할까요?
-  confirm_body: "데이터를 변경하는 문장: %{count}개"
+  row_limit: "이 그리드는 최대 %{limit}행까지 표시하며, 결과에는 더 많은 행이 있습니다. 나머지를 보려면 SQL 문의 조건을 좁히세요."
+  read_only: 읽기 전용 연결이라 SQL 문을 보내지 않았습니다.
+  confirm_title: 이 SQL 문을 실행할까요?
+  confirm_body: "데이터를 변경하는 SQL 문: %{count}개"
   confirm_run: 실행
   not_editable: 이 행들은 기본 키까지 선택된 단일 테이블에서 온 것이 아니라, 읽을 수는 있어도 바꿀 수는 없습니다.
   sql_state: "SQLSTATE %{state}"
-  hint_syntax: 문장의 구문과 대상 객체를 읽을 권한이 있는지 확인하세요.
+  hint_syntax: SQL 문의 구문과, 대상 객체를 읽을 권한이 있는지 확인하세요.
   hint_constraint: 테이블이 선언한 제약 조건을 위반했습니다.
-  hint_auth: 이 접속에는 그럴 권한이 없습니다.
+  hint_auth: 이 연결에는 그럴 권한이 없습니다.
   hint_network: 데이터베이스와의 연결이 끊어졌습니다.
-  hint_cancelled: 문장 실행이 취소되었습니다.
+  hint_canceled: SQL 문 실행이 취소되었습니다.
   open_file_select: SQL 파일 선택
 
 data:
@@ -429,7 +437,7 @@ data:
   empty: 이 테이블에는 행이 없습니다.
   row_count: "%{count}행"
   no_primary_key: 이 테이블에는 기본 키가 없어 행을 읽을 수만 있습니다.
-  read_only: 읽기 전용 접속이라 행을 읽을 수만 있습니다.
+  read_only: 읽기 전용 연결이라 행을 읽을 수만 있습니다.
   discard_first: 변경 사항을 먼저 적용하거나 버리세요.
   pending: "변경 %{changed} · 추가 %{inserted} · 삭제 %{deleted}"
   apply: 적용
@@ -441,24 +449,24 @@ data:
   delete_row: 행 삭제
   undelete_row: 행 삭제 취소
   discard_row: 이 행의 변경 사항 버리기
-  apply_title: "%{count}개 문장 적용"
+  apply_title: "SQL 문 %{count}개 적용"
   apply_no_rollback: 이 데이터베이스는 트랜잭션을 지원하지 않아 도중에 실패해도 되돌릴 수 없습니다.
   applying: 적용하는 중…
-  applied: "%{count}개 문장을 적용했습니다."
+  applied: "SQL 문 %{count}개를 적용했습니다."
   apply_stale: 다른 곳에서 행이 변경되었거나 삭제되었습니다. 아무것도 적용하지 않았으니 새로 고친 뒤 다시 시도하세요.
   apply_half_applied: 일부가 이미 테이블에 반영되었을 수 있습니다. 새로 고쳐 확인한 뒤 다시 적용하세요.
   apply_reconnect_required: 롤백 실패로 결과가 불확실합니다. 다시 연결한 뒤 테이블을 확인하고 자동으로 재시도하지 마세요.
   apply_bad_value: "%{column} 열에 “%{value}”은(는) 넣을 수 없습니다."
   apply_null_key: "이 행의 %{column} 값이 NULL이라 행을 다시 찾을 수 없습니다."
   apply_unknown_key: "읽어 온 열 중에 키 열 %{column}이(가) 없습니다. 새로 고친 뒤 다시 시도하세요."
-  apply_not_planned: "이 변경 사항은 문장으로 만들 수 없습니다: %{detail}"
+  apply_not_planned: "이 변경 사항은 SQL 문으로 만들 수 없습니다: %{detail}"
 
 struct:
   loading: 불러오는 중…
   refresh: 새로 고침
   discard: 변경 사항 버리기
   discard_first: 변경 사항을 먼저 버리세요.
-  read_only: 읽기 전용 접속이라 이 테이블의 구조를 읽을 수만 있습니다.
+  read_only: 읽기 전용 연결이라 이 테이블의 구조를 읽을 수만 있습니다.
   pending: "대기 중인 변경 %{count}건"
   columns: 열
   column: 열
@@ -471,7 +479,7 @@ struct:
   state_added: 새 열
   drop: 삭제
   keep: 되돌리기
-  remove: 빼기
+  remove: 제거
   add_column: 열 추가
   edit_column: 선택한 열
   no_selection: 위에서 열을 고르면 편집할 수 있습니다.
@@ -491,14 +499,14 @@ struct:
   new_table: 새 테이블
   new_table_in: "%{scope}에 새 테이블"
   table_name: 테이블 이름
-  statements: 문장
+  statements: SQL 문
   apply: 적용
   create: 테이블 만들기
-  apply_title: "%{count}개 문장 적용"
-  apply_no_undo: 되돌릴 수 없습니다. 각 문장은 실행되는 즉시 커밋되며 롤백으로도 되돌릴 수 없습니다.
+  apply_title: "SQL 문 %{count}개 적용"
+  apply_no_undo: 되돌릴 수 없습니다. 각 SQL 문은 실행되는 즉시 커밋되며 롤백으로도 되돌릴 수 없습니다.
   applying: 적용하는 중…
-  applied: "문장 %{count}개를 적용했습니다."
-  apply_stopped: "%{total}개 중 %{number}번째 문장이 실패했습니다. 그 앞의 %{committed}개는 이미 커밋되어 되돌릴 수 없습니다."
+  applied: "SQL 문 %{count}개를 적용했습니다."
+  apply_stopped: "%{total}개 중 %{number}번째 SQL 문이 실패했습니다. 그 앞의 %{committed}개는 이미 커밋되어 되돌릴 수 없습니다."
 
 extract:
   title: 스크립트 추출
@@ -507,7 +515,7 @@ extract:
   output_none: 선택한 파일 없음
   browse: 찾아보기…
   template_select: 템플릿 파일 선택
-  ddl: 스키마 포함
+  ddl: 정의(DDL) 포함
   drop: 앞에 DROP 문 넣기
   data: 데이터 포함
   mode: 행 형식
@@ -521,9 +529,9 @@ extract:
   start: 추출
   starting: 시작하는 중…
   counters: "%{rows}행, %{bytes}"
-  cancelling: 취소하는 중…
+  canceling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
-  cancelled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
+  canceled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
   failed: "추출에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 추출에 실패했습니다.
 
@@ -546,10 +554,10 @@ transfer:
   starting: 시작하는 중…
   counters: "%{rows}행"
   skipped: "%{skipped}행 건너뜀"
-  cancelling: 취소하는 중…
+  canceling: 취소하는 중…
   done: "%{rows}행을 %{table}에 전송했습니다."
   done_skipped: "%{skipped}행은 들어가지 못해 건너뛰었습니다."
-  cancelled: "취소했습니다. 이미 커밋된 %{rows}행은 %{table}에 남아 있습니다."
+  canceled: "취소했습니다. 이미 커밋된 %{rows}행은 %{table}에 남아 있습니다."
   failed: "전송에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 전송에 실패했습니다.
 
@@ -561,16 +569,16 @@ backup:
   output_none: 선택한 파일 없음
   browse: 찾아보기…
   compress: gzip으로 압축하기
-  ddl: 스키마 포함
+  ddl: 정의(DDL) 포함
   drop: 앞에 DROP 문 넣기
   data: 데이터 포함
   batch_rows: INSERT당 행 수
   start: 백업
   starting: 시작하는 중…
   counters: "%{rows}행, %{bytes}"
-  cancelling: 취소하는 중…
+  canceling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
-  cancelled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
+  canceled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
   failed: "백업에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 백업에 실패했습니다.
 
@@ -600,7 +608,7 @@ builder:
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
   join_full: FULL JOIN
-  remove: 삭제
+  remove: 제거
   where: 조건
   add_condition: 조건 추가
   columns: 선택한 열
@@ -608,9 +616,9 @@ builder:
   order_none: 정렬 없음
   order_asc: 오름차순
   order_desc: 내림차순
-  sql: 문장
-  no_sql: 테이블을 추가하면 문장이 만들어집니다.
-  open_editor: 에디터에서 열기
+  sql: SQL 문
+  no_sql: 테이블을 추가하면 SQL 문이 만들어집니다.
+  open_editor: 편집기에서 열기
 
 input:
   menu_cut: 잘라내기
@@ -637,7 +645,7 @@ context:
   redo: 다시 실행
   toggle_comment: 주석 토글
   format_sql: SQL 서식 정리
-  run_statement: 문장 실행
+  run_statement: 현재 SQL 문 실행
   run_selection: 선택 영역 실행
   run_all: 전체 실행
   find: 찾기…
@@ -647,14 +655,14 @@ context:
   close_right: 오른쪽 탭 모두 닫기
   split_right: 오른쪽으로 분할
   split_below: 아래로 분할
-  close_pane: 팬 닫기
+  close_pane: 분할 창 닫기
   open_detail: 상세 열기
   zoom_in: 확대
   zoom_out: 축소
   zoom_reset: 실제 크기
-  remove_table: 테이블 제거
-  select_column: 조회 목록에 추가
-  clear_column: 조회 목록에서 제거
+  remove_table: 빌더에서 테이블 제거
+  select_column: SELECT 목록에 추가
+  clear_column: SELECT 목록에서 제거
   connect: 연결
   edit: 편집…
 
@@ -677,8 +685,8 @@ tab_name:
   hint: 비워 두면 기본 이름으로 돌아갑니다.
 
 completion:
-  trigger: "SQL 자동완성"
-  column: "컬럼"
+  trigger: "SQL 자동 완성"
+  column: "열"
   table: "테이블"
   schema: "스키마"
   keyword: "키워드"
@@ -691,17 +699,17 @@ lob:
   open: "LOB 열기…"
   export: "파일로 저장…"
   import: "파일로 교체…"
-  empty: "빈 값"
+  empty: "빈 값으로 지정"
   loading: "불러오는 중…"
   modified: "수정됨"
   size: "%{bytes}바이트"
   truncated: "처음 1 MiB만 표시합니다. 파일 저장은 전체 내용을 저장하며, 큰 값은 파일로 교체할 수 있습니다."
   read_only: "읽기 전용입니다. 내용을 조회하고 파일로 저장할 수 있습니다."
-  hex_hint: "16진수 바이트 쌍을 편집하세요. 변경사항에 추가한 뒤 데이터 그리드의 적용 버튼으로 DB에 반영합니다."
-  text_hint: "텍스트 파일은 UTF-8을 사용합니다. 변경사항에 추가한 뒤 데이터 그리드의 적용 버튼으로 DB에 반영합니다."
+  hex_hint: "16진수 바이트 쌍을 편집하세요. 변경 사항에 추가한 뒤 데이터 그리드의 적용 버튼으로 DB에 반영합니다."
+  text_hint: "텍스트 파일은 UTF-8을 사용합니다. 변경 사항에 추가한 뒤 데이터 그리드의 적용 버튼으로 DB에 반영합니다."
   import_error: "파일을 불러오지 못했습니다(CLOB은 UTF-8이어야 합니다): %{error}"
   saved: "파일을 저장했습니다."
-  stage: "변경사항에 추가"
-  discard_question: "이 LOB 편집 창의 변경사항을 버릴까요?"
+  stage: "변경 사항에 추가"
+  discard_question: "이 LOB 편집기의 변경 사항을 버릴까요?"
   keep_editing: "계속 편집"
   invalid_hex: "16진수 두 자리(00–FF)를 공백이나 줄바꿈으로 구분하여 입력하세요."

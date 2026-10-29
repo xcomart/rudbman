@@ -95,7 +95,7 @@ public final class DriverProbe {
                 }
                 String cls = name.substring(0, name.length() - 6).replace('/', '.');
                 try {
-                    // initialize=false: a driver's static initialiser can open
+                    // initialize=false: a driver's static initializer can open
                     // sockets or load native libraries, and probing must not.
                     Class<?> c = Class.forName(cls, false, loader);
                     if (Driver.class.isAssignableFrom(c) && !c.isInterface()) {

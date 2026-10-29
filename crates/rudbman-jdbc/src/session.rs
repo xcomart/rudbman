@@ -9,7 +9,7 @@
 //! every command for that connection is handed to it and executed in order.
 //! Two callers can hold a [`Session`] and neither can interleave with the other.
 //!
-//! Staying attached is not an optimisation detail. Attaching per command makes
+//! Staying attached is not an optimization detail. Attaching per command makes
 //! the JVM build a thread structure every time, and the fetch path runs once
 //! per screenful of scrolling.
 //!
@@ -18,7 +18,7 @@
 //! [`Session::cancel`] deliberately does **not** go through the queue. It is
 //! called precisely when the worker is blocked inside the statement it is meant
 //! to interrupt, so queueing it behind that statement would mean waiting for
-//! the thing being cancelled. It attaches the calling thread for the duration
+//! the thing being canceled. It attaches the calling thread for the duration
 //! of the call and detaches again — expensive, and rare.
 //!
 //! [`Canceller`] is the `Send + Sync` handle for that, so the cancel button can
@@ -60,10 +60,10 @@ use crate::error::{Error, Result};
 use crate::jvm::Jvm;
 use crate::protocol::{Op, parse_json, take_payload};
 use crate::response::{
-    Cancelled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, JobProgress, Ping, SessionInfo,
+    Canceled, ColumnInfo, DdlResult, DescribeResult, ExecuteResult, JobProgress, Ping, SessionInfo,
 };
 use crate::spec::{
-    BackupSpec, ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, StatementSpec,
+    BackupSpec, ConnectionSpec, DdlSource, DescribeRequest, ExtractSpec, ObjectKind, StatementSpec,
     TransferSpec,
 };
 
@@ -81,11 +81,13 @@ struct Started {
 
 /// The `JOB_CANCEL` response body.
 ///
-/// Not [`Cancelled`], which counts statements: a job either was still running
+/// Not [`Canceled`], which counts statements: a job either was still running
 /// or was not.
 #[derive(Deserialize)]
-struct JobCancelled {
-    cancelled: bool,
+struct JobCanceled {
+    /// Older bridge JARs spell the key the British way.
+    #[serde(alias = "cancelled")]
+    canceled: bool,
 }
 
 /// One JDBC connection, its worker thread, and everything that runs on it.
@@ -199,6 +201,52 @@ impl Session {
         self.json_call(Op::Describe, self.handle, 0, Some(body))
     }
 
+    /// Reads one object's `CREATE` statement, whatever kind it is.
+    ///
+    /// The same shape as [`Session::describe_ddl`], which is this with
+    /// [`ObjectKind::Table`]. `name` is exact and required. What each kind
+    /// answers with:
+    ///
+    /// * a **view**: the server's own text where it keeps one, otherwise a
+    ///   `CREATE VIEW` around `INFORMATION_SCHEMA.VIEWS.VIEW_DEFINITION`
+    ///   (`metadata`) — never the `CREATE TABLE` its column list would rebuild
+    ///   into;
+    /// * a **sequence**: the server's own text, or a `CREATE SEQUENCE` rebuilt
+    ///   from the sequence catalog, which holds every option a sequence has
+    ///   and so says `catalog` rather than `metadata`;
+    /// * a **trigger**: the server's own text, or one rebuilt from
+    ///   `INFORMATION_SCHEMA.TRIGGERS` (`metadata`);
+    /// * a **routine**: `SHOW CREATE PROCEDURE`, `pg_get_functiondef`,
+    ///   `ALL_SOURCE` and their kin, or `INFORMATION_SCHEMA.ROUTINES` under a
+    ///   header rebuilt from the parameter list (`metadata`); an overloaded name
+    ///   answers every overload, one statement each.
+    ///
+    /// # Errors
+    ///
+    /// A `sql` error when no layer has text to show: an account that may run a
+    /// routine but not read it gets this on MySQL, and so does a routine bound
+    /// to an external method, such as an H2 alias asked for through
+    /// [`DdlSource::Metadata`].
+    pub fn describe_object_ddl(
+        &self,
+        catalog: Option<&str>,
+        schema: Option<&str>,
+        name: &str,
+        kind: ObjectKind,
+        source: DdlSource,
+    ) -> Result<DdlResult> {
+        if kind == ObjectKind::Table {
+            return self.describe_ddl(catalog, schema, name, source);
+        }
+        let mut request = DescribeRequest::new("ddl").with_name(name);
+        request.catalog = catalog.map(str::to_string);
+        request.schema = schema.map(str::to_string);
+        request.source = Some(source);
+        request.object = Some(kind);
+        let body = serde_json::to_vec(&request)?;
+        self.json_call(Op::Describe, self.handle, 0, Some(body))
+    }
+
     /// Executes a statement and returns its cursor.
     ///
     /// A cursor comes back even for an `UPDATE` that produced only a row count,
@@ -289,7 +337,7 @@ impl Session {
     /// The shared half of the three `JOB_START` calls.
     ///
     /// The kind is inside the body, so every job kind takes the same path: the
-    /// session handle, the serialised spec, and a `{job}` back.
+    /// session handle, the serialized spec, and a `{job}` back.
     fn start_job_body(&self, body: Vec<u8>) -> Result<Job> {
         let started: Started = self.json_call(Op::JobStart, self.handle, 0, Some(body))?;
         Ok(Job {
@@ -335,7 +383,7 @@ impl Session {
     /// Calls an operation this crate does not model yet.
     ///
     /// An escape hatch for protocol extensions. Goes through the worker like
-    /// every other command, so it stays serialised against the connection.
+    /// every other command, so it stays serialized against the connection.
     /// Prefer typed methods such as [`Cursor::read_lob`] where available.
     pub fn call_raw(
         &self,
@@ -403,8 +451,8 @@ impl Canceller {
     pub fn cancel(&self) -> Result<u32> {
         let response = self.jvm.call_detached(Op::Cancel, self.session, 0, None)?;
         let payload = take_payload(response)?;
-        let cancelled: Cancelled = parse_json(&payload)?;
-        Ok(cancelled.cancelled)
+        let canceled: Canceled = parse_json(&payload)?;
+        Ok(canceled.canceled)
     }
 
     /// The session this handle cancels.
@@ -662,7 +710,7 @@ impl Job {
     ///
     /// The cancel sets a flag and interrupts the statement in flight; the job
     /// notices at the next row or phase boundary and ends as
-    /// [`JobState::Cancelled`](crate::JobState::Cancelled) — which a
+    /// [`JobState::Canceled`](crate::JobState::Canceled) — which a
     /// [`poll`](Job::poll) still has to read. **The output path is left as it
     /// was**: the bridge writes beside it, renames only on success, and deletes
     /// the unfinished file before it reports the cancel.
@@ -681,8 +729,8 @@ impl Job {
             .jvm
             .call_detached(Op::JobCancel, self.handle, 0, None)?;
         let payload = take_payload(response)?;
-        let cancelled: JobCancelled = parse_json(&payload)?;
-        Ok(cancelled.cancelled)
+        let canceled: JobCanceled = parse_json(&payload)?;
+        Ok(canceled.canceled)
     }
 }
 
@@ -693,7 +741,7 @@ impl Drop for Job {
             return;
         }
         if let Err(error) = self.cancel() {
-            log::debug!("cancelling job {} failed: {error}", self.handle);
+            log::debug!("canceling job {} failed: {error}", self.handle);
         }
         // One reading, to retire the handle if the job has already stopped. It
         // often has not — the worker notices the flag at the next row boundary
@@ -723,7 +771,7 @@ struct Worker {
     ///
     /// The mutex is what makes an `Arc<Worker>` usable from several threads —
     /// an `mpsc::Sender` is `Send` but not `Sync` — and holding it across the
-    /// reply is deliberate: commands for one connection are serialised at the
+    /// reply is deliberate: commands for one connection are serialized at the
     /// door rather than piling up in a queue whose depth nobody bounds.
     sender: Mutex<Option<Sender<Command>>>,
     thread: Mutex<Option<JoinHandle<()>>>,

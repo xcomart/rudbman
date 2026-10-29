@@ -1,7 +1,7 @@
 //! Sending a staged edit set to the server, and the three surfaces around it.
 //!
 //! The half of the architecture document's §7.9 apply that a planner cannot do:
-//! read the primary key off the catalogue, run the batch in one transaction,
+//! read the primary key off the catalog, run the batch in one transaction,
 //! say in the user's language why it did not happen, and draw the confirmation
 //! that every write goes through. §7.9's "editing a query result" subsection is
 //! why any of it is a module rather than a pane's private half — the data pane
@@ -87,7 +87,7 @@ impl ApplyProblem {
 /// The three name parts are taken loose rather than as an [`ObjectTarget`] so
 /// that a caller who has them from somewhere else — a query result's
 /// [`ColumnInfo`], which carries a `catalog`, `schema` and `table` per column —
-/// can ask the same question. An **empty** catalog or schema is normalised to
+/// can ask the same question. An **empty** catalog or schema is normalized to
 /// `None`, and that is not tidying: JDBC's `getPrimaryKeys` reads an exact `""`
 /// as "objects that have no catalog/schema at all", so passing the `""` several
 /// drivers report unconditionally would ask about a table nobody has and get a
@@ -125,7 +125,7 @@ pub(crate) fn primary_key(
 ///
 /// `None` for a statement that binds nothing — an `INSERT ... DEFAULT VALUES` —
 /// so that the line is left out rather than drawn empty. NULL is spelled `NULL`
-/// and not translated: it is the value's SQL name, and a localised one would
+/// and not translated: it is the value's SQL name, and a localized one would
 /// stop matching the statement above it.
 fn render_values(values: &[Option<String>]) -> Option<SharedString> {
     if values.is_empty() {

@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn a_comment_before_a_write_does_not_hide_it() {
     let h2 = Dialect::H2;
-    // The whole reason the judgement goes through the lexer: a script's
+    // The whole reason the judgment goes through the lexer: a script's
     // explanation sits above the statement it explains.
     assert!(is_write_statement(
         "-- nightly clean-up\nUPDATE orders SET state = 'x'",
@@ -52,6 +52,7 @@ fn a_plain_read_is_paged_and_anything_that_cuts_its_own_rows_is_not() {
         Dialect::MYSQL,
         Dialect::MARIADB,
         Dialect::SQLITE,
+        Dialect::DB2,
     ] {
         let name = dialect.name();
         for (sql, body) in [
@@ -99,6 +100,9 @@ fn a_plain_read_is_paged_and_anything_that_cuts_its_own_rows_is_not() {
             "select * from t for update",
             "select * from t where a = 1 lock in share mode",
             "select * from t for system_time all",
+            // Db2's isolation clause, and MySQL's rollup beside it.
+            "select * from t with ur",
+            "select a, count(*) from t group by a with rollup",
             // Reads, but not ones a page clause belongs on.
             "show tables",
             "explain select * from t",

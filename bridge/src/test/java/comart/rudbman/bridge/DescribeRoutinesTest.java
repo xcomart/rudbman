@@ -140,6 +140,64 @@ class DescribeRoutinesTest {
         assertTrue(describe("sequences", "schema", "NO_SUCH_SCHEMA").isEmpty());
     }
 
+    private JsonObject ddl(String... kv) {
+        JsonObject req = new JsonObject();
+        req.addProperty("kind", "ddl");
+        for (int i = 0; i < kv.length; i += 2) {
+            req.addProperty(kv[i], kv[i + 1]);
+        }
+        return H2.call(Ops.DESCRIBE, session, 0, req).json();
+    }
+
+    /**
+     * A routine's DDL is the server's own: on H2 the {@code CREATE ALIAS} row of
+     * its script, and only that row - not the schema's tables and sequences
+     * the same script also writes.
+     */
+    @Test
+    void routineDdlIsTheServersOwnText() {
+        JsonObject resp = ddl("object", "procedure", "schema", "APP", "name", "F_ADD");
+        assertEquals("native", resp.get("source").getAsString());
+        String text = resp.get("ddl").getAsString();
+        assertTrue(text.startsWith("CREATE FORCE ALIAS \"APP\".\"F_ADD\" FOR "), text);
+        assertTrue(text.contains("DescribeRoutinesTest.add"), text);
+        assertFalse(text.contains("SEQUENCE"), text);
+    }
+
+    /**
+     * The catalog layer needs a body to show. An alias bound to a Java method
+     * has none - {@code ROUTINE_DEFINITION} is NULL - and that is reported, not
+     * papered over with a header and nothing under it.
+     */
+    @Test
+    void aRoutineWithNoReadableBodyIsReportedAsSuch() {
+        JsonObject req = new JsonObject();
+        req.addProperty("kind", "ddl");
+        req.addProperty("object", "procedure");
+        req.addProperty("schema", "APP");
+        req.addProperty("name", "F_ADD");
+        req.addProperty("source", "metadata");
+        JsonObject err = H2.call(Ops.DESCRIBE, session, 0, req).error();
+        assertEquals("sql", err.get("kind").getAsString(), err.toString());
+        assertTrue(err.get("message").getAsString().contains("F_ADD"), err.toString());
+    }
+
+    @Test
+    void routineDdlNeedsAKindAndAName() {
+        for (String[] kv : new String[][]{
+                {"object", "procedure", "schema", "APP"},
+                {"object", "index", "schema", "APP", "name", "F_ADD"},
+        }) {
+            JsonObject req = new JsonObject();
+            req.addProperty("kind", "ddl");
+            for (int i = 0; i < kv.length; i += 2) {
+                req.addProperty(kv[i], kv[i + 1]);
+            }
+            JsonObject err = H2.call(Ops.DESCRIBE, session, 0, req).error();
+            assertEquals("protocol", err.get("kind").getAsString(), err.toString());
+        }
+    }
+
     /**
      * The four kinds this milestone added must not answer the deferred-feature
      * error any more. An empty list is a valid answer; an error is not.

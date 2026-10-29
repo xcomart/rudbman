@@ -64,7 +64,7 @@ class TemplateManagerTest {
     }
 
     @Test
-    void aQuotedDirectiveHonoursBackslashEscapes() throws Exception {
+    void aQuotedDirectiveHonorsBackslashEscapes() throws Exception {
         assertEquals("it's", render("${'it\\'s'}", map()));
     }
 

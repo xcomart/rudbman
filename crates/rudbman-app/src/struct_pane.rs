@@ -28,7 +28,7 @@
 //! anything back, and the confirmation says so before the user reaches it.
 //!
 //! Both endings — the batch that ran and the batch that stopped half way —
-//! throw the staging away and read the catalogue again. See
+//! throw the staging away and read the catalog again. See
 //! [`StructPane::applied`] for why the failure cannot do what §7.9's does and
 //! leave the staging standing.
 //!
@@ -45,7 +45,7 @@
 //! §7.10's create path is **this pane with an empty snapshot**, and that is
 //! meant literally rather than as an analogy: [`StructPane::creating`] reaches
 //! [`Load::Ready`] without a `DESCRIBE`, holding a [`Structure`] whose `table`
-//! is the catalogue and schema the table goes in and whose columns and
+//! is the catalog and schema the table goes in and whose columns and
 //! constraints are empty lists. From there the column list draws nothing, "add
 //! column" already works, the one-column-at-a-time form already works, the drop
 //! toggles have nothing to toggle, and the live batch and the apply are the
@@ -138,7 +138,7 @@ enum Load {
 /// [module documentation](self) for the whole list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
-    /// An existing table, read from the catalogue and amended.
+    /// An existing table, read from the catalog and amended.
     Alter,
     /// A table that does not exist yet, filled in and made.
     ///
@@ -183,7 +183,7 @@ pub struct StructPane {
     ///
     /// In [`Mode::Create`] its `name` is empty until the table exists — the
     /// name being typed lives in the staging buffer, which is what makes it
-    /// discardable — and its catalogue and schema are the place the table is
+    /// discardable — and its catalog and schema are the place the table is
     /// being made in.
     target: ObjectTarget,
     /// Whether this is an existing table or one being made.
@@ -279,7 +279,7 @@ pub struct StructPane {
     applying: bool,
     /// Why the last batch stopped, and how far it got.
     ///
-    /// Held apart from [`StructPane::notice`] and drawn in the danger colour: a
+    /// Held apart from [`StructPane::notice`] and drawn in the danger color: a
     /// batch that stopped half way has committed everything before the
     /// statement that failed, and a line that faded in with the other passing
     /// remarks would be the wrong weight for that.
@@ -363,7 +363,7 @@ impl StructPane {
         }
     }
 
-    /// A pane over a table that does not exist yet, in `target`'s catalogue and
+    /// A pane over a table that does not exist yet, in `target`'s catalog and
     /// schema.
     ///
     /// `target.name` is ignored and left empty: the name is the one thing about
@@ -842,7 +842,7 @@ impl StructPane {
     /// The column list survives the change and the two reference fields do
     /// not stop existing either — they are simply not drawn on the two kinds
     /// that have no other side — so a user who picked the columns and then
-    /// realised it was a unique constraint keeps the work.
+    /// realized it was a unique constraint keeps the work.
     fn set_constraint_kind(&mut self, kind: NewConstraintKind, cx: &mut Context<Self>) {
         if self.read_only {
             return;
@@ -1045,7 +1045,7 @@ impl StructPane {
     /// parts company with §7.9's apply. There a failure leaves every staged
     /// change exactly where it was, because the rollback means nothing was
     /// written. Here there is no rollback: the statements before the one that
-    /// failed are committed and cannot be taken back, so the catalogue has
+    /// failed are committed and cannot be taken back, so the catalog has
     /// moved and the staging — keyed, like the row editor's, to indices into
     /// the reading it was staged against — is describing a table that no longer
     /// exists in that shape. Replaying it would apply the committed half twice.
@@ -1057,7 +1057,7 @@ impl StructPane {
     /// Success reloads for its own reason: what a server did with a DDL
     /// statement is not always what it was asked — a type widened, a default
     /// normalized, a column added at the end regardless of where it was typed —
-    /// so the pane re-reads the catalogue and shows that (§7.10).
+    /// so the pane re-reads the catalog and shows that (§7.10).
     ///
     /// **A create that succeeds turns the pane into the editor for the table it
     /// just made** (§7.10): the mode becomes [`Mode::Alter`], the target takes
@@ -1070,7 +1070,7 @@ impl StructPane {
     /// **A create that fails keeps its staging**, which is where this parts
     /// company with the paragraph above and with an alter's own failure. The
     /// reason an alter discards is that the statements before the one that
-    /// failed are committed, so the catalogue has moved out from under indices
+    /// failed are committed, so the catalog has moved out from under indices
     /// the staging holds. A create is one statement: if it failed, nothing ran,
     /// nothing was committed, the snapshot is the same empty one it always was
     /// and the staging is still describing exactly the table the user is trying
@@ -1610,7 +1610,7 @@ impl StructPane {
         .into_any_element()
     }
 
-    /// The constraints: the ones the catalogue reported, the ones being added,
+    /// The constraints: the ones the catalog reported, the ones being added,
     /// and — in [`Mode::Create`] — the form that adds one.
     ///
     /// The two lists are drawn one after the other rather than switched
@@ -1751,7 +1751,7 @@ impl StructPane {
     /// because a constraint over a column this table does not have is not a
     /// thing anyone means; the name is optional, and says so, since an unnamed
     /// constraint is ordinary and the server names it. Only a foreign key draws
-    /// the last two, and those are free text: the pane has no catalogue browser
+    /// the last two, and those are free text: the pane has no catalog browser
     /// and §7.10's create path does not want one, so the other side of a
     /// reference reaches the server as it was typed — which is the rule a
     /// column's type has followed all along.
@@ -2206,7 +2206,7 @@ fn headings<const N: usize>(headers: [SharedString; N], chrome: &Theme) -> Div {
 
 /// One row of the constraint table, up to the button at the end of it.
 ///
-/// The same three cells whether the constraint was read from the catalogue or
+/// The same three cells whether the constraint was read from the catalog or
 /// is being added, because they are the same three facts: what kind it is, what
 /// it is called, and what it covers.
 fn constraint_row(
@@ -2258,10 +2258,10 @@ fn reference_summary(draft: &ConstraintDraft) -> SharedString {
 ///
 /// §7.10's whole design for the create path in one function: the current shape
 /// of a table that does not exist yet is no columns and no constraints, in the
-/// catalogue and schema it is going to be made in. The name is not part of it —
+/// catalog and schema it is going to be made in. The name is not part of it —
 /// that is staged, and discardable, like everything else the user types.
 fn blank_structure(target: &ObjectTarget) -> Structure {
-    // Through `table_parts` so that which of the catalogue and the schema
+    // Through `table_parts` so that which of the catalog and the schema
     // qualifies a name is decided in one place, and then without the name,
     // which is the field nobody has filled in yet.
     let mut table = builder_sql::table_parts(
@@ -2280,7 +2280,7 @@ fn blank_structure(target: &ObjectTarget) -> Structure {
 /// A constraint's kind, as SQL spells it.
 ///
 /// Untranslated for the reason `NOT NULL` is: these are the words the table's
-/// own DDL carries, and a localised `PRIMARY KEY` would stop matching the
+/// own DDL carries, and a localized `PRIMARY KEY` would stop matching the
 /// statement the block below shows.
 fn kind_name(kind: ConstraintKind) -> SharedString {
     SharedString::new_static(match kind {
@@ -3169,7 +3169,7 @@ mod tests {
     /// The create runs against a real server, and the pane then edits the table
     /// it just made (§7.10).
     ///
-    /// The most interesting behaviour on this path, and the one that proves the
+    /// The most interesting behavior on this path, and the one that proves the
     /// rest: the mode switches, the target takes the name the statement carried,
     /// and the reload that follows shows the columns and the key **the server**
     /// stored — H2's own `CHARACTER VARYING`, which nothing on this side typed.
@@ -3249,7 +3249,7 @@ mod tests {
             })
             .expect("the window is open");
 
-        // And the table is there for anybody else reading the catalogue.
+        // And the table is there for anybody else reading the catalog.
         assert_eq!(*created.borrow(), vec![target("NOTE")]);
         assert_eq!(
             server_columns(&connected, "NOTE"),
@@ -3361,7 +3361,7 @@ mod tests {
         cx.run_until_parked();
 
         // Read straight off the session and not through the pane: a table that
-        // was never made answers no columns, which is how the catalogue says a
+        // was never made answers no columns, which is how the catalog says a
         // table is not there.
         let made = load_structure(connected.session(), &target("NOTE"))
             .map(|structure| !structure.columns.is_empty())
@@ -3417,7 +3417,7 @@ mod tests {
     /// through the pane.
     ///
     /// Every apply assertion needs both readings: what the pane shows is one
-    /// reading of the catalogue, and the question a stopped batch asks is about
+    /// reading of the catalog, and the question a stopped batch asks is about
     /// the table itself.
     fn server_columns(connected: &Connected, table: &str) -> Vec<String> {
         columns_named(

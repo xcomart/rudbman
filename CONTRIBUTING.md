@@ -123,7 +123,8 @@ docker compose -f docker/compose.yml down
 
 These are POSIX shell commands; PowerShell uses `$env:NAME = 'value'` for
 environment variables. [docker/compose.yml](docker/compose.yml) documents the
-MySQL, MariaDB, SQL Server and Oracle settings.
+MySQL, MariaDB, SQL Server, Oracle and Db2 settings. Db2's first start creates
+its database and takes several minutes before the container reports healthy.
 [CI](.github/workflows/ci.yml) shows the full matrix and driver overrides such
 as `RUDBMAN_TEST_PG_JAR`. These tests create and drop objects; use test databases,
 not a connection holding real data. The rudbman and rudbgen Compose stacks use

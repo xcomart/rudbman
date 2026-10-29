@@ -64,7 +64,7 @@ const PAYLOAD: &[&str] = &["rudbman", "lib", "runtime"];
 /// * and the shell's updater uses it to find the entry again, so that a copy
 ///   which has updated itself still reports its real version to winget.
 ///
-/// Move any one corner without the other two and winget stops recognising an
+/// Move any one corner without the other two and winget stops recognizing an
 /// installed rudbman: `winget list` finds nothing, `winget upgrade` offers a
 /// fresh install to sit beside the existing one, and `winget uninstall` has
 /// nothing to remove — all silently, because a key that is not there is

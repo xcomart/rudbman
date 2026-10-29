@@ -176,7 +176,7 @@ pub fn build_spec(
     if let Some(schema) = non_empty(Some(&form.target_schema)) {
         table = table.with_schema(schema);
     }
-    // No catalogue: the form does not ask for one. A target catalogue is
+    // No catalog: the form does not ask for one. A target catalog is
     // meaningful on two products out of the eight, and an absent one means
     // "wherever the target connection is pointed", which is what a user who
     // chose that connection already said.
@@ -236,7 +236,7 @@ struct Running {
     /// Rows the target refused, under a policy that drops them.
     rows_skipped: u64,
     /// Whether a cancel has been issued and the job has not stopped yet.
-    cancelling: bool,
+    canceling: bool,
 }
 
 /// How a job ended.
@@ -250,9 +250,9 @@ enum Ended {
     },
     /// The job failed. The message is the first error's, as the bridge wrote it.
     Failed(SharedString),
-    /// The job was cancelled. The rows already committed stay in the target,
+    /// The job was canceled. The rows already committed stay in the target,
     /// which is why the count is kept: it is the only record of what landed.
-    Cancelled {
+    Canceled {
         /// Rows written before the cancel took.
         rows: u64,
     },
@@ -398,11 +398,11 @@ impl TransferDialog {
 
     /// Hides the dialog without emitting an event.
     ///
-    /// **A job still running is cancelled**, by the drop chain
+    /// **A job still running is canceled**, by the drop chain
     /// [`crate::extract_dialog`] documents: the polling task goes, nobody holds
     /// the `Job`, and its `Drop` asks the bridge to stop. Rows already
     /// committed on the target stay there, which is the contract §6 states and
-    /// what [`Ended::Cancelled`] reports while the card is still up.
+    /// what [`Ended::Canceled`] reports while the card is still up.
     pub fn close(&mut self, cx: &mut Context<Self>) {
         self.open = false;
         self.pending_focus = false;
@@ -560,7 +560,7 @@ impl TransferDialog {
             phase: SharedString::default(),
             rows_done: 0,
             rows_skipped: 0,
-            cancelling: false,
+            canceling: false,
         });
         cx.notify();
     }
@@ -604,7 +604,7 @@ impl TransferDialog {
                 rows: progress.rows_done,
                 skipped: progress.rows_skipped,
             },
-            JobState::Cancelled => Ended::Cancelled {
+            JobState::Canceled => Ended::Canceled {
                 rows: progress.rows_done,
             },
             // `Running` cannot reach here — `is_terminal` excluded it — and a
@@ -631,15 +631,15 @@ impl TransferDialog {
         let Stage::Running(running) = &mut self.stage else {
             return;
         };
-        if running.cancelling {
+        if running.canceling {
             return;
         }
-        running.cancelling = true;
+        running.canceling = true;
         // Taken on the UI thread rather than handed to a task: the bridge's
         // cancel is detached and quick, and a task would arrive after the work
         // it was meant to stop.
         if let Err(error) = running.job.lock().cancel() {
-            log::warn!("cancelling the transfer failed: {error}");
+            log::warn!("canceling the transfer failed: {error}");
         }
         cx.notify();
     }
@@ -814,8 +814,8 @@ impl TransferDialog {
                 div()
                     .text_size(px(12.))
                     .text_color(chrome.text_muted)
-                    .child(if running.cancelling {
-                        ts!("transfer.cancelling")
+                    .child(if running.canceling {
+                        ts!("transfer.canceling")
                     } else {
                         phase
                     }),
@@ -843,10 +843,10 @@ impl TransferDialog {
                 (SharedString::from(message), chrome.success)
             }
             // The committed rows are named because they are still there: a
-            // cancelled transfer is not an undone one, and a user who does not
+            // canceled transfer is not an undone one, and a user who does not
             // know how much landed cannot decide what to do next.
-            Ended::Cancelled { rows } => (
-                ts!("transfer.cancelled", rows = rows, table = table),
+            Ended::Canceled { rows } => (
+                ts!("transfer.canceled", rows = rows, table = table),
                 chrome.text,
             ),
             Ended::Failed(message) => (
@@ -911,7 +911,7 @@ impl TransferDialog {
             Stage::Running(running) => div().flex().flex_row().gap(px(8.)).child(
                 Button::new("transfer-stop", ts!("common.cancel"))
                     .variant(ButtonVariant::Secondary)
-                    .disabled(running.cancelling)
+                    .disabled(running.canceling)
                     .tab_index(tab::DISMISS)
                     .on_click({
                         let this = this.clone();
@@ -1154,7 +1154,7 @@ mod tests {
         assert_eq!(spec.target_session, 7);
         assert_eq!(spec.target_table.name, "ORDERS");
         assert_eq!(spec.target_table.schema.as_deref(), Some("PUBLIC"));
-        // Never asked for and never sent: the form has no catalogue field.
+        // Never asked for and never sent: the form has no catalog field.
         assert_eq!(spec.target_table.catalog, None);
         assert_eq!(spec.mode, TransferMode::Insert);
         assert_eq!(spec.on_error, OnError::Abort);
@@ -1320,14 +1320,14 @@ mod tests {
             .expect("the window is open");
         cx.run_until_parked();
 
-        for (skipped, cancelling) in [(0, false), (4, false), (4, true)] {
+        for (skipped, canceling) in [(0, false), (4, false), (4, true)] {
             window
                 .update(&mut cx, |dialog, _window, cx| {
                     let Stage::Running(running) = &mut dialog.stage else {
                         panic!("the card was entered above");
                     };
                     running.rows_skipped = skipped;
-                    running.cancelling = cancelling;
+                    running.canceling = canceling;
                     running.phase = SharedString::from("transfer");
                     cx.notify();
                 })
@@ -1345,7 +1345,7 @@ mod tests {
                 rows: 118,
                 skipped: 2,
             },
-            Ended::Cancelled { rows: 40 },
+            Ended::Canceled { rows: 40 },
             Ended::Failed(SharedString::from("the target table went away")),
         ] {
             window
@@ -1496,9 +1496,9 @@ mod tests {
         assert_eq!(count(&target, "ORDERS"), 3);
     }
 
-    /// Cancelling ends the job as cancelled and leaves both sessions usable.
+    /// Canceling ends the job as canceled and leaves both sessions usable.
     #[gpui::test]
-    fn cancelling_stops_the_transfer_and_leaves_the_sessions_usable(cx: &mut TestAppContext) {
+    fn canceling_stops_the_transfer_and_leaves_the_sessions_usable(cx: &mut TestAppContext) {
         // Not a big table but a slow one, for the extraction dialog's reason: a
         // big table only loses the race on a fast enough disk, whereas a view
         // that sleeps a millisecond per row cannot reach the end inside the
@@ -1537,14 +1537,14 @@ mod tests {
         window
             .update(cx, |dialog, _window, _cx| {
                 assert!(
-                    matches!(dialog.stage, Stage::Ended(Ended::Cancelled { .. })),
-                    "a cancelled job ends as cancelled, not as done or failed"
+                    matches!(dialog.stage, Stage::Ended(Ended::Canceled { .. })),
+                    "a canceled job ends as canceled, not as done or failed"
                 );
             })
             .expect("the window is open");
 
         // Neither session is left holding its connection lock: the source had a
-        // SELECT cancelled underneath it and the target a batch. Counting a
+        // SELECT canceled underneath it and the target a batch. Counting a
         // plain range on the source, not the sleeping view, so the check itself
         // is instant.
         assert_eq!(count(&source, "SYSTEM_RANGE(1, 10)"), 10);

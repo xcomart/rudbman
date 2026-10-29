@@ -225,7 +225,7 @@ public final class ExtractJob extends Jobs.Job {
                     writeData(out);
                 }
             } finally {
-                // A cancelled or failed job still reports how much it managed to
+                // A canceled or failed job still reports how much it managed to
                 // write before it stopped, even though that file is discarded.
                 try {
                     out.flush();
@@ -335,8 +335,8 @@ public final class ExtractJob extends Jobs.Job {
                 + (where == null || where.isEmpty() ? "" : " WHERE " + where);
 
         try (Statement st = session().connection().createStatement()) {
-            // A hint only: several drivers ignore it, and PostgreSQL honours it
-            // only with auto-commit off. Without it, a driver that materialises
+            // A hint only: several drivers ignore it, and PostgreSQL honors it
+            // only with auto-commit off. Without it, a driver that materializes
             // the whole result would decide the heap ceiling for this job.
             try {
                 st.setFetchSize(FETCH_SIZE);
@@ -348,7 +348,7 @@ public final class ExtractJob extends Jobs.Job {
             // Statement.cancel on a statement that was not yet executing, which
             // JDBC lets a driver treat as a no-op — H2 does. The flag is the
             // durable half of the request, so it gets one last look before
-            // execution begins; without it, a query the driver materialises
+            // execution begins; without it, a query the driver materializes
             // (a view over a generator, say) would run to completion with the
             // cancel already lost.
             if (shouldStop()) {

@@ -44,7 +44,7 @@ import java.util.function.Function;
  * </ul>
  *
  * <p>PostgreSQL and H2 fill {@code REMARKS} themselves and are never asked.
- * SQLite has no comments to find. Anything unrecognised gets the portable answer.
+ * SQLite has no comments to find. Anything unrecognized gets the portable answer.
  *
  * <p>The subtraction is MySQL's and MariaDB's alone: they report the literal
  * string {@code VIEW} as a view's comment, and they do it through
@@ -86,7 +86,7 @@ import java.util.function.Function;
  * {@code table_comments_sql} and {@code column_comments_sql} on the session, from
  * jdbgen, where a driver definition has carried these two queries all along.
  * Where one is set it <em>replaces</em> the built-in query for that kind rather
- * than adding to it, and it does so on every product, the four recognised ones
+ * than adding to it, and it does so on every product, the four recognized ones
  * included: the definition is the user's statement about their own database and
  * it outranks this file's guess. Everything around the query is unchanged - the
  * driver still wins, nothing is asked when nothing is missing, failure is still
@@ -277,7 +277,7 @@ final class Comments {
      * of every view in the tree. Connector/J hands it over in {@code REMARKS}
      * without any help from this class, so the correction cannot live in the
      * enrichment query and cannot be conditional on enrichment running: it is a
-     * normalisation of what the driver said, and it happens whether or not any
+     * normalization of what the driver said, and it happens whether or not any
      * comment is missing.
      *
      * <p>The test is on {@code TABLE_TYPE} rather than on the text, so a

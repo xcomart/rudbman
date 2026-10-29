@@ -596,7 +596,7 @@ fn moving_a_connection_tab_refuses_what_would_change_nothing(cx: &mut gpui::Test
             }
             workspace.active_connection = 1;
 
-            // Onto itself, and before its own neighbour, both change nothing.
+            // Onto itself, and before its own neighbor, both change nothing.
             workspace.move_connection(1, 1, cx);
             workspace.move_connection(1, 2, cx);
             assert_eq!(names(workspace), ["a", "b", "c"]);

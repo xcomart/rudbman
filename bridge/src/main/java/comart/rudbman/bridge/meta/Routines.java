@@ -7,10 +7,15 @@ import comart.rudbman.bridge.Json;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * {@code DESCRIBE} kinds {@code procedures} and {@code functions}.
@@ -39,10 +44,31 @@ import java.util.logging.Logger;
  * reports {@code CREATE ALIAS} functions through {@code getProcedures} with
  * {@code PROCEDURE_TYPE = procedureReturnsResult}. The UI should therefore treat
  * an empty list as "this server files them elsewhere", not as "there are none".
+ *
+ * <p>MySQL's and MariaDB's drivers go the other way and file a function in
+ * <em>both</em> lists: {@code getProcedures} answers every routine of the
+ * schema, functions marked {@code procedureReturnsResult}, and
+ * {@code getFunctions} answers the functions again. {@code procedures} therefore
+ * leaves out a routine that {@code getFunctions} also reports, so that each one
+ * is drawn once, under the folder its own kind names.
+ *
+ * <p>SQL Server's driver answers <em>both</em> lists with every routine, and
+ * the only thing telling the two kinds apart is the number it puts on each
+ * name, the way the server numbers procedure groups: {@code F;0} for a
+ * function, {@code P;1} for a procedure. Each list keeps its own kind there,
+ * and the number - no part of any name a user typed, and not needed to find the
+ * routine again - is taken off.
  */
 public final class Routines {
 
     private static final Logger LOG = Logger.getLogger(Routines.class.getName());
+
+    /** ojdbc's fixed {@code REMARKS}; see {@link #remarks}. */
+    private static final Pattern ORACLE_REMARKS = Pattern.compile(
+            "(?i)(standalone|packaged) (procedure|function)( or function)?");
+
+    /** SQL Server's {@code name;number}; see the class documentation. */
+    private static final Pattern NUMBERED = Pattern.compile("(.*);(\\d+)");
 
     private Routines() {
     }
@@ -65,6 +91,8 @@ public final class Routines {
 
         Params params = collect("getProcedureColumns", () ->
                 dbm.getProcedureColumns(catalog, schema, name, null), true);
+        boolean numbered = Dialect.of(dbm) == Dialect.SQLSERVER;
+        Set<String> functions = numbered ? Set.of() : functionKeys(dbm, catalog, schema, name);
 
         JsonArray arr = new JsonArray();
         try (ResultSet rs = dbm.getProcedures(catalog, schema, name)) {
@@ -82,9 +110,27 @@ public final class Routines {
                 String remarks = v.str("REMARKS");         // 7
                 Integer type = v.i32("PROCEDURE_TYPE");    // 8
                 String specific = v.str("SPECIFIC_NAME");  // 9
-                o.addProperty("name", routine);
+                // A function the driver files twice belongs to `functions`. A
+                // routine that says it returns nothing is a procedure whatever
+                // its name, which keeps MySQL's procedure and function of the
+                // same name - two namespaces there - both listed.
+                String shown = routine;
+                if (numbered) {
+                    Matcher m = NUMBERED.matcher(routine == null ? "" : routine);
+                    if (m.matches()) {
+                        if ("0".equals(m.group(2))) {
+                            continue;
+                        }
+                        shown = m.group(1);
+                    }
+                } else if ((type == null || type != DatabaseMetaData.procedureNoResult)
+                        && functions.contains(key(Json.str(o, "catalog"),
+                                Json.str(o, "schema"), routine))) {
+                    continue;
+                }
+                o.addProperty("name", shown);
                 o.addProperty("specific_name", specific);
-                o.addProperty("remarks", remarks);
+                o.addProperty("remarks", remarks(dbm, remarks));
                 o.addProperty("type", type);
                 o.addProperty("type_name", procedureType(type));
                 o.add("parameters", params.forRoutine(specific, routine));
@@ -112,9 +158,19 @@ public final class Routines {
 
         Params params = collect("getFunctionColumns", () ->
                 dbm.getFunctionColumns(catalog, schema, name, null), false);
+        boolean numbered = Dialect.of(dbm) == Dialect.SQLSERVER;
 
         JsonArray arr = new JsonArray();
-        try (ResultSet rs = dbm.getFunctions(catalog, schema, name)) {
+        ResultSet listed;
+        try {
+            listed = dbm.getFunctions(catalog, schema, name);
+        } catch (SQLFeatureNotSupportedException | AbstractMethodError e) {
+            // SQLite's driver, among others: a product with no functions to
+            // list is an empty folder, not a failed one.
+            LOG.log(Level.FINE, "getFunctions is not supported", e);
+            return arr;
+        }
+        try (ResultSet rs = listed) {
             RsView v = new RsView(rs);
             while (rs.next()) {
                 JsonObject o = new JsonObject();
@@ -125,9 +181,19 @@ public final class Routines {
                 String remarks = v.str("REMARKS");         // 4
                 Integer type = v.i32("FUNCTION_TYPE");     // 5
                 String specific = v.str("SPECIFIC_NAME");  // 6
-                o.addProperty("name", routine);
+                String shown = routine;
+                if (numbered) {
+                    Matcher m = NUMBERED.matcher(routine == null ? "" : routine);
+                    if (m.matches()) {
+                        if (!"0".equals(m.group(2))) {
+                            continue;
+                        }
+                        shown = m.group(1);
+                    }
+                }
+                o.addProperty("name", shown);
                 o.addProperty("specific_name", specific);
-                o.addProperty("remarks", remarks);
+                o.addProperty("remarks", remarks(dbm, remarks));
                 o.addProperty("type", type);
                 o.addProperty("type_name", functionType(type));
                 o.add("parameters", params.forRoutine(specific, routine));
@@ -135,6 +201,49 @@ public final class Routines {
             }
         }
         return arr;
+    }
+
+    /**
+     * The routines {@code getFunctions} reports, keyed by {@link #key}.
+     *
+     * <p>A driver that refuses the call answers an empty set, which leaves the
+     * procedure list as the driver reported it: a routine listed twice is a
+     * smaller fault than one that is not listed at all.
+     */
+    private static Set<String> functionKeys(DatabaseMetaData dbm, String catalog,
+                                            String schema, String name) {
+        Set<String> out = new HashSet<>();
+        try (ResultSet rs = dbm.getFunctions(catalog, schema, name)) {
+            RsView v = new RsView(rs);
+            while (rs.next()) {
+                String cat = v.str("FUNCTION_CAT");     // 1
+                String sch = v.str("FUNCTION_SCHEM");   // 2
+                out.add(key(cat, sch, v.str("FUNCTION_NAME")));  // 3
+            }
+        } catch (SQLException | RuntimeException | AbstractMethodError e) {
+            LOG.log(Level.FINE, "functions unavailable via getFunctions", e);
+        }
+        return out;
+    }
+
+    /**
+     * The driver's {@code REMARKS}, less what Oracle's driver writes into it for
+     * every routine - "Standalone procedure or function", "Packaged function" -
+     * which says nothing about the routine and is not a comment anyone wrote.
+     */
+    private static String remarks(DatabaseMetaData dbm, String remarks) {
+        if (remarks != null && Dialect.of(dbm) == Dialect.ORACLE
+                && ORACLE_REMARKS.matcher(remarks.trim()).matches()) {
+            return null;
+        }
+        return remarks;
+    }
+
+    /** One routine's place: catalog, schema and name, absent parts empty. */
+    private static String key(String catalog, String schema, String name) {
+        return (catalog == null ? "" : catalog) + '\0'
+                + (schema == null ? "" : schema) + '\0'
+                + (name == null ? "" : name);
     }
 
     /** Supplier of a metadata result set, allowed to throw. */

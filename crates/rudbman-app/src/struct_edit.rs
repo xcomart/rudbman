@@ -83,7 +83,7 @@
 //!
 //! [`StructEdits::plan_create`] is the second entry point, and it stages
 //! against the same [`Structure`] the first one does — one whose `table` holds
-//! the catalogue and schema the table is to be made in, whose `columns` are
+//! the catalog and schema the table is to be made in, whose `columns` are
 //! empty and whose `constraints` are empty. Everything that follows from that
 //! is already here: an added column is a [`ColumnDraft`] with no snapshot row
 //! behind it, which is what every added column already is, and a name typed
@@ -297,7 +297,7 @@ impl NewConstraintKind {
     /// The SQL keyword that introduces the clause.
     ///
     /// Untranslated, exactly as `NOT NULL` is: it is what the statement below
-    /// the form says, and a localised `PRIMARY KEY` would stop matching it.
+    /// the form says, and a localized `PRIMARY KEY` would stop matching it.
     pub fn keyword(self) -> &'static str {
         match self {
             NewConstraintKind::PrimaryKey => "PRIMARY KEY",
@@ -318,7 +318,7 @@ impl NewConstraintKind {
 ///
 /// The columns are chosen from the columns being defined, and everything on the
 /// other side of a foreign key is text the user wrote: the pane has no
-/// catalogue browser, and §7.10's create path does not want one. Both halves
+/// catalog browser, and §7.10's create path does not want one. Both halves
 /// reach the server as they stand, which is the rule a column's type already
 /// follows — and what makes it safe is the same thing: the statement is shown
 /// in full before any of it runs.
@@ -387,7 +387,7 @@ fn name_parts(text: &str) -> Vec<String> {
 
 /// One comma-separated list as its members, with the empty ones dropped.
 ///
-/// Unlike [`name_parts`], a trailing comma here is a typing artefact and not a
+/// Unlike [`name_parts`], a trailing comma here is a typing artifact and not a
 /// hole: the list is optional in the first place, and refusing one because it
 /// ends in a separator would be inventing a rule the server does not have.
 fn comma_list(text: &str) -> Vec<String> {
@@ -445,7 +445,7 @@ impl StructEdits {
     /// typed over and typed back still counts here while planning to nothing.
     /// The pane's Apply button being enabled for a batch that turns out empty
     /// is the harmless direction of that, and the alternative — a button that
-    /// greys itself out while the user is still in the field — is not.
+    /// grays itself out while the user is still in the field — is not.
     pub fn is_empty(&self) -> bool {
         self.changed.is_empty()
             && self.dropped.is_empty()
@@ -655,7 +655,7 @@ impl StructEdits {
     ///
     /// The four refusals this makes on its own are the ones that can name a row
     /// the user can go and look at; everything else is the generator's
-    /// judgement, wrapped in [`PlanError::Ddl`] and shown as it stands. See the
+    /// judgment, wrapped in [`PlanError::Ddl`] and shown as it stands. See the
     /// [module documentation](self) for both, and for why a change equal to the
     /// snapshot is dropped rather than refused.
     pub fn plan(&self, structure: &Structure, dialect: &Dialect) -> Result<Vec<String>, PlanError> {
@@ -742,7 +742,7 @@ impl StructEdits {
     /// [`StructEdits::plan`]'s sibling rather than a mode of it, exactly as
     /// [`plan_create`] is [`plan_alter`]'s: an alter is a batch of amendments
     /// to something that exists and has to be ordered against itself, and a
-    /// create is one sentence. `structure.table` is the catalogue and schema
+    /// create is one sentence. `structure.table` is the catalog and schema
     /// the table goes in, and the name staged through
     /// [`StructEdits::set_rename`] is appended to it — the one field, used for
     /// the one name there is on this path.
@@ -845,7 +845,7 @@ pub enum PlanError {
     /// A table being created has not been given a name.
     ///
     /// Separate from [`PlanError::NoNewName`] because it is a different
-    /// question: there a field pre-filled from the catalogue was cleared, and
+    /// question: there a field pre-filled from the catalog was cleared, and
     /// here a field that started empty has not been filled in yet. Only the
     /// second is [`PlanError::is_unfinished`].
     NoTableName,

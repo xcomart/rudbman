@@ -132,6 +132,31 @@ pub(super) fn for_dialect(dialect: Dialect) -> impl Iterator<Item = &'static str
             "STRING_AGG",
             "SUBSTRING",
         ],
+        // https://www.ibm.com/docs/en/db2/12.1?topic=functions-built-in
+        DialectId::Db2 => &[
+            "CEIL",
+            "CONCAT",
+            "DAYS",
+            "DIGITS",
+            "FLOOR",
+            "HEX",
+            "LCASE",
+            "LENGTH",
+            "LISTAGG",
+            "LOCATE",
+            "MOD",
+            "NVL",
+            "POSSTR",
+            "POWER",
+            "SQRT",
+            "SUBSTR",
+            "TIMESTAMPDIFF",
+            "TO_CHAR",
+            "TO_DATE",
+            "TRUNCATE",
+            "UCASE",
+            "VARCHAR_FORMAT",
+        ],
     };
     COMMON.iter().chain(vendor).copied()
 }

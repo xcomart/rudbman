@@ -3,7 +3,7 @@
 # its keys, and a key missing from a translation falls back to the value here.
 #
 # Not translated anywhere, on purpose: the "rudbman" wordmark itself, element
-# ids, gpui key names, theme ids, the licence identifier, and the `Cmd`/`Ctrl`
+# ids, gpui key names, theme ids, the license identifier, and the `Cmd`/`Ctrl`
 # modifier names.
 #
 # This is the M0 set: the application shell and nothing that is not on screen
@@ -26,7 +26,7 @@ common:
   close: Close
 
 # The in-app dropdown menu, and the macOS menu bar below it. The two differ
-# only in capitalisation in English, but a translation may need to distinguish
+# only in capitalization in English, but a translation may need to distinguish
 # them, so they are separate keys.
 #
 # An ellipsis marks a row that asks something before it acts, which is every
@@ -94,6 +94,8 @@ tab:
   # on each tab reuses `close` above: same command, same wording.
   tip_list: All connections
   tip_new: "New connection (%{shortcut})"
+  # The same dropdown on a pane's strip, listing that pane's tabs.
+  tip_pane_list: All tabs
 
 # The welcome screen: the whole body of the window while no connection is open.
 # A heading, the button that makes a connection, and the connections already
@@ -139,7 +141,7 @@ statusbar:
   failed: "failed: %{error}"
   tunnel_lost: "the SSH tunnel closed: %{reason}"
 
-# The about box. The version, the licence name and the names of the libraries
+# The about box. The version, the license name and the names of the libraries
 # are values, not words, and are never translated.
 about:
   title: About rudbman
@@ -150,9 +152,9 @@ about:
 
 # The settings dialog and the theme editor inside it.
 #
-# Never translated: hex colour values, the `#RRGGBB` notation, JVM flags and
+# Never translated: hex color values, the `#RRGGBB` notation, JVM flags and
 # the slot keys of a theme file. The slot *labels* below are translated — they
-# name what a colour is for, not what the file calls it.
+# name what a color is for, not what the file calls it.
 settings:
   title: Settings
   # Heads both dropdowns, and doubles as their placeholder so a trigger reads
@@ -217,8 +219,8 @@ settings:
     # says which row would have taken it.
     import_not_a_theme: "“%{file}” is an editor theme. Import it under Editor theme."
     import_not_an_editor_theme: "“%{file}” is an interface theme. Import it under Interface theme."
-    # The right kind of file, with a colour in it that is not #RRGGBB.
-    import_bad_color: "“%{file}” has no usable colour for %{slot}."
+    # The right kind of file, with a color in it that is not #RRGGBB.
+    import_bad_color: "“%{file}” has no usable color for %{slot}."
     # Some of the chosen files were installed and some were not. Only the ones
     # that failed are counted; the ones that worked are already in the picker.
     import_skipped: "%{count} files were skipped."
@@ -230,15 +232,15 @@ settings:
     write_failed: "The file could not be written: %{error}"
     delete_failed: "The file could not be removed: %{error}"
 
-  # The colour editor the management row opens.
+  # The color editor the management row opens.
   editor:
     theme_title: Edit interface theme
     editor_theme_title: Edit editor theme
     name: Name
     dark: This is a dark palette
-    invalid: Every colour has to be written as #RRGGBB.
-    # The five grid colours a theme file may leave out.
-    grid_group: Result grid — left out of the file unless a colour is given
+    invalid: "Every color has to be written as #RRGGBB."
+    # The five grid colors a theme file may leave out.
+    grid_group: Result grid — left out of the file unless a color is given
     automatic: Automatic
     # How an automatic slot's own label reads while it is being derived.
     automatic_slot: "%{name} (automatic)"
@@ -332,7 +334,7 @@ connect:
   add_prop: Add a property
 
   section:
-    behaviour: Behaviour
+    behavior: Behavior
     tunnel: SSH tunnel
 
   read_only: Open the connection read-only
@@ -435,7 +437,7 @@ driver:
   downloading: "Downloading %{file}…"
   downloading_percent: "Downloading %{file} — %{percent}%"
   downloaded: "%{file} was downloaded and added."
-  download_cancelled: The download was cancelled.
+  download_canceled: The download was canceled.
   bad_coordinate: "“%{coordinate}” is not a group:artifact:version coordinate."
   not_found: "Maven Central has nothing at %{url}."
   network_failed: "The download failed: %{error}"
@@ -451,7 +453,7 @@ driver:
   none_selected: Select a driver, or add one.
   # Comments the driver itself will not report. Several products answer
   # DatabaseMetaData with an empty REMARKS and keep their comments in a
-  # catalogue view instead, so the query says where to find them. The tick box
+  # catalog view instead, so the query says where to find them. The tick box
   # is separate from the text so that a query can be switched off without being
   # thrown away. Inherited from jdbgen.
   table_comments: Table comments
@@ -466,7 +468,7 @@ driver:
 
 # The explorer sidebar: one tree over every open connection.
 #
-# Never translated: catalogue, schema, table, routine and sequence names, which
+# Never translated: catalog, schema, table, routine and sequence names, which
 # are the database's own.
 explorer:
   refresh: Refresh
@@ -484,12 +486,13 @@ explorer:
   # An error row whose message went missing, for the same reason.
   load_failed_unknown: This could not be loaded.
 
-  # The five folders under a schema.
+  # The six folders under a schema.
   tables: Tables
   views: Views
   procedures: Procedures
   functions: Functions
   sequences: Sequences
+  triggers: Triggers
 
 # The object detail panel: what one table, view or routine is made of.
 #
@@ -516,6 +519,7 @@ detail:
   # has no way to quote its own back. JDBC metadata carries none of the things
   # listed here, so the text is for reading rather than for restoring from.
   ddl_reconstructed: Rebuilt from metadata, for reference. CHECK constraints, triggers, partitioning and collations are not in it.
+  ddl_reconstructed_object: Rebuilt from the catalog, for reference. What the catalog does not keep — a routine's characteristics, among others — is not in it.
 
   # Column headings.
   column: Column
@@ -554,6 +558,14 @@ detail:
   cycle: Cycle
   cache: Cache
 
+  # Rows of a trigger's properties. The values are SQL words - BEFORE, INSERT,
+  # ROW, ENABLED - and stay as they are in every language.
+  trigger_table: Table
+  timing: Timing
+  events: Events
+  level: Level
+  status: Status
+
 # The query pane: a SQL editor over the results of what it ran. Opened with the
 # menu row or its shortcut, and over the object selected in the explorer with
 # the second row.
@@ -578,7 +590,7 @@ query:
   # The cancel button once the cancel has been issued and the driver has not
   # answered yet. A word of its own rather than a disabled "Cancel", because
   # what is happening is not what the button offered.
-  cancelling: Cancelling…
+  canceling: Canceling…
   # One tab per result set. The shared log does not consume an index.
   result: "Result %{index}"
   # The title of a query pane's tab in the pane it sits in. `index` counts
@@ -629,7 +641,7 @@ query:
   hint_constraint: The statement broke a constraint the table declares.
   hint_auth: This connection is not allowed to do that.
   hint_network: The connection to the database was lost.
-  hint_cancelled: The statement was cancelled.
+  hint_canceled: The statement was canceled.
   # Title of the file picker the "Open SQL file…" row opens.
   open_file_select: Choose a SQL file
 
@@ -703,7 +715,7 @@ struct:
   loading: loading…
   refresh: Refresh
   discard: Discard
-  # A reload reads the catalogue again, and every staged edit is keyed to an
+  # A reload reads the catalog again, and every staged edit is keyed to an
   # index into the reading it was staged against.
   discard_first: Discard the pending changes first.
   # The one line that says why nothing here can be staged. Not a failure: a
@@ -749,7 +761,7 @@ struct:
   # UNIQUE, CHECK — are SQL keywords and stay as they are.
   constraints: Constraints
   kind: Kind
-  # A table the catalogue reports no constraint for, as against one that could
+  # A table the catalog reports no constraint for, as against one that could
   # not be read.
   empty: nothing here
   # The product has no ALTER that drops one, so the toggles are drawn disabled
@@ -766,7 +778,7 @@ struct:
   # the server names it.
   constraint_name: Name (optional)
   # The other side of a foreign key. Both are free text — the pane has no
-  # catalogue browser — and both reach the server as they were typed.
+  # catalog browser — and both reach the server as they were typed.
   references: Referenced table
   # Left empty means the referenced table's own primary key, which every
   # product accepts as an omitted list.
@@ -819,7 +831,7 @@ extract:
   browse: Browse…
   template_select: Choose a template file
   # The two halves of a script, each with its own sub-option below it.
-  ddl: Include the schema
+  ddl: Include the definitions (DDL)
   drop: Precede it with DROP statements
   data: Include the rows
   mode: Row format
@@ -842,12 +854,12 @@ extract:
   # unit symbol.
   counters: "%{rows} rows, %{bytes}"
   # The cancel has been issued and the job has not stopped yet.
-  cancelling: Cancelling…
-  # The three endings. A cancelled job writes nothing to the path: the bridge
+  canceling: Canceling…
+  # The three endings. A canceled job writes nothing to the path: the bridge
   # writes beside it and only renames on success, so whatever was there before
   # — an earlier extract — is left as it was. The message says so.
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
-  cancelled: "Cancelled. Nothing was written to %{path}."
+  canceled: "Canceled. Nothing was written to %{path}."
   failed: "The extraction failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The extraction failed for a reason the bridge did not give.
@@ -887,12 +899,12 @@ transfer:
   # Shown beside the row count only once something has actually been dropped.
   skipped: "%{skipped} skipped"
   # The cancel has been issued and the job has not stopped yet.
-  cancelling: Cancelling…
-  # The three endings. A cancelled transfer keeps whatever was committed before
+  canceling: Canceling…
+  # The three endings. A canceled transfer keeps whatever was committed before
   # it stopped, so the message says how much that was.
   done: "Transferred %{rows} rows into %{table}."
   done_skipped: "%{skipped} rows would not go in and were skipped."
-  cancelled: "Cancelled. %{rows} rows had already been committed to %{table} and are still there."
+  canceled: "Canceled. %{rows} rows had already been committed to %{table} and are still there."
   failed: "The transfer failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The transfer failed for a reason the bridge did not give.
@@ -903,7 +915,7 @@ backup:
   # The scope the dialog was opened over. Read-only: what is backed up is where
   # the selection sits.
   scope: Schema
-  # A product whose catalogue and schema levels were both skipped — SQLite —
+  # A product whose catalog and schema levels were both skipped — SQLite —
   # has one scope and no name for it.
   scope_all: The whole database
   output: Output file
@@ -912,7 +924,7 @@ backup:
   browse: Browse…
   compress: Compress the file with gzip
   # The two halves of a script, with their own sub-options below them.
-  ddl: Include the schema
+  ddl: Include the definitions (DDL)
   drop: Precede it with DROP statements
   data: Include the rows
   # A backup writes INSERT statements and nothing else, so there is no row
@@ -925,9 +937,9 @@ backup:
   # `bytes` arrives already formatted with its unit symbol, and counts what
   # reached the file — after compression, when there is any.
   counters: "%{rows} rows, %{bytes}"
-  cancelling: Cancelling…
+  canceling: Canceling…
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
-  cancelled: "Cancelled. Nothing was written to %{path}."
+  canceled: "Canceled. Nothing was written to %{path}."
   failed: "The backup failed: %{error}"
   failed_unknown: The backup failed for a reason the bridge did not give.
 
@@ -936,10 +948,10 @@ backup:
 # Never translated: table and column names, type names, and the "SVG" and
 # "ERD" abbreviations themselves.
 erd:
-  # The panel's own title and the title of its tab. `scope` is the catalogue
+  # The panel's own title and the title of its tab. `scope` is the catalog
   # and schema being drawn and is the database's own name for them.
   tab: "ERD — %{scope}"
-  # The same tab on a product whose catalogue and schema levels were both
+  # The same tab on a product whose catalog and schema levels were both
   # skipped, so there is no scope to name.
   tab_all: ERD
   loading: loading…
@@ -949,7 +961,7 @@ erd:
   # Re-runs the automatic layout over every box.
   auto_arrange: Arrange
   # The two vocabularies a box can be drawn in: the identifiers the SQL is
-  # written in, and the comments the catalogue carries. Both label the same
+  # written in, and the comments the catalog carries. Both label the same
   # two-option control, so they read as a pair.
   names_physical: Physical
   names_logical: Logical

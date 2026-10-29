@@ -24,7 +24,8 @@
 //! `CASE` lines up its `WHEN`s and `ELSE` under the first `WHEN` and its `END`
 //! under itself. Statements are separated by an empty line. Anything the rules
 //! do not recognize — DDL, a function's arguments — is written on one line,
-//! single-spaced.
+//! single-spaced; [`format_ddl`] is the layout for the `CREATE` statements a
+//! DDL tab shows.
 //!
 //! What the guide asks of the *author* — naming, `AS` for every alias, no
 //! vendor functions — is not something a formatter can do without changing the
@@ -64,6 +65,10 @@ use std::collections::HashMap;
 
 use crate::dialect::Dialect;
 use crate::lexer::{LineState, TokenKind, lex, lex_line};
+
+mod ddl;
+
+pub use ddl::format_ddl;
 
 /// Keywords written in upper case: reserved words of MySQL, the one product
 /// whose bare table names are case-sensitive, plus `END`, which closes `CASE`.
@@ -262,10 +267,14 @@ fn directive(line: &str) -> Option<Directive> {
 struct Item<'a> {
     kind: TokenKind,
     text: &'a str,
+    /// Where it starts in the input, in bytes.
+    start: usize,
     /// Whether whitespace (or the start of the input) came right before it.
     spaced: bool,
     /// Whether that whitespace held a line break.
     newline: bool,
+    /// Whether that whitespace held an empty line.
+    blank: bool,
 }
 
 impl Item<'_> {
@@ -413,11 +422,15 @@ fn items<'a>(sql: &'a str, dialect: &Dialect) -> Vec<Item<'a>> {
     let mut items = Vec::new();
     let mut spaced = true;
     let mut newline = false;
+    // Line breaks since the last token: the lexer may cut a run of whitespace
+    // at each one, so the count is what says an empty line was there.
+    let mut breaks = 0;
     for token in lex(sql, dialect) {
         let text = token.text(sql);
         if token.kind == TokenKind::Whitespace {
             spaced = true;
             newline |= text.contains('\n');
+            breaks += text.matches('\n').count();
             continue;
         }
         let text = if token.kind == TokenKind::Comment && !text.starts_with("/*") {
@@ -428,11 +441,14 @@ fn items<'a>(sql: &'a str, dialect: &Dialect) -> Vec<Item<'a>> {
         items.push(Item {
             kind: token.kind,
             text,
+            start: token.start,
             spaced,
             newline,
+            blank: breaks > 1,
         });
         spaced = false;
         newline = false;
+        breaks = 0;
     }
     items
 }
@@ -526,7 +542,11 @@ fn clause_of(
     let by_next = next_significant(items, i).is_some_and(|n| items[n].is_keyword("BY"));
     let updating = first_keyword
         .is_some_and(|k| k.eq_ignore_ascii_case("UPDATE") || k.eq_ignore_ascii_case("MERGE"));
+    // `VALUES(col)` after an operator is MySQL's function of `ON DUPLICATE KEY
+    // UPDATE`, not the clause.
+    let operand = prev.is_some_and(|p| p.kind == TokenKind::Operator);
     match item.text.to_ascii_uppercase().as_str() {
+        "VALUES" if operand => None,
         "SELECT" | "VALUES" | "RETURNING" | "WINDOW" => Some(Clause::List),
         "GROUP" | "ORDER" if by_next => Some(Clause::List),
         "WITH" if prev.is_none_or(|p| p.is_punct("(")) => Some(Clause::List),
@@ -890,6 +910,17 @@ returning id",
 SELECT *
   FROM a,
        b",
+        );
+    }
+
+    #[test]
+    fn values_after_an_operator_is_a_function() {
+        assert_eq!(
+            format_sql(
+                "insert into t (a, b) values (1, 2) on duplicate key update b = values(b)",
+                &Dialect::from_id("mysql"),
+            ),
+            "INSERT INTO t (a, b)\nVALUES (1, 2) ON duplicate KEY UPDATE b = VALUES(b)",
         );
     }
 

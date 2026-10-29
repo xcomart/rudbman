@@ -63,10 +63,13 @@ pub fn order_by(sql: &str, column: &str, direction: SortDirection, dialect: &Dia
 /// The statement already cuts its own rows (`LIMIT`, `OFFSET`, `FETCH`,
 /// `TOP`), or ends in a clause that has to stay last or that a page clause
 /// cannot follow (`FOR UPDATE`, `FOR SHARE`, MariaDB's `FOR SYSTEM_TIME`,
-/// `LOCK IN SHARE MODE`, `PROCEDURE ANALYSE`, `INTO`). Matched at depth zero
-/// only, so the same words inside a subquery or a function's parentheses are
-/// left alone; a column that happens to be called `offset` costs nothing but
-/// the old way of reading.
+/// `LOCK IN SHARE MODE`, `PROCEDURE ANALYZE`, `INTO`, and Db2's isolation
+/// clause, `WITH UR`). Matched at depth zero only, so the same words inside a
+/// subquery or a function's parentheses are left alone; a column that happens
+/// to be called `offset` costs nothing but the old way of reading. `WITH` is
+/// matched after the statement's first word only, so a common table
+/// expression still pages — and the `WITH ROLLUP` or `WITH ORDINALITY` it also
+/// refuses is read the old way too.
 const UNPAGEABLE_WORDS: &[&str] = &[
     "LIMIT",
     "OFFSET",
@@ -76,6 +79,7 @@ const UNPAGEABLE_WORDS: &[&str] = &[
     "LOCK",
     "PROCEDURE",
     "INTO",
+    "WITH",
 ];
 
 /// The statement every page's clause is appended to, when `sql` is one that
@@ -191,9 +195,9 @@ pub(super) fn name_part(part: &Option<String>) -> Option<&str> {
 /// The one table a result's columns were all read from, when there is one.
 ///
 /// The first two clauses of §7.9's gate, and nothing else — the third, that the
-/// table's primary key is present in the result, needs the catalogue and is
+/// table's primary key is present in the result, needs the catalog and is
 /// asked afterwards ([`QueryPane::keyed`]). Answers the table's `(catalog,
-/// schema, table)` parts, each already normalised by [`name_part`].
+/// schema, table)` parts, each already normalized by [`name_part`].
 ///
 /// * A column that names **no** table takes no part in the vote and is not
 ///   disqualifying. It is a computed column — an expression, a literal, an

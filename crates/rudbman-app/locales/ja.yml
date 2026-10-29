@@ -10,17 +10,17 @@ common:
   close: 閉じる
 
 menu:
-  new_connection: 接続管理…
+  new_connection: 接続の管理…
   settings: 設定…
   toggle_explorer: エクスプローラー
   # Opens an empty query pane on the connection whose tab is showing.
-  new_query: 新しいクエリ
+  new_query: 新規クエリ
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
-  query_object: 選択したオブジェクトを照会
+  query_object: 選択したオブジェクトをクエリ
   view_data: データを表示
   view_structure: 構造を編集
-  new_table: 新しいテーブル
+  new_table: 新規テーブル
   open_sql_file: SQL ファイルを開く…
   extract_script: スクリプトを抽出…
   transfer_table: 行を転送…
@@ -31,7 +31,7 @@ menu:
   # opening one first if the connection has none.
   add_to_builder: クエリビルダーに追加
   # Opens an empty query builder on the connection whose tab is showing.
-  new_builder: 新しいクエリビルダー
+  new_builder: 新規クエリビルダー
   about: rudbman について
   check_updates: 更新を確認
   quit: 終了
@@ -39,18 +39,19 @@ menu:
   view: 表示
   tip_menu: メニュー
   mac:
-    new_connection: 接続管理…
+    new_connection: 接続の管理…
     quit: rudbman を終了
 
 tab:
   close: 接続を閉じる
   tip_list: すべての接続
   tip_new: "新規接続 (%{shortcut})"
+  tip_pane_list: すべてのタブ
 
 welcome:
   hint: "%{shortcut} で接続を管理します。"
-  new_connection: 接続管理…
-  saved: 保存した接続
+  new_connection: 接続の管理…
+  saved: 保存済みの接続
 
 empty:
   hint: 接続を追加すると、データベースの参照と SQL の実行ができます。
@@ -62,7 +63,7 @@ statusbar:
   idle: 待機中
   connecting: 接続中…
   connected: 接続済み
-  disconnected: 切断
+  disconnected: 切断済み
   failed: "失敗: %{error}"
   tunnel_lost: "SSH トンネルが閉じました: %{reason}"
 
@@ -98,7 +99,7 @@ settings:
 
   opacity: 不透明度
   opacity_hint: "% — 100 未満にするとデスクトップが透けます"
-  blur: ウィンドウの背後をぼかす
+  blur: ウィンドウの背後のデスクトップをぼかす
   titlebar: タイトルバー
   titlebar_custom: rudbman が描画
   titlebar_system: システムが描画
@@ -128,7 +129,7 @@ settings:
     import_not_a_theme: "「%{file}」はエディターテーマです。エディターテーマからインポートしてください。"
     import_not_an_editor_theme: "「%{file}」はインターフェイステーマです。インターフェイステーマからインポートしてください。"
     import_bad_color: "「%{file}」の%{slot}に使える色がありません。"
-    import_skipped: "%{count}個のファイルをスキップしました。"
+    import_skipped: "%{count} 個のファイルをスキップしました。"
     copy_name: "%{name}（コピー）"
     delete_theme_confirm: "テーマ「%{name}」を削除しますか？"
     delete_editor_theme_confirm: "エディターテーマ「%{name}」を削除しますか？"
@@ -140,7 +141,7 @@ settings:
     editor_theme_title: エディターテーマの編集
     name: 名前
     dark: ダークパレットです
-    invalid: すべての色は #RRGGBB 形式で指定してください。
+    invalid: "すべての色は #RRGGBB 形式で指定してください。"
     grid_group: 結果グリッド — 色を指定しない限りファイルには書き出されません
     automatic: 自動
     automatic_slot: "%{name}（自動）"
@@ -187,13 +188,13 @@ settings:
 
 # 接続ダイアログ。
 connect:
-  title: 接続
+  title: 接続の管理
   new: 新規
-  new_name: 新しい接続
+  new_name: 新規接続
   duplicate: 複製
   delete: 削除
   delete_confirm: "接続「%{name}」と保存されたパスワードを削除しますか？"
-  unnamed: "(名前なし)"
+  unnamed: "（名前なし）"
   copy_name: "%{name}（コピー）"
 
   name: 名前
@@ -210,7 +211,7 @@ connect:
   url: URL
   url_hint: 上の項目から組み立てられます。直接書き換えるとその内容が使われます。
   url_overridden: 手入力された URL です。上の項目を変えても反映されません。
-  url_reset: 組み立て直す
+  url_reset: 再構築
 
   username: ユーザー
   password: パスワード
@@ -220,7 +221,7 @@ connect:
   add_prop: プロパティを追加
 
   section:
-    behaviour: 動作
+    behavior: 動作
     tunnel: SSH トンネル
 
   read_only: 読み取り専用で接続する
@@ -278,7 +279,7 @@ driver:
   probe_found: "%{class} を見つけました。"
   probe_choose: このドライバーには複数のクラスがあります。接続に使うものを選んでください。
   probe_recommended: 推奨
-  probe_none: これらのファイルに JDBC ドライバーはありません。ソースや javadoc の JAR がこう見えます。正しいファイルを選んだか確認してください。
+  probe_none: これらのファイルに JDBC ドライバーはありません。ソースや javadoc の JAR を選ぶとこうなります。正しいファイルを選んだか確認してください。
   probe_damaged: "ファイルが壊れていて最後まで読めませんでした。ダウンロードし直してください。(%{error})"
   probe_missing: "JAR ファイルが見つかりません: %{error}"
   probe_jvm_failed: "Java ランタイムを起動できませんでした: %{error}"
@@ -290,7 +291,7 @@ driver:
   jars: JAR ファイル
   add_jar: JAR を追加…
   add_jar_select: 追加
-  remove_jar: 削除
+  remove_jar: 外す
   jar_missing: 見つかりません
   no_jar: JAR なし
   no_jar_hint: 接続に使うには、ドライバーに JAR が少なくとも一つ必要です。
@@ -299,7 +300,7 @@ driver:
   downloading: "%{file} をダウンロードしています…"
   downloading_percent: "%{file} をダウンロード中 — %{percent}%"
   downloaded: "%{file} をダウンロードして追加しました。"
-  download_cancelled: ダウンロードを中止しました。
+  download_canceled: ダウンロードをキャンセルしました。
   bad_coordinate: "「%{coordinate}」は group:artifact:version 形式の座標ではありません。"
   not_found: "Maven Central の %{url} には何もありません。"
   network_failed: "ダウンロードに失敗しました: %{error}"
@@ -307,7 +308,7 @@ driver:
   load_failed: "ドライバー定義を読み込めませんでした: %{error}"
   save_failed: "ドライバー定義を保存できませんでした: %{error}"
   new: 新規
-  new_name: 新しいドライバー
+  new_name: 新規ドライバー
   delete: 削除
   delete_confirm: "ドライバー定義「%{name}」を削除しますか？"
   none_selected: ドライバーを選ぶか、新しく追加してください。
@@ -320,12 +321,12 @@ driver:
 
 # エクスプローラーのサイドバー。
 explorer:
-  refresh: 更新
+  refresh: 再読み込み
   title: エクスプローラー
   empty: 接続を開くと中身をたどれます。
   loading: 読み込み中…
   disconnected: 接続は閉じています。
-  unknown_connection: "(接続)"
+  unknown_connection: "（接続）"
   load_failed_unknown: 読み込めませんでした。
 
   tables: テーブル
@@ -333,6 +334,7 @@ explorer:
   procedures: プロシージャー
   functions: 関数
   sequences: シーケンス
+  triggers: トリガー
 
 # オブジェクトの詳細パネル。
 detail:
@@ -348,6 +350,7 @@ detail:
   empty: ありません
   no_ddl: このオブジェクトに表示できる CREATE 文はありません。
   ddl_reconstructed: メタデータから組み立てた参考用です。CHECK 制約・トリガー・パーティション・照合順序は含まれていません。
+  ddl_reconstructed_object: カタログから組み立てた参考用です。ルーチンの特性など、カタログにない内容は含まれていません。
 
   column: 列
   type: 型
@@ -378,6 +381,11 @@ detail:
   current_value: 現在値
   cycle: 循環
   cache: キャッシュ
+  trigger_table: テーブル
+  timing: タイミング
+  events: イベント
+  level: レベル
+  status: 状態
 
 query:
   result_log: "実行ログ"
@@ -388,7 +396,7 @@ query:
   rolled_back: "トランザクションをロールバックしました。"
   rollback_failed: "ロールバックに失敗しました: %{message}"
   rollback_auto: "ロールバック（自動コミットが有効です）"
-  uncommitted_pending: "この接続にはクエリエディタで実行した未コミットの変更があります。先にクエリタブでコミットまたはロールバックしてください。"
+  uncommitted_pending: "この接続にはクエリエディターで実行した未コミットの変更があります。先にクエリタブでコミットまたはロールバックしてください。"
   commit: "コミット"
   committing: "コミット中…"
   committed: "トランザクションをコミットしました。"
@@ -396,31 +404,31 @@ query:
   commit_auto: "コミット（自動コミットが有効です）"
   run: 実行
   cancel: キャンセル
-  cancelling: キャンセル中…
+  canceling: キャンセル中…
   result: "結果 %{index}"
   tab: "クエリ %{index}"
   empty: 文を書いて実行してください。
   no_results: 文は結果を返しませんでした。
   running: 実行中…
-  rows_affected: "%{count} 行を更新しました"
+  rows_affected: "%{count} 行処理されました"
   executed: 文を実行しました。
   row_count: "%{count} 行"
   elapsed: "%{seconds} 秒"
   busy: このペインでは既に文が実行中です。
   no_statement: 実行する文がありません。
   draft_too_large: "この下書きは %{limit} MB を超えるため、アプリを閉じると保持されません。残すにはファイルに保存してください。"
-  row_limit: "このグリッドに表示できるのは最大 %{limit} 行で、結果にはまだ行があります。残りを見るにはステートメントを絞り込んでください。"
+  row_limit: "このグリッドに表示できるのは最大 %{limit} 行で、結果にはまだ行があります。残りを見るには文を絞り込んでください。"
   read_only: 読み取り専用の接続のため、文は送信されませんでした。
-  confirm_title: この文を実行しますか?
+  confirm_title: この文を実行しますか？
   confirm_body: "データを変更する文: %{count} 件"
-  confirm_run: 実行する
+  confirm_run: 実行
   not_editable: この行は主キーを選択した単一のテーブルから来ていないため、読み取りはできますが変更はできません。
   sql_state: "SQLSTATE %{state}"
   hint_syntax: 文の構文と、対象を読む権限があるかを確認してください。
   hint_constraint: テーブルが宣言している制約に違反しました。
   hint_auth: この接続にはその権限がありません。
   hint_network: データベースとの接続が失われました。
-  hint_cancelled: 文の実行はキャンセルされました。
+  hint_canceled: 文の実行はキャンセルされました。
   open_file_select: SQL ファイルを選択
 
 data:
@@ -447,7 +455,7 @@ data:
   applied: "%{count} 件の文を適用しました。"
   apply_stale: 他の誰かが行を変更または削除しました。何も適用していません。再読み込みしてやり直してください。
   apply_half_applied: 一部がすでにテーブルに反映されている可能性があります。再読み込みして確認してから適用し直してください。
-  apply_reconnect_required: ロールバックに失敗したため結果は不明です。再接続してテーブルを確認し、自動的に再試行しないでください。
+  apply_reconnect_required: ロールバックに失敗したため結果は不明です。再接続してテーブルを確認してください。そのまま再適用しないでください。
   apply_bad_value: "%{column} に「%{value}」は設定できません。"
   apply_null_key: "この行の %{column} が NULL のため、行を特定できません。"
   apply_unknown_key: "読み込んだ列の中にキー列 %{column} がありません。再読み込みしてやり直してください。"
@@ -470,8 +478,8 @@ struct:
   state_dropped: 削除予定
   state_added: 新規
   drop: 削除
-  keep: 元に戻す
-  remove: 取り除く
+  keep: 削除を取り消す
+  remove: 追加を取り消す
   add_column: 列を追加
   edit_column: 選択中の列
   no_selection: 上の一覧から列を選ぶと編集できます。
@@ -488,10 +496,10 @@ struct:
   add_constraint: 制約を追加
   rename_table: テーブル名の変更
   new_name: 新しい名前
-  new_table: 新しいテーブル
-  new_table_in: "%{scope} に新しいテーブル"
+  new_table: 新規テーブル
+  new_table_in: "%{scope} の新規テーブル"
   table_name: テーブル名
-  statements: 文
+  statements: SQL 文
   apply: 適用
   create: テーブルを作成
   apply_title: "%{count} 件の文を適用"
@@ -507,7 +515,7 @@ extract:
   output_none: ファイルが未選択
   browse: 参照…
   template_select: テンプレートファイルを選択
-  ddl: スキーマを含める
+  ddl: 定義 (DDL) を含める
   drop: 先に DROP 文を入れる
   data: 行を含める
   mode: 行の形式
@@ -521,9 +529,9 @@ extract:
   start: 抽出
   starting: 開始しています…
   counters: "%{rows} 行、%{bytes}"
-  cancelling: キャンセルしています…
+  canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
 
@@ -538,18 +546,18 @@ transfer:
   mode_upsert: 挿入し、既にある行は更新する
   mode_truncate: 転送先を空にしてから挿入する
   where: WHERE 句
-  on_error: 入らなかった行の扱い
+  on_error: 挿入できなかった行の扱い
   on_error_abort: 転送を中止する
-  on_error_skip: その行を飛ばす
-  on_error_log: 行を飛ばして理由を記録する
+  on_error_skip: その行をスキップする
+  on_error_log: その行をスキップして理由を記録する
   start: 転送
   starting: 開始しています…
   counters: "%{rows} 行"
-  skipped: "%{skipped} 行を飛ばしました"
-  cancelling: キャンセルしています…
+  skipped: "%{skipped} 行をスキップ"
+  canceling: キャンセルしています…
   done: "%{rows} 行を %{table} に転送しました。"
-  done_skipped: "%{skipped} 行は入らなかったので飛ばしました。"
-  cancelled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
+  done_skipped: "%{skipped} 行は挿入できなかったためスキップしました。"
+  canceled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
   failed: "転送に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま転送に失敗しました。
 
@@ -561,16 +569,16 @@ backup:
   output_none: ファイルが未選択
   browse: 参照…
   compress: gzip で圧縮する
-  ddl: スキーマを含める
+  ddl: 定義 (DDL) を含める
   drop: 先に DROP 文を入れる
   data: 行を含める
   batch_rows: INSERT あたりの行数
   start: バックアップ
   starting: 開始しています…
   counters: "%{rows} 行、%{bytes}"
-  cancelling: キャンセルしています…
+  canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
-  cancelled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
 
@@ -585,7 +593,7 @@ erd:
   names_physical: 物理名
   names_logical: 論理名
   logical_names: 論理名で表示
-  export_svg: SVG で書き出し…
+  export_svg: SVG にエクスポート…
   export_done: "%{path} に書き出しました。"
   export_failed: "図を書き出せませんでした: %{error}"
   refresh: 再読み込み
@@ -608,9 +616,9 @@ builder:
   order_none: 並べ替えなし
   order_asc: 昇順
   order_desc: 降順
-  sql: ステートメント
-  no_sql: テーブルを追加するとステートメントが作られます。
-  open_editor: エディタで開く
+  sql: SQL 文
+  no_sql: テーブルを追加すると SQL 文が作られます。
+  open_editor: エディターで開く
 
 input:
   menu_cut: 切り取り
@@ -637,14 +645,14 @@ context:
   redo: やり直し
   toggle_comment: コメントの切り替え
   format_sql: SQL を整形
-  run_statement: ステートメントを実行
+  run_statement: 文を実行
   run_selection: 選択範囲を実行
   run_all: すべて実行
   find: 検索…
   replace: 置換…
   close_tab: タブを閉じる
-  close_others: 他のタブをすべて閉じる
-  close_right: 右側のタブをすべて閉じる
+  close_others: 他のタブを閉じる
+  close_right: 右側のタブを閉じる
   split_right: 右に分割
   split_below: 下に分割
   close_pane: ペインを閉じる
@@ -652,9 +660,9 @@ context:
   zoom_in: 拡大
   zoom_out: 縮小
   zoom_reset: 実際のサイズ
-  remove_table: テーブルを削除
-  select_column: 選択リストに追加
-  clear_column: 選択リストから外す
+  remove_table: テーブルを外す
+  select_column: SELECT リストに追加
+  clear_column: SELECT リストから外す
   connect: 接続
   edit: 編集…
 
@@ -688,20 +696,20 @@ completion:
 lob:
   open_text: "テキストエディターを開く…"
   text: "テキスト"
-  open: "LOBを開く…"
+  open: "LOB を開く…"
   export: "ファイルに保存…"
   import: "ファイルで置換…"
   empty: "空の値"
   loading: "読み込み中…"
   modified: "変更あり"
   size: "%{bytes} バイト"
-  truncated: "先頭の1 MiBのみ表示します。保存は全内容を出力します。大きな値はファイルで置換できます。"
+  truncated: "先頭の 1 MiB のみ表示しています。保存すると値全体を書き出します。これより大きな値はファイルで置換してください。"
   read_only: "読み取り専用です。表示とファイル保存ができます。"
-  hex_hint: "16進数のバイトを編集します。変更に追加した後、データグリッドの適用でDBに反映します。"
-  text_hint: "テキストファイルはUTF-8を使用します。変更に追加してから、データグリッドの適用でデータベースに反映します。"
-  import_error: "ファイルを読み込めません（CLOBはUTF-8が必要です）: %{error}"
+  hex_hint: "16 進数のバイトを 2 桁ずつ編集します。変更に追加してから、データグリッドの「適用」でデータベースに反映します。"
+  text_hint: "テキストファイルは UTF-8 を使用します。変更に追加してから、データグリッドの「適用」でデータベースに反映します。"
+  import_error: "ファイルを読み込めませんでした（CLOB のテキストは UTF-8 である必要があります）: %{error}"
   saved: "ファイルを保存しました。"
   stage: "変更に追加"
-  discard_question: "このLOBエディターの変更を破棄しますか？"
+  discard_question: "この LOB エディターの変更を破棄しますか？"
   keep_editing: "編集を続ける"
-  invalid_hex: "2桁の16進数（00–FF）を空白または改行で区切って入力してください。"
+  invalid_hex: "2 桁の 16 進数 (00–FF) を空白または改行で区切って入力してください。"

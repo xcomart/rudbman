@@ -34,7 +34,7 @@ struct Harness {
 impl Render for Harness {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::dark();
-        let bar = Scrollbar::for_handle(SCROLLBARS[1].0, Surface::Welcome.axis(), &self.scroll)
+        let bar = Scrollbar::for_handle(SCROLLBARS[0].0, Surface::Welcome.axis(), &self.scroll)
             .fade(self.bar.fade());
 
         div().flex().flex_col().size_full().child(centered_scroll(
@@ -72,7 +72,7 @@ fn open(cx: &mut TestAppContext, height: f32) -> ScrollHandle {
 
 /// The bar the workspace would draw over the box as it now stands.
 fn scrollbar(scroll: &ScrollHandle) -> Scrollbar {
-    Scrollbar::for_handle(SCROLLBARS[1].0, Surface::Welcome.axis(), scroll)
+    Scrollbar::for_handle(SCROLLBARS[0].0, Surface::Welcome.axis(), scroll)
 }
 
 /// With room to spare the column sits in the middle, exactly where
@@ -90,7 +90,7 @@ fn a_column_that_fits_stays_in_the_middle(cx: &mut TestAppContext) {
     let below = f32::from(box_.bottom() - column.bottom());
     assert!(
         (above - below).abs() < SLACK,
-        "the column was not centred: {above} above, {below} below"
+        "the column was not centered: {above} above, {below} below"
     );
     assert_eq!(
         scroll.max_offset().y,

@@ -1,14 +1,14 @@
 //! Where the boxes of a diagram were left: `erd/<profile-uuid>.json`.
 //!
 //! One file per connection *profile*, holding one entry per scope — a
-//! catalogue and a schema — and under it a table name to a position
+//! catalog and a schema — and under it a table name to a position
 //! (architecture document, §8). Keyed by the profile rather than by the open
 //! connection because an arrangement is worth more than a tab: closing the tab
 //! and opening it again finds the diagram as it was left, and two tabs on one
 //! profile are two views of one schema and share the arrangement.
 //!
 //! Only the *positions* are here. The model itself — the tables, their columns
-//! and the foreign keys between them — is rebuilt from the catalogue every time
+//! and the foreign keys between them — is rebuilt from the catalog every time
 //! a diagram is opened, because a schema that changed underneath a saved copy
 //! is worse than no copy at all. A table the file knows nothing about takes the
 //! grid slot [`rudbman_erd::ErdView::set_model`] gave it, and a table the file
@@ -52,7 +52,7 @@ pub struct Position {
 /// Every table position of one scope.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ScopeLayout {
-    /// The catalogue, when the scope names one.
+    /// The catalog, when the scope names one.
     #[serde(default)]
     pub catalog: Option<String>,
     /// The schema, likewise.
