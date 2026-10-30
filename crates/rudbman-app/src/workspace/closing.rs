@@ -647,6 +647,9 @@ impl Workspace {
             .child(
                 Button::new("close-question-cancel", ts!("common.cancel"))
                     .variant(ButtonVariant::Secondary)
+                    .when(save.is_none(), |button| {
+                        button.focus_handle(&self.close_focus)
+                    })
                     .on_click(answer(CloseAnswer::Cancel)),
             )
             .child(
@@ -670,6 +673,7 @@ impl Workspace {
                 )
                 .variant(ButtonVariant::Primary)
                 .disabled(saving)
+                .focus_handle(&self.close_focus)
                 .on_click(answer(CloseAnswer::Save))
             }));
 
@@ -700,6 +704,11 @@ impl Workspace {
                     });
                 },
             )
+            // The default answer takes the keyboard: Save over a file — it
+            // loses nothing — and Cancel over a connection, whose other answer
+            // rolls a transaction back. `Escape` is Cancel either way.
+            .initial_focus(&self.close_focus)
+            .escape_dismisses(true)
             .into_any_element(),
         )
     }

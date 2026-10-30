@@ -517,14 +517,16 @@ impl TransferDialog {
         self.open && matches!(self.stage, Stage::Running(_))
     }
 
-    /// What a press on the backdrop means: nothing while a job runs, and
-    /// `Escape` otherwise.
-    ///
-    /// A press beside the card is the least deliberate gesture there is, so
-    /// it is the one gesture that never stops a job — not even by asking.
-    pub fn backdrop(&mut self, cx: &mut Context<Self>) {
-        if !self.is_running() {
-            self.escape(cx);
+    /// What `Enter` means when no control on the card keeps it — a field
+    /// that has no submit of its own, or the card itself: start from a form
+    /// that can, close a job that ended, and nothing while one runs. A
+    /// focused button keeps its own `Enter`, so the answer is never a guess
+    /// about which one was meant.
+    pub fn confirm(&mut self, cx: &mut Context<Self>) {
+        match &self.stage {
+            Stage::Form if self.truncate.is_none() && self.spec(cx).is_some() => self.start(cx),
+            Stage::Ended(_) => self.dismiss(cx),
+            _ => {}
         }
     }
 
@@ -1327,7 +1329,13 @@ impl Render for TransferDialog {
         let on_dismiss = {
             let this = cx.entity();
             move |_window: &mut Window, cx: &mut App| {
-                this.update(cx, |dialog, cx| dialog.backdrop(cx));
+                this.update(cx, |dialog, cx| dialog.escape(cx));
+            }
+        };
+        let confirm = {
+            let this = cx.entity();
+            move |_window: &mut Window, cx: &mut App| {
+                this.update(cx, |dialog, cx| dialog.confirm(cx));
             }
         };
 
@@ -1339,18 +1347,26 @@ impl Render for TransferDialog {
             .inset_0()
             .size_full()
             .track_focus(&self.focus_handle)
-            .child(modal(
-                "transfer-modal",
-                ts!("transfer.title"),
-                px(DIALOG_WIDTH),
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .child(body)
-                    .child(footer),
-                on_dismiss,
-            ))
+            .child(
+                modal(
+                    "transfer-modal",
+                    ts!("transfer.title"),
+                    px(DIALOG_WIDTH),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .child(body)
+                        .child(footer),
+                    on_dismiss,
+                )
+                // A press beside the card is the least deliberate gesture
+                // there is, so while a job runs it is the one that does
+                // nothing at all — not even ask; `Escape` asks (see
+                // `escape`).
+                .backdrop_dismisses(!self.is_running())
+                .on_confirm(confirm),
+            )
     }
 }
 
@@ -2098,8 +2114,8 @@ mod tests {
                     matches!(dialog.stage, Stage::Running(_)),
                     "the job was accepted and the card is showing it"
                 );
-                // A press on the backdrop stops nothing and asks nothing.
-                dialog.backdrop(cx);
+                // `Enter` neither starts a second job nor stops this one.
+                dialog.confirm(cx);
                 assert!(dialog.is_running() && !dialog.asking_stop);
                 // `Escape` asks, a second one answers "keep running", and
                 // neither of them has stopped the job.

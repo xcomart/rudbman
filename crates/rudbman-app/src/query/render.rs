@@ -159,6 +159,7 @@ impl Render for QueryPane {
                 let discard = this.clone();
                 render_discard_confirm(
                     counts,
+                    &self.confirm_focus,
                     cx,
                     move |_window, cx| {
                         this.update(cx, |pane, cx| {
@@ -177,6 +178,7 @@ impl Render for QueryPane {
             render_apply_preview(
                 &preview.statements,
                 self.transactional,
+                &self.confirm_focus,
                 cx,
                 move |_window, cx| {
                     this.update(cx, |pane, cx| {

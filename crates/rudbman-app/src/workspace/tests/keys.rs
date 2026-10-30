@@ -187,3 +187,70 @@ fn a_dialog_gives_the_keyboard_back_where_it_found_it(cx: &mut gpui::TestAppCont
         })
         .expect("the window is open");
 }
+
+/// The write confirmation takes the keyboard from the editor that asked:
+/// `Enter` answers the focused "Cancel" rather than breaking the line it was
+/// typed after, and `Escape` declines as well, handing the editor back.
+#[gpui::test]
+fn the_write_confirmation_takes_enter_and_escape_from_the_editor(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("keys-confirm", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let ask = |cx: &mut gpui::VisualTestContext| {
+        window
+            .update(cx, |workspace, window, cx| {
+                let query = workspace
+                    .active_query()
+                    .expect("the query is the tab on top")
+                    .clone();
+                query.update(cx, |pane, cx| pane.focus_editor(window, cx));
+                workspace.confirm = Some(PendingConfirm {
+                    pane: query,
+                    request: Box::new(ConfirmRequest {
+                        count: 1,
+                        preview: "DELETE FROM PUBLIC.ORDERS".into(),
+                    }),
+                });
+                cx.notify();
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(cx, |workspace, window, cx| {
+                assert!(workspace.confirm_focus.is_focused(window));
+                assert!(!editor_focused(workspace, window, cx));
+            })
+            .expect("the window is open");
+    };
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("delete from orders", window, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+
+    for key in ["enter", "escape"] {
+        ask(&mut cx);
+        // Down and up, as a real press: a focused button clicks on the
+        // release of `Enter`.
+        let keystroke = gpui::Keystroke::parse(key).expect("a key");
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke });
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |workspace, window, cx| {
+                assert!(workspace.confirm.is_none(), "{key} answered the question");
+                assert!(editor_focused(workspace, window, cx), "{key}");
+                let query = workspace.active_query().expect("still on top");
+                assert_eq!(
+                    query.read(cx).editor_text(cx),
+                    "delete from orders",
+                    "{key} reached the editor"
+                );
+            })
+            .expect("the window is open");
+    }
+}

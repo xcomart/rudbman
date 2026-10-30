@@ -51,9 +51,9 @@ use rudbman_core::{
     TunnelAuth, TunnelConfig,
 };
 use rugpui::{
-    Button, ButtonVariant, Checkbox, Collapsible, DraggedThumb, Scrollbar, ScrollbarAxis,
-    ScrollbarState, Segmented, Select, TextInput, Theme, form_row, hide_later, hide_now, modal,
-    scroll_to, scrolled, theme,
+    Button, ButtonVariant, Checkbox, Collapsible, DismissReason, DraggedThumb, Scrollbar,
+    ScrollbarAxis, ScrollbarState, Segmented, Select, TextInput, Theme, form_row, hide_later,
+    hide_now, modal, scroll_to, scrolled, theme,
 };
 use uuid::Uuid;
 
@@ -1078,26 +1078,40 @@ impl ConnectionDialog {
         current_dirty || others || secrets
     }
 
-    /// What every way out of the dialog but "Connect" goes through: `Escape`,
-    /// "Cancel" and a press beside it.
+    /// Whether a way out of the dialog but "Connect" — `Escape`, "Cancel", a
+    /// press beside it — may close it now. When it may not, the gesture has
+    /// been answered here instead.
     ///
     /// A form holding nothing unsaved closes. One holding something asks
     /// first — Save, Discard, Keep editing — in the footer, because opening
     /// the dialog again re-reads the file and an edit closed over is an edit
     /// lost. Asked once: the same gesture again while the question is up is
     /// "Keep editing".
-    pub fn request_dismiss(&mut self, cx: &mut Context<Self>) {
+    fn may_dismiss(&mut self, cx: &mut Context<Self>) -> bool {
         if self.asking_discard {
             self.asking_discard = false;
             cx.notify();
-            return;
+            return false;
         }
         if self.is_dirty(cx) {
             self.asking_discard = true;
             self.confirming = false;
             cx.notify();
-            return;
+            return false;
         }
+        true
+    }
+
+    /// "Cancel": closes the dialog unless [`ConnectionDialog::may_dismiss`]
+    /// asks first.
+    pub fn request_dismiss(&mut self, cx: &mut Context<Self>) {
+        if self.may_dismiss(cx) {
+            self.dismiss(cx);
+        }
+    }
+
+    /// Closes the dialog and reports it, so the shell can restore focus.
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
         cx.emit(ConnectionDialogEvent::Dismissed);
         self.close(cx);
     }
@@ -1493,26 +1507,52 @@ impl ConnectionDialog {
         cx.notify();
     }
 
-    /// `Escape`, one layer at a time.
-    ///
-    /// Public because the key never actually arrives here: gpui matches key
-    /// bindings ahead of key events, so the shell's binding wins and calls this.
-    pub fn escape(&mut self, cx: &mut Context<Self>) {
+    /// What the modal asks before `Escape` or a press beside the card closes
+    /// it: whatever is layered on the form takes the gesture first and only
+    /// undoes itself — the driver manager, the driver list, a delete
+    /// confirmation — and the form itself goes through
+    /// [`ConnectionDialog::may_dismiss`].
+    fn peel(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(manager) = self.manager.clone() {
             manager.update(cx, |manager, cx| manager.escape(cx));
-            return;
+            return false;
         }
         if self.driver_list_open {
             self.driver_list_open = false;
             cx.notify();
-            return;
+            return false;
         }
         if self.confirming {
             self.confirming = false;
             cx.notify();
-            return;
+            return false;
         }
-        self.request_dismiss(cx);
+        self.may_dismiss(cx)
+    }
+
+    /// `Escape`, one layer at a time.
+    ///
+    /// The modal answers the key itself while the focus is inside the card;
+    /// this is the shell's way in for when it is not — the dialog's own
+    /// handle, outside the card, holds it between fields.
+    pub fn escape(&mut self, cx: &mut Context<Self>) {
+        if self.peel(cx) {
+            self.dismiss(cx);
+        }
+    }
+
+    /// What `Enter` means when no control on the card keeps it — a one-line
+    /// field, or the card itself: "Connect", while the form is what shows and
+    /// nothing is asking. A focused button keeps its own `Enter`, and the
+    /// driver manager's fields are its own, not the form's.
+    fn confirm(&mut self, cx: &mut Context<Self>) {
+        if self.manager.is_none()
+            && !self.driver_list_open
+            && !self.confirming
+            && !self.asking_discard
+        {
+            self.connect(cx);
+        }
     }
 
     /// Moves focus into the name field when the dialog opens.
@@ -2655,7 +2695,19 @@ impl Render for ConnectionDialog {
         let on_dismiss = {
             let this = cx.entity();
             move |_window: &mut Window, cx: &mut App| {
-                this.update(cx, |dialog, cx| dialog.escape(cx));
+                this.update(cx, |dialog, cx| dialog.dismiss(cx));
+            }
+        };
+        let guard = {
+            let this = cx.entity();
+            move |_reason: DismissReason, _window: &mut Window, cx: &mut App| {
+                this.update(cx, |dialog, cx| dialog.peel(cx))
+            }
+        };
+        let confirm = {
+            let this = cx.entity();
+            move |_window: &mut Window, cx: &mut App| {
+                this.update(cx, |dialog, cx| dialog.confirm(cx));
             }
         };
 
@@ -2697,13 +2749,14 @@ impl Render for ConnectionDialog {
                     dialog.release_scrollbars(cx);
                 }),
             )
-            .child(modal(
-                "connect-modal",
-                title,
-                px(DIALOG_WIDTH),
-                body,
-                on_dismiss,
-            ))
+            .child(
+                modal("connect-modal", title, px(DIALOG_WIDTH), body, on_dismiss)
+                    // `Escape` and a press beside the card both go through the
+                    // same peel, so neither throws an unsaved edit away unasked.
+                    .escape_dismisses(true)
+                    .dismiss_guard(guard)
+                    .on_confirm(confirm),
+            )
     }
 }
 
@@ -3888,6 +3941,34 @@ mod tests {
                 assert!(!dialog.is_open());
             });
         });
+    }
+
+    /// `Escape` from a field is the card's own now, and it goes through the
+    /// same peel the shell's way in does: an edit is asked about rather than
+    /// thrown away, and the second press keeps editing.
+    #[gpui::test]
+    fn escape_from_a_field_asks_over_an_edit(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        cx.update(|window, cx| {
+            dialog.update(cx, |dialog, cx| {
+                let filled = dialog.collect(cx);
+                dialog.store.upsert(filled);
+                dialog.filled_secrets = (String::new(), String::new());
+                set_text(&dialog.name_input, "renamed", cx);
+            });
+            let handle = dialog.read(cx).name_input.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.run_until_parked();
+        for asking in [true, false] {
+            cx.simulate_keystrokes("escape");
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let dialog = dialog.read(cx);
+                assert!(dialog.is_open(), "an edit was thrown away");
+                assert_eq!(dialog.asking_discard, asking);
+            });
+        }
     }
 
     /// `Ctrl`/`Cmd`+`N` inside the dialog makes a new profile in it rather

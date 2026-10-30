@@ -431,10 +431,13 @@ impl Workspace {
             return;
         }
         if self.connect.read(cx).is_open() {
-            // Routed through the dialog for the same reason the settings one is:
-            // it stacks a driver manager, a dropdown and a delete confirmation,
-            // and each of those has to be able to take `Escape` for itself
-            // before the whole form is thrown away.
+            // The card answers `Escape` itself while the focus is inside it
+            // (its modal's guard peels the same layers); this is the way in
+            // for a focus on the dialog's own handle, outside the card. Routed
+            // through the dialog for the settings one's reason: it stacks a
+            // driver manager, a dropdown and a delete confirmation, and each
+            // of those has to be able to take `Escape` for itself before the
+            // whole form is thrown away.
             self.connect.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }

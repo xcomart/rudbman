@@ -313,6 +313,9 @@ pub struct StructPane {
     body_scroll: ScrollHandle,
     /// Whether the body's overlay bar is on screen.
     body_scrollbar: ScrollbarState,
+    /// The apply preview's Cancel button, which takes the keyboard when it
+    /// opens.
+    confirm_focus: FocusHandle,
 }
 
 impl StructPane {
@@ -391,6 +394,7 @@ impl StructPane {
             applying: false,
             apply_error: None,
             focus_handle: cx.focus_handle(),
+            confirm_focus: cx.focus_handle(),
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
         }
@@ -2079,6 +2083,7 @@ impl StructPane {
                     .gap(px(8.))
                     .child(
                         Button::new("struct-apply-cancel", ts!("common.cancel"))
+                            .focus_handle(&self.confirm_focus)
                             .variant(ButtonVariant::Secondary)
                             .on_click({
                                 let this = this.clone();
@@ -2112,6 +2117,10 @@ impl StructPane {
                     });
                 },
             )
+            // On Cancel, for the apply preview's reason: a batch of DDL is
+            // read before it is run, and Enter must not be what runs it.
+            .initial_focus(&self.confirm_focus)
+            .escape_dismisses(true)
             .into_any_element(),
         )
     }

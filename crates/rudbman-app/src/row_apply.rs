@@ -37,7 +37,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, prelude::*, px,
+    AnyElement, App, FocusHandle, IntoElement, ParentElement, SharedString, Styled, Window, div,
+    prelude::*, px,
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::DmlError;
@@ -178,9 +179,13 @@ pub(crate) fn plan_message(error: &PlanError) -> SharedString {
 /// and the two are irreversible in opposite directions.
 ///
 /// `on_cancel` is what both ways out — the button and the modal's own dismiss —
-/// call, so the caller writes the retraction once.
+/// call, so the caller writes the retraction once. `cancel_focus` is the
+/// caller's handle for the Cancel button, which takes the keyboard when the
+/// question opens: the question is about throwing work away, so a stray
+/// `Enter` must not be what answers it yes. `Escape` answers it no.
 pub(crate) fn render_discard_confirm(
     counts: EditCounts,
+    cancel_focus: &FocusHandle,
     cx: &mut App,
     on_cancel: impl Fn(&mut Window, &mut App) + 'static,
     on_discard: impl Fn(&mut Window, &mut App) + 'static,
@@ -208,6 +213,7 @@ pub(crate) fn render_discard_confirm(
                 .child(
                     Button::new("data-discard-cancel", ts!("common.cancel"))
                         .variant(ButtonVariant::Secondary)
+                        .focus_handle(cancel_focus)
                         .on_click({
                             let on_cancel = on_cancel.clone();
                             move |_, window, cx| on_cancel(window, cx)
@@ -227,6 +233,8 @@ pub(crate) fn render_discard_confirm(
         body,
         move |window, cx| dismiss(window, cx),
     )
+    .initial_focus(cancel_focus)
+    .escape_dismisses(true)
     .into_any_element()
 }
 
@@ -242,10 +250,13 @@ pub(crate) fn render_discard_confirm(
 /// batch that fails half way stays half applied.
 ///
 /// `on_cancel` is shared by the button and the modal's dismiss, as above;
-/// `on_run` is what sends the batch.
+/// `on_run` is what sends the batch. The Cancel button takes the keyboard
+/// when it opens, through `cancel_focus`, for the discard question's reason:
+/// this is a write, and reading it is the point.
 pub(crate) fn render_apply_preview(
     statements: &[PlannedStatement],
     transactional: bool,
+    cancel_focus: &FocusHandle,
     cx: &mut App,
     on_cancel: impl Fn(&mut Window, &mut App) + 'static,
     on_run: impl Fn(&mut Window, &mut App) + 'static,
@@ -309,6 +320,7 @@ pub(crate) fn render_apply_preview(
                 .child(
                     Button::new("data-apply-cancel", ts!("common.cancel"))
                         .variant(ButtonVariant::Secondary)
+                        .focus_handle(cancel_focus)
                         .on_click({
                             let on_cancel = on_cancel.clone();
                             move |_, window, cx| on_cancel(window, cx)
@@ -328,6 +340,8 @@ pub(crate) fn render_apply_preview(
         body,
         move |window, cx| dismiss(window, cx),
     )
+    .initial_focus(cancel_focus)
+    .escape_dismisses(true)
     .into_any_element()
 }
 

@@ -1759,6 +1759,7 @@ impl Workspace {
                     .child(
                         Button::new("confirm-cancel", ts!("common.cancel"))
                             .variant(ButtonVariant::Secondary)
+                            .focus_handle(&self.confirm_focus)
                             .on_click({
                                 let this = this.clone();
                                 move |_, window, cx| {
@@ -1791,6 +1792,10 @@ impl Workspace {
                     });
                 },
             )
+            // On Cancel: the question is whether to write, and an `Enter`
+            // meant for the editor behind it must not be what says yes.
+            .initial_focus(&self.confirm_focus)
+            .escape_dismisses(true)
             .into_any_element(),
         )
     }

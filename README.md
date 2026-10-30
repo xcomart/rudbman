@@ -213,7 +213,8 @@ macOS), with its chord beside it.
 | | <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy the selected cells |
 | ERD | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Zoom in / out / actual size |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>L</kbd> | Auto-arrange / switch to comment names |
-| Dialogs | <kbd>Esc</kbd> | Close; over a running extraction, transfer or backup, ask whether to stop it |
+| Dialogs | <kbd>Esc</kbd> | Close; over a running extraction, transfer or backup, ask whether to stop it; over unsaved connection edits, ask first |
+| | <kbd>Enter</kbd> | In a field: Connect, Start, or Close a finished job. On a focused button: that button — a write or discard question opens with Cancel focused |
 
 ## Installing
 

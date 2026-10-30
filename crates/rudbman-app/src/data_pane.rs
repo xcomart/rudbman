@@ -435,6 +435,9 @@ pub struct DataPane {
     notice: Option<Notice>,
     /// Takes an informational notice away after a while.
     notice_clock: NoticeClock,
+    /// The Cancel button of the apply preview and the discard question, which
+    /// takes the keyboard when either opens.
+    confirm_focus: FocusHandle,
     /// Reaches the driver under the load in flight, for its "Cancel"; `None`
     /// while nothing is loading.
     canceller: Option<rudbman_jdbc::Canceller>,
@@ -518,6 +521,7 @@ impl DataPane {
             applying: false,
             apply_error: None,
             focus_handle: cx.focus_handle(),
+            confirm_focus: cx.focus_handle(),
             lob_dialog: None,
             lob_events: None,
         }
@@ -1947,6 +1951,7 @@ impl Render for DataPane {
                 let discard = this.clone();
                 render_discard_confirm(
                     counts,
+                    &self.confirm_focus,
                     cx,
                     move |_window, cx| {
                         this.update(cx, |pane, cx| {
@@ -1965,6 +1970,7 @@ impl Render for DataPane {
             render_apply_preview(
                 statements,
                 self.transactional,
+                &self.confirm_focus,
                 cx,
                 move |_window, cx| {
                     this.update(cx, |pane, cx| {

@@ -753,6 +753,12 @@ struct Workspace {
     confirm: Option<PendingConfirm>,
     /// A close waiting on the user's answer; see [`closing`].
     close_question: Option<closing::CloseQuestion>,
+    /// The write confirmation's Cancel button, which takes the keyboard when
+    /// the confirmation opens.
+    confirm_focus: FocusHandle,
+    /// The close question's default answer — Save over a file, Cancel over a
+    /// connection — which takes the keyboard when the question opens.
+    close_focus: FocusHandle,
     /// The connection tab that asked the dialog for a password to reconnect
     /// with, and the profile it asked about; see [`Workspace::reconnect_with`].
     pending_reconnect: Option<(ConnectionId, Uuid)>,
@@ -912,6 +918,8 @@ impl Workspace {
             context_menu: None,
             confirm: None,
             close_question: None,
+            confirm_focus: cx.focus_handle(),
+            close_focus: cx.focus_handle(),
             pending_reconnect: None,
             focus_origin: FocusOrigin::Shell,
             tab_drop: TabDropState::new(),

@@ -671,6 +671,9 @@ pub struct QueryPane {
     next_tab_id: u64,
     /// The right-click menu of one half of the pane, while one is open.
     context_menu: Option<PaneMenu>,
+    /// The Cancel button of the apply preview and the discard question, which
+    /// takes the keyboard when either opens.
+    confirm_focus: FocusHandle,
     /// Whether "throw the staged edits away" is waiting to be confirmed.
     ///
     /// A modal of the pane's own, exactly as the data pane's is and for the
@@ -915,6 +918,7 @@ impl QueryPane {
             next_tab_id: 1,
             context_menu: None,
             confirm_discard: false,
+            confirm_focus: cx.focus_handle(),
             preview: None,
             applying: false,
             apply_error: None,

@@ -895,9 +895,23 @@ the active pane has put up over itself, such as an apply preview — is on
 screen. A dialog that wants one of those chords binds it in a key context of its
 own, which gpui prefers for being deeper. The extraction, transfer and backup
 dialogs are never closed under a running job: a press on the backdrop does
-nothing, `Escape` asks whether to stop the job, and `close_overlays` leaves the
-card standing and reports that the screen is not clear, so no other dialog
-opens over it.
+nothing (`Modal::backdrop_dismisses(!running)`), `Escape` asks whether to stop
+the job, and `close_overlays` leaves the card standing and reports that the
+screen is not clear, so no other dialog opens over it.
+
+Dialogs say what `Enter` and `Escape` mean through `rugpui::Modal`'s options
+rather than through key handlers of their own. A question about a write — the
+write confirmation, the data and structure apply previews, the discard
+question — puts the keyboard on Cancel when it opens (`initial_focus`), so an
+`Enter` meant for the editor or grid behind it answers no rather than yes, and
+lets `Escape` decline (`escape_dismisses`); the close question does the same
+with Save over a file and Cancel over a connection. The connection dialog's
+`Escape` and backdrop both go through one `dismiss_guard` that peels whatever
+is layered on the form (driver manager, driver list, delete confirmation) and
+then asks over unsaved edits, and `Enter` in one of its fields is Connect
+(`on_confirm`) while nothing is asking. The job dialogs' `Enter` starts from a
+complete form and closes a finished job. The workspace's own `Escape` binding
+(`DismissDialog`) stays as the way in for a focus outside a card.
 
 Every close — a tab, several tabs, a pane, a connection tab, the application —
 goes through `Workspace::request_close` (`workspace/closing.rs`). A tab with
