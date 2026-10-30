@@ -566,6 +566,12 @@ transfer:
   canceled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
   failed: "転送に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま転送に失敗しました。
+  choose_target: 行のコピー先の接続を選んでください。
+  no_other_connection: ほかの接続が開かれていません。コピー先の接続を開くか、この接続を選んで別のテーブル名を入力してください。
+  same_table: 転送先が転送元のテーブルそのものです。別の接続、スキーマ、テーブルを選んでください。
+  truncate_confirm: "コピーを始める前に %{table} のすべての行を削除します。"
+  truncate_confirm_rows: "コピーを始める前に %{table} の %{rows} 行をすべて削除します。"
+  truncate_start: 空にして転送
 
 backup:
   title: スキーマのバックアップ

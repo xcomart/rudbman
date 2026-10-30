@@ -927,6 +927,17 @@ transfer:
   failed: "The transfer failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The transfer failed for a reason the bridge did not give.
+  # Why "Transfer" cannot be pressed yet. The first two: no target chosen,
+  # with and without another connection open to choose. The third: the target
+  # is the very table being read, on the same connection.
+  choose_target: Choose the connection to copy the rows into.
+  no_other_connection: No other connection is open. Open the one to copy into, or choose this one and name another table.
+  same_table: The target is the source table itself. Choose another connection, schema or table.
+  # Asked before "Empty the target table first" deletes anything. %{table} is
+  # the target connection's name, a slash, and the table as the form names it.
+  truncate_confirm: "Every row of %{table} will be deleted before the copy starts."
+  truncate_confirm_rows: "All %{rows} rows of %{table} will be deleted before the copy starts."
+  truncate_start: Empty and transfer
 
 # The backup dialog: every table of one schema, out to a replayable script.
 backup:

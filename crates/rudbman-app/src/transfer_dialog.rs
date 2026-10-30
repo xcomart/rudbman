@@ -41,7 +41,10 @@ use gpui::{
     Task, Window, div, prelude::*, px,
 };
 use parking_lot::Mutex;
-use rudbman_jdbc::{Job, JobProgress, JobState, ObjectRef, OnError, TransferMode, TransferSpec};
+use rudbman_jdbc::{
+    Job, JobProgress, JobState, ObjectRef, OnError, StatementSpec, TransferMode, TransferSpec,
+    Value,
+};
 use rugpui::{Button, ButtonVariant, Select, TextInput, form_row, modal, theme};
 
 use crate::connection::SessionHandle;
@@ -212,6 +215,73 @@ fn source_sql(target: &ObjectTarget, where_clause: &str) -> String {
     sql
 }
 
+/// The connection a transfer opened over `source` starts pointed at.
+///
+/// The first open connection that is not the source's own, in tab order — the
+/// command is a copy *between* connections, and the one target a form that is
+/// accepted as it stands must never mean is the table it reads. With nothing
+/// else open there is no good guess, and the dropdown starts empty: copying
+/// into another table of the same database is a real use, but one the user
+/// says by picking the source's connection themselves.
+fn default_target(targets: &[TransferTarget], source: ConnectionId) -> Option<usize> {
+    targets
+        .iter()
+        .position(|candidate| candidate.connection != source)
+}
+
+/// Whether `form`, pointed at `connection`, names the table `source` is.
+///
+/// The same tab is the same session, and on it the same schema and name are
+/// the same table. Compared without regard to case, because most products fold
+/// an unquoted name and a false "same" costs a retyped field where a false
+/// "different" costs the table. A blank target schema means "wherever the
+/// session is pointed", which may well be the source's own, so with the same
+/// name it counts as the same table too.
+fn same_table(source: &ObjectTarget, connection: ConnectionId, form: &TransferForm) -> bool {
+    if connection != source.connection
+        || !form.target_table.trim().eq_ignore_ascii_case(&source.name)
+    {
+        return false;
+    }
+    match non_empty(Some(&form.target_schema)) {
+        None => true,
+        Some(schema) => source
+            .schema
+            .as_deref()
+            .is_some_and(|own| own.eq_ignore_ascii_case(schema.trim())),
+    }
+}
+
+/// How many rows `table` holds on `session`, or `None` when the count could
+/// not be had. **Blocks.**
+///
+/// The name goes in as the form spells it, unquoted: what the count is for is
+/// a number in a question, and a name it cannot read leaves the question
+/// without one rather than in doubt.
+fn count_rows(session: &SessionHandle, table: &str) -> Option<u64> {
+    let spec = StatementSpec::new(format!("SELECT COUNT(*) FROM {table}"));
+    let cursor = session.session().execute(&spec).ok()?;
+    let batch = cursor.fetch(1).ok()?;
+    match batch.value(0, 0)? {
+        Value::I64(count) => u64::try_from(count).ok(),
+        // `NUMBER` on Oracle and `DECIMAL` elsewhere arrive as the driver's
+        // own text.
+        Value::Str(text) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// The question "empty the target table first" asks before a job starts.
+struct TruncateQuestion {
+    /// The table as the question names it: the target connection's name, then
+    /// the table the form spells.
+    label: SharedString,
+    /// What the count found, once it has answered.
+    rows: Option<u64>,
+    /// The count itself; dropping it abandons the count.
+    _count: Task<()>,
+}
+
 /// Which half of the dialog is on screen.
 enum Stage {
     /// Collecting the form.
@@ -280,7 +350,10 @@ pub struct TransferDialog {
     /// Every open connection, as the dropdown lists them.
     targets: Vec<TransferTarget>,
     /// Index into [`TransferDialog::targets`] of the chosen one.
-    selected_target: usize,
+    ///
+    /// `None` until the user picks one, when no connection other than the
+    /// source is open: see [`default_target`].
+    selected_target: Option<usize>,
     /// Whether the connection dropdown is showing its list.
     connection_list_open: bool,
     /// The target schema.
@@ -302,6 +375,12 @@ pub struct TransferDialog {
     /// A refusal to show under the form — a specification the bridge would not
     /// accept.
     notice: Option<SharedString>,
+    /// "Empty the target table first", waiting for its yes.
+    ///
+    /// `Some` from the press of "Transfer" in that mode until the question is
+    /// answered: the one write mode that destroys rows nobody selected asks
+    /// first, naming the table, and starts nothing until it is told to.
+    truncate: Option<TruncateQuestion>,
     /// The task that starts the job and then polls it.
     ///
     /// Dropping it cancels the job.
@@ -330,7 +409,7 @@ impl TransferDialog {
             target: None,
             source: None,
             targets: Vec::new(),
-            selected_target: 0,
+            selected_target: None,
             connection_list_open: false,
             schema_input,
             table_input,
@@ -341,6 +420,7 @@ impl TransferDialog {
             on_error_list_open: false,
             stage: Stage::Form,
             notice: None,
+            truncate: None,
             _poll: None,
         }
     }
@@ -352,10 +432,12 @@ impl TransferDialog {
     /// real transfer and the bridge's lock is reentrant, so refusing it here
     /// would only be a rule the engine does not have.
     ///
-    /// The form starts from the source object every time: the same schema, the
-    /// same table name, on the connection the object came from. That is the
-    /// shape of the command — "this table, over there" — and it is a form the
-    /// user finishes by changing one dropdown.
+    /// The form starts from the source object's own names — the same schema,
+    /// the same table name — because "this table, over there" is the shape of
+    /// the command. *Over there* is the part it does not guess at its own
+    /// expense: the target connection starts on another open connection, never
+    /// on the source's (see [`default_target`]), so a form that is merely
+    /// accepted copies somewhere else rather than into the table it reads.
     pub fn open(
         &mut self,
         target: ObjectTarget,
@@ -364,10 +446,7 @@ impl TransferDialog {
         cx: &mut Context<Self>,
     ) {
         let defaults = TransferForm::default();
-        self.selected_target = targets
-            .iter()
-            .position(|candidate| candidate.connection == target.connection)
-            .unwrap_or(0);
+        self.selected_target = default_target(&targets, target.connection);
         self.targets = targets;
         let schema = target.schema.clone().unwrap_or_default();
         let table = target.name.clone();
@@ -385,6 +464,7 @@ impl TransferDialog {
         self.on_error_list_open = false;
         self.stage = Stage::Form;
         self.notice = None;
+        self.truncate = None;
         self._poll = None;
         self.open = true;
         self.pending_focus = true;
@@ -415,6 +495,7 @@ impl TransferDialog {
         self.targets = Vec::new();
         self.target = None;
         self.notice = None;
+        self.truncate = None;
         cx.notify();
     }
 
@@ -434,6 +515,12 @@ impl TransferDialog {
             self.connection_list_open = false;
             self.mode_list_open = false;
             self.on_error_list_open = false;
+            cx.notify();
+            return;
+        }
+        // The truncate question is answered "no" by it, and the form it was
+        // asked over stays up.
+        if self.truncate.take().is_some() {
             cx.notify();
             return;
         }
@@ -457,13 +544,39 @@ impl TransferDialog {
 
     /// The connection the rows go into.
     fn chosen(&self) -> Option<&TransferTarget> {
-        self.targets.get(self.selected_target)
+        self.targets.get(self.selected_target?)
     }
 
-    /// The specification the form describes, or `None` while it is incomplete.
+    /// The specification the form describes, or `None` while it is incomplete
+    /// or [`TransferDialog::blocked`].
     fn spec(&self, cx: &App) -> Option<TransferSpec> {
+        if self.blocked(cx).is_some() {
+            return None;
+        }
         let handle = self.chosen()?.session.session().handle();
         build_spec(self.target.as_ref()?, &self.form(cx), handle)
+    }
+
+    /// Why "Transfer" cannot be pressed as the form stands, when the reason is
+    /// one the user has to be told rather than one they can see.
+    ///
+    /// Two of them. No target connection chosen, which only happens when the
+    /// source's was the only one open; and a target that *is* the source — the
+    /// same session, the same table — which would read a table and write it
+    /// back into itself: every row twice on a table with no primary key, and
+    /// on "empty the target first" a `DELETE` of the very rows about to be
+    /// read. An empty table name is not here: the disabled button says that
+    /// one by itself, and the field is right beside it.
+    fn blocked(&self, cx: &App) -> Option<SharedString> {
+        let source = self.target.as_ref()?;
+        let Some(chosen) = self.chosen() else {
+            return Some(if self.targets.len() > 1 {
+                ts!("transfer.choose_target")
+            } else {
+                ts!("transfer.no_other_connection")
+            });
+        };
+        same_table(source, chosen.connection, &self.form(cx)).then(|| ts!("transfer.same_table"))
     }
 
     /// The target table as the result card names it.
@@ -483,6 +596,60 @@ impl TransferDialog {
     /// into a table with no primary key — comes back as an error and lands in
     /// the notice line with the form still up, because the fix is in the form.
     fn start(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.stage, Stage::Form) {
+            return;
+        }
+        if self.mode == TransferMode::TruncateInsert && self.spec(cx).is_some() {
+            self.ask_truncate(cx);
+            return;
+        }
+        self.begin(cx);
+    }
+
+    /// Puts the "empty the target table first" question up, and counts what
+    /// it would delete.
+    ///
+    /// The count is a courtesy rather than a precondition: it goes to the
+    /// target's own session on a background task and lands in the question if
+    /// and when it answers, and a table the count cannot read — a name typed
+    /// in a case the server folds differently, a table that is not there yet —
+    /// leaves the question asked without a number rather than not asked.
+    fn ask_truncate(&mut self, cx: &mut Context<Self>) {
+        let Some(chosen) = self.chosen() else {
+            return;
+        };
+        let table = self.target_name(cx);
+        let label = SharedString::from(format!("{} / {table}", chosen.name));
+        let session = chosen.session.clone();
+        let counting = cx.background_spawn(async move { count_rows(&session, &table) });
+        let task = cx.spawn(async move |dialog, cx| {
+            let rows = counting.await;
+            dialog
+                .update(cx, |dialog, cx| {
+                    if let Some(question) = &mut dialog.truncate {
+                        question.rows = rows;
+                        cx.notify();
+                    }
+                })
+                .ok();
+        });
+        self.truncate = Some(TruncateQuestion {
+            label,
+            rows: None,
+            _count: task,
+        });
+        cx.notify();
+    }
+
+    /// "Empty and transfer": the question was answered yes.
+    fn confirm_truncate(&mut self, cx: &mut Context<Self>) {
+        if self.truncate.take().is_some() {
+            self.begin(cx);
+        }
+    }
+
+    /// Starts the job, past every question the form asks first.
+    fn begin(&mut self, cx: &mut Context<Self>) {
         if !matches!(self.stage, Stage::Form) {
             return;
         }
@@ -692,7 +859,7 @@ impl TransferDialog {
                 move |index, _label, _window, cx| {
                     this.update(cx, |dialog, cx| {
                         if index < dialog.targets.len() {
-                            dialog.selected_target = index;
+                            dialog.selected_target = Some(index);
                             cx.notify();
                         }
                     });
@@ -868,7 +1035,12 @@ impl TransferDialog {
         let this = cx.entity();
         let chrome = theme(cx);
 
-        let notice = self.notice.clone().map(|message| {
+        // A refusal the bridge gave wins over the form's own, which would only
+        // say again what the form already shows.
+        let blocked = matches!(self.stage, Stage::Form)
+            .then(|| self.blocked(cx))
+            .flatten();
+        let notice = self.notice.clone().or(blocked).map(|message| {
             div()
                 .flex_1()
                 .min_w_0()
@@ -876,6 +1048,58 @@ impl TransferDialog {
                 .text_color(chrome.danger)
                 .child(message)
         });
+
+        // The truncate question takes the whole row: the two buttons that
+        // answer it stand where "Transfer" was, so the press that asked cannot
+        // land a second time on the answer that destroys.
+        if let Some(question) = &self.truncate {
+            let text = match question.rows {
+                Some(rows) => ts!(
+                    "transfer.truncate_confirm_rows",
+                    table = question.label.to_string(),
+                    rows = rows
+                ),
+                None => ts!(
+                    "transfer.truncate_confirm",
+                    table = question.label.to_string()
+                ),
+            };
+            let keep = this.clone();
+            let go = this.clone();
+            return div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(12.))
+                        .text_color(chrome.danger)
+                        .child(text),
+                )
+                .child(
+                    Button::new("transfer-truncate-cancel", ts!("common.cancel"))
+                        .variant(ButtonVariant::Secondary)
+                        .tab_index(tab::DISMISS)
+                        .on_click(move |_, _window, cx| {
+                            keep.update(cx, |dialog, cx| {
+                                dialog.truncate = None;
+                                cx.notify();
+                            });
+                        }),
+                )
+                .child(
+                    Button::new("transfer-truncate-confirm", ts!("transfer.truncate_start"))
+                        .variant(ButtonVariant::Danger)
+                        .tab_index(tab::START)
+                        .on_click(move |_, _window, cx| {
+                            go.update(cx, |dialog, cx| dialog.confirm_truncate(cx));
+                        }),
+                );
+        }
 
         let buttons = match &self.stage {
             Stage::Form => {
@@ -1107,7 +1331,7 @@ mod tests {
                 dialog.open(object, session, candidates, cx);
                 // The dropdown would be a click; the field behind it is what
                 // the click sets.
-                dialog.selected_target = 1;
+                dialog.selected_target = Some(1);
             })
             .expect("the window is open");
         window
@@ -1222,6 +1446,176 @@ mod tests {
         }
     }
 
+    /// One candidate per connection id, all over the same session — which
+    /// session a candidate holds plays no part in which one is picked.
+    fn candidates(session: &Connected, ids: &[u64]) -> Vec<TransferTarget> {
+        ids.iter()
+            .map(|id| TransferTarget {
+                connection: ConnectionId(*id),
+                name: SharedString::from(format!("connection {id}")),
+                session: session.handle(),
+            })
+            .collect()
+    }
+
+    /// The form never starts pointed at the table it reads: another open
+    /// connection when there is one, and nothing at all when there is not.
+    #[test]
+    fn the_target_starts_on_another_connection_or_on_none() {
+        let session = h2("transfer-default-target", &[]);
+        assert_eq!(
+            default_target(&candidates(&session, &[1, 2, 3]), ConnectionId(1)),
+            Some(1),
+            "the first connection that is not the source's"
+        );
+        assert_eq!(
+            default_target(&candidates(&session, &[3, 1, 2]), ConnectionId(1)),
+            Some(0),
+            "in tab order, wherever the source's own tab stands"
+        );
+        assert_eq!(
+            default_target(&candidates(&session, &[1]), ConnectionId(1)),
+            None,
+            "the source alone is no guess at all"
+        );
+    }
+
+    /// The same session, schema and name is the same table, whatever the case
+    /// it is typed in — and a blank schema on the same session may be it too.
+    #[test]
+    fn the_source_table_is_recognized_as_its_own_target() {
+        let source = object("ORDERS");
+        let form = |schema: &str, table: &str| TransferForm {
+            target_schema: schema.to_string(),
+            target_table: table.to_string(),
+            ..TransferForm::default()
+        };
+        assert!(same_table(
+            &source,
+            ConnectionId(1),
+            &form("PUBLIC", "ORDERS")
+        ));
+        assert!(same_table(
+            &source,
+            ConnectionId(1),
+            &form("public", " orders ")
+        ));
+        assert!(same_table(&source, ConnectionId(1), &form("", "ORDERS")));
+        assert!(
+            !same_table(&source, ConnectionId(2), &form("PUBLIC", "ORDERS")),
+            "the same name on another connection is the copy the command is for"
+        );
+        assert!(
+            !same_table(&source, ConnectionId(1), &form("ARCHIVE", "ORDERS")),
+            "another schema of the same database is a real target"
+        );
+        assert!(!same_table(
+            &source,
+            ConnectionId(1),
+            &form("PUBLIC", "ORDERS_OLD")
+        ));
+    }
+
+    /// Opened with nothing but the source to write into, the dialog points at
+    /// nothing and says why "Transfer" will not press; pointed back at the
+    /// source by hand, it says the target is the source and still will not.
+    #[gpui::test]
+    fn the_source_table_is_never_a_target_it_can_start_on(cx: &mut TestAppContext) {
+        let source = h2("transfer-self-source", &["CREATE TABLE ORDERS (ID INT)"]);
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| TransferDialog::new(cx));
+        let session = source.handle();
+        window
+            .update(cx, |dialog, _window, cx| {
+                dialog.open(object("ORDERS"), session, candidates(&source, &[1]), cx);
+                assert_eq!(dialog.selected_target, None);
+                assert!(dialog.spec(cx).is_none(), "nothing to point the job at");
+                assert_eq!(
+                    dialog.blocked(cx),
+                    Some(ts!("transfer.no_other_connection"))
+                );
+
+                dialog.selected_target = Some(0);
+                assert_eq!(dialog.blocked(cx), Some(ts!("transfer.same_table")));
+                assert!(dialog.spec(cx).is_none());
+                dialog.start(cx);
+                assert!(matches!(dialog.stage, Stage::Form), "the press did nothing");
+
+                // Another table of the same database is a transfer it allows.
+                dialog
+                    .table_input
+                    .update(cx, |input, cx| input.set_content("ORDERS_COPY", cx));
+                assert_eq!(dialog.blocked(cx), None);
+                assert!(dialog.spec(cx).is_some());
+            })
+            .expect("the window is open");
+    }
+
+    /// "Empty the target table first" deletes nothing until it is told yes,
+    /// and the question counts what it would delete.
+    #[gpui::test]
+    fn emptying_the_target_asks_first_and_counts_what_goes(cx: &mut TestAppContext) {
+        let source = h2(
+            "transfer-truncate-source",
+            &[
+                "CREATE TABLE ORDERS (ID INT PRIMARY KEY)",
+                "INSERT INTO ORDERS VALUES (1), (2), (3)",
+            ],
+        );
+        let target = h2(
+            "transfer-truncate-target",
+            &[
+                "CREATE TABLE ORDERS (ID INT PRIMARY KEY)",
+                "INSERT INTO ORDERS VALUES (7), (8)",
+            ],
+        );
+        let window = dialog(&source, &target, "ORDERS", cx);
+
+        window
+            .update(cx, |dialog, _window, cx| {
+                dialog.mode = TransferMode::TruncateInsert;
+                dialog.start(cx);
+                assert!(matches!(dialog.stage, Stage::Form), "only asked so far");
+                let question = dialog.truncate.as_ref().expect("the question is up");
+                assert_eq!(question.label.as_ref(), "target / PUBLIC.ORDERS");
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(cx, |dialog, _window, _cx| {
+                let question = dialog.truncate.as_ref().expect("still asking");
+                assert_eq!(question.rows, Some(2), "the two rows it would delete");
+            })
+            .expect("the window is open");
+        assert_eq!(count(&target, "ORDERS"), 2, "asking deleted nothing");
+
+        // `Escape` answers no, and the form stays up.
+        window
+            .update(cx, |dialog, _window, cx| {
+                dialog.escape(cx);
+                assert!(dialog.truncate.is_none());
+                assert!(dialog.is_open());
+                dialog.start(cx);
+                dialog.confirm_truncate(cx);
+            })
+            .expect("the window is open");
+        drive(&window, cx);
+
+        window
+            .update(cx, |dialog, _window, _cx| {
+                assert!(matches!(
+                    dialog.stage,
+                    Stage::Ended(Ended::Done { rows: 3, .. })
+                ));
+            })
+            .expect("the window is open");
+        assert_eq!(
+            count(&target, "ORDERS"),
+            3,
+            "emptied, then filled from the source"
+        );
+    }
+
     #[test]
     fn without_a_target_table_there_is_nothing_to_send() {
         let source = object("ORDERS");
@@ -1291,6 +1685,33 @@ mod tests {
                 .expect("the window is open");
             cx.run_until_parked();
         }
+
+        // The truncate question, before and after its count has answered, and
+        // the form's own refusal line with no target chosen.
+        window
+            .update(&mut cx, |dialog, _window, cx| {
+                dialog.connection_list_open = false;
+                dialog.mode_list_open = false;
+                dialog.on_error_list_open = false;
+                dialog.start(cx);
+                assert!(dialog.truncate.is_some());
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |dialog, _window, cx| {
+                dialog.truncate = None;
+                dialog.selected_target = None;
+                cx.notify();
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |dialog, _window, _cx| {
+                dialog.selected_target = Some(1);
+                dialog.mode = TransferMode::Insert;
+            })
+            .expect("the window is open");
 
         // The progress card, which needs a real job to hold: `Running` owns
         // one and there is no way to build the card without it. The job is

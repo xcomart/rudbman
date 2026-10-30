@@ -566,6 +566,12 @@ transfer:
   canceled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
   failed: "Le transfert a échoué : %{error}"
   failed_unknown: Le transfert a échoué sans que le pont en donne la raison.
+  choose_target: Choisissez la connexion dans laquelle copier les lignes.
+  no_other_connection: Aucune autre connexion n’est ouverte. Ouvrez celle vers laquelle copier, ou choisissez celle-ci et indiquez une autre table.
+  same_table: La cible est la table source elle-même. Choisissez une autre connexion, un autre schéma ou une autre table.
+  truncate_confirm: "Toutes les lignes de %{table} seront supprimées avant le début de la copie."
+  truncate_confirm_rows: "Les %{rows} lignes de %{table} seront toutes supprimées avant le début de la copie."
+  truncate_start: Vider et transférer
 
 backup:
   title: Sauvegarder le schéma

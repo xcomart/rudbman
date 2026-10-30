@@ -566,6 +566,12 @@ transfer:
   canceled: "Cancelado. %{rows} filas ya se habían confirmado en %{table} y siguen ahí."
   failed: "La transferencia falló: %{error}"
   failed_unknown: La transferencia falló y el puente no dijo por qué.
+  choose_target: Elige la conexión a la que copiar las filas.
+  no_other_connection: No hay otra conexión abierta. Abre la conexión de destino, o elige esta e indica otra tabla.
+  same_table: El destino es la propia tabla de origen. Elige otra conexión, esquema o tabla.
+  truncate_confirm: "Antes de empezar la copia se eliminarán todas las filas de %{table}."
+  truncate_confirm_rows: "Antes de empezar la copia se eliminarán las %{rows} filas de %{table}."
+  truncate_start: Vaciar y transferir
 
 backup:
   title: Copia de seguridad del esquema

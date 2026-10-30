@@ -566,6 +566,12 @@ transfer:
   canceled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
   failed: "Die Übertragung schlug fehl: %{error}"
   failed_unknown: Die Übertragung schlug fehl; die Bridge nannte keinen Grund.
+  choose_target: Wählen Sie die Verbindung, in die die Zeilen kopiert werden sollen.
+  no_other_connection: Es ist keine andere Verbindung geöffnet. Öffnen Sie die Zielverbindung, oder wählen Sie diese und geben Sie eine andere Tabelle an.
+  same_table: Das Ziel ist die Quelltabelle selbst. Wählen Sie eine andere Verbindung, ein anderes Schema oder eine andere Tabelle.
+  truncate_confirm: "Vor dem Kopieren werden alle Zeilen von %{table} gelöscht."
+  truncate_confirm_rows: "Vor dem Kopieren werden alle %{rows} Zeilen von %{table} gelöscht."
+  truncate_start: Leeren und übertragen
 
 backup:
   title: Schema sichern

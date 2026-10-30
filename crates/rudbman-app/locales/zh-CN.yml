@@ -566,6 +566,12 @@ transfer:
   canceled: "已取消。已经提交的 %{rows} 行仍留在 %{table} 中。"
   failed: "传输失败：%{error}"
   failed_unknown: 传输失败，桥接层没有给出原因。
+  choose_target: 请选择要把数据行复制到的连接。
+  no_other_connection: 没有打开其他连接。请打开要复制到的连接，或选择此连接并填写另一个表名。
+  same_table: 目标就是源表本身。请选择其他连接、模式（Schema）或表。
+  truncate_confirm: "开始复制前将删除 %{table} 中的所有行。"
+  truncate_confirm_rows: "开始复制前将删除 %{table} 中的全部 %{rows} 行。"
+  truncate_start: 清空并传输
 
 backup:
   title: 备份模式（Schema）

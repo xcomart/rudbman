@@ -684,9 +684,18 @@ Transfer semantics (settled in M6):
   the target session is marked unusable and must be reconnected. The UI also
   refuses to start a transfer into a session holding a query editor's
   uncommitted manual-commit writes.
+- **The dialog never starts pointed at its own source.** The target connection
+  defaults to the first open connection that is not the source's, and to none
+  when the source's is the only one open; a target on the source's session
+  naming the source's schema and table (compared case-insensitively, a blank
+  schema counting as the same) disables "Transfer" with the reason under the
+  form. The bridge has no such check: the guard is the UI's, because only the
+  UI knows that two handles are one tab.
 - **`truncate_insert` empties the table with `DELETE FROM`.** TRUNCATE is a
   minefield of dialect, privilege and transactionality. DELETE means the same
-  thing everywhere and rolls back in the same transaction.
+  thing everywhere and rolls back in the same transaction. The dialog asks
+  before it starts one, naming the target connection and table and — once a
+  `COUNT(*)` on the target session answers — how many rows will go.
 - **upsert**: the conflict key is read from the target table's PK metadata. If
   there is no PK, `JOB_START` rejects synchronously. It branches by dialect —
   `ON CONFLICT … DO UPDATE` for PostgreSQL/SQLite, `ON DUPLICATE KEY UPDATE`

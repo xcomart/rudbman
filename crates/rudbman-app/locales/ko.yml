@@ -566,6 +566,12 @@ transfer:
   canceled: "취소했습니다. 이미 커밋된 %{rows}행은 %{table}에 남아 있습니다."
   failed: "전송에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 전송에 실패했습니다.
+  choose_target: 행을 복사할 연결을 고르세요.
+  no_other_connection: 다른 연결이 열려 있지 않습니다. 복사할 연결을 열거나, 이 연결을 고르고 다른 테이블 이름을 입력하세요.
+  same_table: 대상이 원본 테이블 자신입니다. 다른 연결, 스키마 또는 테이블을 고르세요.
+  truncate_confirm: "복사를 시작하기 전에 %{table}의 모든 행을 삭제합니다."
+  truncate_confirm_rows: "복사를 시작하기 전에 %{table}의 %{rows}행을 모두 삭제합니다."
+  truncate_start: 비우고 전송
 
 backup:
   title: 스키마 백업

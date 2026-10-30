@@ -109,7 +109,10 @@ JVM bridge.
   insert or by upsert — `MERGE`, `ON CONFLICT` or `ON DUPLICATE KEY` as the
   target dialect spells it. On a bad row, abort, skip it, or log it and carry
   on (batches are isolated with savepoints so one bad row does not cost the
-  batch), with per-row progress for both copied and skipped rows.
+  batch), with per-row progress for both copied and skipped rows. The target
+  starts on another open connection rather than the source's, a transfer of a
+  table into itself is refused, and "Empty the target table first" asks before
+  it deletes, saying how many rows will go.
 - **Script extraction**: any table to a replayable `.sql`, to CSV, or
   through a user template — streamed to the file inside the JVM with progress
   and cancellation. Script execution is the same editor pipeline: open a
