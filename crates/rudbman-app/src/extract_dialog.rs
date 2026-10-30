@@ -590,7 +590,7 @@ impl ExtractDialog {
             .output
             .as_ref()
             .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(default_directory);
+            .unwrap_or_else(|| crate::extract_dialog::output_directory(cx));
         let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
 
         cx.spawn(async move |dialog, cx| {
@@ -604,6 +604,7 @@ impl ExtractDialog {
             };
             dialog
                 .update(cx, |dialog, cx| {
+                    crate::extract_dialog::remember_output(&path, cx);
                     dialog.output = Some(path);
                     dialog.notice = None;
                     cx.notify();
@@ -1231,6 +1232,37 @@ fn mode_label(mode: DataMode) -> SharedString {
     }
 }
 
+/// Where a save dialog for an extraction, a backup or an export opens: the
+/// folder the last of them was written to, while it is still there, and the
+/// home directory otherwise.
+///
+/// Only the folder is remembered, never the file — writing over the previous
+/// object's script because its name was still offered is not a mistake a user
+/// can undo — and only for these outputs, not for a query tab's SQL, which
+/// saves beside the file it came from.
+pub fn output_directory(cx: &App) -> PathBuf {
+    crate::app_settings::current(cx)
+        .output_directory
+        .filter(|directory| directory.is_dir())
+        .unwrap_or_else(default_directory)
+}
+
+/// Remembers the folder `path` is in as where the next output goes; see
+/// [`output_directory`].
+pub fn remember_output(path: &Path, cx: &mut App) {
+    let Some(directory) = path
+        .parent()
+        .filter(|directory| !directory.as_os_str().is_empty())
+    else {
+        return;
+    };
+    let mut settings = crate::app_settings::current(cx);
+    if settings.output_directory.as_deref() != Some(directory) {
+        settings.output_directory = Some(directory.to_path_buf());
+        crate::app_settings::replace(settings, cx);
+    }
+}
+
 /// Where the save dialog opens when no output has been chosen yet.
 ///
 /// The user's home directory, and the working directory when even that cannot
@@ -1303,6 +1335,22 @@ mod tests {
     use gpui::{TestAppContext, WindowHandle};
     use rudbman_core::AppSettings;
     use rudbman_jdbc::StatementSpec;
+
+    /// The next save dialog opens where the last output went, while that
+    /// folder is still there; with nothing remembered, or the folder gone, it
+    /// opens at home.
+    #[gpui::test]
+    fn the_next_output_starts_in_the_folder_of_the_last(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        cx.update(|cx| {
+            crate::app_settings::install(Ok(AppSettings::default()), cx);
+            assert_eq!(output_directory(cx), default_directory());
+            remember_output(&dir.path().join("orders.sql"), cx);
+            assert_eq!(output_directory(cx), dir.path());
+        });
+        drop(dir);
+        cx.update(|cx| assert_eq!(output_directory(cx), default_directory()));
+    }
 
     use super::*;
     use crate::connection::{self, Connected};

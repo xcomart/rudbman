@@ -302,6 +302,13 @@ pub struct AppSettings {
     /// vocabulary a reader wants is a fact about the reader, not about the
     /// schema they happen to have open.
     pub erd_logical_names: bool,
+    /// The folder the last extraction, backup or export was written to, where
+    /// the next one's save dialog opens.
+    ///
+    /// The folder and never the file: a save dialog that offered the last
+    /// file's name again would invite writing one object's script over
+    /// another's. `None` — nothing written yet — opens in the home directory.
+    pub output_directory: Option<std::path::PathBuf>,
     /// Window geometry and background treatment.
     pub window: WindowState,
     /// Release tag the user asked never to be told about again, e.g. `"v0.2.0"`.
@@ -347,6 +354,7 @@ impl Default for AppSettings {
             explorer_width: DEFAULT_EXPLORER_WIDTH,
             explorer_visible: true,
             erd_logical_names: false,
+            output_directory: None,
             window: WindowState::default(),
             ignored_update: None,
             extra: BTreeMap::new(),

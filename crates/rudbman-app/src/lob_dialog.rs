@@ -416,7 +416,10 @@ impl LobDialog {
         } else {
             "value.txt"
         };
-        let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        // Where the last export went, not the process's working directory —
+        // which for an application started from a desktop is wherever the
+        // launcher happened to be.
+        let directory = crate::extract_dialog::output_directory(cx);
         let prompt = cx.prompt_for_new_path(&directory, Some(name));
         cx.spawn(async move |dialog, cx| {
             let path = match prompt.await {
@@ -432,6 +435,11 @@ impl LobDialog {
                 }
                 _ => return,
             };
+            dialog
+                .update(cx, |_, cx| {
+                    crate::extract_dialog::remember_output(&path, cx)
+                })
+                .ok();
             let result = cx
                 .background_spawn(async move {
                     contents

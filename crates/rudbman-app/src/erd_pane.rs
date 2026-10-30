@@ -451,7 +451,10 @@ impl ErdPane {
     /// write goes to a background task.
     fn export(&mut self, cx: &mut Context<Self>) {
         let suggested = format!("{}.svg", self.target.file_stem());
-        let prompt = cx.prompt_for_new_path(&default_directory(), Some(&suggested));
+        let prompt = cx.prompt_for_new_path(
+            &crate::extract_dialog::output_directory(cx),
+            Some(&suggested),
+        );
 
         cx.spawn(async move |pane, cx| {
             let path = match prompt.await {
@@ -462,7 +465,10 @@ impl ErdPane {
                     return;
                 }
             };
-            let Ok(svg) = pane.update(cx, |pane, cx| pane.view.read(cx).export_svg(cx)) else {
+            let Ok(svg) = pane.update(cx, |pane, cx| {
+                crate::extract_dialog::remember_output(&path, cx);
+                pane.view.read(cx).export_svg(cx)
+            }) else {
                 return;
             };
             let written = cx
@@ -788,17 +794,6 @@ fn note(message: SharedString, color: gpui::Hsla) -> impl IntoElement {
         .text_size(px(12.))
         .text_color(color)
         .child(message)
-}
-
-/// Where the save dialog opens when nothing has been exported yet.
-///
-/// The user's home directory, and the working directory when even that cannot
-/// be resolved — the same choice the extraction dialog makes, and for the same
-/// reason: a relative path is resolved against something the user did not pick.
-fn default_directory() -> PathBuf {
-    directories::UserDirs::new()
-        .map(|dirs| dirs.home_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Reads one scope's tables, columns and foreign keys, and assembles a diagram.

@@ -271,6 +271,16 @@ fn count_rows(session: &SessionHandle, table: &str) -> Option<u64> {
     }
 }
 
+/// What a started transfer leaves for the next one to start from.
+struct LastTransfer {
+    /// The connection the rows went into.
+    target: ConnectionId,
+    /// How they were written — never "empty the target first".
+    mode: TransferMode,
+    /// What a refused row did.
+    on_error: OnError,
+}
+
 /// The question "empty the target table first" asks before a job starts.
 struct TruncateQuestion {
     /// The table as the question names it: the target connection's name, then
@@ -378,6 +388,9 @@ pub struct TransferDialog {
     /// A refusal to show under the form — a specification the bridge would not
     /// accept.
     notice: Option<SharedString>,
+    /// What the last transfer that started was pointed at and how it wrote,
+    /// for the next one to start from; see [`TransferDialog::open`].
+    last: Option<LastTransfer>,
     /// "Empty the target table first", waiting for its yes.
     ///
     /// `Some` from the press of "Transfer" in that mode until the question is
@@ -425,6 +438,7 @@ impl TransferDialog {
             asking_stop: false,
             notice: None,
             truncate: None,
+            last: None,
             _poll: None,
         }
     }
@@ -450,7 +464,16 @@ impl TransferDialog {
         cx: &mut Context<Self>,
     ) {
         let defaults = TransferForm::default();
-        self.selected_target = default_target(&targets, target.connection);
+        // The last transfer's target and policies, when it had any: a run of
+        // tables copied to the same place is the ordinary case, and choosing
+        // the same dropdowns again for every one of them is the chore. The
+        // target only while it is still open and is not the source's own.
+        let remembered = self.last.as_ref().and_then(|last| {
+            targets.iter().position(|candidate| {
+                candidate.connection == last.target && candidate.connection != target.connection
+            })
+        });
+        self.selected_target = remembered.or_else(|| default_target(&targets, target.connection));
         self.targets = targets;
         let schema = target.schema.clone().unwrap_or_default();
         let table = target.name.clone();
@@ -461,8 +484,11 @@ impl TransferDialog {
         self.where_input.update(cx, |input, cx| input.clear(cx));
         self.target = Some(target);
         self.source = Some(source);
-        self.mode = defaults.mode;
-        self.on_error = defaults.on_error;
+        self.mode = self.last.as_ref().map_or(defaults.mode, |last| last.mode);
+        self.on_error = self
+            .last
+            .as_ref()
+            .map_or(defaults.on_error, |last| last.on_error);
         self.connection_list_open = false;
         self.mode_list_open = false;
         self.on_error_list_open = false;
@@ -706,6 +732,18 @@ impl TransferDialog {
             return;
         }
         self.notice = None;
+        if let Some(chosen) = self.chosen() {
+            self.last = Some(LastTransfer {
+                target: chosen.connection,
+                // Never carried over: the one mode that deletes rows is chosen
+                // afresh each time, not inherited from the transfer before.
+                mode: match self.mode {
+                    TransferMode::TruncateInsert => TransferMode::Insert,
+                    mode => mode,
+                },
+                on_error: self.on_error,
+            });
+        }
 
         // Both handles travel into the task and back out of the first step.
         // They are what keep the two sessions — and any tunnels under them —
@@ -1907,6 +1945,34 @@ mod tests {
 
         assert_eq!(count(&target, "ORDERS"), 3, "the rows are in the target");
         assert_eq!(count(&source, "ORDERS"), 3, "the source kept its own");
+
+        // The next transfer starts where this one went, whichever tab order
+        // the connections are listed in now.
+        window
+            .update(cx, |dialog, _window, cx| {
+                let session = source.handle();
+                let candidates = vec![
+                    TransferTarget {
+                        connection: ConnectionId(3),
+                        name: SharedString::from("another"),
+                        session: source.handle(),
+                    },
+                    TransferTarget {
+                        connection: ConnectionId(1),
+                        name: SharedString::from("source"),
+                        session: source.handle(),
+                    },
+                    TransferTarget {
+                        connection: ConnectionId(2),
+                        name: SharedString::from("target"),
+                        session: target.handle(),
+                    },
+                ];
+                dialog.open(object("ORDERS"), session, candidates, cx);
+                assert_eq!(dialog.selected_target, Some(2), "the last target");
+                assert_eq!(dialog.mode, TransferMode::Insert);
+            })
+            .expect("the window is open");
     }
 
     /// A specification the bridge will not accept is a refusal, not a job: the

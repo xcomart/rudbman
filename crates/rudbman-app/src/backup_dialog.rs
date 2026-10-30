@@ -36,7 +36,7 @@ use rugpui::{Button, ButtonVariant, Checkbox, TextInput, form_row, modal, theme}
 
 use crate::connection::SessionHandle;
 use crate::explorer::Scope;
-use crate::extract_dialog::{POLL_INTERVAL, default_directory, format_bytes, non_empty};
+use crate::extract_dialog::{POLL_INTERVAL, format_bytes, non_empty};
 use crate::i18n::ts;
 
 /// Width of the dialog panel, matching the extraction's.
@@ -442,7 +442,7 @@ impl BackupDialog {
             .output
             .as_ref()
             .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(default_directory);
+            .unwrap_or_else(|| crate::extract_dialog::output_directory(cx));
         let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
 
         cx.spawn(async move |dialog, cx| {
@@ -456,6 +456,7 @@ impl BackupDialog {
             };
             dialog
                 .update(cx, |dialog, cx| {
+                    crate::extract_dialog::remember_output(&path, cx);
                     dialog.output = Some(path);
                     dialog.notice = None;
                     cx.notify();
