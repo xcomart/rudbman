@@ -88,7 +88,7 @@ fn a_failed_save_keeps_the_binding_and_says_why(cx: &mut TestAppContext) {
             );
             assert_eq!(pane.file(), Some(bound.as_path()));
             assert!(!pane.is_modified(cx), "the bound file was not touched");
-            let notice = pane.notice.clone().expect("the failure is said");
+            let notice = pane.notice.clone().expect("the failure is said").text;
             assert!(notice.contains("disk full"), "{notice}");
 
             let job = pane.begin_save(cx).expect("the next save may try");

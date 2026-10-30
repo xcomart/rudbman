@@ -95,6 +95,7 @@ use crate::connection::SessionHandle;
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::icons;
+use crate::notice::{Notice, NoticeClock, render_notice};
 use crate::query::{QueryError, error_lines, note};
 use crate::struct_edit::{
     ColumnDraft, ColumnField, ConstraintDraft, DraftValue, LoadedColumn, LoadedConstraint,
@@ -255,8 +256,11 @@ pub struct StructPane {
     /// successful apply reloads (§7.10), and its reload has to be able to
     /// supersede whatever a refresh had already asked for.
     generation: u64,
-    /// A line the pane wants to say without it being a failure.
-    notice: Option<SharedString>,
+    /// A line the pane wants to say, at the level it matters; see
+    /// [`crate::notice`].
+    notice: Option<Notice>,
+    /// Takes an informational notice away after a while.
+    notice_clock: NoticeClock,
     /// The statements an apply is about to send, while they are being shown.
     ///
     /// This pane's write confirmation, and the one modal it raises: §7.10 and
@@ -353,6 +357,7 @@ impl StructPane {
             _watch: watch,
             generation: 0,
             notice: None,
+            notice_clock: NoticeClock::default(),
             preview: None,
             apply_asked: false,
             applying: false,
@@ -492,7 +497,7 @@ impl StructPane {
     /// The counterpart of [`StructPane::has_pending_edits`] for the shell: a
     /// tab that simply would not close, with nothing said, would read as a bug.
     pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
-        self.notice = Some(ts!("struct.discard_first"));
+        self.notice = Some(Notice::warn(ts!("struct.discard_first")));
         cx.notify();
     }
 
@@ -569,7 +574,7 @@ impl StructPane {
     /// sent, and it keeps this the one way the pane arrives at a structure.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.has_pending_edits() {
-            self.notice = Some(ts!("struct.discard_first"));
+            self.notice = Some(Notice::warn(ts!("struct.discard_first")));
             cx.notify();
             return;
         }
@@ -582,7 +587,7 @@ impl StructPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
@@ -977,7 +982,7 @@ impl StructPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
             cx.notify();
             return;
         }
@@ -1008,7 +1013,7 @@ impl StructPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
             cx.notify();
             return;
         }
@@ -1019,14 +1024,14 @@ impl StructPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
 
         self.applying = true;
         self.apply_error = None;
-        self.notice = Some(ts!("struct.applying"));
+        self.notice = Some(Notice::warn(ts!("struct.applying")));
         let generation = self.generation;
         let restore = self.restore_auto_commit;
 
@@ -1114,7 +1119,7 @@ impl StructPane {
             self.refresh(cx);
         }
         match outcome {
-            Ok(applied) => self.notice = Some(ts!("struct.applied", count = applied)),
+            Ok(applied) => self.notice = Some(Notice::info(ts!("struct.applied", count = applied))),
             Err(failure) => {
                 self.notice = None;
                 self.apply_error = Some(ApplyProblem {
@@ -2102,6 +2107,28 @@ impl Render for StructPane {
         let chrome = theme(cx);
         let header = self.render_header(&chrome, cx);
         let banner = self.render_banner(&chrome);
+        self.notice_clock
+            .watch(self.notice.as_ref(), cx, |pane, shown| {
+                let still = pane.notice.as_ref() == Some(shown);
+                if still {
+                    pane.notice = None;
+                }
+                still
+            });
+        let notice = self.notice.as_ref().map(|notice| {
+            let this = cx.entity();
+            render_notice(
+                ("struct-notice", cx.entity_id()),
+                notice,
+                &chrome,
+                move |_, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.notice = None;
+                        cx.notify();
+                    });
+                },
+            )
+        });
         let failure = self.render_apply_error(&chrome);
         let body = self.render_body(&chrome, cx);
         let preview = self.render_apply_preview(&chrome, cx);
@@ -2134,25 +2161,10 @@ impl Render for StructPane {
                 cx.listener(|pane, _: &MouseUpEvent, _window, cx| pane.release(cx)),
             )
             .child(header)
+            .children(notice)
             .children(banner)
             .children(failure)
             .child(body)
-            .children(self.notice.clone().map(|notice| {
-                div()
-                    .absolute()
-                    .bottom(px(6.))
-                    .left(px(10.))
-                    .right(px(10.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded_md()
-                    .bg(chrome.surface)
-                    .border_1()
-                    .border_color(chrome.border)
-                    .text_size(px(11.))
-                    .text_color(chrome.text_muted)
-                    .child(notice)
-            }))
             // Last, so it draws over everything else including the notice
             // (architecture document, §7.8).
             .children(preview)
@@ -3229,7 +3241,10 @@ mod tests {
                 assert_eq!(pane.title(), "APP.NOTE", "and the tab renamed itself");
                 assert_eq!(pane.apply_label(), ts!("struct.apply"));
                 assert!(!pane.has_pending_edits());
-                assert_eq!(pane.notice, Some(ts!("struct.applied", count = 1)));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.applied", count = 1))
+                );
                 assert!(pane.apply_error.is_none());
 
                 // The reload is against the table that now exists, and what it
@@ -3387,7 +3402,10 @@ mod tests {
             .update(cx, |pane, _window, cx| {
                 pane.detach(cx);
                 pane.refresh(cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
                 assert!(pane.structure().is_some(), "what was read is still there");
             })
             .expect("the window is open");
@@ -3408,12 +3426,18 @@ mod tests {
                 assert!(pane.has_pending_edits());
 
                 pane.refresh(cx);
-                assert_eq!(pane.notice, Some(ts!("struct.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.discard_first"))
+                );
                 assert!(pane.structure().is_some(), "nothing was thrown away");
                 assert!(pane.has_pending_edits());
 
                 pane.warn_pending(cx);
-                assert_eq!(pane.notice, Some(ts!("struct.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.discard_first"))
+                );
             })
             .expect("the window is open");
         connected.close().expect("close");
@@ -3513,7 +3537,10 @@ mod tests {
                 stage_batch(pane, "VARCHAR(80)", cx);
                 pane.apply(cx);
                 assert!(pane.preview.is_none(), "the confirmation was raised");
-                assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("query.uncommitted_pending"))
+                );
 
                 handle.clear_uncommitted();
                 pane.apply(cx);
@@ -3559,7 +3586,10 @@ mod tests {
                 assert!(!pane.has_pending_edits(), "the buffer outlived the batch");
                 assert!(pane.preview.is_none());
                 assert!(pane.apply_error.is_none());
-                assert_eq!(pane.notice, Some(ts!("struct.applied", count = 2)));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.applied", count = 2))
+                );
                 // The reload is what makes the server's own spelling visible:
                 // H2 answers CHARACTER VARYING, which nothing on this side
                 // typed and nothing on this side could have guessed.

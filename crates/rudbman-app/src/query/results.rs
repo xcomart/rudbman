@@ -253,7 +253,7 @@ impl QueryPane {
             // `detach` has already dropped every way on, so this is only
             // reached by a scroll that was already in flight; saying why the
             // rows stop is better than a grid that quietly ends early.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
@@ -339,7 +339,7 @@ impl QueryPane {
                         grid.source_mut(cx).base_mut().push_page(batch, complete)
                     });
                     if limited {
-                        self.notice = Some(ts!("query.row_limit", limit = ROW_LIMIT));
+                        self.notice = Some(Notice::warn(ts!("query.row_limit", limit = ROW_LIMIT)));
                     }
                 }
 
@@ -383,18 +383,18 @@ impl QueryPane {
             // Sorting is a re-run, and there is nothing left to run it on. Said
             // here rather than left to `start`, so the grid's own header click
             // gets an answer even when the statement turns out unsortable.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         }
         if self.is_running() {
-            self.notice = Some(ts!("query.busy"));
+            self.notice = Some(Notice::warn(ts!("query.busy")));
             cx.notify();
             return;
         }
         if self.has_pending_edits(cx) {
             // A re-run replaces the source the edits are keyed to; §7.9.
-            self.notice = Some(ts!("data.discard_first"));
+            self.notice = Some(Notice::warn(ts!("data.discard_first")));
             cx.notify();
             return;
         }

@@ -21,10 +21,10 @@ impl QueryPane {
             return;
         };
         self.transaction = Some(action);
-        self.notice = Some(match action {
+        self.notice = Some(Notice::warn(match action {
             TransactionAction::Commit => ts!("query.committing"),
             TransactionAction::Rollback => ts!("query.rolling_back"),
-        });
+        }));
         cx.spawn(async move |pane, cx| {
             let outcome = cx
                 .background_spawn({
@@ -44,13 +44,18 @@ impl QueryPane {
                 }
                 if pane.session.is_some() {
                     pane.notice = Some(match (action, outcome) {
-                        (TransactionAction::Commit, Ok(())) => ts!("query.committed"),
-                        (TransactionAction::Rollback, Ok(())) => ts!("query.rolled_back"),
+                        (TransactionAction::Commit, Ok(())) => Notice::info(ts!("query.committed")),
+                        (TransactionAction::Rollback, Ok(())) => {
+                            Notice::info(ts!("query.rolled_back"))
+                        }
+                        // In the danger color, never the gray a commit that
+                        // went through is said in: the transaction is still
+                        // open, and the user has to know it is.
                         (TransactionAction::Commit, Err(error)) => {
-                            ts!("query.commit_failed", message = error.to_string())
+                            Notice::error(ts!("query.commit_failed", message = error.to_string()))
                         }
                         (TransactionAction::Rollback, Err(error)) => {
-                            ts!("query.rollback_failed", message = error.to_string())
+                            Notice::error(ts!("query.rollback_failed", message = error.to_string()))
                         }
                     });
                 }
@@ -94,7 +99,7 @@ impl QueryPane {
         // a sort round trip and an accepted write confirmation arrive here
         // without passing `request` again.
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };

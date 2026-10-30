@@ -123,6 +123,7 @@ use crate::data_edit::{
 };
 use crate::explorer::ConnectionId;
 use crate::i18n::ts;
+use crate::notice::{Notice, NoticeClock, render_notice};
 use crate::query_source::{
     Paged, ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, column_name, key_index, page,
     read_page,
@@ -607,8 +608,12 @@ pub struct QueryPane {
     results: Vec<ResultTab>,
     active_result: usize,
     error: Option<QueryError>,
-    /// A line the pane wants to say without it being a failure — "already running".
-    notice: Option<SharedString>,
+    /// A line the pane wants to say without it being a failure of the
+    /// statement — "already running", "committed" — at the level it matters;
+    /// see [`crate::notice`].
+    notice: Option<Notice>,
+    /// Takes an informational notice away after a while.
+    notice_clock: NoticeClock,
     run: RunState,
     /// The generation of the newest run. Every delivery carries one, and one
     /// that is not this is an answer the user has already moved on from.
@@ -858,6 +863,7 @@ impl QueryPane {
             active_result: 0,
             error: None,
             notice: None,
+            notice_clock: NoticeClock::default(),
             run: RunState::Idle,
             generation: 0,
             ran: false,
@@ -1005,10 +1011,10 @@ impl QueryPane {
             && !draft.warned
         {
             draft.warned = true;
-            self.notice = Some(ts!(
+            self.notice = Some(Notice::warn(ts!(
                 "query.draft_too_large",
                 limit = DRAFT_LIMIT / (1024 * 1024)
-            ));
+            )));
             cx.notify();
         }
     }
@@ -1134,14 +1140,14 @@ impl QueryPane {
         self.notice = None;
 
         if statements.is_empty() {
-            self.notice = Some(ts!("query.no_statement"));
+            self.notice = Some(Notice::warn(ts!("query.no_statement")));
             cx.notify();
             return;
         }
         if self.has_pending_edits(cx) {
             // A run replaces every result, and a staged edit is keyed to a row
             // index of the source it was typed on and nothing else (§7.9).
-            self.notice = Some(ts!("data.discard_first"));
+            self.notice = Some(Notice::warn(ts!("data.discard_first")));
             cx.notify();
             return;
         }
@@ -1149,14 +1155,14 @@ impl QueryPane {
             // Said before the write confirmation rather than after it: being
             // asked whether to run something that cannot be run is worse than
             // being told there is nothing to run it on.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         }
         if self.is_running() {
             // The session would queue it behind the statement already running,
             // which looks like a hang rather than like a queue.
-            self.notice = Some(ts!("query.busy"));
+            self.notice = Some(Notice::warn(ts!("query.busy")));
             cx.notify();
             return;
         }
@@ -1171,7 +1177,7 @@ impl QueryPane {
                 // does not write, and asking would offer something it will not
                 // do anyway.
                 self.error = None;
-                self.notice = Some(ts!("query.read_only"));
+                self.notice = Some(Notice::warn(ts!("query.read_only")));
                 cx.notify();
                 return;
             }

@@ -542,7 +542,10 @@ fn a_write_is_refused_outright_or_asked_about(cx: &mut TestAppContext) {
     refusing
         .update(cx, |pane, _window, _cx| {
             assert!(!pane.ran, "a read-only profile never sends the statement");
-            assert_eq!(pane.notice, Some(ts!("query.read_only")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("query.read_only"))
+            );
             assert!(pane.pending.is_none(), "a refusal is not a question");
         })
         .expect("the window is open");
@@ -647,7 +650,10 @@ fn a_detached_pane_keeps_its_rows_and_refuses_to_run(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, dead, cx| {
             assert!(!pane.is_running(), "a detached pane sent a statement");
-            assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("explorer.disconnected"))
+            );
             assert_eq!(
                 pane.results.len(),
                 2,
@@ -662,11 +668,17 @@ fn a_detached_pane_keeps_its_rows_and_refuses_to_run(cx: &mut TestAppContext) {
                 dead,
                 cx,
             );
-            assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("explorer.disconnected"))
+            );
 
             pane.notice = None;
             pane.fetch_more(pane.row_result(0).id, dead, cx);
-            assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("explorer.disconnected"))
+            );
         })
         .expect("the window is open");
     cx.run_until_parked();

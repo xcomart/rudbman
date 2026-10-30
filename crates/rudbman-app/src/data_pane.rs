@@ -75,6 +75,7 @@ use crate::context_menu::{self, MenuRow};
 use crate::data_edit::{EditableSource, PlannedStatement, RowRef, StagedCell, plan_apply};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
+use crate::notice::{Notice, NoticeClock, render_notice};
 use crate::query::{QueryError, note, render_error};
 use crate::query_source::{
     ROW_LIMIT, ReadPage, RenderedBatch, ResultSource, Step, advance, page, read_page,
@@ -335,8 +336,11 @@ pub struct DataPane {
     load: Load,
     /// The order the rows were asked in, when one was asked for.
     order: Option<Order>,
-    /// A line the pane wants to say without it being a failure.
-    notice: Option<SharedString>,
+    /// A line the pane wants to say, at the level it matters; see
+    /// [`crate::notice`].
+    notice: Option<Notice>,
+    /// Takes an informational notice away after a while.
+    notice_clock: NoticeClock,
     /// The generation of the newest load. Every delivery carries one, and one
     /// that is not this is an answer a later load has already replaced.
     generation: u64,
@@ -407,6 +411,7 @@ impl DataPane {
             load: Load::Running,
             order: None,
             notice: None,
+            notice_clock: NoticeClock::default(),
             generation: 0,
             context_menu: None,
             confirm_discard: false,
@@ -567,7 +572,7 @@ impl DataPane {
     /// The counterpart of [`DataPane::has_pending_edits`] for the shell: a tab
     /// that simply would not close, with nothing said, would read as a bug.
     pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
-        self.notice = Some(ts!("data.discard_first"));
+        self.notice = Some(Notice::warn(ts!("data.discard_first")));
         cx.notify();
     }
 
@@ -623,12 +628,12 @@ impl DataPane {
             return;
         }
         if self.has_pending_edits(cx) {
-            self.notice = Some(ts!("data.discard_first"));
+            self.notice = Some(Notice::warn(ts!("data.discard_first")));
             cx.notify();
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
@@ -798,7 +803,7 @@ impl DataPane {
             // `detach` has already dropped the way on, so this is only reached
             // by a scroll that was already in flight; saying why the rows stop
             // is better than a grid that quietly ends early.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
@@ -897,7 +902,7 @@ impl DataPane {
                 failure = Some(QueryError::new(error).message);
             }
         }
-        self.notice = failure;
+        self.notice = failure.map(Notice::error);
         cx.notify();
     }
 
@@ -910,13 +915,13 @@ impl DataPane {
         cx: &mut Context<Self>,
     ) {
         if self.session.is_none() {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         }
         if self.has_pending_edits(cx) {
             // A re-run replaces the source the edits are keyed to; §7.9.
-            self.notice = Some(ts!("data.discard_first"));
+            self.notice = Some(Notice::warn(ts!("data.discard_first")));
             cx.notify();
             return;
         }
@@ -1219,7 +1224,7 @@ impl DataPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
             cx.notify();
             return;
         }
@@ -1272,7 +1277,7 @@ impl DataPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
             cx.notify();
             return;
         }
@@ -1283,14 +1288,14 @@ impl DataPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
 
         self.applying = true;
         self.apply_error = None;
-        self.notice = Some(ts!("data.applying"));
+        self.notice = Some(Notice::warn(ts!("data.applying")));
         let generation = self.generation;
         let transactional = self.transactional;
         let restore = self.restore_auto_commit;
@@ -1341,7 +1346,7 @@ impl DataPane {
                 // the server has all of it.
                 self.discard_all(cx);
                 self.refresh(window, cx);
-                self.notice = Some(ts!("data.applied", count = applied));
+                self.notice = Some(Notice::info(ts!("data.applied", count = applied)));
             }
             Err(failure) => {
                 self.notice = None;
@@ -1689,6 +1694,28 @@ impl Render for DataPane {
         let chrome = theme(cx);
         let toolbar = self.render_toolbar(&chrome, cx);
         let banner = self.render_banner(&chrome);
+        self.notice_clock
+            .watch(self.notice.as_ref(), cx, |pane, shown| {
+                let still = pane.notice.as_ref() == Some(shown);
+                if still {
+                    pane.notice = None;
+                }
+                still
+            });
+        let notice = self.notice.as_ref().map(|notice| {
+            let this = cx.entity();
+            render_notice(
+                ("data-notice", cx.entity_id()),
+                notice,
+                &chrome,
+                move |_, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.notice = None;
+                        cx.notify();
+                    });
+                },
+            )
+        });
         let failure = self
             .apply_error
             .as_ref()
@@ -1747,25 +1774,10 @@ impl Render for DataPane {
             .min_h_0()
             .relative()
             .child(toolbar)
+            .children(notice)
             .children(banner)
             .children(failure)
             .child(body)
-            .children(self.notice.clone().map(|notice| {
-                div()
-                    .absolute()
-                    .bottom(px(6.))
-                    .left(px(10.))
-                    .right(px(10.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded_md()
-                    .bg(chrome.surface)
-                    .border_1()
-                    .border_color(chrome.border)
-                    .text_size(px(11.))
-                    .text_color(chrome.text_muted)
-                    .child(notice)
-            }))
             // All last, and the menu last of all: a context menu paints above
             // even a modal (architecture document, §7.8). The two modals never
             // stand at once — raising either puts the other away — so their
@@ -2487,15 +2499,24 @@ mod tests {
                 assert!(!pane.is_attached());
 
                 pane.fetch_more(cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
 
                 pane.notice = None;
                 pane.reorder(0, Some(SortDirection::Ascending), window, cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
 
                 pane.notice = None;
                 pane.refresh(window, cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -3016,12 +3037,18 @@ mod tests {
         window
             .update(cx, |pane, window, cx| {
                 pane.reorder(0, Some(SortDirection::Descending), window, cx);
-                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.discard_first"))
+                );
                 assert!(pane.order.is_none(), "the ordering was taken anyway");
 
                 pane.notice = None;
                 pane.refresh(window, cx);
-                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.discard_first"))
+                );
                 assert!(
                     matches!(pane.load, Load::Ready(_)),
                     "the rows were thrown away anyway"
@@ -3132,7 +3159,10 @@ mod tests {
             .update(cx, |pane, _window, cx| {
                 assert!(pane.has_pending_edits(cx));
                 pane.warn_pending(cx);
-                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.discard_first"))
+                );
 
                 pane.discard_all(cx);
                 assert!(!pane.has_pending_edits(cx));
@@ -3245,7 +3275,10 @@ mod tests {
                 assert!(!pane.has_pending_edits(cx), "the buffer outlived the apply");
                 assert!(pane.apply_error.is_none());
                 assert!(pane.preview.is_none());
-                assert_eq!(pane.notice, Some(ts!("data.applied", count = 3)));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.applied", count = 3))
+                );
             })
             .expect("the window is open");
         // The reload is what makes the generated key visible: it is 4, and
@@ -3489,7 +3522,10 @@ mod tests {
             .update(cx, |pane, window, cx| {
                 pane.apply(window, cx);
                 assert!(pane.preview.is_none(), "the confirmation was raised");
-                assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("query.uncommitted_pending"))
+                );
 
                 handle.clear_uncommitted();
                 pane.apply(window, cx);

@@ -105,6 +105,31 @@ impl Render for QueryPane {
             .as_ref()
             .map(|problem| render_apply_error(problem, &chrome));
         let results = self.render_results(&chrome, cx);
+        // Above the rows rather than over them: a notice that covered the last
+        // row and the scrollbar until something replaced it hid exactly what
+        // a user reads after a commit.
+        self.notice_clock
+            .watch(self.notice.as_ref(), cx, |pane, shown| {
+                let still = pane.notice.as_ref() == Some(shown);
+                if still {
+                    pane.notice = None;
+                }
+                still
+            });
+        let notice = self.notice.as_ref().map(|notice| {
+            let this = cx.entity();
+            render_notice(
+                ("query-notice", cx.entity_id()),
+                notice,
+                &chrome,
+                move |_, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.notice = None;
+                        cx.notify();
+                    });
+                },
+            )
+        });
         let context_menu = self.render_context_menu(cx);
         // Both modals are `row_apply`'s; what each button does is this pane's,
         // and it is said here rather than threaded through as an entity.
@@ -212,26 +237,11 @@ impl Render for QueryPane {
                     .border_t_1()
                     .border_color(chrome.border)
                     .child(toolbar)
+                    .children(notice)
                     .children(banner)
                     .children(failure)
                     .child(results),
             )
-            .children(self.notice.clone().map(|notice| {
-                div()
-                    .absolute()
-                    .bottom(px(6.))
-                    .left(px(10.))
-                    .right(px(10.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded_md()
-                    .bg(chrome.surface)
-                    .border_1()
-                    .border_color(chrome.border)
-                    .text_size(px(11.))
-                    .text_color(chrome.text_muted)
-                    .child(notice)
-            }))
             // After both halves, so it wins the hit test against the two it
             // straddles. The band is centered on the seam by `at`, which pulls it
             // back half its own thickness for us, and it carries the accent bar

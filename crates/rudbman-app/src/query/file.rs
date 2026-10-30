@@ -172,7 +172,7 @@ impl QueryPane {
     /// The line the pane is showing, for the shell's tests of a failed save.
     #[cfg(test)]
     pub(crate) fn notice(&self) -> Option<&SharedString> {
-        self.notice.as_ref()
+        self.notice.as_ref().map(|notice| &notice.text)
     }
 
     /// Whether the editor holds changes the bound file does not.
@@ -288,7 +288,7 @@ impl QueryPane {
     /// either order, and the older text would win half the time.
     pub(crate) fn begin_save(&mut self, cx: &mut Context<Self>) -> Option<SaveJob> {
         if self.saving || self.reloading {
-            self.notice = Some(ts!("query.save_busy"));
+            self.notice = Some(Notice::warn(ts!("query.save_busy")));
             cx.notify();
             return None;
         }
@@ -337,7 +337,7 @@ impl QueryPane {
                 saved
             }
             SaveOutcome::Changed => {
-                self.notice = Some(ts!("query.file_changed"));
+                self.notice = Some(Notice::warn(ts!("query.file_changed")));
                 Saved::Changed
             }
             SaveOutcome::Failed(error) => {
@@ -345,7 +345,10 @@ impl QueryPane {
                 if self.file.as_deref() == Some(path.as_path()) {
                     self.draft_unsaved = true;
                 }
-                self.notice = Some(ts!("query.save_failed", error = error.to_string()));
+                self.notice = Some(Notice::error(ts!(
+                    "query.save_failed",
+                    error = error.to_string()
+                )));
                 Saved::Failed
             }
         };

@@ -9,7 +9,7 @@ impl QueryPane {
     /// The counterpart of [`QueryPane::has_pending_edits`] for the shell: a tab
     /// that simply would not close, with nothing said, would read as a bug.
     pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
-        self.notice = Some(ts!("data.discard_first"));
+        self.notice = Some(Notice::warn(ts!("data.discard_first")));
         cx.notify();
     }
 
@@ -138,7 +138,7 @@ impl QueryPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
             cx.notify();
             return;
         }
@@ -204,7 +204,7 @@ impl QueryPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
             cx.notify();
             return;
         }
@@ -215,14 +215,14 @@ impl QueryPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
 
         self.applying = true;
         self.apply_error = None;
-        self.notice = Some(ts!("data.applying"));
+        self.notice = Some(Notice::warn(ts!("data.applying")));
         let generation = self.generation;
         let transactional = self.transactional;
         let restore = self.restore_auto_commit;
@@ -284,7 +284,7 @@ impl QueryPane {
                     self.pending_sort = sort;
                     self.start(vec![executed], Some(base), window, cx);
                 }
-                self.notice = Some(ts!("data.applied", count = applied));
+                self.notice = Some(Notice::info(ts!("data.applied", count = applied)));
             }
             Err(failure) => {
                 self.notice = None;

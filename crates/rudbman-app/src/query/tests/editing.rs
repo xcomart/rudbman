@@ -60,7 +60,10 @@ fn a_select_of_one_keyed_table_is_edited_and_applied(cx: &mut TestAppContext) {
             assert!(!pane.has_pending_edits(cx), "the buffer outlived the apply");
             assert!(pane.apply_error.is_none());
             assert!(pane.preview.is_none());
-            assert_eq!(pane.notice, Some(ts!("data.applied", count = 1)));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.applied", count = 1))
+            );
             assert_eq!(pane.results.len(), 2, "the statement was re-run");
         })
         .expect("the window is open");
@@ -102,7 +105,10 @@ fn an_open_transaction_holds_a_grid_apply_back_until_it_is_settled(cx: &mut Test
         .update(cx, |pane, window, cx| {
             pane.apply(window, cx);
             assert!(pane.preview.is_none(), "the confirmation was raised");
-            assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("query.uncommitted_pending"))
+            );
             pane.finish_transaction(TransactionAction::Rollback, cx);
         })
         .expect("the window is open");
@@ -288,18 +294,27 @@ fn a_sort_or_a_run_waits_for_the_staged_edits_to_be_dealt_with(cx: &mut TestAppC
     window
         .update(cx, |pane, window, cx| {
             pane.reorder(id, 0, Some(SortDirection::Descending), window, cx);
-            assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.discard_first"))
+            );
 
             pane.notice = None;
             pane.request(vec!["select 7".to_string()], window, cx);
-            assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.discard_first"))
+            );
 
             // What the tab strip asks before it closes the tab, and what
             // the pane says about a yes.
             assert!(pane.has_pending_edits(cx));
             pane.notice = None;
             pane.warn_pending(cx);
-            assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.discard_first"))
+            );
         })
         .expect("the window is open");
     cx.run_until_parked();

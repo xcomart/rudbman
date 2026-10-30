@@ -155,7 +155,10 @@ fn toolbar_commit_persists_manual_transactions_and_keeps_the_results(cx: &mut Te
     click("query-commit", &mut cx);
     window
         .update(&mut cx, |pane, _, _| {
-            assert_eq!(pane.notice, Some(ts!("query.committed")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("query.committed"))
+            );
             assert_eq!(
                 pane.results.len(),
                 1,
@@ -241,7 +244,10 @@ fn toolbar_rollback_reverts_only_uncommitted_changes(cx: &mut TestAppContext) {
     click("query-rollback", &mut cx);
     window
         .update(&mut cx, |pane, _, _| {
-            assert_eq!(pane.notice, Some(ts!("query.rolled_back")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("query.rolled_back"))
+            );
             assert!(pane.transaction.is_none());
             assert!(pane.can_finish_transaction());
             assert_eq!(pane.results.len(), 1);

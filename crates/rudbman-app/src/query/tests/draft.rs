@@ -49,7 +49,7 @@ fn an_oversized_draft_is_saved_empty_and_said_once(cx: &mut TestAppContext) {
             assert!(pane.owes_draft_warning());
             pane.warn_oversized_draft(cx);
             assert_eq!(
-                pane.notice,
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
                 Some(ts!(
                     "query.draft_too_large",
                     limit = DRAFT_LIMIT / (1024 * 1024)
