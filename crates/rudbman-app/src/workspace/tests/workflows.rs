@@ -295,7 +295,7 @@ fn closing_a_connection_discards_its_work_area(cx: &mut gpui::TestAppContext) {
             // And the pane commands, which have no tree to act on.
             workspace.split_active(Axis::Horizontal, window, cx);
             workspace.close_active_pane(window, cx);
-            workspace.cycle_pane(true, cx);
+            workspace.cycle_pane(true, window, cx);
             assert!(workspace.work_area().is_none());
         })
         .expect("the window is open");

@@ -27,6 +27,13 @@ impl Workspace {
     /// not — two modals at once would be two sheets fighting over one press.
     #[must_use]
     pub(super) fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // Every dialog opens through here, so this is where the keyboard is
+        // remembered — once, by the first of a run of dialogs, so that one
+        // opened over another still gives the keyboard back to where it was
+        // before either.
+        if !self.dialog_open(cx) {
+            self.focus_origin = self.focus_origin_now(window, cx);
+        }
         if self.rename_tab.is_some() {
             self.finish_tab_name(false, window, cx);
         }
@@ -690,11 +697,11 @@ impl Workspace {
                 pane.declined(cx);
             }
         });
-        if run {
-            pending
-                .pane
-                .update(cx, |pane, cx| pane.focus_editor(window, cx));
-        }
+        // Back to the editor either way: the question interrupted someone
+        // running SQL, and that is where they go on.
+        pending
+            .pane
+            .update(cx, |pane, cx| pane.focus_editor(window, cx));
         cx.notify();
     }
 }

@@ -29,11 +29,11 @@ pub(crate) use bootstrap::{editor_theme_for, theme_dirs};
 
 use crate::{
     AddToBuilder, BackupSchema, CheckUpdates, ClosePane, CloseTab, DismissDialog, ExtractScript,
-    FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery, OpenErd, OpenSettings,
-    OpenSqlFile, QueryObject, Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, ShowAbout,
-    SplitBelow, SplitRight, ToggleExplorer, TransferTable, app_identity, app_settings,
-    builder_pane, builder_sql, connection, context_menu, erd_pane, explorer, i18n, icons,
-    table_detail,
+    FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery, NextConnection, NextRegion,
+    NextTab, OpenErd, OpenSettings, OpenSqlFile, PrevConnection, PrevRegion, PrevTab, QueryObject,
+    Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, SelectTab, ShowAbout, SplitBelow,
+    SplitRight, ToggleExplorer, TransferTable, app_identity, app_settings, builder_pane,
+    builder_sql, connection, context_menu, erd_pane, explorer, i18n, icons, table_detail,
 };
 
 mod actions;
@@ -590,6 +590,35 @@ enum FocusTarget {
     Shell,
 }
 
+/// One of the regions `F6` moves the keyboard between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Region {
+    /// The explorer's tree.
+    Explorer,
+    /// The active pane's tab on top: a query tab's editor, a grid, a canvas.
+    Tab,
+    /// A query tab's result grid.
+    Results,
+}
+
+/// Where the keyboard was before a dialog took it.
+///
+/// A region rather than a focus handle: by the time the dialog closes, the
+/// element that had the keyboard may have stopped being rendered — its tab
+/// closed, its connection switched away — and handing the focus back to it
+/// would strand it exactly as [`Workspace::reclaim_focus`] describes. A
+/// region is asked again for what it is showing *now*.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum FocusOrigin {
+    /// Nowhere in particular: the shell.
+    #[default]
+    Shell,
+    /// The explorer's tree.
+    Explorer,
+    /// The work area on screen.
+    Area,
+}
+
 /// The pane a close was refused over, so that it can be told to say why.
 ///
 /// Three kinds hold work a close would destroy, and each says so in its own
@@ -727,6 +756,9 @@ struct Workspace {
     /// The connection tab that asked the dialog for a password to reconnect
     /// with, and the profile it asked about; see [`Workspace::reconnect_with`].
     pending_reconnect: Option<(ConnectionId, Uuid)>,
+    /// Where the keyboard was when the dialog on screen opened, for it to go
+    /// back to when the dialog closes; see [`Workspace::restore_focus`].
+    focus_origin: FocusOrigin,
     /// Where a dragged tab would land, while a drag is over a strip.
     ///
     /// Strips are tagged with a pane id for a pane's strip, and
@@ -859,6 +891,7 @@ impl Workspace {
             confirm: None,
             close_question: None,
             pending_reconnect: None,
+            focus_origin: FocusOrigin::Shell,
             tab_drop: TabDropState::new(),
             titlebar,
             _about_events: about_events,

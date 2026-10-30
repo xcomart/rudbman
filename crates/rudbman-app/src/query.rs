@@ -1161,6 +1161,32 @@ impl QueryPane {
         self.preview.is_some() || self.confirm_discard || self.lob_dialog.is_some()
     }
 
+    /// Whether the result tab showing is a grid the keyboard can be put on.
+    pub fn has_result_grid(&self) -> bool {
+        self.active_rows().is_some()
+    }
+
+    /// Whether the keyboard is on a result grid of this pane.
+    pub fn results_hold_focus(&self, window: &Window, cx: &App) -> bool {
+        self.results.iter().any(|tab| match &tab.body {
+            ResultBody::Rows(rows) => rows
+                .grid
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx),
+            ResultBody::Log(_) => false,
+        })
+    }
+
+    /// Puts the keyboard on the grid of the result tab showing — the way out
+    /// of an editor whose `Tab` indents rather than moving on.
+    pub fn focus_results(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(rows) = self.active_rows() {
+            let handle = rows.grid.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        }
+    }
+
     /// Whether a statement is in flight.
     pub fn is_running(&self) -> bool {
         matches!(self.run, RunState::Running(_))

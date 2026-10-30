@@ -1227,6 +1227,14 @@ impl Explorer {
 
 impl EventEmitter<ExplorerEvent> for Explorer {}
 
+impl Explorer {
+    /// Puts the keyboard on the tree, where the arrows walk it.
+    pub fn take_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.tree.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    }
+}
+
 impl Focusable for Explorer {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()

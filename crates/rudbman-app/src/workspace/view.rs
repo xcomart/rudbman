@@ -534,6 +534,13 @@ impl Render for Workspace {
             .on_action(cx.listener(actions::unless_held(Self::split_right_action)))
             .on_action(cx.listener(actions::unless_held(Self::split_below_action)))
             .on_action(cx.listener(actions::unless_held(Self::close_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::next_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::prev_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::select_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::next_connection_action)))
+            .on_action(cx.listener(actions::unless_held(Self::prev_connection_action)))
+            .on_action(cx.listener(actions::unless_held(Self::next_region_action)))
+            .on_action(cx.listener(actions::unless_held(Self::prev_region_action)))
             .on_action(cx.listener(actions::unless_held(Self::reopen_closed_tab_action)))
             // Not held: quitting is never a command acting behind a dialog, and
             // it asks for itself when it would lose something.

@@ -275,6 +275,44 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
     if let Some((chord, _)) = CLOSE_TAB_SHORTCUT {
         bindings.push(KeyBinding::new(chord, CloseTab, Some(KEY_CONTEXT)));
     }
+    // Tab and region keys, as editors and browsers have them. Off macOS the
+    // tab chords are `Ctrl+PgDn`/`PgUp` and `Ctrl+1`–`9`, and the connection
+    // strip one modifier further out, `Ctrl+Alt+PgDn`/`PgUp`; `Ctrl+Tab` works
+    // everywhere, macOS included, where `Cmd+Alt+→`/`←` and `Cmd+1`–`9` are the
+    // tab chords instead (the connection strip has none there yet). None of
+    // them is a chord the SQL editor or the grid binds.
+    bindings.push(KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)));
+    bindings.push(KeyBinding::new(
+        "ctrl-shift-tab",
+        PrevTab,
+        Some(KEY_CONTEXT),
+    ));
+    if cfg!(target_os = "macos") {
+        bindings.push(KeyBinding::new("cmd-alt-right", NextTab, Some(KEY_CONTEXT)));
+        bindings.push(KeyBinding::new("cmd-alt-left", PrevTab, Some(KEY_CONTEXT)));
+    } else {
+        bindings.push(KeyBinding::new("ctrl-pagedown", NextTab, Some(KEY_CONTEXT)));
+        bindings.push(KeyBinding::new("ctrl-pageup", PrevTab, Some(KEY_CONTEXT)));
+        bindings.push(KeyBinding::new(
+            "ctrl-alt-pagedown",
+            NextConnection,
+            Some(KEY_CONTEXT),
+        ));
+        bindings.push(KeyBinding::new(
+            "ctrl-alt-pageup",
+            PrevConnection,
+            Some(KEY_CONTEXT),
+        ));
+    }
+    for digit in 1..=9 {
+        bindings.push(KeyBinding::new(
+            &format!("{modifier}-{digit}"),
+            SelectTab(digit - 1),
+            Some(KEY_CONTEXT),
+        ));
+    }
+    bindings.push(KeyBinding::new("f6", NextRegion, Some(KEY_CONTEXT)));
+    bindings.push(KeyBinding::new("shift-f6", PrevRegion, Some(KEY_CONTEXT)));
     // "Reopen closed tab" where every browser and editor puts it, on every
     // platform: the unshifted chord is "New query", so the shifted one brings
     // back the last tab rather than opening an empty one.

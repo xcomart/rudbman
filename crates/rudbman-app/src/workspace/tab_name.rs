@@ -97,7 +97,7 @@ impl Workspace {
                 }
             }
         }
-        self.focus_shell(window, cx);
+        self.restore_focus(window, cx);
         cx.notify();
     }
 

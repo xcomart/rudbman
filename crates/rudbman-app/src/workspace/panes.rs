@@ -670,8 +670,18 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Moves the pane marker one step along the layout order.
-    pub(super) fn cycle_pane(&mut self, forward: bool, cx: &mut Context<Self>) {
+    /// Moves the pane marker one step along the layout order, and the
+    /// keyboard with it.
+    ///
+    /// The keyboard follows because the marker is where typing is expected to
+    /// go: a frame drawn round one pane while the caret stayed in the other
+    /// had the user typing into the pane they had just moved away from.
+    pub(super) fn cycle_pane(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(from) = self.active_pane() else {
             return;
         };
@@ -685,8 +695,195 @@ impl Workspace {
         };
         if let Some(next) = next {
             area.active_pane = next;
+            self.focus_active_tab(next, window, cx);
             cx.notify();
         }
+    }
+
+    /// Brings the tab one step along the active pane's strip to the front,
+    /// wrapping at either end, and puts the keyboard in it.
+    pub(super) fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.active_pane() else {
+            return;
+        };
+        let Some((count, active)) = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .map(|pane| (pane.items().len(), pane.active_index()))
+        else {
+            return;
+        };
+        if count < 2 {
+            return;
+        }
+        let next = if forward {
+            (active + 1) % count
+        } else {
+            (active + count - 1) % count
+        };
+        self.show_tab(pane, next, window, cx);
+    }
+
+    /// Brings tab `index` of the active pane to the front — the last one for
+    /// `8` — and puts the keyboard in it.
+    pub(super) fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.active_pane() else {
+            return;
+        };
+        let Some(count) = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .map(|pane| pane.items().len())
+        else {
+            return;
+        };
+        if count == 0 {
+            return;
+        }
+        let index = if index >= 8 { count - 1 } else { index };
+        if index < count {
+            self.show_tab(pane, index, window, cx);
+        }
+    }
+
+    /// Brings tab `index` of `pane` to the front with the keyboard in it —
+    /// what a tab chosen from the keyboard is for, where a click on a strip
+    /// leaves the keyboard where it was.
+    fn show_tab(
+        &mut self,
+        pane: PaneId,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.activate_tab(pane, index, window, cx);
+        self.focus_active_tab(pane, window, cx);
+    }
+
+    /// Brings the connection tab one step along the strip to the front,
+    /// wrapping, and the keyboard into its work area.
+    pub(super) fn cycle_connection(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.connections.len();
+        if count < 2 {
+            return;
+        }
+        let next = if forward {
+            (self.active_connection + 1) % count
+        } else {
+            (self.active_connection + count - 1) % count
+        };
+        self.select_connection(next, window, cx);
+        match self.active_pane() {
+            Some(pane) => self.focus_active_tab(pane, window, cx),
+            None => self.focus_shell(window, cx),
+        }
+    }
+
+    /// Moves the keyboard to the next region of the window — the explorer,
+    /// the active tab, and a query tab's results — wrapping round, as `F6`
+    /// does in every application with panes.
+    ///
+    /// The regions are the ones there are right now: no explorer while it is
+    /// hidden, no results while the tab on top has none to show. From
+    /// anywhere else — the shell, after a dialog — the first region is next.
+    pub(super) fn cycle_region(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let query = self.active_query().cloned();
+        let has_results = query
+            .as_ref()
+            .is_some_and(|pane| pane.read(cx).has_result_grid());
+        let mut regions = Vec::new();
+        if self.explorer_showing() {
+            regions.push(Region::Explorer);
+        }
+        if self.active_pane().is_some() {
+            regions.push(Region::Tab);
+        }
+        if has_results {
+            regions.push(Region::Results);
+        }
+        if regions.is_empty() {
+            return;
+        }
+        let explorer = self.explorer.read(cx).focus_handle(cx);
+        let current = if explorer.contains_focused(window, cx) {
+            Some(Region::Explorer)
+        } else if query
+            .as_ref()
+            .is_some_and(|pane| pane.read(cx).results_hold_focus(window, cx))
+        {
+            Some(Region::Results)
+        } else if self.area_holds_focus(window, cx) {
+            Some(Region::Tab)
+        } else {
+            None
+        };
+        let at = current.and_then(|current| regions.iter().position(|region| *region == current));
+        let next = match (at, forward) {
+            (None, true) => 0,
+            (None, false) => regions.len() - 1,
+            (Some(at), true) => (at + 1) % regions.len(),
+            (Some(at), false) => (at + regions.len() - 1) % regions.len(),
+        };
+        match regions[next] {
+            Region::Explorer => self
+                .explorer
+                .update(cx, |explorer, cx| explorer.take_focus(window, cx)),
+            Region::Tab => {
+                if let Some(pane) = self.active_pane() {
+                    self.focus_active_tab(pane, window, cx);
+                }
+            }
+            Region::Results => {
+                if let Some(query) = query {
+                    query.update(cx, |pane, cx| pane.focus_results(window, cx));
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Where the keyboard is, as a region a dialog can give it back to.
+    pub(super) fn focus_origin_now(&self, window: &Window, cx: &App) -> FocusOrigin {
+        if self
+            .explorer
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            FocusOrigin::Explorer
+        } else if self.area_holds_focus(window, cx) {
+            FocusOrigin::Area
+        } else {
+            FocusOrigin::Shell
+        }
+    }
+
+    /// Gives the keyboard back to where it was before the dialog that has just
+    /// closed took it: the explorer, the active tab — whatever it is showing
+    /// now — or the shell.
+    pub(super) fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match std::mem::take(&mut self.focus_origin) {
+            FocusOrigin::Explorer if self.explorer_showing() => {
+                self.explorer
+                    .update(cx, |explorer, cx| explorer.take_focus(window, cx));
+            }
+            FocusOrigin::Area => match self.active_pane() {
+                Some(pane) => self.focus_active_tab(pane, window, cx),
+                None => self.focus_shell(window, cx),
+            },
+            _ => self.focus_shell(window, cx),
+        }
+        cx.notify();
     }
 
     /// Puts the keyboard back on the shell after a dialog closes.

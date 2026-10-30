@@ -12,7 +12,7 @@ impl Workspace {
         match event {
             AboutDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -49,12 +49,16 @@ impl Workspace {
                     Some(index) => self.reconnect_with(index, typed, window, cx),
                     None => self.open_connection_with((**profile).clone(), typed, window, cx),
                 }
+                // The dialog has closed itself, and the keyboard was in it.
+                if !dialog.read(cx).is_open() {
+                    self.restore_focus(window, cx);
+                }
             }
             ConnectionDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
                 self.pending_reconnect = None;
                 self.profiles = load_profiles();
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -111,7 +115,7 @@ impl Workspace {
                 // The dialog closes itself after applying; without a refocus
                 // the window focus dangles on its unrendered controls and
                 // macOS disables every menu item validated through it.
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
             // The user is still in the dialog and nothing has been saved, so
             // only the palettes and the fonts follow — and the focus stays
@@ -123,7 +127,7 @@ impl Workspace {
             SettingsDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
                 self.apply_preview(window, cx);
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -138,7 +142,7 @@ impl Workspace {
         match event {
             ExtractDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -153,7 +157,7 @@ impl Workspace {
         match event {
             TransferDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -168,7 +172,7 @@ impl Workspace {
         match event {
             BackupDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -186,7 +190,7 @@ impl Workspace {
                 // this workspace's job, through the policy `app_identity`
                 // installed, because the settings are rudbman's.
                 update::remember_ignored(tag, cx);
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
             UpdateDialogEvent::Installed(_) => {
                 // The new build is on disk and the dialog is still on
@@ -211,7 +215,7 @@ impl Workspace {
             }
             UpdateDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }

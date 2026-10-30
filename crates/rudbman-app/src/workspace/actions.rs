@@ -302,20 +302,90 @@ impl Workspace {
     pub(super) fn focus_next_pane_action(
         &mut self,
         _: &FocusNextPane,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_pane(true, cx);
+        self.cycle_pane(true, window, cx);
     }
 
     /// Moves the pane marker backwards.
     pub(super) fn focus_prev_pane_action(
         &mut self,
         _: &FocusPrevPane,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_pane(false, cx);
+        self.cycle_pane(false, window, cx);
+    }
+
+    /// The next tab of the active pane.
+    pub(super) fn next_tab_action(
+        &mut self,
+        _: &NextTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_tab(true, window, cx);
+    }
+
+    /// The previous tab of the active pane.
+    pub(super) fn prev_tab_action(
+        &mut self,
+        _: &PrevTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_tab(false, window, cx);
+    }
+
+    /// Tab `n` of the active pane.
+    pub(super) fn select_tab_action(
+        &mut self,
+        action: &SelectTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_tab(action.0, window, cx);
+    }
+
+    /// The next connection tab.
+    pub(super) fn next_connection_action(
+        &mut self,
+        _: &NextConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_connection(true, window, cx);
+    }
+
+    /// The previous connection tab.
+    pub(super) fn prev_connection_action(
+        &mut self,
+        _: &PrevConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_connection(false, window, cx);
+    }
+
+    /// The next region, `F6`.
+    pub(super) fn next_region_action(
+        &mut self,
+        _: &NextRegion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_region(true, window, cx);
+    }
+
+    /// The previous region, `Shift+F6`.
+    pub(super) fn prev_region_action(
+        &mut self,
+        _: &PrevRegion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_region(false, window, cx);
     }
 
     /// Splits the active pane to the right.
@@ -361,7 +431,6 @@ impl Workspace {
         }
         if self.confirm.is_some() {
             self.answer_confirm(false, window, cx);
-            self.focus_shell(window, cx);
             return;
         }
         if self.update.read(cx).is_open() {
@@ -370,13 +439,13 @@ impl Workspace {
             // swap either, so `Escape` simply does nothing until it is over.
             if !self.update.read(cx).is_busy() {
                 self.update.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
             return;
         }
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
-            self.focus_shell(window, cx);
+            self.restore_focus(window, cx);
             return;
         }
         if self.connect.read(cx).is_open() {

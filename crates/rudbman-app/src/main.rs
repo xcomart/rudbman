@@ -106,7 +106,28 @@ actions!(
         /// Bring back the query or builder tab closed most recently on the
         /// connection whose tab is showing.
         ReopenClosedTab,
+        /// Bring the next tab of the active pane to the front.
+        NextTab,
+        /// Bring the previous tab of the active pane to the front.
+        PrevTab,
+        /// Bring the next connection tab to the front.
+        NextConnection,
+        /// Bring the previous connection tab to the front.
+        PrevConnection,
+        /// Move the keyboard to the next region: explorer, editor, results.
+        NextRegion,
+        /// Move the keyboard to the previous region.
+        PrevRegion,
     ]
+);
+
+/// Bring tab `n` of the active pane to the front — the last one for `8`, as
+/// `Ctrl+9` does in every browser.
+#[derive(Clone, PartialEq, Default, Debug, gpui::Action)]
+#[action(namespace = rudbman, no_json)]
+struct SelectTab(
+    /// Zero-based index of the tab, `8` meaning the last.
+    usize,
 );
 
 mod workspace;
