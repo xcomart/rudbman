@@ -647,8 +647,12 @@ erd:
 # two of them describe.
 builder:
   tab: "Builder %{index}"
-  canvas_hint: Wählen Sie im Explorer eine Tabelle und fügen Sie sie dem Builder hinzu.
+  canvas_hint: Ziehen Sie eine Tabelle oder Ansicht aus dem Explorer auf diese Fläche, oder klicken Sie sie dort mit der rechten Maustaste an und wählen Sie „Zum Abfrage-Builder hinzufügen“.
   joins: Verknüpfungen
+  join_hint: Ziehen Sie eine Spalte auf eine Spalte einer anderen Tabelle, um sie zu verknüpfen, oder wählen Sie die beiden Spalten hier.
+  join_pick: Spalte…
+  add_join: Verknüpfung hinzufügen
+  pick_hint: Klicken Sie auf der Fläche auf eine Spalte, um sie der SELECT-Liste hinzuzufügen.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN

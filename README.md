@@ -121,7 +121,9 @@ JVM bridge.
   restored next time. Export the diagram as SVG.
 - **A visual query builder.** Drag tables out of the explorer onto a canvas,
   click columns to toggle them into the `SELECT` list, and drag column to
-  column to join (`INNER`, `LEFT`, `RIGHT`, `FULL`). Forms cover `WHERE`,
+  column to join (`INNER`, `LEFT`, `RIGHT`, `FULL`) — or pick the two columns
+  in the Joins form, which appears once two tables are on the canvas. The
+  canvas and the form say which of these gestures to use until each is used. Forms cover `WHERE`,
   `GROUP BY` and `ORDER BY`, the SQL preview updates as you go with
   identifiers quoted the way the dialect wants them, and one click opens the
   statement in an editor.

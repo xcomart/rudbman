@@ -647,8 +647,12 @@ erd:
 # two of them describe.
 builder:
   tab: "빌더 %{index}"
-  canvas_hint: 탐색기에서 테이블을 선택해 빌더에 추가하세요.
+  canvas_hint: 탐색기에서 테이블이나 뷰를 이 캔버스로 끌어 놓거나, 탐색기에서 우클릭해 “쿼리 빌더에 추가”를 고르세요.
   joins: 조인
+  join_hint: 열을 다른 테이블의 열로 끌어 놓으면 조인됩니다. 여기서 두 열을 골라도 됩니다.
+  join_pick: 열…
+  add_join: 조인 추가
+  pick_hint: 캔버스에서 열을 클릭하면 SELECT 목록에 추가됩니다.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN

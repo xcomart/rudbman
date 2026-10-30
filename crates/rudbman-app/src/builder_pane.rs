@@ -139,6 +139,9 @@ pub struct BuilderPane {
     order_by: Vec<((usize, usize), SortDir)>,
     /// Which join row's type dropdown is showing its list.
     open_join: Option<usize>,
+    /// The two columns the "Add join" form has been given so far, as
+    /// `(table, column)` indices, and which of its two dropdowns is open.
+    join_form: JoinForm,
     /// Which column row's sort dropdown is.
     open_order: Option<usize>,
     /// Vertical scroll of the form.
@@ -189,6 +192,7 @@ impl BuilderPane {
             group_by: Vec::new(),
             order_by: Vec::new(),
             open_join: None,
+            join_form: (None, None, None),
             open_order: None,
             body_scroll: ScrollHandle::new(),
             context_menu: None,
@@ -700,10 +704,106 @@ impl BuilderPane {
         }
     }
 
+    /// Every column on the canvas as the join form lists it: its place, and
+    /// `alias.column`.
+    fn join_columns(&self) -> Vec<((usize, usize), SharedString)> {
+        self.tables
+            .iter()
+            .enumerate()
+            .flat_map(|(table, entry)| (0..entry.columns.len()).map(move |column| (table, column)))
+            .map(|place| (place, self.label_of(place)))
+            .collect()
+    }
+
+    /// "Add join": joins the two columns the form names, when they are of two
+    /// different tables, and clears the form.
+    fn add_join_from_form(&mut self, cx: &mut Context<Self>) {
+        let (Some(from), Some(to), _) = self.join_form else {
+            return;
+        };
+        if from.0 == to.0 {
+            return;
+        }
+        self.join_form = (None, None, None);
+        self.add_join(from, to, cx);
+    }
+
+    /// The form that makes a join without drawing one: a column of one table,
+    /// a column of another, and "Add join".
+    ///
+    /// The drag between two column rows is quick once it is known, and found
+    /// by nobody who has not been told; and it needs a pointer. The form is
+    /// the same join reached another way, offered as soon as two tables are on
+    /// the canvas.
+    fn render_join_form(&self, chrome: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let this = cx.entity();
+        let columns = self.join_columns();
+        let labels: Vec<SharedString> = columns.iter().map(|(_, label)| label.clone()).collect();
+        let (from, to, open) = self.join_form;
+        let pick = |id: &'static str, chosen: Option<(usize, usize)>, first: bool| {
+            let places: Vec<(usize, usize)> = columns.iter().map(|(place, _)| *place).collect();
+            let this = this.clone();
+            let toggle = this.clone();
+            Select::new(id)
+                .chevron_icon(icons::CHEVRON_DOWN)
+                .options(labels.clone())
+                .selected(chosen.map(|place| self.label_of(place)))
+                .placeholder(ts!("builder.join_pick"))
+                .open(open == Some(first))
+                .width(px(180.))
+                .on_select(move |index, _label, _window, cx| {
+                    let Some(place) = places.get(index).copied() else {
+                        return;
+                    };
+                    this.update(cx, |pane, cx| {
+                        if first {
+                            pane.join_form.0 = Some(place);
+                        } else {
+                            pane.join_form.1 = Some(place);
+                        }
+                        pane.join_form.2 = None;
+                        cx.notify();
+                    });
+                })
+                .on_open_change(move |opened, _window, cx| {
+                    toggle.update(cx, |pane, cx| {
+                        pane.join_form.2 = opened.then_some(first);
+                        cx.notify();
+                    });
+                })
+        };
+        let ready = matches!((from, to), (Some(from), Some(to)) if from.0 != to.0);
+        let add = {
+            let this = this.clone();
+            Button::new("builder-join-add", ts!("builder.add_join"))
+                .variant(ButtonVariant::Secondary)
+                .disabled(!ready)
+                .on_click(move |_, _window, cx| {
+                    this.update(cx, |pane, cx| pane.add_join_from_form(cx));
+                })
+        };
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap(px(8.))
+            .child(pick("builder-join-from", from, true))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(chrome.text_muted)
+                    .child("="),
+            )
+            .child(pick("builder-join-to", to, false))
+            .child(add)
+    }
+
     /// The join list: one row per line drawn, with its type and its delete
-    /// button.
+    /// button — and, once two tables are on the canvas, the form that adds
+    /// one without drawing it.
     fn render_joins(&self, chrome: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if self.joins.is_empty() {
+        if self.joins.is_empty() && self.tables.len() < 2 {
             return None;
         }
         let this = cx.entity();
@@ -771,9 +871,19 @@ impl BuilderPane {
             })
             .collect();
 
+        // With no join yet, the gesture is said out loud beside the form.
+        let hint = self.joins.is_empty().then(|| {
+            div()
+                .text_size(px(11.))
+                .text_color(chrome.text_muted)
+                .child(ts!("builder.join_hint"))
+        });
+        let form = (self.tables.len() >= 2).then(|| self.render_join_form(chrome, cx));
         Some(
             section(ts!("builder.joins"), chrome)
                 .children(rows)
+                .children(hint)
+                .children(form)
                 .into_any_element(),
         )
     }
@@ -994,6 +1104,14 @@ impl Render for BuilderPane {
         let joins = self.render_joins(&chrome, cx);
         let conditions = self.render_conditions(&chrome, cx);
         let columns = self.render_columns(&chrome, cx);
+        // What a click on a column row does, while no click has: the canvas
+        // has no other way of saying that its rows are buttons.
+        let pick_hint = (!self.tables.is_empty() && self.selected.is_empty()).then(|| {
+            div()
+                .text_size(px(11.))
+                .text_color(chrome.text_muted)
+                .child(ts!("builder.pick_hint"))
+        });
         let preview = self.render_preview(&chrome, cx);
         let context_menu = self.render_context_menu(cx);
 
@@ -1021,6 +1139,7 @@ impl Render for BuilderPane {
                     .border_color(chrome.border)
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
+                    .children(pick_hint)
                     .children(joins)
                     .child(conditions)
                     .children(columns)
@@ -1032,6 +1151,10 @@ impl Render for BuilderPane {
             .children(context_menu)
     }
 }
+
+/// What the "Add join" form holds: its two columns, as `(table, column)`, and
+/// which of its two dropdowns is open — `Some(true)` the first.
+type JoinForm = (Option<(usize, usize)>, Option<(usize, usize)>, Option<bool>);
 
 /// The three states the sort dropdown offers, in the order it lists them.
 const SORTS: [Option<SortDir>; 3] = [None, Some(SortDir::Asc), Some(SortDir::Desc)];
@@ -1217,6 +1340,45 @@ mod tests {
                 );
             })
             .expect("the window is open");
+    }
+
+    /// The join form makes the same join a drag would, refuses a column
+    /// joined to its own table, and the hints and the form all lay out.
+    #[gpui::test]
+    fn the_join_form_joins_two_columns_without_a_drag(cx: &mut TestAppContext) {
+        let window = open(cx);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                pane.add_table(&target("PERSON"), columns(&["ID", "TEAM_ID"]), cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                pane.add_table(&target("TEAM"), columns(&["ID", "NAME"]), cx);
+                // Two columns of one table are not a join.
+                pane.join_form = (Some((0, 0)), Some((0, 1)), None);
+                pane.add_join_from_form(cx);
+                assert!(pane.joins.is_empty());
+                pane.join_form = (Some((0, 1)), Some((1, 0)), Some(true));
+                cx.notify();
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |pane, _window, cx| {
+                pane.add_join_from_form(cx);
+                assert_eq!(pane.joins.len(), 1);
+                assert_eq!(pane.join_form, (None, None, None), "the form is cleared");
+                assert_eq!(
+                    pane.sql(cx),
+                    "SELECT *\nFROM APP.PERSON\n  INNER JOIN APP.TEAM ON PERSON.TEAM_ID = TEAM.ID"
+                );
+                cx.notify();
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
     }
 
     /// The same table twice is two boxes under two aliases, which is what makes

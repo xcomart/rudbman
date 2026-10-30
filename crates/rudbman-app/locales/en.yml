@@ -1075,9 +1075,16 @@ builder:
   # connection and is never reused, so two open tabs never share a title.
   tab: "Builder %{index}"
   # Shown where the canvas would be, before any table has been added.
-  canvas_hint: Select a table in the explorer and add it to the builder.
+  canvas_hint: Drag a table or view from the explorer onto this canvas, or right-click it there and choose “Add to query builder”.
   # Heading of the list of joins drawn on the canvas.
   joins: Joins
+  # Under the joins while there are none: the gesture, and the form below.
+  join_hint: Drag a column onto a column of another table to join them, or pick the two columns here.
+  # The placeholder of the form's two column dropdowns, and its button.
+  join_pick: Column…
+  add_join: Add join
+  # Above the form while nothing is in the select list yet.
+  pick_hint: Click a column on the canvas to add it to the select list.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN

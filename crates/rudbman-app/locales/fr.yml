@@ -647,8 +647,12 @@ erd:
 # two of them describe.
 builder:
   tab: "Concepteur %{index}"
-  canvas_hint: Sélectionnez une table dans l’explorateur et ajoutez-la au concepteur.
+  canvas_hint: Faites glisser une table ou une vue de l’explorateur sur ce canevas, ou faites un clic droit dessus et choisissez « Ajouter au concepteur de requêtes ».
   joins: Jointures
+  join_hint: Faites glisser une colonne sur une colonne d’une autre table pour les joindre, ou choisissez les deux colonnes ici.
+  join_pick: Colonne…
+  add_join: Ajouter une jointure
+  pick_hint: Cliquez sur une colonne du canevas pour l’ajouter à la liste SELECT.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN

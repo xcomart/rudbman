@@ -647,8 +647,12 @@ erd:
 # two of them describe.
 builder:
   tab: "ビルダー %{index}"
-  canvas_hint: エクスプローラーでテーブルを選び、ビルダーに追加してください。
+  canvas_hint: エクスプローラーからテーブルやビューをこのキャンバスにドラッグするか、エクスプローラーで右クリックして「クエリビルダーに追加」を選んでください。
   joins: 結合
+  join_hint: 列を別のテーブルの列へドラッグすると結合されます。ここで 2 つの列を選ぶこともできます。
+  join_pick: 列…
+  add_join: 結合を追加
+  pick_hint: キャンバスの列をクリックすると SELECT リストに追加されます。
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN

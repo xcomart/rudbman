@@ -647,8 +647,12 @@ erd:
 # two of them describe.
 builder:
   tab: "构建器 %{index}"
-  canvas_hint: 在资源管理器中选择一张表并添加到构建器。
+  canvas_hint: 将表或视图从资源管理器拖到此画布上，或在资源管理器中右键单击并选择“添加到查询构建器”。
   joins: 联接
+  join_hint: 将一列拖到另一张表的列上即可联接它们，也可以在这里选择两列。
+  join_pick: 列…
+  add_join: 添加联接
+  pick_hint: 单击画布上的列即可将其加入 SELECT 列表。
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN

@@ -647,8 +647,12 @@ erd:
 # two of them describe.
 builder:
   tab: "Generador %{index}"
-  canvas_hint: Selecciona una tabla en el explorador y añádela al generador.
+  canvas_hint: Arrastra una tabla o vista del explorador a este lienzo, o haz clic derecho sobre ella y elige «Añadir al generador de consultas».
   joins: Combinaciones (JOIN)
+  join_hint: Arrastra una columna sobre una columna de otra tabla para combinarlas, o elige aquí las dos columnas.
+  join_pick: Columna…
+  add_join: Añadir combinación
+  pick_hint: Haz clic en una columna del lienzo para añadirla a la lista SELECT.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
