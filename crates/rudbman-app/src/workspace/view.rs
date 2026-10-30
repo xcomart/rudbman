@@ -953,7 +953,10 @@ impl Workspace {
             // command, worded the same way, and neither takes an ellipsis.
             .tooltips(
                 ts!("tab.tip_list"),
-                ts!("tab.tip_new", shortcut = format!("{SHORTCUT_MODIFIER}+N")),
+                ts!(
+                    "tab.tip_manage",
+                    shortcut = format!("{SHORTCUT_MODIFIER}+N")
+                ),
                 ts!("tab.close"),
             )
             .on_new(|window, cx| window.dispatch_action(Box::new(NewConnection), cx))

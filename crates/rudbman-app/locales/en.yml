@@ -103,7 +103,9 @@ tab:
   # Hover labels for the two buttons at the end of the strip. The close button
   # on each tab reuses `close` above: same command, same wording.
   tip_list: All connections
-  tip_new: "New connection (%{shortcut})"
+  # The "+": what it and Ctrl+N actually do, which is the connection manager
+  # over the first saved profile.
+  tip_manage: "Manage connections (%{shortcut})"
   # The same dropdown on a pane's strip, listing that pane's tabs.
   tip_pane_list: All tabs
 
@@ -393,6 +395,19 @@ connect:
   load_failed: "The saved connections could not be read, so nothing can be saved or deleted until that file is fixed or moved: %{error}"
   save_failed: "The connections could not be saved: %{error}"
   keychain_failed: "The password could not be saved to the keychain: %{error}"
+  # Off, the password and the tunnel secret are kept nowhere and asked for on
+  # every connect. The same words rulogman uses.
+  remember_password: Remember password in the system keychain
+  # The dialog was opened to connect a profile that keeps no password.
+  password_prompt: This connection does not remember its password. Enter it and press Connect.
+  # Connected with the typed password although the keychain refused it.
+  keychain_failed_connected: "The password could not be saved to the keychain (%{error}). The connection uses the one typed here."
+  # A driver with no JAR whose Maven artifact is known.
+  driver_has_no_jar_download: This driver has no JAR yet. Download it here, or add one under Drivers.
+  # Closing a form with unsaved changes asks first.
+  discard_question: This form has changes that are not saved.
+  keep_editing: Keep editing
+  discard: Discard
 
   # One-line suggestions attached to a failure whose SQLSTATE class says what
   # kind it is.
@@ -1162,6 +1177,10 @@ context:
   # does; the ellipsis on "edit" is the connection dialog it opens.
   connect: Connect
   edit: Edit…
+  # Both open the connection dialog over the row: with the copy made, or with
+  # the delete question up.
+  duplicate: Duplicate…
+  delete: Delete…
 
 # The update dialog, in all of its states: the announcement the start-up check
 # puts up when GitHub has a newer release than the running build, the manual

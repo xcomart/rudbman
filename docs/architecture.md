@@ -1561,12 +1561,21 @@ A connection profile:
   "keep_alive": { "enabled": true, "interval_s": 300, "query": "select 1 from dual" },
   "read_only": false,
   "auto_commit": true,
-  "confirm_writes": true
+  "confirm_writes": true,
+  "remember_password": true
 }
 ```
 
 Passwords are **never stored in a file.** They go into the `keyring`
-(rudbman-core's `secrets.rs`) under service `rudbman`, account `<profile-id>`.
+(rudbman-core's `secrets.rs`) under service `rudbman`, account `<profile-id>` —
+unless the profile's `remember_password` is off (it defaults on, and is on for
+every profile written before it existed). Off, saving writes nothing to the
+keychain and deletes what was there, and connecting asks: the dialog opens over
+the profile with the password field focused, its Connect hands the typed
+secrets straight to the attempt, and the tab holds them for nothing longer.
+A keychain write that fails while connecting no longer stops the connection:
+the profile is saved, the attempt uses the typed secrets, and the dialog stays
+up to say the password was not kept.
 
 `read_only` and `confirm_writes` guard against accidents on production
 databases. With `read_only`, the session is opened with

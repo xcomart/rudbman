@@ -49,7 +49,7 @@ menu:
 tab:
   close: Cerrar la conexión
   tip_list: Todas las conexiones
-  tip_new: "Nueva conexión (%{shortcut})"
+  tip_manage: "Gestionar conexiones (%{shortcut})"
   tip_pane_list: Todas las pestañas
 
 welcome:
@@ -266,6 +266,13 @@ connect:
   load_failed: "No se pudieron leer las conexiones guardadas; no se puede guardar ni eliminar nada hasta que se repare o se mueva ese archivo: %{error}"
   save_failed: "No se pudieron guardar las conexiones: %{error}"
   keychain_failed: "No se pudo guardar la contraseña en el llavero: %{error}"
+  remember_password: Recordar la contraseña en el llavero del sistema
+  password_prompt: Esta conexión no recuerda su contraseña. Escríbela y pulsa «Conectar».
+  keychain_failed_connected: "No se pudo guardar la contraseña en el llavero (%{error}). La conexión usa la que escribiste aquí."
+  driver_has_no_jar_download: Este controlador todavía no tiene JAR. Descárgalo aquí o añade uno en «Controladores».
+  discard_question: Este formulario tiene cambios sin guardar.
+  keep_editing: Seguir editando
+  discard: Descartar
 
   hint_auth: revisa el usuario y la contraseña
   hint_driver: revisa el JAR y la clase del controlador
@@ -702,6 +709,8 @@ context:
   clear_column: Quitar de la lista de selección
   connect: Conectar
   edit: Editar…
+  duplicate: Duplicar…
+  delete: Eliminar…
 
 update:
   title: Actualización disponible

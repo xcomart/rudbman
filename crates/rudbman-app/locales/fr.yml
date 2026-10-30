@@ -49,7 +49,7 @@ menu:
 tab:
   close: Fermer la connexion
   tip_list: Toutes les connexions
-  tip_new: "Nouvelle connexion (%{shortcut})"
+  tip_manage: "Gérer les connexions (%{shortcut})"
   tip_pane_list: Tous les onglets
 
 welcome:
@@ -266,6 +266,13 @@ connect:
   load_failed: "Les connexions enregistrées n’ont pas pu être lues ; rien ne peut être enregistré ni supprimé tant que ce fichier n’est pas réparé ou déplacé : %{error}"
   save_failed: "Les connexions n’ont pas pu être enregistrées : %{error}"
   keychain_failed: "Le mot de passe n’a pas pu être enregistré dans le trousseau : %{error}"
+  remember_password: Mémoriser le mot de passe dans le trousseau du système
+  password_prompt: Cette connexion ne mémorise pas son mot de passe. Saisissez-le et cliquez sur « Se connecter ».
+  keychain_failed_connected: "Le mot de passe n’a pas pu être enregistré dans le trousseau (%{error}). La connexion utilise celui saisi ici."
+  driver_has_no_jar_download: Ce pilote n’a pas encore de JAR. Téléchargez-le ici, ou ajoutez-en un sous « Pilotes ».
+  discard_question: Ce formulaire contient des modifications non enregistrées.
+  keep_editing: Continuer la modification
+  discard: Abandonner
 
   hint_auth: vérifiez le nom d’utilisateur et le mot de passe
   hint_driver: vérifiez le JAR et la classe du pilote
@@ -702,6 +709,8 @@ context:
   clear_column: Retirer de la liste de sélection
   connect: Se connecter
   edit: Modifier…
+  duplicate: Dupliquer…
+  delete: Supprimer…
 
 update:
   title: Mise à jour disponible

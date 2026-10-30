@@ -49,7 +49,7 @@ menu:
 tab:
   close: Verbindung schließen
   tip_list: Alle Verbindungen
-  tip_new: "Neue Verbindung (%{shortcut})"
+  tip_manage: "Verbindungen verwalten (%{shortcut})"
   tip_pane_list: Alle Tabs
 
 welcome:
@@ -266,6 +266,13 @@ connect:
   load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden; bis die Datei repariert oder verschoben ist, kann nichts gespeichert oder gelöscht werden: %{error}"
   save_failed: "Die Verbindungen konnten nicht gespeichert werden: %{error}"
   keychain_failed: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden: %{error}"
+  remember_password: Passwort im Schlüsselbund des Systems speichern
+  password_prompt: Diese Verbindung speichert ihr Passwort nicht. Geben Sie es ein und klicken Sie auf „Verbinden“.
+  keychain_failed_connected: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden (%{error}). Die Verbindung verwendet das hier eingegebene."
+  driver_has_no_jar_download: Dieser Treiber hat noch kein JAR. Laden Sie es hier herunter oder fügen Sie unter „Treiber“ eines hinzu.
+  discard_question: Dieses Formular hat nicht gespeicherte Änderungen.
+  keep_editing: Weiter bearbeiten
+  discard: Verwerfen
 
   hint_auth: Benutzername und Passwort prüfen
   hint_driver: Treiber-JAR und Treiberklasse prüfen
@@ -702,6 +709,8 @@ context:
   clear_column: Aus der Auswahlliste entfernen
   connect: Verbinden
   edit: Bearbeiten…
+  duplicate: Duplizieren…
+  delete: Löschen…
 
 update:
   title: Update verfügbar

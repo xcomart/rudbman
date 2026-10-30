@@ -64,6 +64,7 @@ use crate::connection::{
 use crate::driver_manager::{DriverManager, DriverManagerEvent};
 use crate::i18n::ts;
 use crate::icons;
+use crate::maven::Coordinate;
 
 /// Width of the dialog panel.
 ///
@@ -155,6 +156,8 @@ mod tab {
     pub const USERNAME: isize = 150;
     /// Password.
     pub const PASSWORD: isize = 155;
+    /// "Remember password".
+    pub const REMEMBER_PASSWORD: isize = 156;
     /// Driver property key/value rows.
     pub const PROPS: isize = 160;
     /// Read-only.
@@ -209,11 +212,53 @@ mod tab {
     pub const CONNECT: isize = 242;
 }
 
+gpui::actions!(
+    connection_dialog,
+    [
+        /// Add a new profile to the dialog's list and select it.
+        NewProfile,
+        /// Save the profile the form shows.
+        SaveProfile,
+    ]
+);
+
+/// The key context the dialog renders in.
+const KEY_CONTEXT: &str = "ConnectionDialog";
+
+/// Marks the dialog's chords as registered.
+struct Bindings;
+
+impl gpui::Global for Bindings {}
+
+/// Registers `Ctrl`/`Cmd`+`N` and `+S` inside the dialog, once.
+fn bind_keys(cx: &mut App) {
+    if cx.has_global::<Bindings>() {
+        return;
+    }
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        gpui::KeyBinding::new(&format!("{modifier}-n"), NewProfile, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new(&format!("{modifier}-s"), SaveProfile, Some(KEY_CONTEXT)),
+    ]);
+    cx.set_global(Bindings);
+}
+
 /// What the dialog tells the shell.
 pub enum ConnectionDialogEvent {
     /// The user asked to open this profile. The shell connects and opens a tab;
     /// the dialog has already saved it.
-    Connect(Box<ConnectionProfile>),
+    Connect {
+        /// The profile, as saved.
+        profile: Box<ConnectionProfile>,
+        /// The secrets as typed, when the keychain will not have them: the
+        /// profile does not remember its password, or writing it failed. Taken
+        /// once, by whoever opens the session; `None` reads the keychain.
+        typed: std::cell::RefCell<Option<Credentials>>,
+    },
     /// The dialog was dismissed.
     Dismissed,
 }
@@ -369,11 +414,41 @@ pub struct ConnectionDialog {
     tunnel_remote_host_input: Entity<TextInput>,
     /// The database's port there.
     tunnel_remote_port_input: Entity<TextInput>,
+    /// Whether the profile keeps its secrets in the keychain.
+    remember_password: bool,
+    /// The two secret fields as [`ConnectionDialog::fill_form`] left them,
+    /// which is what tells a password typed since from one that was there.
+    filled_secrets: (String, String),
+    /// Profiles added in this dialog, as they were the moment they were
+    /// added: one left exactly so is not an unsaved change worth asking about.
+    fresh: HashMap<Uuid, ConnectionProfile>,
+    /// Whether "Save / Discard / Keep editing" is up; see
+    /// [`ConnectionDialog::request_dismiss`].
+    asking_discard: bool,
+    /// Whether the next focus goes to the password field rather than the
+    /// name: the dialog was opened to ask for a password; see
+    /// [`ConnectionDialog::open_for_password`].
+    focus_password: bool,
+    /// A driver download started from the form, while one runs.
+    download: Option<FormDownload>,
+}
+
+/// A driver JAR being fetched from the form's own "Download".
+struct FormDownload {
+    /// The driver it is for.
+    driver: String,
+    /// What is being fetched, for the message.
+    file_name: SharedString,
+    /// How far it has got.
+    progress: crate::maven::Progress,
+    /// The flag "Cancel" raises.
+    cancel: crate::maven::Cancel,
 }
 
 impl ConnectionDialog {
     /// Builds the dialog. Nothing is read from disk until it is opened.
     pub fn new(cx: &mut Context<Self>) -> Self {
+        bind_keys(cx);
         let field = |cx: &mut Context<Self>, placeholder: &str, index: isize| {
             let placeholder = SharedString::from(placeholder.to_owned());
             cx.new(move |cx| TextInput::new(cx).placeholder(placeholder).tab_index(index))
@@ -430,6 +505,12 @@ impl ConnectionDialog {
             tunnel_secret_input: secret(cx, tab::TUNNEL_SECRET),
             tunnel_remote_host_input: field(cx, "db.internal", tab::TUNNEL_REMOTE_HOST),
             tunnel_remote_port_input: field(cx, "5432", tab::TUNNEL_REMOTE_PORT),
+            remember_password: true,
+            filled_secrets: (String::new(), String::new()),
+            fresh: HashMap::new(),
+            asking_discard: false,
+            focus_password: false,
+            download: None,
         }
     }
 
@@ -466,10 +547,40 @@ impl ConnectionDialog {
         self.status = None;
         self.pending_host_key = None;
         self.confirming = false;
+        self.asking_discard = false;
+        self.focus_password = false;
         self.manager = None;
         self.manager_events = None;
         self.pending_focus = true;
         cx.notify();
+    }
+
+    /// Shows the dialog over a copy of profile `id`, made and selected — what
+    /// the welcome list's "Duplicate…" opens. The copy is saved like any other
+    /// new profile, by "Save" or "Connect".
+    pub fn open_duplicating(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.open_showing(Some(id), cx);
+        if self.selected == Some(id) {
+            self.duplicate_profile(cx);
+        }
+    }
+
+    /// Shows the dialog over profile `id` with its delete question already
+    /// up — what the welcome list's "Delete…" opens, so that a delete from
+    /// there is asked exactly as it is asked here.
+    pub fn open_deleting(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.open_showing(Some(id), cx);
+        self.confirming = self.selected == Some(id);
+        cx.notify();
+    }
+
+    /// Shows the dialog over profile `id` to ask for its password, which the
+    /// profile does not keep: the field takes the keyboard, and "Connect"
+    /// opens the profile with what is typed.
+    pub fn open_for_password(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.open_showing(Some(id), cx);
+        self.focus_password = true;
+        self.report(Level::Busy, ts!("connect.password_prompt"), cx);
     }
 
     /// Whether the dialog is visible.
@@ -483,6 +594,12 @@ impl ConnectionDialog {
         self.status = None;
         self.pending_host_key = None;
         self.confirming = false;
+        self.asking_discard = false;
+        // The download writes to a temporary sibling and renames only once it
+        // is whole, so a canceled one leaves no JAR behind to be loaded.
+        if let Some(download) = self.download.take() {
+            download.cancel.cancel();
+        }
         self.manager = None;
         self.manager_events = None;
         self.driver_list_open = false;
@@ -501,6 +618,7 @@ impl ConnectionDialog {
     /// over the one that could not be read.
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.edited.clear();
+        self.fresh.clear();
         match ConnectionStore::load() {
             Ok(store) => {
                 self.store = store;
@@ -547,6 +665,7 @@ impl ConnectionDialog {
         self.read_only = profile.read_only;
         self.auto_commit = profile.auto_commit;
         self.confirm_writes = profile.confirm_writes;
+        self.remember_password = profile.remember_password;
         set_text(&self.url_input, profile.url.clone(), cx);
         set_text(&self.username_input, profile.username.clone(), cx);
 
@@ -593,7 +712,8 @@ impl ConnectionDialog {
         } else {
             String::new()
         };
-        set_text(&self.tunnel_secret_input, tunnel_secret, cx);
+        set_text(&self.tunnel_secret_input, tunnel_secret.clone(), cx);
+        self.filled_secrets = (text(&self.password_input, cx), tunnel_secret);
         set_text(&self.tunnel_remote_host_input, tunnel.remote_host, cx);
         set_text(
             &self.tunnel_remote_port_input,
@@ -737,6 +857,7 @@ impl ConnectionDialog {
         profile.read_only = self.read_only;
         profile.auto_commit = self.auto_commit;
         profile.confirm_writes = self.confirm_writes;
+        profile.remember_password = self.remember_password;
 
         profile.props = self
             .props
@@ -828,6 +949,14 @@ impl ConnectionDialog {
             // Empty is what `write_secret` deletes the slot for.
             ""
         };
+        // A profile that does not remember its password keeps nothing in the
+        // keychain, and loses whatever it kept there before the switch went
+        // off — a password left behind would be remembered after all.
+        let (password, tunnel_secret) = if profile.remember_password {
+            (password, tunnel_secret)
+        } else {
+            ("", "")
+        };
         rudbkit_core::save::save_connection(
             &profile.name,
             &profile.url,
@@ -859,11 +988,40 @@ impl ConnectionDialog {
         match result {
             Ok(profile) => {
                 if connect {
-                    cx.emit(ConnectionDialogEvent::Connect(Box::new(profile)));
+                    let typed = (!profile.remember_password).then(|| self.typed_secrets(cx));
+                    cx.emit(ConnectionDialogEvent::Connect {
+                        profile: Box::new(profile),
+                        typed: std::cell::RefCell::new(typed),
+                    });
                     self.close(cx);
                 } else {
+                    self.fresh.clear();
+                    self.filled_secrets = (
+                        text(&self.password_input, cx),
+                        text(&self.tunnel_secret_input, cx),
+                    );
                     self.report(Level::Ok, ts!("connect.saved"), cx);
                 }
+            }
+            // The profile is saved and only the keychain refused: a locked or
+            // missing keychain must not stand between the user and a password
+            // they have just typed. The connection goes ahead with it, and the
+            // dialog stays up over the new tab to say the password was not
+            // kept.
+            Err(SaveError::Secret(error)) if connect => {
+                let profile = self.collect(cx);
+                cx.emit(ConnectionDialogEvent::Connect {
+                    profile: Box::new(profile),
+                    typed: std::cell::RefCell::new(Some(self.typed_secrets(cx))),
+                });
+                self.report(
+                    Level::Error,
+                    ts!(
+                        "connect.keychain_failed_connected",
+                        error = format!("{error:#}")
+                    ),
+                    cx,
+                );
             }
             Err(error) => {
                 let message = match error {
@@ -878,6 +1036,88 @@ impl ConnectionDialog {
             }
         }
         cx.notify();
+    }
+
+    /// The two secret fields as typed, for a connection the keychain will not
+    /// answer for.
+    fn typed_secrets(&self, cx: &App) -> Credentials {
+        let profile = self.collect(cx);
+        Credentials::typed(
+            Some(text(&self.password_input, cx)),
+            profile
+                .tunnel
+                .as_ref()
+                .map(|_| text(&self.tunnel_secret_input, cx)),
+        )
+    }
+
+    /// Whether the form holds anything a close would throw away: a profile
+    /// edited and not saved, here or left behind on another one, a secret typed
+    /// since the form was filled, or a profile added or duplicated and not
+    /// saved — except one added and not touched since, which holds nothing of
+    /// the user's.
+    pub fn is_dirty(&self, cx: &App) -> bool {
+        if self.manager.is_some() {
+            return false;
+        }
+        let current = self.collect(cx);
+        let untouched = |profile: &ConnectionProfile| self.fresh.get(&profile.id) == Some(profile);
+        let current_dirty = if self.fresh.contains_key(&current.id) {
+            !untouched(&current)
+        } else {
+            self.edited.contains(&current.id) || self.store.get(current.id) != Some(&current)
+        };
+        let others = self
+            .edited
+            .iter()
+            .any(|id| *id != current.id && !self.store.get(*id).is_some_and(&untouched));
+        let secrets = (
+            text(&self.password_input, cx),
+            text(&self.tunnel_secret_input, cx),
+        ) != self.filled_secrets;
+        current_dirty || others || secrets
+    }
+
+    /// What every way out of the dialog but "Connect" goes through: `Escape`,
+    /// "Cancel" and a press beside it.
+    ///
+    /// A form holding nothing unsaved closes. One holding something asks
+    /// first — Save, Discard, Keep editing — in the footer, because opening
+    /// the dialog again re-reads the file and an edit closed over is an edit
+    /// lost. Asked once: the same gesture again while the question is up is
+    /// "Keep editing".
+    pub fn request_dismiss(&mut self, cx: &mut Context<Self>) {
+        if self.asking_discard {
+            self.asking_discard = false;
+            cx.notify();
+            return;
+        }
+        if self.is_dirty(cx) {
+            self.asking_discard = true;
+            self.confirming = false;
+            cx.notify();
+            return;
+        }
+        cx.emit(ConnectionDialogEvent::Dismissed);
+        self.close(cx);
+    }
+
+    /// "Save" from the discard question: saves, and closes when that worked.
+    fn save_and_close(&mut self, cx: &mut Context<Self>) {
+        self.asking_discard = false;
+        let result = self.persist(cx);
+        let ok = result.is_ok();
+        self.saved(result, false, cx);
+        if ok {
+            cx.emit(ConnectionDialogEvent::Dismissed);
+            self.close(cx);
+        }
+    }
+
+    /// "Discard" from the discard question.
+    fn discard_and_close(&mut self, cx: &mut Context<Self>) {
+        cx.emit(ConnectionDialogEvent::Dismissed);
+        self.close(cx);
     }
 
     /// Saves and reports it.
@@ -1006,22 +1246,21 @@ impl ConnectionDialog {
     }
 
     /// Adds a blank profile and selects it.
+    ///
+    /// With no driver chosen: the picker says "Choose a driver" until one is.
+    /// Starting on the first of the list made every new profile an H2 one,
+    /// with the no-JAR warning up before the user had chosen anything at all.
     fn add_profile(&mut self, cx: &mut Context<Self>) {
         let settings = app_settings::current(cx);
-        let driver_id = self
-            .drivers
-            .drivers()
-            .first()
-            .map(|driver| driver.id.clone())
-            .unwrap_or_default();
         let mut profile = ConnectionProfile::new(
             ts!("connect.new_name").to_string(),
-            driver_id,
+            String::new(),
             String::new(),
             String::new(),
         );
         profile.confirm_writes = settings.confirm_writes_default;
         let id = profile.id;
+        self.fresh.insert(id, profile.clone());
         self.store.upsert(profile);
         self.edited.insert(id);
         self.selected = Some(id);
@@ -1091,9 +1330,143 @@ impl ConnectionDialog {
         cx.notify();
     }
 
+    /// Fetches the form's driver's JAR from its Maven coordinate and adds it
+    /// to the driver's class path, without leaving the form.
+    ///
+    /// The driver manager's own download, made reachable from the line that
+    /// says the JAR is missing: the same artifact, the same checksum, the same
+    /// temporary file renamed into place, and the same words for every way it
+    /// can fail.
+    fn download_driver(&mut self, cx: &mut Context<Self>) {
+        if self.download.is_some() {
+            return;
+        }
+        let Some(driver) = self.current_driver().cloned() else {
+            return;
+        };
+        let Some(coordinate) = driver.maven.as_deref().and_then(Coordinate::parse) else {
+            return;
+        };
+        let directory = match rudbman_core::drivers_dir() {
+            Ok(directory) => directory,
+            Err(error) => {
+                self.report(
+                    Level::Error,
+                    ts!("driver.save_failed", error = format!("{error:#}")),
+                    cx,
+                );
+                return;
+            }
+        };
+        let cancel = crate::maven::Cancel::new();
+        self.download = Some(FormDownload {
+            driver: driver.id.clone(),
+            file_name: coordinate.file_name().into(),
+            progress: crate::maven::Progress {
+                received: 0,
+                total: None,
+            },
+            cancel: cancel.clone(),
+        });
+        self.status = None;
+        cx.notify();
+
+        let (reporter, mut reports) = futures::channel::mpsc::unbounded();
+        let fetch = cx.background_spawn(async move {
+            crate::maven::download(&coordinate, &directory, &cancel, |progress| {
+                let _ = reporter.unbounded_send(progress);
+            })
+        });
+        cx.spawn(async move |dialog, cx| {
+            let drain = async {
+                while let Some(progress) = futures::StreamExt::next(&mut reports).await {
+                    let updated = dialog.update(cx, |dialog, cx| {
+                        if let Some(download) = dialog.download.as_mut() {
+                            download.progress = progress;
+                            cx.notify();
+                        }
+                    });
+                    if updated.is_err() {
+                        return;
+                    }
+                }
+            };
+            let (outcome, ()) = futures::join!(fetch, drain);
+            dialog
+                .update(cx, |dialog, cx| dialog.downloaded(outcome, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Puts what a download produced on the driver it was for.
+    fn downloaded(
+        &mut self,
+        outcome: Result<std::path::PathBuf, crate::maven::DownloadError>,
+        cx: &mut Context<Self>,
+    ) {
+        // Closed in the meantime: the cancel has already been raised.
+        let Some(download) = self.download.take() else {
+            return;
+        };
+        let path = match outcome {
+            Ok(path) => path,
+            Err(crate::maven::DownloadError::Canceled) => {
+                self.report(Level::Ok, ts!("driver.download_canceled"), cx);
+                return;
+            }
+            Err(error) => {
+                self.report(
+                    Level::Error,
+                    crate::driver_manager::download_failure(error),
+                    cx,
+                );
+                return;
+            }
+        };
+        let mut store = match DriverStore::load() {
+            Ok(store) => store,
+            Err(error) => {
+                self.report(
+                    Level::Error,
+                    ts!("driver.save_failed", error = format!("{error:#}")),
+                    cx,
+                );
+                return;
+            }
+        };
+        let Some(mut driver) = store.get(&download.driver).cloned() else {
+            return;
+        };
+        if !driver.jars.contains(&path) {
+            driver.jars.push(path.clone());
+        }
+        store.upsert(driver);
+        if let Err(error) = store.save() {
+            self.report(
+                Level::Error,
+                ts!("driver.save_failed", error = format!("{error:#}")),
+                cx,
+            );
+            return;
+        }
+        self.drivers = store;
+        let file = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.report(Level::Ok, ts!("driver.downloaded", file = file), cx);
+    }
+
     /// Puts the driver manager in front of the form.
     fn open_driver_manager(&mut self, cx: &mut Context<Self>) {
         let manager = cx.new(DriverManager::new);
+        // On the driver the form names, which is the one the user came to
+        // give a JAR — not on whichever heads the list.
+        let driver = self.collect(cx).driver_id;
+        if !driver.is_empty() {
+            manager.update(cx, |manager, cx| manager.show_driver(&driver, cx));
+        }
         self.manager_events = Some(cx.subscribe(&manager, |dialog, _manager, event, cx| {
             match event {
                 DriverManagerEvent::Changed => {
@@ -1139,8 +1512,7 @@ impl ConnectionDialog {
             cx.notify();
             return;
         }
-        cx.emit(ConnectionDialogEvent::Dismissed);
-        self.close(cx);
+        self.request_dismiss(cx);
     }
 
     /// Moves focus into the name field when the dialog opens.
@@ -1149,7 +1521,12 @@ impl ConnectionDialog {
             return;
         }
         self.pending_focus = false;
-        let handle = self.name_input.read(cx).focus_handle(cx);
+        let field = if std::mem::take(&mut self.focus_password) {
+            &self.password_input
+        } else {
+            &self.name_input
+        };
+        let handle = field.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
     }
 
@@ -1373,15 +1750,96 @@ impl ConnectionDialog {
             .collect();
 
         // A driver with no JAR cannot open anything; saying so beside the picker
-        // is what turns "no suitable driver" into a sentence with a next step.
+        // is what turns "no suitable driver" into a sentence with a next step —
+        // and for a driver that names its Maven artifact, the next step is a
+        // button beside the sentence rather than a trip through the manager.
         let warning = self
             .current_driver()
             .filter(|driver| driver.jars.is_empty())
-            .map(|_| {
+            .map(|driver| {
+                let downloadable = driver
+                    .maven
+                    .as_deref()
+                    .and_then(Coordinate::parse)
+                    .is_some();
+                let running = self
+                    .download
+                    .as_ref()
+                    .filter(|download| download.driver == driver.id);
+                let action = match running {
+                    Some(download) => {
+                        let label = match download.progress.fraction() {
+                            Some(fraction) => ts!(
+                                "driver.downloading_percent",
+                                file = download.file_name.to_string(),
+                                percent = (fraction * 100.0).round() as u32
+                            ),
+                            None => {
+                                ts!("driver.downloading", file = download.file_name.to_string())
+                            }
+                        };
+                        let this = this.clone();
+                        Some(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(chrome.text_muted)
+                                        .child(label),
+                                )
+                                .child(
+                                    Button::new("connect-download-cancel", ts!("common.cancel"))
+                                        .variant(ButtonVariant::Secondary)
+                                        .compact()
+                                        .on_click(move |_, _window, cx| {
+                                            this.update(cx, |dialog, cx| {
+                                                if let Some(download) = &dialog.download {
+                                                    download.cancel.cancel();
+                                                }
+                                                cx.notify();
+                                            });
+                                        }),
+                                )
+                                .into_any_element(),
+                        )
+                    }
+                    None if downloadable => {
+                        let this = this.clone();
+                        Some(
+                            Button::new("connect-download-driver", ts!("driver.download"))
+                                .variant(ButtonVariant::Secondary)
+                                .compact()
+                                .on_click(move |_, _window, cx| {
+                                    this.update(cx, |dialog, cx| dialog.download_driver(cx));
+                                })
+                                .into_any_element(),
+                        )
+                    }
+                    None => None,
+                };
                 div()
-                    .text_size(px(11.))
-                    .text_color(chrome.danger)
-                    .child(ts!("connect.driver_has_no_jar"))
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(11.))
+                            .text_color(chrome.danger)
+                            .child(if downloadable {
+                                ts!("connect.driver_has_no_jar_download")
+                            } else {
+                                ts!("connect.driver_has_no_jar")
+                            }),
+                    )
+                    .children(action)
             });
 
         let select = Select::new("connect-driver")
@@ -1840,6 +2298,21 @@ impl ConnectionDialog {
                         ts!("connect.password"),
                         self.password_input.clone(),
                     ))
+                    .child(form_row("", {
+                        let this = cx.entity();
+                        Checkbox::new(
+                            "connect-remember-password",
+                            ts!("connect.remember_password"),
+                        )
+                        .checked(self.remember_password)
+                        .tab_index(tab::REMEMBER_PASSWORD)
+                        .on_toggle(move |checked, _window, cx| {
+                            this.update(cx, |dialog, cx| {
+                                dialog.remember_password = checked;
+                                cx.notify();
+                            });
+                        })
+                    }))
                     .child(form_row(ts!("connect.props"), props))
                     .child(section(ts!("connect.section.behavior"), chrome, behavior))
                     // No `section` title over this one: the collapsible's own
@@ -1988,6 +2461,51 @@ impl ConnectionDialog {
                 )
         });
 
+        // Asked where the buttons are, the way the delete question is: the
+        // answers stand in the row the press that asked came from.
+        let discard = self.asking_discard.then(|| {
+            let keep = this.clone();
+            let drop = this.clone();
+            let save = this.clone();
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(12.))
+                        .child(ts!("connect.discard_question")),
+                )
+                .child(
+                    Button::new("connect-keep-editing", ts!("connect.keep_editing"))
+                        .variant(ButtonVariant::Secondary)
+                        .on_click(move |_, _window, cx| {
+                            keep.update(cx, |dialog, cx| {
+                                dialog.asking_discard = false;
+                                cx.notify();
+                            });
+                        }),
+                )
+                .child(
+                    Button::new("connect-discard", ts!("connect.discard"))
+                        .variant(ButtonVariant::Danger)
+                        .on_click(move |_, _window, cx| {
+                            drop.update(cx, |dialog, cx| dialog.discard_and_close(cx));
+                        }),
+                )
+                .child(
+                    Button::new("connect-save-close", ts!("common.save"))
+                        .variant(ButtonVariant::Primary)
+                        .on_click(move |_, _window, cx| {
+                            save.update(cx, |dialog, cx| dialog.save_and_close(cx));
+                        }),
+                )
+        });
+
         div()
             .flex()
             .flex_col()
@@ -1997,6 +2515,7 @@ impl ConnectionDialog {
             .children(status)
             .children(host_key)
             .children(confirm)
+            .children(discard)
             .child(
                 div()
                     .flex()
@@ -2041,10 +2560,7 @@ impl ConnectionDialog {
                         ts!("common.cancel"),
                         ButtonVariant::Secondary,
                         tab::CANCEL,
-                        |dialog, cx| {
-                            cx.emit(ConnectionDialogEvent::Dismissed);
-                            dialog.close(cx);
-                        },
+                        |dialog, cx| dialog.request_dismiss(cx),
                     ))
                     .child(button(
                         "connect-save",
@@ -2145,6 +2661,21 @@ impl Render for ConnectionDialog {
 
         div()
             .id("connection-dialog")
+            .key_context(KEY_CONTEXT)
+            // The two chords a form of profiles is expected to answer, bound
+            // here so they win over the workspace's own: `Ctrl+N` would
+            // otherwise reopen this dialog over its first profile, and
+            // `Ctrl+S` save the query tab behind it.
+            .on_action(cx.listener(|dialog, _: &NewProfile, _window, cx| {
+                if dialog.manager.is_none() {
+                    dialog.add_profile(cx);
+                }
+            }))
+            .on_action(cx.listener(|dialog, _: &SaveProfile, _window, cx| {
+                if dialog.manager.is_none() {
+                    dialog.save(cx);
+                }
+            }))
             .absolute()
             .inset_0()
             .size_full()
@@ -2667,7 +3198,7 @@ mod tests {
         let subscription = cx.update(|cx| {
             let connected = connected.clone();
             cx.subscribe(&dialog, move |_, event, _| {
-                if matches!(event, ConnectionDialogEvent::Connect(_)) {
+                if matches!(event, ConnectionDialogEvent::Connect { .. }) {
                     connected.set(true);
                 }
             })
@@ -3120,6 +3651,13 @@ mod tests {
             ts!("connect.pick_driver"),
             ts!("connect.manage_drivers"),
             ts!("connect.driver_has_no_jar"),
+            ts!("connect.driver_has_no_jar_download"),
+            ts!("connect.remember_password"),
+            ts!("connect.password_prompt"),
+            ts!("connect.keychain_failed_connected", error = "x"),
+            ts!("connect.discard_question"),
+            ts!("connect.keep_editing"),
+            ts!("connect.discard"),
             ts!("connect.host"),
             ts!("connect.port"),
             ts!("connect.database"),
@@ -3272,6 +3810,106 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         (dialog, cx)
+    }
+
+    /// A profile that does not remember its password writes nothing to the
+    /// keychain — an empty write is the delete — whatever the fields hold.
+    #[gpui::test]
+    fn a_profile_that_remembers_nothing_keeps_nothing(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("connections.json");
+        let mut profile = ConnectionProfile::new("p", "h2", "jdbc:h2:mem:a", "sa");
+        profile.remember_password = false;
+        profile.tunnel = Some(TunnelConfig {
+            host: "bastion".into(),
+            auth: TunnelAuth::Password,
+            ..TunnelConfig::default()
+        });
+        let dialog = cx.new(ConnectionDialog::new);
+        let writes = Writes::default();
+        let result = dialog.update(cx, |dialog, _| {
+            dialog.persist_with(
+                profile,
+                "pw",
+                "typed",
+                || ConnectionStore::load_from(&path),
+                |store| store.save_to(&path),
+                recorder(&writes, None),
+            )
+        });
+        assert!(result.is_ok());
+        assert_eq!(
+            writes.take(),
+            vec![
+                (SecretSlot::Connection, String::new()),
+                (SecretSlot::Tunnel, String::new())
+            ]
+        );
+        assert!(!ConnectionStore::load_from(&path).unwrap().connections()[0].remember_password);
+    }
+
+    /// A form with nothing unsaved closes at once; one with an edit asks
+    /// first, a second `Escape` keeps editing, and only "Discard" closes it.
+    /// A profile added and left as it was is nothing to ask about.
+    #[gpui::test]
+    fn closing_over_unsaved_edits_asks_first(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        cx.update(|_, cx| {
+            dialog.update(cx, |dialog, cx| {
+                // What the form was filled with is what the store holds.
+                let filled = dialog.collect(cx);
+                dialog.store.upsert(filled);
+                dialog.filled_secrets = (String::new(), String::new());
+                assert!(!dialog.is_dirty(cx), "nothing has been typed");
+
+                dialog.add_profile(cx);
+                assert!(
+                    !dialog.is_dirty(cx),
+                    "an untouched new profile is not an edit"
+                );
+
+                set_text(&dialog.name_input, "renamed", cx);
+                assert!(dialog.is_dirty(cx));
+                dialog.escape(cx);
+                assert!(dialog.asking_discard && dialog.is_open());
+                dialog.escape(cx);
+                assert!(
+                    !dialog.asking_discard && dialog.is_open(),
+                    "Escape kept editing"
+                );
+                dialog.request_dismiss(cx);
+                assert!(dialog.asking_discard);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            dialog.update(cx, |dialog, cx| {
+                dialog.discard_and_close(cx);
+                assert!(!dialog.is_open());
+            });
+        });
+    }
+
+    /// `Ctrl`/`Cmd`+`N` inside the dialog makes a new profile in it rather
+    /// than reaching the shell.
+    #[gpui::test]
+    fn the_new_profile_chord_adds_a_profile_inside_the_dialog(cx: &mut gpui::TestAppContext) {
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        let before = cx.update(|_, cx| dialog.read(cx).store.connections().len());
+        cx.update(|window, cx| {
+            let handle = dialog.read(cx).name_input.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-n"
+        } else {
+            "ctrl-n"
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(dialog.read(cx).store.connections().len(), before + 1);
+        });
     }
 
     #[gpui::test]
@@ -3454,6 +4092,12 @@ mod tests {
                 assert!(dialog.auto_commit);
                 assert!(!dialog.keep_alive_enabled);
                 assert!(!dialog.tunnel_enabled);
+                // A new profile names no driver until one is chosen; choosing
+                // the one the previous profile used must not bring its fields
+                // back.
+                assert!(dialog.current_driver().is_none());
+                let first = dialog.drivers.drivers()[0].id.clone();
+                dialog.set_driver(first, cx);
             });
         });
         cx.update(|window, _| window.refresh());

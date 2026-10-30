@@ -210,6 +210,27 @@ fn probe_message(failure: &ProbeFailure) -> SharedString {
     }
 }
 
+/// What a download that did not land says: not found, the network, a
+/// checksum that does not match, or a file that could not be written.
+///
+/// Shared with the connection dialog, whose own "Download" fetches the same
+/// artifacts the same way.
+pub(crate) fn download_failure(error: DownloadError) -> SharedString {
+    match error {
+        DownloadError::NotFound(url) => ts!("driver.not_found", url = url),
+        DownloadError::Network(message) => ts!("driver.network_failed", error = message),
+        DownloadError::Checksum { expected, actual } => {
+            ts!(
+                "driver.checksum_failed",
+                expected = expected,
+                actual = actual
+            )
+        }
+        DownloadError::Io(message) => ts!("driver.save_failed", error = message),
+        DownloadError::Canceled => ts!("driver.download_canceled"),
+    }
+}
+
 /// A download in flight.
 struct Download {
     /// What is being fetched, for the message.
@@ -413,6 +434,17 @@ impl DriverManager {
         }
         self.store.upsert(driver);
         cx.notify();
+    }
+
+    /// Selects driver `id`, when the store has one by that id.
+    ///
+    /// What the connection dialog opens the manager with: the driver its form
+    /// names, which is the one the user came here to give a JAR, rather than
+    /// whichever happens to head the list.
+    pub fn show_driver(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.store.get(id).is_some() {
+            self.select(id.to_string(), cx);
+        }
     }
 
     /// Selects `id`, keeping whatever was typed into the driver being left.
@@ -656,22 +688,7 @@ impl DriverManager {
                 self.report(ts!("driver.download_canceled"), false, cx);
             }
             Err(error) => {
-                let message = match error {
-                    DownloadError::NotFound(url) => ts!("driver.not_found", url = url),
-                    DownloadError::Network(message) => {
-                        ts!("driver.network_failed", error = message)
-                    }
-                    DownloadError::Checksum { expected, actual } => {
-                        ts!(
-                            "driver.checksum_failed",
-                            expected = expected,
-                            actual = actual
-                        )
-                    }
-                    DownloadError::Io(message) => ts!("driver.save_failed", error = message),
-                    DownloadError::Canceled => unreachable!("handled above"),
-                };
-                self.report(message, true, cx);
+                self.report(download_failure(error), true, cx);
             }
         }
     }

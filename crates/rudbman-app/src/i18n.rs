@@ -208,7 +208,9 @@ mod tests {
         // asks about, drawn next to `common.cancel`. A translation that words it
         // as "cancel" too — the Korean "취소" once did for discarding changes —
         // leaves two identical buttons that do opposite things.
-        const GO_AHEAD: [&str; 9] = [
+        const GO_AHEAD: [&str; 11] = [
+            "connect.discard",
+            "closing.dont_save",
             "data.discard",
             "struct.discard",
             "data.apply",

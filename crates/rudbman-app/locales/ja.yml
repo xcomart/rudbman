@@ -49,7 +49,7 @@ menu:
 tab:
   close: 接続を閉じる
   tip_list: すべての接続
-  tip_new: "新規接続 (%{shortcut})"
+  tip_manage: "接続の管理 (%{shortcut})"
   tip_pane_list: すべてのタブ
 
 welcome:
@@ -266,6 +266,13 @@ connect:
   load_failed: "保存された接続を読み込めなかったため、そのファイルを修正するか移動するまで保存も削除もできません: %{error}"
   save_failed: "接続を保存できませんでした: %{error}"
   keychain_failed: "パスワードをキーチェーンに保存できませんでした: %{error}"
+  remember_password: システムのキーチェーンにパスワードを保存
+  password_prompt: この接続はパスワードを保存しません。パスワードを入力して「接続」を押してください。
+  keychain_failed_connected: "パスワードをキーチェーンに保存できませんでした（%{error}）。接続にはここで入力したパスワードを使います。"
+  driver_has_no_jar_download: このドライバーにはまだ JAR がありません。ここでダウンロードするか、「ドライバー」で追加してください。
+  discard_question: このフォームには保存していない変更があります。
+  keep_editing: 編集を続ける
+  discard: 変更を破棄
 
   hint_auth: ユーザー名とパスワードを確認してください
   hint_driver: ドライバー JAR とドライバークラスを確認してください
@@ -702,6 +709,8 @@ context:
   clear_column: SELECT リストから外す
   connect: 接続
   edit: 編集…
+  duplicate: 複製…
+  delete: 削除…
 
 update:
   title: 更新があります

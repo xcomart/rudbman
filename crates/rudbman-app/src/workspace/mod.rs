@@ -724,6 +724,9 @@ struct Workspace {
     confirm: Option<PendingConfirm>,
     /// A close waiting on the user's answer; see [`closing`].
     close_question: Option<closing::CloseQuestion>,
+    /// The connection tab that asked the dialog for a password to reconnect
+    /// with, and the profile it asked about; see [`Workspace::reconnect_with`].
+    pending_reconnect: Option<(ConnectionId, Uuid)>,
     /// Where a dragged tab would land, while a drag is over a strip.
     ///
     /// Strips are tagged with a pane id for a pane's strip, and
@@ -855,6 +858,7 @@ impl Workspace {
             context_menu: None,
             confirm: None,
             close_question: None,
+            pending_reconnect: None,
             tab_drop: TabDropState::new(),
             titlebar,
             _about_events: about_events,

@@ -538,6 +538,9 @@ fn the_welcome_menu_opens_the_dialog_over_the_row(cx: &mut gpui::TestAppContext)
             ts!("context.connect").to_string(),
             String::new(),
             ts!("context.edit").to_string(),
+            ts!("context.duplicate").to_string(),
+            String::new(),
+            ts!("context.delete").to_string(),
         ]
     );
 

@@ -349,12 +349,29 @@ impl Workspace {
 
     /// The menu of one row of the welcome screen's saved list.
     ///
-    /// The two things there are to do with a saved connection: open it, which
-    /// is what clicking the row already does, and change it — which otherwise
-    /// means opening the dialog from the button above and finding the profile
-    /// again in a second copy of the same list.
+    /// What there is to do with a saved connection: open it, which is what
+    /// clicking the row already does, change it, copy it and delete it — the
+    /// same four rulogman's welcome list offers, so the sibling applications'
+    /// lists answer a right-click alike. The last three open the connection
+    /// dialog over the row — with the copy made, or the delete question up —
+    /// rather than doing anything from the menu itself: both end in a form or
+    /// a question the dialog already has, and a delete from here is asked
+    /// exactly as it is asked there.
     pub(super) fn profile_rows(&self, id: Uuid, cx: &mut Context<Self>) -> Vec<MenuRow> {
         let this = cx.entity();
+        let dialog = |open: fn(&mut ConnectionDialog, Uuid, &mut Context<ConnectionDialog>)| {
+            let this = this.clone();
+            move |window: &mut Window, cx: &mut App| {
+                this.update(cx, |workspace, cx| {
+                    if workspace.close_overlays(window, cx) {
+                        workspace
+                            .connect
+                            .update(cx, |dialog, cx| open(dialog, id, cx));
+                        cx.notify();
+                    }
+                });
+            }
+        };
         vec![
             MenuRow::new(ts!("context.connect")).on_activate({
                 let this = this.clone();
@@ -363,9 +380,12 @@ impl Workspace {
                 }
             }),
             MenuRow::separator(),
-            MenuRow::new(ts!("context.edit")).on_activate(move |window, cx| {
-                this.update(cx, |workspace, cx| workspace.edit_profile(id, window, cx));
-            }),
+            MenuRow::new(ts!("context.edit")).on_activate(dialog(ConnectionDialog::open_at)),
+            MenuRow::new(ts!("context.duplicate"))
+                .on_activate(dialog(ConnectionDialog::open_duplicating)),
+            MenuRow::separator(),
+            MenuRow::new(ts!("context.delete"))
+                .on_activate(dialog(ConnectionDialog::open_deleting)),
         ]
     }
 }

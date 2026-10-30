@@ -49,7 +49,7 @@ menu:
 tab:
   close: 연결 닫기
   tip_list: 모든 연결
-  tip_new: "새 연결 (%{shortcut})"
+  tip_manage: "연결 관리 (%{shortcut})"
   tip_pane_list: 모든 탭
 
 welcome:
@@ -266,6 +266,13 @@ connect:
   load_failed: "저장된 연결을 읽지 못해, 그 파일을 고치거나 옮기기 전까지는 저장하거나 삭제할 수 없습니다: %{error}"
   save_failed: "연결을 저장하지 못했습니다: %{error}"
   keychain_failed: "비밀번호를 키체인에 저장하지 못했습니다: %{error}"
+  remember_password: 시스템 키체인에 비밀번호 저장
+  password_prompt: 이 연결은 비밀번호를 저장하지 않습니다. 비밀번호를 입력하고 연결을 누르세요.
+  keychain_failed_connected: "비밀번호를 키체인에 저장하지 못했습니다(%{error}). 연결에는 여기에 입력한 비밀번호를 사용합니다."
+  driver_has_no_jar_download: 이 드라이버에는 아직 JAR가 없습니다. 여기서 내려받거나 드라이버에서 추가하세요.
+  discard_question: 이 양식에 저장하지 않은 변경 사항이 있습니다.
+  keep_editing: 계속 편집
+  discard: 변경 사항 버리기
 
   hint_auth: 사용자 이름과 비밀번호를 확인하세요
   hint_driver: 드라이버 JAR과 드라이버 클래스를 확인하세요
@@ -702,6 +709,8 @@ context:
   clear_column: SELECT 목록에서 제거
   connect: 연결
   edit: 편집…
+  duplicate: 복제…
+  delete: 삭제…
 
 update:
   title: 업데이트 있음

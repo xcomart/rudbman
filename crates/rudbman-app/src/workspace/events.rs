@@ -34,12 +34,25 @@ impl Workspace {
             // list may have been saved, renamed or deleted since it was
             // last read, and the list is what the user comes back to when
             // this tab is closed again.
-            ConnectionDialogEvent::Connect(profile) => {
+            //
+            // A tab that asked for a password to reconnect gets the session in
+            // place; anything else opens a tab of its own.
+            ConnectionDialogEvent::Connect { profile, typed } => {
                 self.profiles = load_profiles();
-                self.open_connection((**profile).clone(), window, cx);
+                let typed = typed.borrow_mut().take();
+                let waiting = self.pending_reconnect.take().and_then(|(tab, id)| {
+                    (id == profile.id)
+                        .then(|| self.connections.iter().position(|open| open.id == tab))
+                        .flatten()
+                });
+                match waiting {
+                    Some(index) => self.reconnect_with(index, typed, window, cx),
+                    None => self.open_connection_with((**profile).clone(), typed, window, cx),
+                }
             }
             ConnectionDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
+                self.pending_reconnect = None;
                 self.profiles = load_profiles();
                 self.focus_shell(window, cx);
             }

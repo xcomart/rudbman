@@ -54,7 +54,17 @@ JVM bridge.
 - **SSH tunnels** with password or private-key auth, loopback binds only,
   and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
   OS keychain, never on disk, and credentials are masked out of logs and
-  JDBC URLs.
+  JDBC URLs; turn off **Remember password in the system keychain** on a
+  profile to keep nothing and be asked on every connect.
+- **The connection dialog keeps what you type.** Closing it with unsaved
+  edits — Esc, Cancel or a click beside it — asks Save / Discard / Keep
+  editing, and inside it <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>N</kbd> makes a
+  new profile and <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>S</kbd> saves. A new
+  profile starts with no driver chosen; a driver without its JAR offers
+  **Download** right under the picker (from its Maven coordinate, with
+  progress and cancel), and **Drivers…** opens on the driver the form names.
+  The welcome list's right-click menu offers Connect, Edit…, Duplicate… and
+  Delete….
 - **A schema explorer** — catalogs, schemas, tables, views (materialized ones
   too), procedures, functions, sequences and triggers — and a detail panel with
   columns, keys, references in both directions, and DDL in a read-only,

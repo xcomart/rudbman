@@ -42,9 +42,21 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_connection_with(profile, None, window, cx);
+    }
+
+    /// [`Workspace::open_connection`], with the secrets as the connection
+    /// dialog's form held them when the keychain will not have them.
+    pub(super) fn open_connection_with(
+        &mut self,
+        profile: ConnectionProfile,
+        typed: Option<connection::Credentials>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let held = self.area_holds_focus(window, cx);
         let id = next_connection_id();
-        let state = self.attempt(id, &profile, None, window, cx);
+        let state = self.attempt(id, &profile, None, typed, window, cx);
         self.connections.push(Connection {
             id,
             profile,
@@ -76,6 +88,7 @@ impl Workspace {
         id: ConnectionId,
         profile: &ConnectionProfile,
         restore: Option<session::SavedWorkspace>,
+        typed: Option<connection::Credentials>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ConnectionState {
@@ -95,8 +108,9 @@ impl Workspace {
         let attempt = profile.clone();
         // Read here, on the UI thread, and moved straight into the task: the
         // secret exists as a value for the length of one connection attempt and
-        // is written to nothing.
-        let credentials = connection::Credentials::read(profile);
+        // is written to nothing. Typed into the dialog instead when the profile
+        // keeps none, or the keychain would not take it.
+        let credentials = typed.unwrap_or_else(|| connection::Credentials::read(profile));
         let opening = cx.background_spawn(async move {
             connection::connect(&attempt, &driver, &credentials, &settings)
         });
@@ -127,6 +141,35 @@ impl Workspace {
     /// session died with tabs open keeps showing them while the attempt runs,
     /// and gets them back — drafts, layout, names — once the new session is in.
     pub(super) fn reconnect(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.reconnect_with(index, None, window, cx);
+    }
+
+    /// [`Workspace::reconnect`], with secrets typed into the dialog.
+    ///
+    /// A profile that does not remember its password has none to read, so a
+    /// reconnect of one asks for it first — the dialog opens over the profile
+    /// with the password field taking the keyboard — and this runs when the
+    /// dialog's "Connect" answers, in the tab that asked.
+    pub(super) fn reconnect_with(
+        &mut self,
+        index: usize,
+        typed: Option<connection::Credentials>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.connections.get(index) else {
+            return;
+        };
+        if typed.is_none() && !open.profile.remember_password {
+            let (id, profile) = (open.id, open.profile.id);
+            if self.close_overlays(window, cx) {
+                self.pending_reconnect = Some((id, profile));
+                self.connect
+                    .update(cx, |dialog, cx| dialog.open_for_password(profile, cx));
+                cx.notify();
+            }
+            return;
+        }
         let Some(open) = self.connections.get(index) else {
             return;
         };
@@ -152,7 +195,7 @@ impl Workspace {
             .iter()
             .all(|(_, pane)| pane.is_empty()))
         .then(|| open.work.snapshot(cx));
-        let state = self.attempt(id, &profile, restore, window, cx);
+        let state = self.attempt(id, &profile, restore, typed, window, cx);
         let Some(open) = self.connections.get_mut(index) else {
             return;
         };
@@ -232,6 +275,18 @@ impl Workspace {
             // The list is a snapshot; the file may have lost the profile since.
             return;
         };
+        // The one exception to asking nothing: a profile that keeps no
+        // password has to be given one, so the dialog opens over it with the
+        // password field taking the keyboard, and its "Connect" goes on from
+        // there.
+        if !profile.remember_password {
+            if self.close_overlays(window, cx) {
+                self.connect
+                    .update(cx, |dialog, cx| dialog.open_for_password(id, cx));
+                cx.notify();
+            }
+            return;
+        }
         self.open_connection(profile, window, cx);
         // The tab takes the welcome screen off screen, and with it the very row
         // that was clicked — which is holding the keyboard, because the rows are

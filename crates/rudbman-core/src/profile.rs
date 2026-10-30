@@ -287,6 +287,16 @@ pub struct ConnectionProfile {
     /// SSH tunnel to open before connecting; `None` connects directly.
     #[serde(deserialize_with = "deserialize_gated_block")]
     pub tunnel: Option<TunnelConfig>,
+    /// Whether the password — and the tunnel's password or key passphrase —
+    /// is kept in the OS keychain.
+    ///
+    /// On by default, and for every profile written before the switch
+    /// existed, because that is what saving a profile always did. Off, nothing
+    /// is written to the keychain and whatever was stored is removed: the
+    /// password is asked for each time the profile is connected, for the
+    /// places where keeping one is not allowed or there is no keychain to keep
+    /// it in.
+    pub remember_password: bool,
 }
 
 impl Default for ConnectionProfile {
@@ -312,6 +322,7 @@ impl Default for ConnectionProfile {
             auto_commit: true,
             confirm_writes: true,
             tunnel: None,
+            remember_password: true,
         }
     }
 }
@@ -370,6 +381,7 @@ impl fmt::Debug for ConnectionProfile {
             .field("auto_commit", &self.auto_commit)
             .field("confirm_writes", &self.confirm_writes)
             .field("tunnel", &self.tunnel)
+            .field("remember_password", &self.remember_password)
             .finish()
     }
 }
@@ -944,6 +956,25 @@ mod tests {
         assert_eq!(a.keep_alive, None);
         assert_eq!(a.tunnel, None);
         assert!(a.props.is_empty());
+        assert!(
+            a.remember_password,
+            "saving a password is what a profile always did"
+        );
+    }
+
+    /// A profile written before the switch existed keeps its password, and
+    /// one that turned it off says so on the way back in.
+    #[test]
+    fn remembering_the_password_defaults_on_and_round_trips_off() {
+        let json = r#"{ "connections": [{ "name": "old" }] }"#;
+        let store: ConnectionStore = serde_json::from_str(json).expect("parse");
+        assert!(store.connections()[0].remember_password);
+
+        let mut profile = sample("careful");
+        profile.remember_password = false;
+        let json = serde_json::to_string(&profile).expect("serialize");
+        let back: ConnectionProfile = serde_json::from_str(&json).expect("parse");
+        assert!(!back.remember_password);
     }
 
     #[test]

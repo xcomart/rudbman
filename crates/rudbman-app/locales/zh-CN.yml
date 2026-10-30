@@ -49,7 +49,7 @@ menu:
 tab:
   close: 关闭连接
   tip_list: 所有连接
-  tip_new: "新建连接（%{shortcut}）"
+  tip_manage: "管理连接 (%{shortcut})"
   tip_pane_list: 所有标签页
 
 welcome:
@@ -266,6 +266,13 @@ connect:
   load_failed: "无法读取已保存的连接，在修复或移走该文件之前无法保存或删除：%{error}"
   save_failed: "无法保存连接：%{error}"
   keychain_failed: "无法把密码保存到钥匙串：%{error}"
+  remember_password: 将密码保存到系统钥匙串
+  password_prompt: 此连接不保存密码。请输入密码后点击“连接”。
+  keychain_failed_connected: "无法将密码保存到钥匙串（%{error}）。连接使用此处输入的密码。"
+  driver_has_no_jar_download: 此驱动还没有 JAR。可以在这里下载，或在“驱动”中添加。
+  discard_question: 此表单有尚未保存的更改。
+  keep_editing: 继续编辑
+  discard: 放弃
 
   hint_auth: 请检查用户名和密码
   hint_driver: 请检查驱动 JAR 和驱动类
@@ -702,6 +709,8 @@ context:
   clear_column: 从 SELECT 列表移除
   connect: 连接
   edit: 编辑…
+  duplicate: 创建副本…
+  delete: 删除…
 
 update:
   title: 有可用更新
