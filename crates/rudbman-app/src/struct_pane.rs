@@ -177,6 +177,26 @@ struct ApplyProblem {
     stopped: SharedString,
 }
 
+/// Tab order of the pane's own fields, after the column rows (which sit at
+/// the default `0`, in the order they are drawn), spaced so a field can be
+/// added between two without renumbering.
+mod tab {
+    /// The selected column's name.
+    pub const NAME: isize = 20;
+    /// Its type.
+    pub const TYPE: isize = 21;
+    /// Its default.
+    pub const DEFAULT: isize = 22;
+    /// "NOT NULL".
+    pub const NOT_NULL: isize = 23;
+    /// "Has a default".
+    pub const HAS_DEFAULT: isize = 24;
+    /// The table's new name.
+    pub const RENAME: isize = 30;
+    /// The first of the constraint form's three fields.
+    pub const CONSTRAINT: isize = 40;
+}
+
 /// One table's structure, and whatever is staged against it.
 pub struct StructPane {
     /// What is being edited. Also the tab's title, and the identity two "edit
@@ -314,12 +334,20 @@ impl StructPane {
         // halves of "this may not be written" — the profile's flag and the
         // absence of an apply — are settled before the first frame.
         let read_only = profile.read_only;
-        let field = |cx: &mut Context<Self>| cx.new(|cx| TextInput::new(cx).disabled(read_only));
-        let name_input = field(cx);
-        let type_input = field(cx);
-        let default_input = field(cx);
-        let rename_input = field(cx);
-        let constraint_fields = [field(cx), field(cx), field(cx)];
+        // In the tab ring, in the order they are read: a field left out of it
+        // is one Tab skips — from the name straight to the next column row.
+        let field = |cx: &mut Context<Self>, index: isize| {
+            cx.new(|cx| TextInput::new(cx).disabled(read_only).tab_index(index))
+        };
+        let name_input = field(cx, tab::NAME);
+        let type_input = field(cx, tab::TYPE);
+        let default_input = field(cx, tab::DEFAULT);
+        let rename_input = field(cx, tab::RENAME);
+        let constraint_fields = [
+            field(cx, tab::CONSTRAINT),
+            field(cx, tab::CONSTRAINT + 1),
+            field(cx, tab::CONSTRAINT + 2),
+        ];
 
         // Observed rather than left alone: a `TextInput` emits nothing, so the
         // only way a keystroke reaches the staging buffer is for the pane to
@@ -796,6 +824,13 @@ impl StructPane {
         let value = has_default.then(|| self.filled[2].clone());
         self.set_field(DraftValue::Default(value), cx);
         self.fill_fields(cx);
+    }
+
+    /// Puts the caret in the column form's name field, where filling in a
+    /// column starts.
+    fn focus_name(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.name_input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
     }
 
     /// Appends a column and starts filling it in.
@@ -1490,8 +1525,12 @@ impl StructPane {
         let add = writable.then(|| {
             Button::new("struct-add-column", ts!("struct.add_column"))
                 .variant(ButtonVariant::Secondary)
-                .on_click(move |_, _window, cx| {
-                    adder.update(cx, |pane, cx| pane.add_column(cx));
+                // And straight into its name: a column is added to be named.
+                .on_click(move |_, window, cx| {
+                    adder.update(cx, |pane, cx| {
+                        pane.add_column(cx);
+                        pane.focus_name(window, cx);
+                    });
                 })
         });
 
@@ -1611,6 +1650,7 @@ impl StructPane {
                             // column's own DDL says.
                             Checkbox::new("struct-not-null", SharedString::new_static("NOT NULL"))
                                 .checked(draft.not_null)
+                                .tab_index(tab::NOT_NULL)
                                 .on_toggle(move |checked, _window, cx| {
                                     nulls.update(cx, |pane, cx| {
                                         pane.set_field(DraftValue::NotNull(checked), cx);
@@ -1620,6 +1660,7 @@ impl StructPane {
                         .child(
                             Checkbox::new("struct-has-default", ts!("struct.has_default"))
                                 .checked(draft.default_sql.is_some())
+                                .tab_index(tab::HAS_DEFAULT)
                                 .on_toggle(move |checked, _window, cx| {
                                     this.update(cx, |pane, cx| pane.set_has_default(checked, cx));
                                 }),

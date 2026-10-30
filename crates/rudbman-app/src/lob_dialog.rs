@@ -601,7 +601,12 @@ impl Render for LobDialog {
             .flex_col()
             .min_h_0()
             .gap(px(10.))
-            .capture_action(cx.listener(|dialog, _: &CloseFind, _, cx| {
+            // In the bubble phase, after the editor has had it: with its find
+            // bar open the editor closes the bar and the key goes no further,
+            // and only with the bar shut does it pass the action on to here,
+            // where `Escape` means the viewer. Capturing it first closed the
+            // whole viewer under a user who only meant to put the bar away.
+            .on_action(cx.listener(|dialog, _: &CloseFind, _, cx| {
                 dialog.request_close(cx);
                 cx.stop_propagation();
             }))

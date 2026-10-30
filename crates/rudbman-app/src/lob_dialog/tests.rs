@@ -250,3 +250,42 @@ fn a_seed_is_an_edit_only_when_it_differs_from_the_cell(cx: &mut TestAppContext)
             .unwrap();
     }
 }
+
+/// `Escape` with the find bar open puts the bar away and leaves the viewer
+/// up; only the next one, with the bar shut, closes the viewer.
+#[gpui::test]
+fn escape_closes_the_find_bar_before_the_viewer(cx: &mut TestAppContext) {
+    let file = LobFile::from_bytes(b"needle in a haystack", false).unwrap();
+    let window = window(file, true, cx);
+    let closed = std::rc::Rc::new(std::cell::Cell::new(0));
+    window
+        .update(cx, |_dialog, window, cx| {
+            let closed = closed.clone();
+            let this = cx.entity();
+            cx.subscribe_in(&this, window, move |_, _, _: &Closed, _, _| {
+                closed.set(closed.get() + 1);
+            })
+            .detach();
+        })
+        .unwrap();
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |dialog, window, cx| {
+            let handle = dialog.editor.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-f"
+    } else {
+        "ctrl-f"
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(closed.get(), 0, "the first Escape closed the viewer");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(closed.get(), 1, "the second Escape did not close it");
+}
