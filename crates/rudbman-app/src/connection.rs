@@ -410,6 +410,33 @@ pub fn build_spec(
     spec
 }
 
+/// Puts the login timeout of the settings on `spec`, the way the product's
+/// driver reads one.
+///
+/// `java.sql.Driver` has no login timeout of its own, so the bridge sends
+/// `login_timeout_s` as a `loginTimeout` property — which is the property
+/// pgjdbc, mssql-jdbc and IBM's JCC read, in seconds. Connector/J and MariaDB
+/// Connector/J ignore that name and take `connectTimeout` in milliseconds, and
+/// Oracle's thin driver takes `oracle.net.CONNECT_TIMEOUT` in milliseconds, so
+/// those are added beside it. Nothing the profile already sets is touched: a
+/// user who wrote one of these properties into the profile meant that value.
+/// `0` sends nothing, which leaves every driver at its own default.
+fn apply_login_timeout(spec: &mut rudbman_jdbc::ConnectionSpec, dialect: &str, seconds: u32) {
+    if seconds == 0 {
+        return;
+    }
+    spec.login_timeout_s = seconds;
+    let millis = (u64::from(seconds) * 1000).to_string();
+    let property = match dialect {
+        "mysql" | "mariadb" => Some("connectTimeout"),
+        "oracle" => Some("oracle.net.CONNECT_TIMEOUT"),
+        _ => None,
+    };
+    if let Some(property) = property {
+        spec.props.entry(property.to_string()).or_insert(millis);
+    }
+}
+
 /// How long [`connect`] waits before its one-shot retry on "no route to
 /// host".
 ///
@@ -519,7 +546,8 @@ fn connect_once(
 
     // 4. The JVM, then OPEN_SESSION.
     let jvm = start_jvm(settings)?;
-    let spec = build_spec(profile, driver, credentials, &url);
+    let mut spec = build_spec(profile, driver, credentials, &url);
+    apply_login_timeout(&mut spec, &driver.dialect, settings.login_timeout_s);
     let session = Session::open(jvm, &spec)?;
     let info = session.info().map_err(ConnectError::from)?;
 
@@ -1145,6 +1173,47 @@ mod tests {
         // The password is in the spec and nowhere in its rendering.
         assert_eq!(spec.password.as_deref(), Some("hunter2"));
         assert!(!format!("{spec:?}").contains("hunter2"), "{spec:?}");
+    }
+
+    /// The settings' login timeout reaches every driver in the name it reads,
+    /// and never over a value the profile set itself.
+    #[test]
+    fn the_login_timeout_is_spelled_the_way_each_driver_reads_it() {
+        let spec = || rudbman_jdbc::ConnectionSpec::new("jdbc:x", "x.Driver");
+
+        let mut postgres = spec();
+        apply_login_timeout(&mut postgres, "postgres", 30);
+        assert_eq!(postgres.login_timeout_s, 30);
+        assert!(
+            postgres.props.is_empty(),
+            "pgjdbc reads loginTimeout itself"
+        );
+
+        let mut mysql = spec();
+        apply_login_timeout(&mut mysql, "mysql", 30);
+        assert_eq!(
+            mysql.props.get("connectTimeout").map(String::as_str),
+            Some("30000")
+        );
+
+        let mut oracle = spec();
+        oracle
+            .props
+            .insert("oracle.net.CONNECT_TIMEOUT".into(), "5000".into());
+        apply_login_timeout(&mut oracle, "oracle", 30);
+        assert_eq!(
+            oracle
+                .props
+                .get("oracle.net.CONNECT_TIMEOUT")
+                .map(String::as_str),
+            Some("5000"),
+            "the profile's own value wins"
+        );
+
+        let mut off = spec();
+        apply_login_timeout(&mut off, "mariadb", 0);
+        assert_eq!(off.login_timeout_s, 0);
+        assert!(off.props.is_empty(), "0 leaves it to the driver");
     }
 
     /// The driver's custom comment queries reach the spec, and only when the

@@ -461,7 +461,9 @@ struct Connection {
 /// [`ConnectionState::Failed`]: the first is a session that *was* open and is
 /// not any more — a tunnel that closed underneath it, usually — and the second
 /// is one that never opened. Both are terminal, and neither is repaired
-/// silently (architecture document, §9.3).
+/// silently (architecture document, §9.3): what repairs one is the user's
+/// "Reconnect", from the card the work area shows or the tab's menu, which
+/// starts a new attempt in the same tab.
 enum ConnectionState {
     /// The connect task is in flight.
     ///
@@ -472,8 +474,8 @@ enum ConnectionState {
     Connecting { _task: Task<()> },
     /// The session is live.
     Open(Box<Connected>),
-    /// The connection never opened.
-    Failed(SharedString),
+    /// The connection never opened, or the attempt was canceled.
+    Failed(Failure),
     /// The session was open and has ended.
     Dead(SharedString),
 }
@@ -487,6 +489,85 @@ impl ConnectionState {
             ConnectionState::Failed(_) | ConnectionState::Dead(_) => TabStatus::Error,
         }
     }
+}
+
+/// Why a connection tab never opened, as the card in its work area says it.
+///
+/// Everything the connection dialog's own "Test" would have said about the
+/// same failure: the whole message rather than the one line of the status bar,
+/// the hint [`crate::connection_dialog::error_hint`] reads off the error's
+/// kind, and — for a bastion whose host key nothing has trusted yet — the key,
+/// so that it can be trusted from here instead of only from a test.
+#[derive(Clone, Debug)]
+struct Failure {
+    /// The driver's, the bridge's or the tunnel's own words.
+    message: SharedString,
+    /// What to look at first, when the failure's kind says.
+    hint: Option<SharedString>,
+    /// The unknown host key the bastion presented, when that is the failure.
+    host_key: Option<Box<HostKeyOffer>>,
+}
+
+impl Failure {
+    /// What an attempt that ended in `error` says, for a profile tunneling
+    /// through `tunnel` when it does.
+    fn of(error: &ConnectError, profile: &ConnectionProfile) -> Self {
+        let host_key = match error {
+            ConnectError::HostKeyUnknown {
+                host,
+                fingerprint,
+                algorithm,
+            } => Some(Box::new(HostKeyOffer {
+                host: host.clone(),
+                port: profile.tunnel.as_ref().map_or(22, |tunnel| tunnel.port),
+                algorithm: algorithm.clone(),
+                fingerprint: fingerprint.clone(),
+            })),
+            _ => None,
+        };
+        Self {
+            message: error.message().into(),
+            hint: crate::connection_dialog::error_hint(error),
+            host_key,
+        }
+    }
+}
+
+impl From<SharedString> for Failure {
+    /// A failure that is only its message: no driver of that name, or an
+    /// attempt the user canceled.
+    fn from(message: SharedString) -> Self {
+        Self {
+            message,
+            hint: None,
+            host_key: None,
+        }
+    }
+}
+
+impl From<&'static str> for Failure {
+    fn from(message: &'static str) -> Self {
+        SharedString::new_static(message).into()
+    }
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        SharedString::from(message).into()
+    }
+}
+
+/// A bastion's host key that nothing has trusted yet, offered for trusting.
+#[derive(Clone, Debug)]
+struct HostKeyOffer {
+    /// The bastion, as the profile names it.
+    host: String,
+    /// Its SSH port.
+    port: u16,
+    /// The key algorithm, e.g. `ssh-ed25519`.
+    algorithm: String,
+    /// The OpenSSH-style SHA-256 fingerprint.
+    fingerprint: String,
 }
 
 /// What the keyboard is being handed to when a tab comes to the front.

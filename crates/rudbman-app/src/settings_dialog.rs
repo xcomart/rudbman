@@ -141,6 +141,8 @@ mod tab {
     pub const FETCH_BATCH: isize = 110;
     /// Statement timeout.
     pub const QUERY_TIMEOUT: isize = 120;
+    /// Connection attempt timeout.
+    pub const LOGIN_TIMEOUT: isize = 125;
     /// Default of a new profile's "confirm writes" flag.
     pub const CONFIRM_WRITES: isize = 130;
     /// Java heap ceiling.
@@ -357,6 +359,8 @@ pub struct SettingsDialog {
     fetch_batch_input: Entity<TextInput>,
     /// Statement timeout in seconds; `0` disables it.
     query_timeout_input: Entity<TextInput>,
+    /// Seconds a connection attempt may take.
+    login_timeout_input: Entity<TextInput>,
     /// Java heap ceiling in megabytes.
     jvm_heap_input: Entity<TextInput>,
     /// Extra JVM arguments, separated by spaces.
@@ -404,6 +408,7 @@ impl SettingsDialog {
         let opacity_input = field(cx, "100".into(), tab::OPACITY);
         let fetch_batch_input = field(cx, "500".into(), tab::FETCH_BATCH);
         let query_timeout_input = field(cx, "0".into(), tab::QUERY_TIMEOUT);
+        let login_timeout_input = field(cx, "30".into(), tab::LOGIN_TIMEOUT);
         let jvm_heap_input = field(cx, "1024".into(), tab::JVM_HEAP);
         let jvm_args_input = field(cx, "-Dfoo=bar".into(), tab::JVM_ARGS);
 
@@ -414,6 +419,7 @@ impl SettingsDialog {
         restrict_to_number(cx, &opacity_input, false, 3);
         restrict_to_number(cx, &fetch_batch_input, false, 6);
         restrict_to_number(cx, &query_timeout_input, false, 6);
+        restrict_to_number(cx, &login_timeout_input, false, 3);
         restrict_to_number(cx, &jvm_heap_input, false, 6);
 
         // The two sizes are previewed as they are typed. Registered after the
@@ -483,6 +489,7 @@ impl SettingsDialog {
             opacity_input,
             fetch_batch_input,
             query_timeout_input,
+            login_timeout_input,
             jvm_heap_input,
             jvm_args_input,
         }
@@ -754,6 +761,11 @@ impl SettingsDialog {
             settings.query_timeout_s.to_string(),
             cx,
         );
+        set_text(
+            &self.login_timeout_input,
+            settings.login_timeout_s.to_string(),
+            cx,
+        );
         set_text(&self.jvm_heap_input, settings.jvm_heap_mb.to_string(), cx);
         set_text(&self.jvm_args_input, settings.jvm_extra_args.join(" "), cx);
         self.push_selections(cx);
@@ -797,6 +809,9 @@ impl SettingsDialog {
         }
         if let Some(seconds) = parse_number::<u32>(&self.query_timeout_input, cx) {
             settings.query_timeout_s = seconds;
+        }
+        if let Some(seconds) = parse_number::<u32>(&self.login_timeout_input, cx) {
+            settings.login_timeout_s = seconds;
         }
         if let Some(heap) = parse_number::<u32>(&self.jvm_heap_input, cx) {
             settings.jvm_heap_mb = heap;
@@ -1405,6 +1420,14 @@ impl SettingsDialog {
                         cx,
                     ),
                 ))
+                .child(form_row(
+                    ts!("settings.login_timeout"),
+                    suffixed(
+                        self.login_timeout_input.clone(),
+                        ts!("settings.login_timeout_hint"),
+                        cx,
+                    ),
+                ))
                 .child(form_row("", confirm_writes)),
         )
     }
@@ -1672,6 +1695,7 @@ mod tests {
             jvm_extra_args: vec!["-Xss4m".to_string(), "-Dfoo=bar".to_string()],
             fetch_batch_rows: 1_000,
             query_timeout_s: 30,
+            login_timeout_s: 12,
             confirm_writes_default: false,
             window: WindowState {
                 x: Some(120),
@@ -1905,6 +1929,8 @@ mod tests {
             ts!("settings.fetch_batch_rows_hint"),
             ts!("settings.query_timeout"),
             ts!("settings.query_timeout_hint"),
+            ts!("settings.login_timeout"),
+            ts!("settings.login_timeout_hint"),
             ts!("settings.confirm_writes_default"),
             ts!("settings.jvm_heap"),
             ts!("settings.jvm_heap_hint"),
@@ -1973,7 +1999,12 @@ mod tests {
             assert_eq!(section_of(index), 1, "{index}");
         }
         assert_eq!(section_of(tab::LANGUAGE), 2);
-        for index in [tab::FETCH_BATCH, tab::QUERY_TIMEOUT, tab::CONFIRM_WRITES] {
+        for index in [
+            tab::FETCH_BATCH,
+            tab::QUERY_TIMEOUT,
+            tab::LOGIN_TIMEOUT,
+            tab::CONFIRM_WRITES,
+        ] {
             assert_eq!(section_of(index), 3, "{index}");
         }
         for index in [tab::JVM_HEAP, tab::JVM_ARGS, tab::CANCEL, tab::SAVE] {

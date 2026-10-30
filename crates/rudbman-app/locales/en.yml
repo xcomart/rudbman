@@ -204,6 +204,9 @@ settings:
   fetch_batch_rows_hint: rows fetched at a time as the grid is scrolled
   query_timeout: Statement timeout
   query_timeout_hint: seconds — 0 means no limit
+  # How long a connection attempt may take before it gives up.
+  login_timeout: Connection timeout
+  login_timeout_hint: seconds — 0 leaves it to the driver
   confirm_writes_default: Ask before running a write statement on a new connection
 
   jvm_heap: Java heap
@@ -400,6 +403,17 @@ connect:
   host_key_question: "%{host} presented an unknown %{algorithm} key: %{fingerprint}"
   trust_host_key: Trust this key
   host_key_trusted: The host key was added to the trusted list. Try connecting again.
+  # The card the work area of a connection tab shows while the tab is not
+  # open, and the tab menu's rows that do the same.
+  card_connecting: "Connecting to “%{name}”…"
+  card_connecting_hint: "The attempt gives up after %{seconds} seconds."
+  card_failed: "Could not connect to “%{name}”"
+  card_dead: "The connection to “%{name}” has ended"
+  reconnect: Reconnect
+  edit_connection: Edit connection…
+  trust_and_reconnect: Trust the key and reconnect
+  # The attempt was abandoned with Cancel on the card.
+  canceled: The connection attempt was canceled.
 
 # The driver manager, opened from the connection dialog.
 #
@@ -1090,6 +1104,8 @@ context:
   # right-click.
   show_columns: Show all columns
   copy_column_name: Copy column name
+  # Copies an error message as it reads, for a search or a colleague.
+  copy_message: Copy message
   # The SQL editor. Every one of these is also a keyboard chord; the menu and
   # the chord run the same command.
   cut: Cut

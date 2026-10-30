@@ -45,6 +45,12 @@ JVM bridge.
   dialog. Click a folder heading to collapse or expand it, or focus it with
   <kbd>Tab</kbd> and press <kbd>Space</kbd> or <kbd>Enter</kbd>. Folded folders
   stay folded when you reopen the dialog during the same app session.
+- **Connections that say why they failed.** A tab that could not connect, or
+  whose session ended, shows the whole error and a hint in its work area, with
+  **Reconnect** (in the same tab), **Edit connection…** and **Copy message**;
+  a bastion's unknown host key can be trusted right there. While connecting
+  the tab can be canceled, and an attempt gives up after the connection
+  timeout in Settings (30 seconds unless changed).
 - **SSH tunnels** with password or private-key auth, loopback binds only,
   and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
   OS keychain, never on disk, and credentials are masked out of logs and

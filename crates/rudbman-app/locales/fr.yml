@@ -115,6 +115,8 @@ settings:
   fetch_batch_rows_hint: lignes récupérées à chaque fois pendant le défilement
   query_timeout: Délai d’expiration des instructions
   query_timeout_hint: secondes — 0 signifie aucune limite
+  login_timeout: Délai de connexion
+  login_timeout_hint: secondes — 0 laisse le pilote décider
   confirm_writes_default: Demander confirmation avant une instruction d’écriture sur une nouvelle connexion
 
   jvm_heap: Tas Java
@@ -271,6 +273,14 @@ connect:
   host_key_question: "%{host} a présenté une clé %{algorithm} inconnue : %{fingerprint}"
   trust_host_key: Approuver cette clé
   host_key_trusted: La clé d’hôte a été ajoutée aux clés approuvées. Réessayez de vous connecter.
+  card_connecting: "Connexion à « %{name} »…"
+  card_connecting_hint: "La tentative est abandonnée après %{seconds} secondes."
+  card_failed: "Impossible de se connecter à « %{name} »"
+  card_dead: "La connexion à « %{name} » s’est terminée"
+  reconnect: Se reconnecter
+  edit_connection: Modifier la connexion…
+  trust_and_reconnect: Approuver la clé et se reconnecter
+  canceled: La tentative de connexion a été annulée.
 
 # Le gestionnaire de pilotes.
 driver:
@@ -655,6 +665,7 @@ context:
   hide_column: Masquer cette colonne
   show_columns: Afficher toutes les colonnes
   copy_column_name: Copier le nom de la colonne
+  copy_message: Copier le message
   cut: Couper
   copy: Copier
   paste: Coller

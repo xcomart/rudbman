@@ -115,6 +115,8 @@ settings:
   fetch_batch_rows_hint: 滚动结果网格时每次取回的行数
   query_timeout: 语句超时
   query_timeout_hint: 秒 — 0 表示不限制
+  login_timeout: 连接超时
+  login_timeout_hint: 秒 — 0 表示使用驱动的默认值
   confirm_writes_default: 新连接默认在执行写入语句前先确认
 
   jvm_heap: Java 堆
@@ -271,6 +273,14 @@ connect:
   host_key_question: "%{host} 出示了未知的 %{algorithm} 密钥：%{fingerprint}"
   trust_host_key: 信任该密钥
   host_key_trusted: 主机密钥已加入信任列表。请再试一次。
+  card_connecting: "正在连接“%{name}”…"
+  card_connecting_hint: "%{seconds} 秒后放弃尝试。"
+  card_failed: "无法连接到“%{name}”"
+  card_dead: "与“%{name}”的连接已结束"
+  reconnect: 重新连接
+  edit_connection: 编辑连接…
+  trust_and_reconnect: 信任此密钥并重新连接
+  canceled: 已取消连接尝试。
 
 # 驱动管理器。
 driver:
@@ -655,6 +665,7 @@ context:
   hide_column: 隐藏此列
   show_columns: 显示所有列
   copy_column_name: 复制列名
+  copy_message: 复制消息
   cut: 剪切
   copy: 复制
   paste: 粘贴

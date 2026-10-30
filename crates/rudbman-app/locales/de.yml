@@ -115,6 +115,8 @@ settings:
   fetch_batch_rows_hint: Zeilen, die beim Blättern jeweils geholt werden
   query_timeout: Zeitlimit je Anweisung
   query_timeout_hint: Sekunden — 0 bedeutet kein Limit
+  login_timeout: Zeitlimit für den Verbindungsaufbau
+  login_timeout_hint: Sekunden — 0 überlässt es dem Treiber
   confirm_writes_default: Bei neuen Verbindungen vor schreibenden Anweisungen nachfragen
 
   jvm_heap: Java-Heap
@@ -271,6 +273,14 @@ connect:
   host_key_question: "%{host} hat einen unbekannten %{algorithm}-Schlüssel vorgelegt: %{fingerprint}"
   trust_host_key: Diesem Schlüssel vertrauen
   host_key_trusted: Der Hostschlüssel wurde als vertrauenswürdig eingetragen. Versuchen Sie erneut, sich zu verbinden.
+  card_connecting: "Verbindung mit „%{name}“ wird hergestellt…"
+  card_connecting_hint: "Der Versuch wird nach %{seconds} Sekunden aufgegeben."
+  card_failed: "Keine Verbindung mit „%{name}“ möglich"
+  card_dead: "Die Verbindung mit „%{name}“ wurde beendet"
+  reconnect: Neu verbinden
+  edit_connection: Verbindung bearbeiten…
+  trust_and_reconnect: Schlüssel vertrauen und neu verbinden
+  canceled: Der Verbindungsversuch wurde abgebrochen.
 
 # Die Treiberverwaltung.
 driver:
@@ -655,6 +665,7 @@ context:
   hide_column: Diese Spalte ausblenden
   show_columns: Alle Spalten einblenden
   copy_column_name: Spaltenname kopieren
+  copy_message: Meldung kopieren
   cut: Ausschneiden
   copy: Kopieren
   paste: Einfügen

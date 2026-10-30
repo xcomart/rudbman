@@ -1675,11 +1675,27 @@ disconnect → CLOSE_SESSION → tear the tunnel down
   `ConnectionState::Dead`, which closes its session. It never silently
   reconnects — there may have been a transaction in flight, and the user needs
   to know
+- A tab that is not open says so in its work area rather than only in the
+  status bar's cell: a card while connecting (with Cancel, which drops the
+  attempt's task and leaves the tab failed), and for a failed or ended
+  connection the whole message, the same hint the connection dialog's Test
+  gives (`connection_dialog::error_hint`), and Reconnect, Edit connection… and
+  Copy message. A dead tab that still shows its detached tabs draws the same as
+  a band above them. Reconnect is the user's explicit act and reuses the tab:
+  the profile is read afresh (an edit made through "Edit connection…" reaches
+  the new attempt), and a dead tab's work area is snapshotted first and
+  restored once the new session is in
+- The settings' connection timeout (default 30 s, `0` for the driver's own)
+  goes to every attempt as `login_timeout_s`, which the bridge sends as
+  `loginTimeout`; Connector/J and MariaDB Connector/J get `connectTimeout` and
+  Oracle's thin driver `oracle.net.CONNECT_TIMEOUT`, in milliseconds, unless the
+  profile sets those properties itself
 - A host key `known_hosts` does not hold is refused during the key exchange,
   because the verifier cannot block on a dialog. The connection error names the
   algorithm and fingerprint, and the connection dialog's Test result offers
   "Trust this key", which writes `known_hosts` and nothing else; the user then
-  tests again. A key that contradicts a stored one, including a new algorithm
+  tests again. A tab that failed this way offers "Trust the key and reconnect"
+  on its card, which does both. A key that contradicts a stored one, including a new algorithm
   for a known host, is reported as a mismatch and gets no button
 
 ---

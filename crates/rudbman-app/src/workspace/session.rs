@@ -111,7 +111,7 @@ impl SavedObject {
 }
 
 impl WorkArea {
-    fn snapshot(&self, cx: &App) -> SavedWorkspace {
+    pub(super) fn snapshot(&self, cx: &App) -> SavedWorkspace {
         SavedWorkspace {
             version: 1,
             layout: self.snapshot_node(self.panes.root(), cx),
@@ -150,7 +150,7 @@ impl WorkArea {
             },
         }
     }
-    fn snapshot_tab(&self, item: &PaneItem, cx: &App) -> SavedTab {
+    pub(super) fn snapshot_tab(&self, item: &PaneItem, cx: &App) -> SavedTab {
         SavedTab {
             name: self.tab_names.get(&item.entity_id()).cloned(),
             content: match item {
@@ -442,9 +442,28 @@ impl Workspace {
         self.focus_active_tab(destination, window, cx);
     }
 
+    /// Restores connection `index`'s work area from the profile's saved
+    /// workspace; see [`Workspace::restore_connection_workspace_from`].
+    #[cfg(test)]
     pub(super) fn restore_connection_workspace(
         &mut self,
         index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.restore_connection_workspace_from(index, None, window, cx);
+    }
+
+    /// Restores connection `index`'s work area from `saved`, or from the
+    /// profile's saved workspace when that is `None`.
+    ///
+    /// The snapshot is handed in by a reconnect of a tab whose session died
+    /// with tabs open: what it showed a moment ago is what it should show
+    /// again, whether or not the workspace directory could be written.
+    pub(super) fn restore_connection_workspace_from(
+        &mut self,
+        index: usize,
+        saved: Option<SavedWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -456,7 +475,7 @@ impl Workspace {
         }
         let id = open.id;
         let profile = open.profile.id;
-        let Some(saved) = self.sessions.load(profile) else {
+        let Some(saved) = saved.or_else(|| self.sessions.load(profile)) else {
             return;
         };
         let previous = self.active_connection;
@@ -466,6 +485,8 @@ impl Workspace {
         let first = tree.first_leaf().0;
         let mut leaves = Vec::new();
         restore_layout(&saved.layout, &mut tree, first, &mut leaves);
+        // What was closed before the session died can still be reopened.
+        let closed = std::mem::take(&mut self.connections[index].work.closed);
         self.connections[index].work = WorkArea {
             active_pane: first,
             panes: tree,
@@ -473,7 +494,7 @@ impl Workspace {
             checkpoint: None,
             next_query: 1,
             next_builder: 1,
-            closed: Vec::new(),
+            closed,
         };
         for (pane, tabs, active) in leaves {
             self.connections[index].work.active_pane = pane;

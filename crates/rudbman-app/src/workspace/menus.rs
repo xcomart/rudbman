@@ -184,6 +184,14 @@ impl Workspace {
             }
         };
 
+        let settled = self.connections.get(index).is_some_and(|open| {
+            matches!(
+                open.state,
+                ConnectionState::Failed(_) | ConnectionState::Dead(_)
+            )
+        });
+        let profile = self.connections.get(index).map(|open| open.profile.id);
+
         vec![
             MenuRow::new(ts!("menu.new_query"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+T"))
@@ -196,6 +204,31 @@ impl Workspace {
                 .on_activate(on_tab(|workspace, window, cx| {
                     workspace.open_builder(window, cx);
                 })),
+            MenuRow::separator(),
+            // A new attempt in the same tab, for one that never opened or whose
+            // session has ended: what the card in its work area offers too.
+            MenuRow::new(ts!("connect.reconnect"))
+                .enabled(settled)
+                .on_activate({
+                    let this = this.clone();
+                    move |window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            workspace.select_connection(index, window, cx);
+                            workspace.reconnect(index, window, cx);
+                        });
+                    }
+                }),
+            MenuRow::new(ts!("connect.edit_connection")).on_activate({
+                let this = this.clone();
+                move |window, cx| {
+                    let Some(profile) = profile else {
+                        return;
+                    };
+                    this.update(cx, |workspace, cx| {
+                        workspace.edit_profile(profile, window, cx)
+                    });
+                }
+            }),
             MenuRow::separator(),
             MenuRow::new(ts!("tab.close")).on_activate({
                 let this = this.clone();

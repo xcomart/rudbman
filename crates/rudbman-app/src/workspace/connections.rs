@@ -43,6 +43,42 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let held = self.area_holds_focus(window, cx);
+        let id = next_connection_id();
+        let state = self.attempt(id, &profile, None, window, cx);
+        self.connections.push(Connection {
+            id,
+            profile,
+            state,
+            work: WorkArea::new(),
+        });
+        let index = self.connections.len() - 1;
+        self.active_connection = index;
+        self.sync_explorer_root(index, cx);
+        self.sync_visible_root(cx);
+        self.follow_work_area(held, window, cx);
+        cx.notify();
+    }
+
+    /// Starts a connection attempt for tab `id` over `profile`, and answers the
+    /// state the tab is in while it runs.
+    ///
+    /// [`ConnectionState::Connecting`] holding the task, or straight away
+    /// [`ConnectionState::Failed`] when the profile names a driver nobody
+    /// defines. Everything that blocks happens on a background task, because
+    /// [`connection::connect`] opens an SSH channel and a JDBC connection and
+    /// both of those wait on a socket.
+    ///
+    /// `restore` is the work area to bring back once the session is in, for a
+    /// reconnect of a tab whose session died with tabs open; `None` restores
+    /// the profile's saved workspace, as a fresh connection does.
+    fn attempt(
+        &mut self,
+        id: ConnectionId,
+        profile: &ConnectionProfile,
+        restore: Option<session::SavedWorkspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ConnectionState {
         let drivers = match DriverStore::load() {
             Ok(drivers) => drivers,
             Err(error) => {
@@ -51,31 +87,16 @@ impl Workspace {
             }
         };
         let Some(driver) = drivers.get(&profile.driver_id).cloned() else {
-            self.connections.push(Connection {
-                id: next_connection_id(),
-                state: ConnectionState::Failed(ts!(
-                    "connect.no_driver",
-                    driver = profile.driver_id.clone()
-                )),
-                profile,
-                work: WorkArea::new(),
-            });
-            self.active_connection = self.connections.len() - 1;
-            self.sync_explorer_root(self.active_connection, cx);
-            self.sync_visible_root(cx);
-            self.follow_work_area(held, window, cx);
-            cx.notify();
-            return;
+            return ConnectionState::Failed(
+                ts!("connect.no_driver", driver = profile.driver_id.clone()).into(),
+            );
         };
-
-        let index = self.connections.len();
-        let id = next_connection_id();
         let settings = app_settings::current(cx);
         let attempt = profile.clone();
         // Read here, on the UI thread, and moved straight into the task: the
         // secret exists as a value for the length of one connection attempt and
         // is written to nothing.
-        let credentials = connection::Credentials::read(&profile);
+        let credentials = connection::Credentials::read(profile);
         let opening = cx.background_spawn(async move {
             connection::connect(&attempt, &driver, &credentials, &settings)
         });
@@ -90,22 +111,107 @@ impl Workspace {
                         return;
                     };
                     workspace.connected(index, outcome, cx);
-                    workspace.restore_connection_workspace(index, window, cx);
+                    workspace.restore_connection_workspace_from(index, restore, window, cx);
                 })
                 .ok();
         });
+        ConnectionState::Connecting { _task: task }
+    }
 
-        self.connections.push(Connection {
-            id,
-            profile,
-            state: ConnectionState::Connecting { _task: task },
-            work: WorkArea::new(),
-        });
-        self.active_connection = index;
+    /// Tries connection tab `index` again, in the same tab.
+    ///
+    /// What the card of a failed or dead connection offers, and its tab's menu.
+    /// The profile is read afresh, because "Edit connection…" is how most
+    /// failures are fixed and the edit must reach the attempt that follows it;
+    /// a profile no longer saved is tried as the tab last knew it. A tab whose
+    /// session died with tabs open keeps showing them while the attempt runs,
+    /// and gets them back — drafts, layout, names — once the new session is in.
+    pub(super) fn reconnect(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.connections.get(index) else {
+            return;
+        };
+        if matches!(
+            open.state,
+            ConnectionState::Open(_) | ConnectionState::Connecting { .. }
+        ) {
+            return;
+        }
+        self.profiles = load_profiles();
+        let profile = self
+            .profiles
+            .get(open.profile.id)
+            .cloned()
+            .unwrap_or_else(|| open.profile.clone());
+        let id = open.id;
+        // Taken while the area still shows what the user had; a tab that never
+        // opened has nothing in it, and restores from the saved workspace.
+        let restore = (!open
+            .work
+            .panes
+            .leaves()
+            .iter()
+            .all(|(_, pane)| pane.is_empty()))
+        .then(|| open.work.snapshot(cx));
+        let state = self.attempt(id, &profile, restore, window, cx);
+        let Some(open) = self.connections.get_mut(index) else {
+            return;
+        };
+        open.profile = profile;
+        open.state = state;
         self.sync_explorer_root(index, cx);
-        self.sync_visible_root(cx);
-        self.follow_work_area(held, window, cx);
         cx.notify();
+    }
+
+    /// Abandons connection tab `index`'s attempt, leaving the tab to say so.
+    ///
+    /// Dropping the task is the cancel: it ends at its next await point, and a
+    /// session that opened behind it after all is closed by `Connected`'s own
+    /// drop. The tab stays, failed, with "Reconnect" on it — the user canceled
+    /// a wait, not the connection they had asked for.
+    pub(super) fn cancel_connect(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(open) = self.connections.get_mut(index) else {
+            return;
+        };
+        if !matches!(open.state, ConnectionState::Connecting { .. }) {
+            return;
+        }
+        open.state = ConnectionState::Failed(ts!("connect.canceled").into());
+        self.sync_explorer_root(index, cx);
+        cx.notify();
+    }
+
+    /// Trusts the host key a failed tab's bastion presented, and tries again.
+    pub(super) fn trust_and_reconnect(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ConnectionState::Failed(failure)) =
+            self.connections.get(index).map(|open| &open.state)
+        else {
+            return;
+        };
+        let Some(offer) = failure.host_key.clone() else {
+            return;
+        };
+        match connection::trust_host_key(
+            &offer.host,
+            offer.port,
+            &offer.algorithm,
+            &offer.fingerprint,
+        ) {
+            Ok(()) => self.reconnect(index, window, cx),
+            Err(error) => {
+                if let Some(ConnectionState::Failed(failure)) =
+                    self.connections.get_mut(index).map(|open| &mut open.state)
+                {
+                    failure.host_key = None;
+                    failure.hint = Some(ts!("connect.save_failed", error = format!("{error:#}")));
+                }
+                cx.notify();
+            }
+        }
     }
 
     /// Opens a session on the saved profile `id`, with nothing asked first.

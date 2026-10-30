@@ -115,6 +115,8 @@ settings:
   fetch_batch_rows_hint: filas que se traen cada vez al desplazar la cuadrícula
   query_timeout: Tiempo de espera por sentencia
   query_timeout_hint: segundos — 0 significa sin límite
+  login_timeout: Tiempo de espera de conexión
+  login_timeout_hint: segundos — 0 lo deja al controlador
   confirm_writes_default: Preguntar antes de ejecutar una sentencia de escritura en una conexión nueva
 
   jvm_heap: Montículo de Java
@@ -271,6 +273,14 @@ connect:
   host_key_question: "%{host} presentó una clave %{algorithm} desconocida: %{fingerprint}"
   trust_host_key: Confiar en esta clave
   host_key_trusted: La clave de host se añadió a la lista de confianza. Vuelve a conectar.
+  card_connecting: "Conectando con «%{name}»…"
+  card_connecting_hint: "El intento se abandona pasados %{seconds} segundos."
+  card_failed: "No se pudo conectar con «%{name}»"
+  card_dead: "La conexión con «%{name}» ha terminado"
+  reconnect: Volver a conectar
+  edit_connection: Editar la conexión…
+  trust_and_reconnect: Confiar en la clave y volver a conectar
+  canceled: Se canceló el intento de conexión.
 
 # El gestor de controladores.
 driver:
@@ -655,6 +665,7 @@ context:
   hide_column: Ocultar esta columna
   show_columns: Mostrar todas las columnas
   copy_column_name: Copiar el nombre de la columna
+  copy_message: Copiar el mensaje
   cut: Cortar
   copy: Copiar
   paste: Pegar

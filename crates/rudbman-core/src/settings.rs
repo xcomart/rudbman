@@ -59,6 +59,15 @@ const MAX_EXPLORER_WIDTH: f32 = 720.0;
 /// Upper bound on the batch size: one batch crosses the JNI boundary as a
 /// single buffer, so an unbounded value is an out-of-memory waiting to happen.
 const MAX_FETCH_BATCH_ROWS: u32 = 100_000;
+/// Seconds a connection attempt may take when none is configured.
+///
+/// Long enough for a slow VPN, a bastion and a cold database to answer between
+/// them; short enough that a host that never answers says so inside a minute
+/// rather than at the operating system's TCP timeout, which can be several.
+const DEFAULT_LOGIN_TIMEOUT_S: u32 = 30;
+/// Upper bound on the login timeout, ten minutes: past that a timeout is not
+/// protecting anybody from anything.
+const MAX_LOGIN_TIMEOUT_S: u32 = 600;
 /// Window width used on a first run.
 const DEFAULT_WINDOW_WIDTH: u32 = 1440;
 /// Window height used on a first run.
@@ -257,6 +266,15 @@ pub struct AppSettings {
     pub fetch_batch_rows: u32,
     /// Statement timeout in seconds; `0` means no timeout.
     pub query_timeout_s: u32,
+    /// How long a connection attempt may take, in seconds; `0` leaves it to
+    /// the driver. Clamped to 0 ..= 600 on load.
+    ///
+    /// Sent with every connection the way each product's driver understands
+    /// it (see the app layer's `connection::build_spec`): a database behind a
+    /// dropped VPN or a firewall that drops rather than refuses would otherwise
+    /// keep a tab "connecting" for as long as the operating system's TCP
+    /// timeout, which no driver shortens by default.
+    pub login_timeout_s: u32,
     /// Value [`ConnectionProfile::confirm_writes`](crate::ConnectionProfile)
     /// starts at for a newly created profile.
     pub confirm_writes_default: bool,
@@ -324,6 +342,7 @@ impl Default for AppSettings {
             jvm_extra_args: Vec::new(),
             fetch_batch_rows: DEFAULT_FETCH_BATCH_ROWS,
             query_timeout_s: 0,
+            login_timeout_s: DEFAULT_LOGIN_TIMEOUT_S,
             confirm_writes_default: true,
             explorer_width: DEFAULT_EXPLORER_WIDTH,
             explorer_visible: true,
@@ -428,6 +447,7 @@ impl AppSettings {
         // string, which it rejects with a message about the wrong argument.
         self.jvm_extra_args.retain(|arg| !arg.trim().is_empty());
         self.fetch_batch_rows = self.fetch_batch_rows.clamp(1, MAX_FETCH_BATCH_ROWS);
+        self.login_timeout_s = self.login_timeout_s.min(MAX_LOGIN_TIMEOUT_S);
         // A blank tag would match no release and silence nothing, so it is the
         // same thing as having ignored none.
         blank_to_none(&mut self.ignored_update);
@@ -455,6 +475,7 @@ mod tests {
         assert!(settings.jvm_extra_args.is_empty());
         assert_eq!(settings.fetch_batch_rows, 500);
         assert_eq!(settings.query_timeout_s, 0);
+        assert_eq!(settings.login_timeout_s, 30);
         assert!(settings.confirm_writes_default);
         assert_eq!(settings.window, WindowState::default());
         assert_eq!(settings.window.x, None);
@@ -481,6 +502,7 @@ mod tests {
             jvm_extra_args: vec!["-Doracle.jdbc.timezoneAsRegion=false".to_string()],
             fetch_batch_rows: 1_000,
             query_timeout_s: 30,
+            login_timeout_s: 12,
             confirm_writes_default: false,
             window: WindowState {
                 x: Some(120),
@@ -696,8 +718,14 @@ mod tests {
 
         // A timeout of 0 is meaningful — it disables the timeout — and stays.
         settings.query_timeout_s = 0;
+        settings.login_timeout_s = 0;
         settings.sanitize();
         assert_eq!(settings.query_timeout_s, 0);
+        assert_eq!(settings.login_timeout_s, 0);
+
+        settings.login_timeout_s = u32::MAX;
+        settings.sanitize();
+        assert_eq!(settings.login_timeout_s, 600);
     }
 
     #[test]

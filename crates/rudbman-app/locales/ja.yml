@@ -115,6 +115,8 @@ settings:
   fetch_batch_rows_hint: グリッドをスクロールしたときに一度に取得する行数
   query_timeout: 文のタイムアウト
   query_timeout_hint: 秒 — 0 は無制限
+  login_timeout: 接続のタイムアウト
+  login_timeout_hint: 秒 — 0 はドライバーの既定値
   confirm_writes_default: 新しい接続では書き込み文の実行前に確認する
 
   jvm_heap: Java ヒープ
@@ -271,6 +273,14 @@ connect:
   host_key_question: "%{host} が未知の %{algorithm} 鍵を提示しました: %{fingerprint}"
   trust_host_key: この鍵を信頼する
   host_key_trusted: ホスト鍵を信頼済みに追加しました。もう一度接続してみてください。
+  card_connecting: "「%{name}」に接続しています…"
+  card_connecting_hint: "%{seconds} 秒たつと試行をやめます。"
+  card_failed: "「%{name}」に接続できませんでした"
+  card_dead: "「%{name}」への接続が終了しました"
+  reconnect: 再接続
+  edit_connection: 接続を編集…
+  trust_and_reconnect: キーを信頼して再接続
+  canceled: 接続の試行をキャンセルしました。
 
 # ドライバーマネージャー。
 driver:
@@ -655,6 +665,7 @@ context:
   hide_column: この列を隠す
   show_columns: すべての列を表示
   copy_column_name: 列名をコピー
+  copy_message: メッセージをコピー
   cut: 切り取り
   copy: コピー
   paste: 貼り付け

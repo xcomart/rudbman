@@ -252,7 +252,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             workspace.connections.push(Connection {
                 id,
                 profile: unopenable_profile("dead"),
-                state: ConnectionState::Failed(SharedString::new_static("refused")),
+                state: ConnectionState::Failed("refused".into()),
                 work: WorkArea::new(),
             });
             let node = NodeId::Object {
@@ -458,7 +458,7 @@ fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestA
             workspace.connections.push(Connection {
                 id: next_connection_id(),
                 profile: unopenable_profile("refused"),
-                state: ConnectionState::Failed(SharedString::new_static("no driver")),
+                state: ConnectionState::Failed("no driver".into()),
                 work: WorkArea::new(),
             });
 
@@ -469,12 +469,20 @@ fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestA
                     ts!("menu.new_query").to_string(),
                     ts!("menu.new_builder").to_string(),
                     String::new(),
+                    ts!("connect.reconnect").to_string(),
+                    ts!("connect.edit_connection").to_string(),
+                    String::new(),
                     ts!("tab.close").to_string(),
                 ]
             );
-            assert!(context_menu::grayed(&live).is_empty());
+            // A live tab has nothing to reconnect; everything else is there.
+            assert_eq!(
+                context_menu::grayed(&live),
+                [ts!("connect.reconnect").to_string()]
+            );
 
             let dead = workspace.connection_rows(1, cx);
+            assert!(context_menu::row(&dead, &ts!("connect.reconnect")).is_enabled());
             assert!(!context_menu::row(&dead, &ts!("menu.new_query")).is_enabled());
             assert!(!context_menu::row(&dead, &ts!("menu.new_builder")).is_enabled());
             assert!(

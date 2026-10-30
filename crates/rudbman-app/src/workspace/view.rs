@@ -1040,11 +1040,240 @@ impl Workspace {
                     // see [`app_settings::window_tint`].
                     .bg(app_settings::window_tint(theme.background, cx))
                     .child(match work {
-                        Some((root, chrome)) => render_pane(root, &chrome, cx),
+                        Some((root, chrome)) => {
+                            // A tab that is not open says why, in the room the
+                            // panes would have — or, while it still shows the
+                            // tabs its dead session left, in a band above them.
+                            let empty = self.work_area().is_some_and(|area| {
+                                area.panes.leaves().iter().all(|(_, pane)| pane.is_empty())
+                            });
+                            match self.render_connection_card(!empty, cx) {
+                                Some(card) if empty => card,
+                                Some(band) => div()
+                                    .flex()
+                                    .flex_col()
+                                    .size_full()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .child(band)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .min_h_0()
+                                            .child(render_pane(root, &chrome, cx)),
+                                    )
+                                    .into_any_element(),
+                                None => render_pane(root, &chrome, cx),
+                            }
+                        }
                         None => self.render_welcome(&theme, cx),
                     }),
             )
             .into_any_element()
+    }
+
+    /// What the work area says about a connection tab that is not open:
+    /// connecting, failed, or ended. `None` for an open one.
+    ///
+    /// The status bar's one cell is where this used to be said, cut off at the
+    /// width of the window and with nothing to do about it; the empty pane
+    /// under it meanwhile said "pick a table in the explorer" as though the
+    /// connection were live. So the card says it in full — the whole message,
+    /// the hint the connection dialog's "Test" gives for the same failure —
+    /// and carries what to do next: try again in the same tab, fix the
+    /// profile, trust a bastion's new host key, or copy the message for
+    /// someone who can help. While an attempt runs it says so and offers to
+    /// stop waiting.
+    ///
+    /// `band` draws it as a strip over the tabs a dead session left behind
+    /// rather than as a card in the middle of an empty area.
+    pub(super) fn render_connection_card(
+        &self,
+        band: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let open = self.active_connection()?;
+        let index = self.active_connection;
+        let theme = theme(cx);
+        let name = closing::connection_title(&open.profile).to_string();
+        let this = cx.entity();
+        let (title, message, hint, host_key) = match &open.state {
+            ConnectionState::Open(_) => return None,
+            ConnectionState::Connecting { .. } => {
+                let seconds = app_settings::current(cx).login_timeout_s;
+                (
+                    ts!("connect.card_connecting", name = name),
+                    None,
+                    (seconds > 0).then(|| ts!("connect.card_connecting_hint", seconds = seconds)),
+                    None,
+                )
+            }
+            ConnectionState::Failed(failure) => (
+                ts!("connect.card_failed", name = name),
+                Some(failure.message.clone()),
+                failure.hint.clone(),
+                failure.host_key.clone(),
+            ),
+            ConnectionState::Dead(reason) => (
+                ts!("connect.card_dead", name = name),
+                Some(reason.clone()),
+                None,
+                None,
+            ),
+        };
+        let connecting = matches!(open.state, ConnectionState::Connecting { .. });
+        let profile = open.profile.id;
+
+        let mut buttons: Vec<AnyElement> = Vec::new();
+        if connecting {
+            let this = this.clone();
+            buttons.push(
+                Button::new("connection-card-cancel", ts!("common.cancel"))
+                    .variant(ButtonVariant::Secondary)
+                    .compact()
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |workspace, cx| workspace.cancel_connect(index, cx));
+                    })
+                    .into_any_element(),
+            );
+        } else {
+            if host_key.is_some() {
+                let this = this.clone();
+                buttons.push(
+                    Button::new("connection-card-trust", ts!("connect.trust_and_reconnect"))
+                        .variant(ButtonVariant::Primary)
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |workspace, cx| {
+                                workspace.trust_and_reconnect(index, window, cx)
+                            });
+                        })
+                        .into_any_element(),
+                );
+            }
+            let reconnect = this.clone();
+            buttons.push(
+                Button::new("connection-card-reconnect", ts!("connect.reconnect"))
+                    .variant(if host_key.is_some() {
+                        ButtonVariant::Secondary
+                    } else {
+                        ButtonVariant::Primary
+                    })
+                    .compact()
+                    .on_click(move |_, window, cx| {
+                        reconnect
+                            .update(cx, |workspace, cx| workspace.reconnect(index, window, cx));
+                    })
+                    .into_any_element(),
+            );
+            let edit = this.clone();
+            buttons.push(
+                Button::new("connection-card-edit", ts!("connect.edit_connection"))
+                    .variant(ButtonVariant::Secondary)
+                    .compact()
+                    .on_click(move |_, window, cx| {
+                        edit.update(cx, |workspace, cx| {
+                            workspace.edit_profile(profile, window, cx)
+                        });
+                    })
+                    .into_any_element(),
+            );
+            if let Some(message) = message.clone() {
+                buttons.push(
+                    Button::new("connection-card-copy", ts!("context.copy_message"))
+                        .variant(ButtonVariant::Secondary)
+                        .compact()
+                        .on_click(move |_, _window, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                message.to_string(),
+                            ));
+                        })
+                        .into_any_element(),
+                );
+            }
+        }
+
+        let question = host_key.map(|offer| {
+            div().text_size(px(12.)).text_color(theme.text).child(ts!(
+                "connect.host_key_question",
+                host = offer.host.clone(),
+                algorithm = offer.algorithm.clone(),
+                fingerprint = offer.fingerprint.clone()
+            ))
+        });
+        let text = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .min_w_0()
+            .child(
+                div()
+                    .text_size(px(if band { 13. } else { 16. }))
+                    .text_color(theme.text)
+                    .child(title),
+            )
+            .children(message.map(|message| {
+                div()
+                    .id("connection-card-message")
+                    .max_h(px(if band { 60. } else { 220. }))
+                    .overflow_y_scroll()
+                    .text_size(px(12.))
+                    .text_color(theme.danger)
+                    .child(message)
+            }))
+            // The hints are the connection dialog's, written to follow its
+            // "could not connect: …" — so an arrow, not a sentence, leads in.
+            .children(hint.map(|hint| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(theme.text_muted)
+                    .child(SharedString::from(format!("→ {hint}")))
+            }))
+            .children(question);
+        let row = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(8.))
+            .children(buttons);
+
+        Some(if band {
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .flex_none()
+                .items_center()
+                .gap(px(12.))
+                .px(px(12.))
+                .py(px(8.))
+                .bg(theme.surface)
+                .border_b_1()
+                .border_color(theme.border)
+                .child(div().flex_1().min_w_0().child(text))
+                .child(row)
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .p(px(24.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .max_w(px(560.))
+                        .child(text)
+                        .child(row),
+                )
+                .into_any_element()
+        })
     }
 
     /// Renders the welcome screen: what the window is, with nothing open.
@@ -1336,7 +1565,9 @@ impl Workspace {
         let state = match &connection.state {
             ConnectionState::Connecting { .. } => ts!("statusbar.connecting"),
             ConnectionState::Open(_) => ts!("statusbar.connected"),
-            ConnectionState::Failed(error) => ts!("statusbar.failed", error = error.to_string()),
+            ConnectionState::Failed(failure) => {
+                ts!("statusbar.failed", error = failure.message.to_string())
+            }
             ConnectionState::Dead(reason) => reason.clone(),
         };
         (label, state)
@@ -1383,10 +1614,14 @@ impl Workspace {
             .child(div().flex_none().whitespace_nowrap().child(connection))
             .child(
                 div()
+                    .id("status-state")
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .when_some(state_color, |cell, color| cell.text_color(color))
+                    // The cell is cut at the window's width; the whole of it
+                    // is a hover away, and in the work area's card.
+                    .tooltip(rugpui::tooltip_label(state.clone()))
                     .child(state),
             )
             .child(

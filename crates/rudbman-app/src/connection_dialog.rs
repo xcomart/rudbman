@@ -2492,7 +2492,7 @@ fn decompose(template: &str, url: &str) -> Option<Vec<(String, String)>> {
 /// Only the classes worth a hint get one: `28` is the user's password, `08` is
 /// the address, and a driver failure is the JAR. Everything else is left to the
 /// driver's own message, which is usually better than anything invented here.
-fn error_hint(error: &ConnectError) -> Option<SharedString> {
+pub(crate) fn error_hint(error: &ConnectError) -> Option<SharedString> {
     if error.is_authentication() {
         return Some(ts!("connect.hint_auth"));
     }

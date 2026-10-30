@@ -541,7 +541,8 @@ impl Workspace {
             }
             Err(error) => {
                 log::warn!("connecting {} failed: {error}", connection.profile.name);
-                connection.state = ConnectionState::Failed(error.message().into());
+                connection.state =
+                    ConnectionState::Failed(Failure::of(&error, &connection.profile));
             }
         }
         self.sync_explorer_root(index, cx);

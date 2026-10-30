@@ -115,6 +115,8 @@ settings:
   fetch_batch_rows_hint: строк, получаемых за раз при прокрутке таблицы
   query_timeout: Тайм-аут инструкции
   query_timeout_hint: секунд — 0 означает без ограничения
+  login_timeout: Тайм-аут подключения
+  login_timeout_hint: секунд — 0 оставляет значение драйвера
   confirm_writes_default: Спрашивать перед выполнением изменяющей инструкции (для новых подключений)
 
   jvm_heap: Куча Java
@@ -271,6 +273,14 @@ connect:
   host_key_question: "%{host} предъявил неизвестный ключ %{algorithm}: %{fingerprint}"
   trust_host_key: Доверять этому ключу
   host_key_trusted: Ключ хоста добавлен в список доверенных. Попробуйте подключиться снова.
+  card_connecting: "Подключение к «%{name}»…"
+  card_connecting_hint: "Попытка прекращается через %{seconds} с."
+  card_failed: "Не удалось подключиться к «%{name}»"
+  card_dead: "Подключение к «%{name}» завершено"
+  reconnect: Переподключиться
+  edit_connection: Изменить подключение…
+  trust_and_reconnect: Доверять ключу и переподключиться
+  canceled: Попытка подключения отменена.
 
 # Менеджер драйверов.
 driver:
@@ -655,6 +665,7 @@ context:
   hide_column: Скрыть этот столбец
   show_columns: Показать все столбцы
   copy_column_name: Копировать имя столбца
+  copy_message: Копировать сообщение
   cut: Вырезать
   copy: Копировать
   paste: Вставить
