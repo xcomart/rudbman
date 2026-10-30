@@ -614,10 +614,21 @@ impl Workspace {
                 Ok(columns) => {
                     panel.update(cx, |panel, cx| panel.add_table(&target, columns, cx));
                 }
-                // Nowhere to put this on screen: the builder has no message
-                // strip, and a column list that could not be read is the same
-                // failure the explorer already reports on the node itself.
-                Err(error) => log::error!("the column list could not be read: {error}"),
+                // A toast: the table simply does not appear on the canvas, and
+                // the builder has no message strip of its own to say why.
+                Err(error) => {
+                    log::error!("the column list could not be read: {error}");
+                    cx.update(|cx| {
+                        rugpui_shell::show_toast(
+                            rugpui_shell::Toast::error(ts!(
+                                "toast.columns_failed",
+                                table = target.name.clone(),
+                                error = error.to_string()
+                            )),
+                            cx,
+                        );
+                    });
+                }
             }
         })
         .detach();

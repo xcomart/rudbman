@@ -254,3 +254,58 @@ fn the_write_confirmation_takes_enter_and_escape_from_the_editor(cx: &mut gpui::
             .expect("the window is open");
     }
 }
+
+/// A chord that opens a tab says why nothing opens — no connection at all,
+/// or one that is not live — rather than ending without a word.
+#[gpui::test]
+fn opening_a_tab_without_a_session_says_why(cx: &mut gpui::TestAppContext) {
+    let window = workspace_over_welcome(&[], cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let said = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|_, cx| {
+            let said = rugpui_shell::shown_toasts(cx)
+                .into_iter()
+                .map(|(_, toast)| toast.message().to_string())
+                .collect::<Vec<_>>();
+            rugpui_shell::clear_toasts(cx);
+            said
+        })
+    };
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.focus_shell(window, cx);
+        })
+        .expect("the window is open");
+    cx.dispatch_action(NewQuery);
+    cx.run_until_parked();
+    assert_eq!(said(&mut cx), [ts!("toast.no_connection").to_string()]);
+
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.connections.push(Connection {
+                id: next_connection_id(),
+                profile: unopenable_profile("refused"),
+                state: ConnectionState::Failed("no driver".into()),
+                work: WorkArea::new(),
+            });
+            workspace.active_connection = 0;
+            workspace.focus_shell(window, cx);
+            cx.notify();
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    for action in [
+        Box::new(NewQuery) as Box<dyn gpui::Action>,
+        Box::new(NewBuilder),
+        Box::new(ReopenClosedTab),
+    ] {
+        let dispatched = action.boxed_clone();
+        cx.update(|window, cx| window.dispatch_action(dispatched, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            said(&mut cx),
+            [ts!("toast.not_connected", name = "refused").to_string()],
+            "{action:?}"
+        );
+    }
+}

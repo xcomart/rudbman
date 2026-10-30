@@ -389,7 +389,10 @@ pub(super) fn run() {
         // identity twice leaves nothing different behind.
         app_identity::install(cx);
 
-        if let Err(error) = rudbman_core::init_secrets() {
+        // Said once the words are loaded, below: a missing keychain is not
+        // fatal, but every saved password silently reading as empty is.
+        let keychain = rudbman_core::init_secrets().err();
+        if let Some(error) = &keychain {
             log::warn!("the OS keychain is unavailable: {error}");
         }
 
@@ -400,6 +403,15 @@ pub(super) fn run() {
         // Ahead of everything that renders a string — the menu bar included —
         // so nothing is ever built in the wrong language and then corrected.
         i18n::apply(settings.language.as_deref());
+        if let Some(error) = keychain {
+            rugpui_shell::show_toast(
+                rugpui_shell::Toast::warning(ts!(
+                    "toast.keychain_unavailable",
+                    error = format!("{error:#}")
+                )),
+                cx,
+            );
+        }
 
         rugpui::init(cx);
         // After the widget layer, because both scope their bindings to key

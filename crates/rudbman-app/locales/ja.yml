@@ -798,3 +798,11 @@ close_guard:
   quit_anyway: "それでも終了"
   restart_anyway: "それでも再起動"
   save_all: "すべて保存"
+
+toast:
+  no_connection: "先に接続を開いてください。"
+  connecting: "「%{name}」はまだ接続中です。"
+  not_connected: "「%{name}」は接続されていません。先に再接続してください。"
+  open_failed: "%{file} を開けませんでした: %{error}"
+  columns_failed: "%{table} の列を読み込めませんでした: %{error}"
+  keychain_unavailable: "システムのキーチェーンを使用できません (%{error})。保存したパスワードは読み込めず、新しいパスワードも保存されません。"

@@ -798,3 +798,11 @@ close_guard:
   quit_anyway: "Quitter quand même"
   restart_anyway: "Redémarrer quand même"
   save_all: "Tout enregistrer"
+
+toast:
+  no_connection: "Ouvrez d’abord une connexion."
+  connecting: "« %{name} » est encore en cours de connexion."
+  not_connected: "« %{name} » n’est pas connectée. Reconnectez-la d’abord."
+  open_failed: "Impossible d’ouvrir %{file} : %{error}"
+  columns_failed: "Impossible de lire les colonnes de %{table} : %{error}"
+  keychain_unavailable: "Le trousseau du système est indisponible (%{error}). Les mots de passe enregistrés ne peuvent pas être lus, et les nouveaux ne seront pas conservés."

@@ -80,7 +80,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        self.open_query("", window, cx);
+        if self.say_not_live(cx) {
+            self.open_query("", window, cx);
+        }
     }
 
     /// Opens a query pane over the object selected in the explorer.
@@ -235,7 +237,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        self.open_builder(window, cx);
+        if self.say_not_live(cx) {
+            self.open_builder(window, cx);
+        }
     }
 
     /// Closes the tab on top of the active pane, through every guard a close

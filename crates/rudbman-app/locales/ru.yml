@@ -798,3 +798,11 @@ close_guard:
   quit_anyway: "Всё равно выйти"
   restart_anyway: "Всё равно перезапустить"
   save_all: "Сохранить всё"
+
+toast:
+  no_connection: "Сначала откройте подключение."
+  connecting: "«%{name}» ещё подключается."
+  not_connected: "«%{name}» не подключено. Сначала переподключитесь."
+  open_failed: "Не удалось открыть %{file}: %{error}"
+  columns_failed: "Не удалось прочитать столбцы %{table}: %{error}"
+  keychain_unavailable: "Системное хранилище ключей недоступно (%{error}). Сохранённые пароли нельзя прочитать, а новые не будут сохранены."

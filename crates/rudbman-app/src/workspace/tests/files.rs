@@ -364,3 +364,27 @@ fn a_bound_file_that_has_gone_is_written_anew(cx: &mut gpui::TestAppContext) {
     assert!(!cx.did_prompt_for_new_path());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "select 1");
 }
+
+/// A file that cannot be read says so in a toast, naming the file, since no
+/// tab opens to say it in.
+#[gpui::test]
+fn a_file_that_cannot_be_read_says_so(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("files-unreadable", cx);
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let missing = dir.path().join("gone.sql");
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    cx.update(|_, cx| rugpui_shell::clear_toasts(cx));
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.load_sql_file(missing, window, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        let shown = rugpui_shell::shown_toasts(cx);
+        assert_eq!(shown.len(), 1);
+        let (_, toast) = &shown[0];
+        assert_eq!(toast.level(), rugpui_shell::ToastLevel::Error);
+        assert!(toast.message().contains("gone.sql"), "{}", toast.message());
+    });
+}

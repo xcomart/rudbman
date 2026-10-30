@@ -798,3 +798,11 @@ close_guard:
   quit_anyway: "仍然退出"
   restart_anyway: "仍然重新启动"
   save_all: "全部保存"
+
+toast:
+  no_connection: "请先打开一个连接。"
+  connecting: "“%{name}”仍在连接中。"
+  not_connected: "“%{name}”未连接。请先重新连接。"
+  open_failed: "无法打开 %{file}：%{error}"
+  columns_failed: "无法读取 %{table} 的列：%{error}"
+  keychain_unavailable: "系统钥匙串不可用（%{error}）。无法读取已保存的密码，新密码也不会被保存。"

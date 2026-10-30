@@ -930,6 +930,14 @@ from the top rather than resumed, so a tab saved meanwhile is not asked about
 and a tab gone meanwhile is not closed twice. On Linux and Windows `Ctrl+W`
 closes the tab on top; on macOS `Cmd+W` remains "close pane" for now.
 
+Feedback that belongs to no pane goes to a toast (`rugpui_shell::show_toast`,
+drawn by `toast_stack()` as the root's last child, above the status bar): a
+chord that opens a tab over no session (`Workspace::say_not_live` — no
+connection, still connecting, failed or ended), a `.sql` file that could not be
+read, a builder table whose columns could not be read, and a keychain that is
+unavailable at start-up. A pane's own messages stay in its notice band
+(`crate::notice`), where they sit beside what they are about.
+
 Workspaces are saved as `workspaces/<profile-uuid>.json` in the configuration
 directory. The versioned snapshot holds all six tab kinds, tab order and custom
 names, the selected tab in each pane, the active pane, nested splits and ratios,

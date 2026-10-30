@@ -798,3 +798,11 @@ close_guard:
   quit_anyway: "Trotzdem beenden"
   restart_anyway: "Trotzdem neu starten"
   save_all: "Alle speichern"
+
+toast:
+  no_connection: "Öffnen Sie zuerst eine Verbindung."
+  connecting: "„%{name}“ wird noch verbunden."
+  not_connected: "„%{name}“ ist nicht verbunden. Verbinden Sie sie zuerst neu."
+  open_failed: "%{file} konnte nicht geöffnet werden: %{error}"
+  columns_failed: "Die Spalten von %{table} konnten nicht gelesen werden: %{error}"
+  keychain_unavailable: "Der Schlüsselbund des Systems ist nicht verfügbar (%{error}). Gespeicherte Passwörter können nicht gelesen und neue nicht behalten werden."

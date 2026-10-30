@@ -1307,3 +1307,19 @@ close_guard:
   quit_anyway: "Quit anyway"
   restart_anyway: "Restart anyway"
   save_all: "Save all"
+
+# Short messages in the window's corner, for feedback that belongs to no pane:
+# a command that had nowhere to go, or a failure behind one.
+toast:
+  # A shortcut that opens a tab (Ctrl+T, Ctrl+O, Ctrl+Shift+T, a new builder)
+  # was pressed with no connection open, or over a connection tab that is
+  # still connecting or is no longer live.
+  no_connection: "Open a connection first."
+  connecting: "“%{name}” is still connecting."
+  not_connected: "“%{name}” is not connected. Reconnect it first."
+  # Ctrl+O: the file the user picked could not be read.
+  open_failed: "Could not open %{file}: %{error}"
+  # A table added to the query builder whose columns could not be read.
+  columns_failed: "Could not read the columns of %{table}: %{error}"
+  # At start-up, when the platform has no usable credential store.
+  keychain_unavailable: "The system keychain is unavailable (%{error}). Saved passwords can't be read, and new ones won't be kept."

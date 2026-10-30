@@ -558,7 +558,7 @@ impl Workspace {
     /// with changes. A tab closed with "Don't save" is how that answer is
     /// undone. Needs a live session, as opening any tab does.
     pub(super) fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_live_connection() {
+        if !self.say_not_live(cx) {
             return;
         }
         let Some(open) = self.active_connection() else {

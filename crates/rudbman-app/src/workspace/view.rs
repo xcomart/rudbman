@@ -562,7 +562,12 @@ impl Render for Workspace {
             // Last: it paints above the dialogs, as its own backdrop already
             // implies, and it takes no room in the column — the element is an
             // empty absolute box whose two halves are anchored to the window.
-            .children(context_menu);
+            .children(context_menu)
+            // Toasts over everything, menus included, and clear of the status
+            // bar: feedback that belongs to no pane (`Workspace::say_not_live`
+            // and the failures behind a command) has to be readable whatever
+            // is open.
+            .child(rugpui_shell::toast_stack().bottom_inset(px(STATUS_BAR_HEIGHT + 8.)));
 
         let Some(tiling) = tiling else {
             // A server-decorated window: the compositor frames and shadows it,

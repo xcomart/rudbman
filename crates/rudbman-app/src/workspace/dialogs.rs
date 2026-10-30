@@ -339,6 +339,10 @@ impl Workspace {
         if !self.has_live_connection() {
             return;
         }
+        let file = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
         let reading = cx.background_spawn(async move {
             read_sql_file(&path).map(|(bytes, stamp)| (path, bytes, stamp))
         });
@@ -359,10 +363,22 @@ impl Workspace {
                         })
                         .ok();
                 }
-                // Nowhere to put this on screen: the shell has no transient
-                // message strip, and inventing one for the case where a file
-                // the user just picked has gone away is out of proportion.
-                Err(error) => log::error!("could not read the SQL file: {error}"),
+                // A toast: the file the user just picked has gone away or
+                // will not be read, and no tab opened to say so in.
+                Err(error) => {
+                    log::error!("could not read the SQL file: {error}");
+                    cx.update(|_window, cx| {
+                        rugpui_shell::show_toast(
+                            rugpui_shell::Toast::error(ts!(
+                                "toast.open_failed",
+                                file = file.clone(),
+                                error = format!("{error:#}")
+                            )),
+                            cx,
+                        );
+                    })
+                    .ok();
+                }
             }
         })
         .detach();
@@ -518,6 +534,29 @@ impl Workspace {
             .is_some_and(|open| matches!(open.state, ConnectionState::Open(_)))
     }
 
+    /// [`Workspace::has_live_connection`] for a command the user just gave —
+    /// `Ctrl+T`, `Ctrl+O`, `Ctrl+Shift+T`, a new builder — saying in a toast
+    /// why nothing opens when there is no session: no connection at all, one
+    /// still connecting, or one that failed or ended. Those chords used to end
+    /// without a word, which reads as a key that does nothing.
+    pub(super) fn say_not_live(&self, cx: &mut App) -> bool {
+        let message = match self.active_connection() {
+            None => ts!("toast.no_connection"),
+            Some(open) => {
+                let name = closing::connection_title(&open.profile).to_string();
+                match open.state {
+                    ConnectionState::Open(_) => return true,
+                    ConnectionState::Connecting { .. } => ts!("toast.connecting", name = name),
+                    ConnectionState::Failed(_) | ConnectionState::Dead(_) => {
+                        ts!("toast.not_connected", name = name)
+                    }
+                }
+            }
+        };
+        rugpui_shell::show_toast(rugpui_shell::Toast::info(message), cx);
+        false
+    }
+
     /// Asks the platform for a `.sql` file and opens what it hands back.
     ///
     /// Nothing waits on the prompt, for the reason the other pickers in this
@@ -527,7 +566,7 @@ impl Workspace {
         // Asked before the prompt as well as after: opening a file picker over
         // a window that has nowhere to put the file is a dead end the user only
         // finds out about once they have chosen one.
-        if !self.has_live_connection() {
+        if !self.say_not_live(cx) {
             return;
         }
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {

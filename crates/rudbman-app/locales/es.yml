@@ -798,3 +798,11 @@ close_guard:
   quit_anyway: "Salir de todos modos"
   restart_anyway: "Reiniciar de todos modos"
   save_all: "Guardar todo"
+
+toast:
+  no_connection: "Abre primero una conexión."
+  connecting: "«%{name}» todavía se está conectando."
+  not_connected: "«%{name}» no está conectada. Vuelve a conectarla primero."
+  open_failed: "No se pudo abrir %{file}: %{error}"
+  columns_failed: "No se pudieron leer las columnas de %{table}: %{error}"
+  keychain_unavailable: "El llavero del sistema no está disponible (%{error}). No se pueden leer las contraseñas guardadas y las nuevas no se conservarán."
