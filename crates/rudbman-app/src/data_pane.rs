@@ -283,6 +283,100 @@ enum Load {
     Failed(Box<QueryError>),
 }
 
+gpui::actions!(
+    data_pane,
+    [
+        /// Strike the row under the cursor out, or take the mark off.
+        ToggleDeleteRow,
+        /// Put NULL into the cell under the cursor.
+        SetNullCell,
+        /// Add a row to type into.
+        InsertRow,
+        /// Show the staged changes as the statements that would apply them.
+        ApplyChanges,
+        /// Read the rows again.
+        RefreshRows,
+    ]
+);
+
+/// The key context the pane renders in.
+const KEY_CONTEXT: &str = "DataPane";
+
+/// Marks the pane's chords as registered.
+struct Bindings;
+
+impl gpui::Global for Bindings {}
+
+/// The chord each command is bound to, as a menu row or a tooltip writes it.
+///
+/// One table for the bindings and the labels, so that a hint can never name
+/// a key the pane does not answer. Never translated, for
+/// [`SHORTCUT_MODIFIER`]'s reason.
+pub(crate) mod keys {
+    /// Strikes the row out.
+    pub const DELETE_ROW: &str = "Delete";
+    /// NULL into the cell.
+    pub const SET_NULL: &str = if cfg!(target_os = "macos") {
+        "Cmd+0"
+    } else {
+        "Ctrl+0"
+    };
+    /// A new row.
+    pub const INSERT_ROW: &str = "Alt+Insert";
+    /// The apply preview.
+    pub const APPLY: &str = if cfg!(target_os = "macos") {
+        "Cmd+S"
+    } else {
+        "Ctrl+S"
+    };
+    /// Reading the rows again.
+    pub const REFRESH: &str = "F5";
+}
+
+/// A toolbar button with its chord as the hover text.
+///
+/// The button is the widget's and carries no tooltip of its own, so the chord
+/// rides on a box around it.
+fn hinted(id: &'static str, chord: &'static str, button: Button) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex_none()
+        .tooltip(rugpui::tooltip_label(chord))
+        .child(button)
+}
+
+/// Registers the pane's chords, once per application.
+///
+/// In the pane's own key context, so each answers wherever the keyboard is
+/// inside the pane — on the grid, which is where it is while rows are being
+/// edited — and wins over the window's `Ctrl+S`, which has nothing to save
+/// over a data tab. The grid's cell editor is deeper still, so `Delete` typed
+/// into a cell being edited deletes a character, not the row.
+fn bind_keys(cx: &mut App) {
+    if cx.has_global::<Bindings>() {
+        return;
+    }
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        gpui::KeyBinding::new("delete", ToggleDeleteRow, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new("shift-delete", SetNullCell, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new(&format!("{modifier}-0"), SetNullCell, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new("alt-insert", InsertRow, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new(&format!("{modifier}-s"), ApplyChanges, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new(
+            &format!("{modifier}-enter"),
+            ApplyChanges,
+            Some(KEY_CONTEXT),
+        ),
+        gpui::KeyBinding::new("f5", RefreshRows, Some(KEY_CONTEXT)),
+    ]);
+    cx.set_global(Bindings);
+}
+
 /// One table's rows.
 pub struct DataPane {
     /// What is being shown. Also the tab's title, and the identity two "view
@@ -397,6 +491,7 @@ impl DataPane {
         settings: &AppSettings,
         cx: &mut Context<Self>,
     ) -> Self {
+        bind_keys(cx);
         Self {
             target,
             connection,
@@ -1012,6 +1107,36 @@ impl DataPane {
         self.stage(row, column, StagedCell::Null, cx);
     }
 
+    /// `Delete`: strikes the row under the cursor out, or takes the mark off —
+    /// what the grid's menu row does, under the same conditions.
+    fn key_toggle_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid() else {
+            return;
+        };
+        let Some((row, _)) = self.menu_cell(cx) else {
+            return;
+        };
+        let source = grid.read(cx).source();
+        if !source.writable() || source.row_status(row) == RowStatus::Inserted {
+            return;
+        }
+        self.toggle_delete(row, cx);
+    }
+
+    /// `Ctrl+0`: NULL into the cell under the cursor, when it may hold one.
+    fn key_set_null(&mut self, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid() else {
+            return;
+        };
+        let Some((row, column)) = self.menu_cell(cx) else {
+            return;
+        };
+        let source = grid.read(cx).source();
+        if source.writable() && source.cell_editable(row, column) && source.nullable(column) {
+            self.set_null(row, column, cx);
+        }
+    }
+
     /// Puts NULL into a cell, for the shell's tests, which stage an edit to
     /// see what a close does about it without laying out a grid to click.
     #[cfg(test)]
@@ -1461,6 +1586,7 @@ impl DataPane {
         rows.push({
             let this = this.clone();
             MenuRow::new(ts!("data.set_null"))
+                .shortcut(keys::SET_NULL)
                 .enabled(writable && nullable)
                 .on_activate(move |_window, cx| {
                     let Some((row, column)) = cell else {
@@ -1473,6 +1599,7 @@ impl DataPane {
         rows.push({
             let this = this.clone();
             MenuRow::new(ts!("data.insert_row"))
+                .shortcut(keys::INSERT_ROW)
                 .enabled(writable)
                 .on_activate(move |window, cx| {
                     this.update(cx, |pane, cx| pane.insert_row(window, cx));
@@ -1488,6 +1615,7 @@ impl DataPane {
                 ts!("data.delete_row")
             };
             MenuRow::new(label)
+                .shortcut(keys::DELETE_ROW)
                 .enabled(writable && cell.is_some() && !inserted)
                 .on_activate(move |_window, cx| {
                     let Some((row, _)) = cell else {
@@ -1618,23 +1746,31 @@ impl DataPane {
                 // case that menu cannot reach: a table with no rows in it has
                 // no cell to right-click, and a table nobody can put the first
                 // row into would be a strange thing to ship.
-                Button::new("data-insert", ts!("data.insert_row"))
-                    .compact()
-                    .variant(ButtonVariant::Secondary)
-                    .disabled(loading)
-                    .on_click(move |_, window, cx| {
-                        this.update(cx, |pane, cx| pane.insert_row(window, cx));
-                    })
+                hinted(
+                    "data-insert-hint",
+                    keys::INSERT_ROW,
+                    Button::new("data-insert", ts!("data.insert_row"))
+                        .compact()
+                        .variant(ButtonVariant::Secondary)
+                        .disabled(loading)
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |pane, cx| pane.insert_row(window, cx));
+                        }),
+                )
             }))
             .children(writable.then(|| {
                 let this = this.clone();
-                Button::new("data-apply", ts!("data.apply"))
-                    .compact()
-                    .variant(ButtonVariant::Primary)
-                    .disabled(!staged || loading || self.applying)
-                    .on_click(move |_, window, cx| {
-                        this.update(cx, |pane, cx| pane.apply(window, cx));
-                    })
+                hinted(
+                    "data-apply-hint",
+                    keys::APPLY,
+                    Button::new("data-apply", ts!("data.apply"))
+                        .compact()
+                        .variant(ButtonVariant::Primary)
+                        .disabled(!staged || loading || self.applying)
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |pane, cx| pane.apply(window, cx));
+                        }),
+                )
             }))
             .children(writable.then(|| {
                 let this = this.clone();
@@ -1650,7 +1786,9 @@ impl DataPane {
                         });
                     })
             }))
-            .child(
+            .child(hinted(
+                "data-refresh-hint",
+                keys::REFRESH,
                 Button::new("data-refresh", ts!("data.refresh"))
                     .compact()
                     .variant(ButtonVariant::Secondary)
@@ -1658,7 +1796,7 @@ impl DataPane {
                     .on_click(move |_, window, cx| {
                         this.update(cx, |pane, cx| pane.refresh(window, cx));
                     }),
-            )
+            ))
     }
 
     /// The one line that says why nothing here can be edited, when something
@@ -1787,6 +1925,28 @@ impl Render for DataPane {
 
         div()
             .id("data-pane")
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(|pane, _: &ToggleDeleteRow, _window, cx| {
+                pane.key_toggle_delete(cx);
+            }))
+            .on_action(cx.listener(|pane, _: &SetNullCell, _window, cx| {
+                pane.key_set_null(cx);
+            }))
+            .on_action(cx.listener(|pane, _: &InsertRow, window, cx| {
+                if pane.read_only_reason().is_none() && !matches!(pane.load, Load::Running) {
+                    pane.insert_row(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|pane, _: &ApplyChanges, window, cx| {
+                if pane.has_pending_edits(cx) && !pane.applying {
+                    pane.apply(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|pane, _: &RefreshRows, window, cx| {
+                if !matches!(pane.load, Load::Running) && !pane.applying {
+                    pane.refresh(window, cx);
+                }
+            }))
             .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
@@ -2634,6 +2794,57 @@ mod tests {
                 "insert into APP.PERSON values (1, 'a', null), (2, 'b', '')",
             ],
         )
+    }
+
+    /// The grid answers the editing commands from the keyboard: `Delete`
+    /// strikes the row under the caret out and back, `Ctrl+0` puts NULL in its
+    /// cell, `Alt+Insert` adds a row, and `Ctrl+S` raises the apply preview.
+    #[gpui::test]
+    fn the_editing_commands_answer_the_keyboard(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-keys");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |pane, window, cx| pane.take_focus(window, cx))
+            .expect("the window is open");
+        visual.run_until_parked();
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+
+        select(&window, 0, 1, &mut visual);
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Deleted);
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Unchanged);
+
+        select(&window, 1, 1, &mut visual);
+        visual.simulate_keystrokes(&format!("{modifier}-0"));
+        visual.run_until_parked();
+        assert_eq!(status(&window, 1, &mut visual), RowStatus::Modified);
+
+        // A new row goes in at the top, where its first field opens.
+        visual.simulate_keystrokes("alt-insert");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Inserted);
+
+        // Back on the grid, where the new row's field took the keyboard.
+        window
+            .update(&mut visual, |pane, window, cx| pane.take_focus(window, cx))
+            .expect("the window is open");
+        visual.run_until_parked();
+        visual.simulate_keystrokes(&format!("{modifier}-s"));
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |pane, _window, _cx| {
+                assert!(pane.preview.is_some(), "the apply preview was raised");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
     }
 
     /// Typing into a cell stages it, marks the row, and says so in the toolbar
