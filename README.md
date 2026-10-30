@@ -121,6 +121,17 @@ JVM bridge.
   it under a new name; the tab then takes the file's name, and a dot marks
   changes not yet saved. A file changed on disk since the tab read or saved it
   is never overwritten in place; the save asks where instead.
+- **Closing never loses work silently.** A tab with staged row or structure
+  changes refuses to close — and so do the pane and the connection tab
+  holding it — until the changes are applied or discarded. A query tab bound
+  to a `.sql` file with unsaved changes asks Save / Don't save / Cancel
+  wherever it is closed from; a tab bound to no file is a draft and closes
+  without asking. Closing a connection with an uncommitted transaction or a
+  running statement asks first, and quitting lists everything it would lose.
+  <kbd>Ctrl</kbd>+<kbd>W</kbd> closes the tab on top (on macOS
+  <kbd>Cmd</kbd>+<kbd>W</kbd> still closes the pane), and
+  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens the
+  query or builder tab closed most recently.
 - **Context menus** on every surface that has actions worth reaching for —
   the explorer tree, the result grid, the editor, the ERD and builder
   canvases, and the tab strips.

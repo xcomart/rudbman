@@ -318,7 +318,31 @@ impl Workspace {
     /// Closing the tab that is on top brings another area on screen, so the
     /// keyboard has to be asked about before anything is removed; see
     /// [`Workspace::follow_work_area`].
+    ///
+    /// Goes through every guard a close passes first ([`Workspace::request_close`]):
+    /// a tab of the area holding staged edits refuses the close the way it
+    /// refuses its own, a file with changes is asked about, and an uncommitted
+    /// transaction — which the bridge rolls back as the session closes — or a
+    /// statement still running is asked about too.
     pub(super) fn close_connection(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.connections.get(index).map(|open| open.id) else {
+            return;
+        };
+        self.request_close(
+            closing::CloseRequest::Connection(id),
+            closing::CloseAnswers::default(),
+            window,
+            cx,
+        );
+    }
+
+    /// Closes connection tab `index`, now and unasked.
+    pub(super) fn close_connection_now(
         &mut self,
         index: usize,
         window: &mut Window,

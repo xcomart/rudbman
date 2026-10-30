@@ -670,6 +670,7 @@ context:
   close_tab: 탭 닫기
   close_others: 다른 탭 모두 닫기
   close_right: 오른쪽 탭 모두 닫기
+  reopen_tab: 닫은 탭 다시 열기
   split_right: 오른쪽으로 분할
   split_below: 아래로 분할
   close_pane: 분할 창 닫기
@@ -730,3 +731,23 @@ lob:
   discard_question: "이 LOB 편집기의 변경 사항을 버릴까요?"
   keep_editing: "계속 편집"
   invalid_hex: "16진수 두 자리(00–FF)를 공백이나 줄바꿈으로 구분하여 입력하세요."
+
+closing:
+  unsaved_title: 저장하지 않은 변경 사항
+  unsaved_body: "“%{name}”에 아직 파일에 저장하지 않은 변경 사항이 있습니다."
+  dont_save: 저장 안 함
+  saving: 저장하는 중…
+  connection_title: "“%{name}” 연결을 닫을까요?"
+  close_connection: 연결 닫기
+  risk_uncommitted: 커밋하지 않은 트랜잭션이 롤백됩니다.
+  risk_running: "“%{tab}”에서 실행 중인 문장이 중지됩니다."
+  quit_title: "%{app}을(를) 종료할까요?"
+  quit_body: "지금 종료하면 다음을 잃습니다:"
+  quit_anyway: 그래도 종료
+  work_staged: "%{connection}의 “%{tab}”: 적용하지 않은 변경"
+  work_unsaved: "“%{tab}”: 파일에 저장하지 않은 변경"
+  work_running: "%{connection}의 “%{tab}”: 실행 중인 문장"
+  work_uncommitted: "%{connection}: 커밋하지 않은 트랜잭션(롤백됨)"
+  work_extract: 실행 중인 추출
+  work_transfer: 실행 중인 전송
+  work_backup: 실행 중인 백업

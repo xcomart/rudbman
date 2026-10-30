@@ -100,6 +100,11 @@ actions!(
         NewBuilder,
         /// Close the open dialog or dropdown menu, if there is one.
         DismissDialog,
+        /// Close the tab on top of the active pane.
+        CloseTab,
+        /// Bring back the query or builder tab closed most recently on the
+        /// connection whose tab is showing.
+        ReopenClosedTab,
     ]
 );
 

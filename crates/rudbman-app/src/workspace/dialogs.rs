@@ -36,6 +36,10 @@ impl Workspace {
             // Declining is the only safe reading of "the dialog went away".
             self.answer_confirm(false, window, cx);
         }
+        // And for a close, the only safe reading is that nothing closes.
+        if self.close_question.is_some() {
+            self.answer_close(closing::CloseAnswer::Cancel, window, cx);
+        }
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
         }
@@ -367,7 +371,12 @@ impl Workspace {
     ///
     /// Not gated on the session: what is written is the editor's text, which a
     /// pane whose connection has gone still holds.
-    pub(super) fn save_sql_file(&mut self, choose: bool, cx: &mut Context<Self>) {
+    pub(super) fn save_sql_file(
+        &mut self,
+        choose: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(area) = self.work_area() else {
             return;
         };
@@ -389,9 +398,9 @@ impl Workspace {
         };
         match bound {
             Some(path) if !choose => {
-                self.save_pane_to(pane, path, Overwrite::IfUnchanged(stamp), cx)
+                self.save_pane_to(pane, path, Overwrite::IfUnchanged(stamp), window, cx)
             }
-            _ => self.ask_where_to_save(pane, &title, cx),
+            _ => self.ask_where_to_save(pane, &title, window, cx),
         }
     }
 
@@ -401,7 +410,13 @@ impl Workspace {
     /// none starts from the home directory, with the tab's `title` made into a
     /// file name. Nothing waits on the prompt, for the reason
     /// [`Workspace::open_sql_file`] gives.
-    fn ask_where_to_save(&mut self, pane: Entity<QueryPane>, title: &str, cx: &mut Context<Self>) {
+    pub(super) fn ask_where_to_save(
+        &mut self,
+        pane: Entity<QueryPane>,
+        title: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let bound = pane.read(cx).file().map(Path::to_path_buf);
         let directory = bound
             .as_deref()
@@ -414,18 +429,25 @@ impl Workspace {
         };
         let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
 
-        cx.spawn(async move |workspace, cx| {
+        cx.spawn_in(window, async move |workspace, cx| {
             let path = match prompt.await {
                 Ok(Ok(Some(path))) => path,
-                Ok(Ok(None)) | Err(_) => return,
-                Ok(Err(error)) => {
-                    log::warn!("the save dialog could not be opened: {error:#}");
+                outcome => {
+                    if let Ok(Err(error)) = outcome {
+                        log::warn!("the save dialog could not be opened: {error:#}");
+                    }
+                    // A close that asked for this save closes nothing now.
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.close_save_abandoned(&pane, cx)
+                        })
+                        .ok();
                     return;
                 }
             };
             workspace
-                .update(cx, |workspace, cx| {
-                    workspace.save_pane_to(pane, path, Overwrite::Chosen, cx)
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.save_pane_to(pane, path, Overwrite::Chosen, window, cx)
                 })
                 .ok();
         })
@@ -439,11 +461,12 @@ impl Workspace {
     /// any name the user had given its tab, so that the tab reads as the file
     /// it now is; saving again to the same file leaves a name alone. A bound
     /// file that has changed is left as it is, and the save dialog asks.
-    fn save_pane_to(
+    pub(super) fn save_pane_to(
         &mut self,
         pane: Entity<QueryPane>,
         path: PathBuf,
         overwrite: Overwrite,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(SaveJob { text, edits }) = pane.update(cx, |pane, cx| pane.begin_save(cx)) else {
@@ -454,11 +477,13 @@ impl Workspace {
             (path, outcome)
         });
 
-        cx.spawn(async move |workspace, cx| {
+        cx.spawn_in(window, async move |workspace, cx| {
             let (path, outcome) = writing.await;
             workspace
-                .update(cx, |workspace, cx| {
-                    match pane.update(cx, |pane, cx| pane.finish_save(path, edits, outcome, cx)) {
+                .update_in(cx, |workspace, window, cx| {
+                    let saved =
+                        pane.update(cx, |pane, cx| pane.finish_save(path, edits, outcome, cx));
+                    match saved {
                         Saved::Rebound => {
                             let tab = pane.entity_id();
                             for open in &mut workspace.connections {
@@ -467,9 +492,11 @@ impl Workspace {
                         }
                         // The pane is bound, so the dialog suggests its own file
                         // and the title goes unused.
-                        Saved::Changed => workspace.ask_where_to_save(pane, "", cx),
+                        Saved::Changed => workspace.ask_where_to_save(pane.clone(), "", window, cx),
                         Saved::InPlace | Saved::Failed => {}
                     }
+                    // A close that asked for this save carries on, or stops.
+                    workspace.after_close_save(&pane, saved, window, cx);
                     cx.notify();
                 })
                 .ok();

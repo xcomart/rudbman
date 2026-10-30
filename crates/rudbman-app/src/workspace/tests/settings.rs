@@ -149,6 +149,7 @@ fn every_label_the_shell_menus_draw_has_a_translation() {
         ts!("context.close_tab"),
         ts!("context.close_others"),
         ts!("context.close_right"),
+        ts!("context.reopen_tab"),
         ts!("context.split_right"),
         ts!("context.split_below"),
         ts!("context.close_pane"),

@@ -670,6 +670,7 @@ context:
   close_tab: Cerrar la pestaña
   close_others: Cerrar las demás pestañas
   close_right: Cerrar las pestañas de la derecha
+  reopen_tab: Reabrir la pestaña cerrada
   split_right: Dividir a la derecha
   split_below: Dividir debajo
   close_pane: Cerrar el panel
@@ -730,3 +731,23 @@ lob:
   discard_question: "¿Descartar los cambios de este editor LOB?"
   keep_editing: "Seguir editando"
   invalid_hex: "Introduce pares de dígitos hexadecimales (00–FF) separados por espacios o saltos de línea."
+
+closing:
+  unsaved_title: Cambios sin guardar
+  unsaved_body: "«%{name}» tiene cambios que todavía no se han guardado en su archivo."
+  dont_save: No guardar
+  saving: Guardando…
+  connection_title: "¿Cerrar «%{name}»?"
+  close_connection: Cerrar la conexión
+  risk_uncommitted: Su transacción sin confirmar se revertirá.
+  risk_running: "La sentencia que se está ejecutando en «%{tab}» se detendrá."
+  quit_title: "¿Salir de %{app}?"
+  quit_body: "Si sales ahora se pierde:"
+  quit_anyway: Salir de todos modos
+  work_staged: "«%{tab}» en %{connection}: cambios sin aplicar"
+  work_unsaved: "«%{tab}»: cambios sin guardar en su archivo"
+  work_running: "«%{tab}» en %{connection}: una sentencia aún en ejecución"
+  work_uncommitted: "%{connection}: una transacción sin confirmar, que se revertirá"
+  work_extract: Una extracción aún en curso
+  work_transfer: Una transferencia aún en curso
+  work_backup: Una copia de seguridad aún en curso

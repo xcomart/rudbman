@@ -241,6 +241,11 @@ impl Workspace {
         };
         let others: Vec<usize> = (0..count).filter(|other| *other != index).collect();
         let to_the_right: Vec<usize> = (index + 1..count).collect();
+        let reopenable = can_split && !area.closed.is_empty();
+        let close_tab = match CLOSE_TAB_SHORTCUT {
+            Some((_, label)) => MenuRow::new(ts!("context.close_tab")).shortcut(label),
+            None => MenuRow::new(ts!("context.close_tab")),
+        };
 
         vec![
             MenuRow::new(ts!("context.rename_tab")).on_activate({
@@ -252,13 +257,28 @@ impl Workspace {
                 }
             }),
             MenuRow::separator(),
-            MenuRow::new(ts!("context.close_tab")).on_activate(close(vec![index])),
+            close_tab.on_activate(close(vec![index])),
             MenuRow::new(ts!("context.close_others"))
                 .enabled(!others.is_empty())
                 .on_activate(close(others)),
             MenuRow::new(ts!("context.close_right"))
                 .enabled(!to_the_right.is_empty())
                 .on_activate(close(to_the_right)),
+            // Beside the closes it undoes. It reopens into the pane the
+            // marker is on, which a right-click does not move — so the marker
+            // goes to the pane that was right-clicked first.
+            MenuRow::new(ts!("context.reopen_tab"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+Shift+T"))
+                .enabled(reopenable)
+                .on_activate({
+                    let this = this.clone();
+                    move |window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            workspace.mark_pane(pane);
+                            workspace.reopen_closed_tab(window, cx);
+                        });
+                    }
+                }),
             MenuRow::separator(),
             MenuRow::new(ts!("context.split_right"))
                 .enabled(can_split)

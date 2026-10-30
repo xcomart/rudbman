@@ -670,6 +670,7 @@ context:
   close_tab: Fermer l’onglet
   close_others: Fermer les autres onglets
   close_right: Fermer les onglets à droite
+  reopen_tab: Rouvrir l’onglet fermé
   split_right: Diviser à droite
   split_below: Diviser en dessous
   close_pane: Fermer le volet
@@ -730,3 +731,23 @@ lob:
   discard_question: "Abandonner les modifications de cet éditeur LOB ?"
   keep_editing: "Continuer la modification"
   invalid_hex: "Saisissez des paires hexadécimales (00–FF), séparées par des espaces ou des sauts de ligne."
+
+closing:
+  unsaved_title: Modifications non enregistrées
+  unsaved_body: "« %{name} » contient des modifications qui n’ont pas encore été enregistrées dans son fichier."
+  dont_save: Ne pas enregistrer
+  saving: Enregistrement…
+  connection_title: "Fermer « %{name} » ?"
+  close_connection: Fermer la connexion
+  risk_uncommitted: Sa transaction non validée sera annulée.
+  risk_running: "L’instruction en cours dans « %{tab} » sera arrêtée."
+  quit_title: "Quitter %{app} ?"
+  quit_body: "Quitter maintenant fait perdre :"
+  quit_anyway: Quitter quand même
+  work_staged: "« %{tab} » sur %{connection} : modifications non appliquées"
+  work_unsaved: "« %{tab} » : modifications non enregistrées dans son fichier"
+  work_running: "« %{tab} » sur %{connection} : une instruction encore en cours"
+  work_uncommitted: "%{connection} : une transaction non validée, qui sera annulée"
+  work_extract: Une extraction encore en cours
+  work_transfer: Un transfert encore en cours
+  work_backup: Une sauvegarde encore en cours

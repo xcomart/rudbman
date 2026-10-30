@@ -1007,6 +1007,13 @@ impl DataPane {
         self.stage(row, column, StagedCell::Null, cx);
     }
 
+    /// Puts NULL into a cell, for the shell's tests, which stage an edit to
+    /// see what a close does about it without laying out a grid to click.
+    #[cfg(test)]
+    pub(crate) fn null_for_test(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
+        self.set_null(row, column, cx);
+    }
+
     fn open_cell(
         &mut self,
         row: usize,

@@ -115,22 +115,22 @@ impl Workspace {
     pub(super) fn save_sql_file_action(
         &mut self,
         _: &SaveSqlFile,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        self.save_sql_file(false, cx);
+        self.save_sql_file(false, window, cx);
     }
 
     /// Writes the query tab on screen to a file chosen anew.
     pub(super) fn save_sql_file_as_action(
         &mut self,
         _: &SaveSqlFileAs,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        self.save_sql_file(true, cx);
+        self.save_sql_file(true, window, cx);
     }
 
     /// Opens the extraction dialog over the object selected in the explorer.
@@ -238,6 +238,56 @@ impl Workspace {
         self.open_builder(window, cx);
     }
 
+    /// Closes the tab on top of the active pane, through every guard a close
+    /// passes.
+    pub(super) fn close_tab_action(
+        &mut self,
+        _: &CloseTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.active_pane() else {
+            return;
+        };
+        let Some(index) = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .filter(|pane| !pane.is_empty())
+            .map(Pane::active_index)
+        else {
+            return;
+        };
+        self.close_tab(pane, index, window, cx);
+    }
+
+    /// Brings back the query or builder tab closed most recently.
+    pub(super) fn reopen_closed_tab_action(
+        &mut self,
+        _: &ReopenClosedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.reopen_closed_tab(window, cx);
+    }
+
+    /// Quits, once what quitting would lose has been accepted.
+    ///
+    /// Handled here, on the workspace root, rather than application-wide: the
+    /// window is what knows what is unsaved, and the application-wide handler
+    /// `bootstrap` registers stays as the fallback for a quit dispatched with
+    /// no window to answer it.
+    pub(super) fn quit_action(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_question.is_some() {
+            return;
+        }
+        self.request_close(
+            closing::CloseRequest::Quit,
+            closing::CloseAnswers::default(),
+            window,
+            cx,
+        );
+    }
+
     /// Closes the active pane.
     pub(super) fn close_pane_action(
         &mut self,
@@ -301,6 +351,12 @@ impl Workspace {
     ) {
         if self.rename_tab.is_some() {
             self.finish_tab_name(false, window, cx);
+            return;
+        }
+        if self.close_question.is_some() {
+            // "Cancel": nothing closes, and the tab the question brought
+            // forward keeps the keyboard if it had it.
+            self.answer_close(closing::CloseAnswer::Cancel, window, cx);
             return;
         }
         if self.confirm.is_some() {

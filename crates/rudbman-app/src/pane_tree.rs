@@ -211,8 +211,11 @@ impl PaneItem {
     /// Whether this tab holds text its file does not, which its tab marks.
     ///
     /// Only a query pane bound to a file can say yes. Not a reason to refuse a
-    /// close, unlike [`PaneItem::blocks_close`]: the SQL is the user's text,
-    /// and closing the tab is still how one gets rid of it.
+    /// close, unlike [`PaneItem::blocks_close`], but a reason to ask: the file
+    /// is where the user said the text belongs, so every close of such a tab
+    /// asks Save, Don't save or Cancel first (see the workspace's `closing`
+    /// module). A tab bound to no file is never asked about — its SQL is a
+    /// draft, and closing the tab is how one gets rid of a draft.
     pub fn unsaved(&self, cx: &App) -> bool {
         match self {
             PaneItem::Query { pane, .. } => pane.read(cx).is_modified(cx),

@@ -670,6 +670,7 @@ context:
   close_tab: タブを閉じる
   close_others: 他のタブを閉じる
   close_right: 右側のタブを閉じる
+  reopen_tab: 閉じたタブを開き直す
   split_right: 右に分割
   split_below: 下に分割
   close_pane: ペインを閉じる
@@ -730,3 +731,23 @@ lob:
   discard_question: "この LOB エディターの変更を破棄しますか？"
   keep_editing: "編集を続ける"
   invalid_hex: "2 桁の 16 進数 (00–FF) を空白または改行で区切って入力してください。"
+
+closing:
+  unsaved_title: 未保存の変更
+  unsaved_body: "「%{name}」には、まだファイルに保存していない変更があります。"
+  dont_save: 保存しない
+  saving: 保存しています…
+  connection_title: "「%{name}」を閉じますか？"
+  close_connection: 接続を閉じる
+  risk_uncommitted: コミットしていないトランザクションはロールバックされます。
+  risk_running: "「%{tab}」で実行中の文は停止されます。"
+  quit_title: "%{app} を終了しますか？"
+  quit_body: "今終了すると、次のものが失われます:"
+  quit_anyway: それでも終了
+  work_staged: "%{connection} の「%{tab}」: 適用していない変更"
+  work_unsaved: "「%{tab}」: ファイルに保存していない変更"
+  work_running: "%{connection} の「%{tab}」: 実行中の文"
+  work_uncommitted: "%{connection}: コミットしていないトランザクション（ロールバックされます）"
+  work_extract: 実行中の抽出
+  work_transfer: 実行中の転送
+  work_backup: 実行中のバックアップ

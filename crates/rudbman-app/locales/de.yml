@@ -670,6 +670,7 @@ context:
   close_tab: Tab schließen
   close_others: Andere Tabs schließen
   close_right: Tabs rechts davon schließen
+  reopen_tab: Geschlossenen Tab wieder öffnen
   split_right: Rechts teilen
   split_below: Unten teilen
   close_pane: Bereich schließen
@@ -730,3 +731,23 @@ lob:
   discard_question: "Änderungen in diesem LOB-Editor verwerfen?"
   keep_editing: "Weiter bearbeiten"
   invalid_hex: "Geben Sie hexadezimale Ziffernpaare (00–FF) ein, getrennt durch Leerzeichen oder Zeilenumbrüche."
+
+closing:
+  unsaved_title: Nicht gespeicherte Änderungen
+  unsaved_body: "„%{name}“ hat Änderungen, die noch nicht in der Datei gespeichert sind."
+  dont_save: Nicht speichern
+  saving: Wird gespeichert…
+  connection_title: "„%{name}“ schließen?"
+  close_connection: Verbindung schließen
+  risk_uncommitted: Die nicht festgeschriebene Transaktion wird zurückgerollt.
+  risk_running: "Die in „%{tab}“ laufende Anweisung wird gestoppt."
+  quit_title: "%{app} beenden?"
+  quit_body: "Beim Beenden geht jetzt verloren:"
+  quit_anyway: Trotzdem beenden
+  work_staged: "„%{tab}“ auf %{connection}: nicht angewendete Änderungen"
+  work_unsaved: "„%{tab}“: nicht in der Datei gespeicherte Änderungen"
+  work_running: "„%{tab}“ auf %{connection}: eine noch laufende Anweisung"
+  work_uncommitted: "%{connection}: eine nicht festgeschriebene Transaktion, die zurückgerollt wird"
+  work_extract: Eine noch laufende Extraktion
+  work_transfer: Eine noch laufende Übertragung
+  work_backup: Eine noch laufende Sicherung

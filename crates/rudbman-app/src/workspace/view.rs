@@ -92,8 +92,17 @@ pub(super) fn render_tab_strip(
         .menu_icon(icons::TAB_LIST)
         // The second slot is never read: this strip carries no "+". The close
         // button reuses the right-click menu's own row, as the connection
-        // strip's does.
-        .tooltips(ts!("tab.tip_pane_list"), "", ts!("context.close_tab"))
+        // strip's does, with the chord the row shows.
+        .tooltips(
+            ts!("tab.tip_pane_list"),
+            "",
+            match CLOSE_TAB_SHORTCUT {
+                Some((_, label)) => {
+                    SharedString::from(format!("{} ({label})", ts!("context.close_tab")))
+                }
+                None => ts!("context.close_tab"),
+            },
+        )
         .drag_source(id.as_u64())
         .drop_indicator(chrome.drop.indicator(id.as_u64()))
         .on_drag_over({
@@ -444,6 +453,7 @@ impl Render for Workspace {
             .is_open()
             .then(|| div().absolute().inset_0().child(self.update.clone()));
         let confirm = self.render_confirm(cx);
+        let close_question = self.render_close_question(cx);
         let rename_tab = self.render_rename_tab(cx);
         let context_menu = self.render_context_menu(cx);
 
@@ -523,6 +533,11 @@ impl Render for Workspace {
             .on_action(cx.listener(actions::unless_held(Self::focus_prev_pane_action)))
             .on_action(cx.listener(actions::unless_held(Self::split_right_action)))
             .on_action(cx.listener(actions::unless_held(Self::split_below_action)))
+            .on_action(cx.listener(actions::unless_held(Self::close_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::reopen_closed_tab_action)))
+            // Not held: quitting is never a command acting behind a dialog, and
+            // it asks for itself when it would lose something.
+            .on_action(cx.listener(Self::quit_action))
             .on_action(cx.listener(Self::dismiss_dialog_action))
             .child(toolbar)
             .child(body)
@@ -536,6 +551,8 @@ impl Render for Workspace {
             .children(update)
             .children(confirm)
             .children(rename_tab)
+            // Over every other dialog: a quit can be asked for with one up.
+            .children(close_question)
             // Last: it paints above the dialogs, as its own backdrop already
             // implies, and it takes no room in the column — the element is an
             // empty absolute box whose two halves are anchored to the window.

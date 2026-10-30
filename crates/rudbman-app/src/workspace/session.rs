@@ -34,7 +34,7 @@ enum SavedNode {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct SavedTab {
+pub(super) struct SavedTab {
     #[serde(default)]
     name: Option<String>,
     content: SavedContent,
@@ -387,6 +387,36 @@ impl Workspace {
         }
     }
 
+    /// Remembers tab `index` of `pane` (on screen) for "Reopen closed tab",
+    /// when it is a query or a builder; see [`WorkArea::closed`].
+    ///
+    /// Taken through the same snapshot the workspace is saved from, so a tab
+    /// comes back exactly as a restart would bring it back — draft, selection,
+    /// name, file binding and unsaved mark.
+    pub(super) fn remember_closed(&mut self, pane: PaneId, index: usize, cx: &App) {
+        let Some(area) = self.work_area() else {
+            return;
+        };
+        let Some(item) = area
+            .panes
+            .get(pane)
+            .and_then(|pane| pane.items().get(index))
+        else {
+            return;
+        };
+        if !matches!(item, PaneItem::Query { .. } | PaneItem::QueryBuilder { .. }) {
+            return;
+        }
+        let tab = area.snapshot_tab(item, cx);
+        let Some(area) = self.work_area_mut() else {
+            return;
+        };
+        area.closed.push(tab);
+        if area.closed.len() > closing::CLOSED_TABS_KEPT {
+            area.closed.remove(0);
+        }
+    }
+
     pub(super) fn duplicate_tab_into(
         &mut self,
         source: PaneId,
@@ -443,6 +473,7 @@ impl Workspace {
             checkpoint: None,
             next_query: 1,
             next_builder: 1,
+            closed: Vec::new(),
         };
         for (pane, tabs, active) in leaves {
             self.connections[index].work.active_pane = pane;
@@ -471,7 +502,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn restore_tab(
+    pub(super) fn restore_tab(
         &mut self,
         tab: &SavedTab,
         connection: ConnectionId,
@@ -959,6 +990,17 @@ mod tests {
                 let expected = workspace.connections[0].work.snapshot(cx);
                 let profile = workspace.connections[0].profile.clone();
                 workspace.close_connection(0, window, cx);
+                // The tab whose file is behind its text is asked about first,
+                // and "Don't save" is what leaves the draft for the workspace.
+                assert!(matches!(
+                    workspace
+                        .close_question
+                        .as_ref()
+                        .map(|question| &question.ask),
+                    Some(closing::CloseAsk::Unsaved { .. })
+                ));
+                workspace.answer_close(closing::CloseAnswer::Discard, window, cx);
+                assert!(workspace.connections.is_empty(), "the close went ahead");
                 (profile, expected)
             })
             .unwrap();

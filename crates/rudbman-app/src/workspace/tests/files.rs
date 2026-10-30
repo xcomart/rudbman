@@ -48,7 +48,7 @@ fn saving_a_new_query_asks_where_and_names_the_tab_after_the_file(cx: &mut gpui:
                 .tab_names
                 .insert(tab, "분석 초안".into());
             assert!(!shown_unsaved(workspace, cx), "an unbound tab has no mark");
-            workspace.save_sql_file(false, cx);
+            workspace.save_sql_file(false, window, cx);
         })
         .expect("the window is open");
     let home = crate::extract_dialog::default_directory();
@@ -158,14 +158,14 @@ fn save_as_moves_the_binding_and_the_tab_name_to_the_new_file(cx: &mut gpui::Tes
     cx.simulate_keystrokes(DOCUMENT_END);
     cx.simulate_input(" + 1");
     window
-        .update(&mut cx, |workspace, _window, cx| {
+        .update(&mut cx, |workspace, window, cx| {
             let tab = workspace.active_query().unwrap().entity_id();
             workspace
                 .work_area_mut()
                 .unwrap()
                 .tab_names
                 .insert(tab, "custom".into());
-            workspace.save_sql_file(true, cx);
+            workspace.save_sql_file(true, window, cx);
         })
         .expect("the window is open");
     cx.simulate_new_path_selection(|directory| {
@@ -198,16 +198,16 @@ fn a_canceled_or_failed_save_leaves_the_tab_as_it_was(cx: &mut gpui::TestAppCont
     let title = window
         .update(&mut cx, |workspace, window, cx| {
             workspace.open_query("select 1", window, cx);
-            workspace.save_sql_file(false, cx);
+            workspace.save_sql_file(false, window, cx);
             shown_title(workspace, cx)
         })
         .expect("the window is open");
     cx.simulate_new_path_selection(|_| None);
     cx.run_until_parked();
     window
-        .update(&mut cx, |workspace, _window, cx| {
+        .update(&mut cx, |workspace, window, cx| {
             assert!(workspace.active_query().unwrap().read(cx).file().is_none());
-            workspace.save_sql_file(false, cx);
+            workspace.save_sql_file(false, window, cx);
         })
         .expect("the window is open");
     cx.simulate_new_path_selection(|_| Some(unwritable.clone()));
@@ -236,8 +236,8 @@ fn saving_needs_a_query_tab_on_top(cx: &mut gpui::TestAppContext) {
     window
         .update(&mut cx, |workspace, window, cx| {
             workspace.open_object(object(id, "SAVED"), window, cx);
-            workspace.save_sql_file(false, cx);
-            workspace.save_sql_file(true, cx);
+            workspace.save_sql_file(false, window, cx);
+            workspace.save_sql_file(true, window, cx);
         })
         .expect("the window is open");
     cx.run_until_parked();
@@ -284,8 +284,8 @@ fn a_file_changed_on_disk_is_not_overwritten_in_place(cx: &mut gpui::TestAppCont
     cx.simulate_keystrokes(DOCUMENT_END);
     cx.simulate_input(" -- right");
     window
-        .update(&mut cx, |workspace, _window, cx| {
-            workspace.save_sql_file(false, cx)
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.save_sql_file(false, window, cx)
         })
         .expect("the window is open");
     cx.run_until_parked();
@@ -303,8 +303,8 @@ fn a_file_changed_on_disk_is_not_overwritten_in_place(cx: &mut gpui::TestAppCont
     cx.simulate_keystrokes(DOCUMENT_END);
     cx.simulate_input(" -- left");
     window
-        .update(&mut cx, |workspace, _window, cx| {
-            workspace.save_sql_file(false, cx)
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.save_sql_file(false, window, cx)
         })
         .expect("the window is open");
     cx.run_until_parked();
@@ -355,8 +355,8 @@ fn a_bound_file_that_has_gone_is_written_anew(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     std::fs::remove_file(&path).expect("the fixture is removed");
     window
-        .update(&mut cx, |workspace, _window, cx| {
-            workspace.save_sql_file(false, cx)
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.save_sql_file(false, window, cx)
         })
         .expect("the window is open");
     cx.run_until_parked();

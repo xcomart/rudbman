@@ -272,6 +272,17 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
     if let Some((chord, _)) = SAVE_AS_SHORTCUT {
         bindings.push(KeyBinding::new(chord, SaveSqlFileAs, Some(KEY_CONTEXT)));
     }
+    if let Some((chord, _)) = CLOSE_TAB_SHORTCUT {
+        bindings.push(KeyBinding::new(chord, CloseTab, Some(KEY_CONTEXT)));
+    }
+    // "Reopen closed tab" where every browser and editor puts it, on every
+    // platform: the unshifted chord is "New query", so the shifted one brings
+    // back the last tab rather than opening an empty one.
+    bindings.push(KeyBinding::new(
+        &format!("{modifier}-shift-t"),
+        ReopenClosedTab,
+        Some(KEY_CONTEXT),
+    ));
     cx.bind_keys(bindings);
 }
 

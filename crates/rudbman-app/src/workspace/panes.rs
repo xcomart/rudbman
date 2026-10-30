@@ -34,13 +34,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Closes the tab `index` of `pane`.
-    ///
-    /// Dropping the tab drops the view in it, which closes whatever cursor or
-    /// fetch it was holding. The neighbor that takes its place inherits the
-    /// keyboard when the closed tab had it, because the tab strip is a place a
-    /// user closes several tabs in a row from and a focus that fell back to the
-    /// shell every time would swallow the editor shortcuts in between.
+    /// Closes the tab `index` of `pane`, through every guard a close passes;
+    /// see [`Workspace::request_close`].
     pub(super) fn close_tab(
         &mut self,
         pane: PaneId,
@@ -48,30 +43,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.refuse_close(pane, &[index], window, cx) {
-            return;
-        }
-        let active = self
-            .work_area()
-            .and_then(|area| area.panes.get(pane))
-            .is_some_and(|pane| pane.active_index() == index);
-        // Only the active tab is rendered, so only it can be holding the
-        // keyboard; see [`Workspace::reclaim_focus`].
-        let held = active && self.pane_holds_focus(pane, window, cx);
-        let Some(closed) = self
-            .work_area_mut()
-            .and_then(|area| area.panes.get_mut(pane))
-            .and_then(|pane| pane.close(index))
-        else {
-            return;
-        };
-        if let Some(area) = self.work_area_mut() {
-            area.tab_names.remove(&closed.entity_id());
-        }
-        drop(closed);
-        self.finish_tab_close(pane, held, window, cx);
-        self.drop_stale_confirm(cx);
-        cx.notify();
+        self.close_tabs(pane, &[index], window, cx);
     }
 
     /// Whether any of `victims` is holding work a close would destroy, and —
@@ -137,18 +109,13 @@ impl Workspace {
         true
     }
 
-    /// Closes several tabs of `pane` at once.
+    /// Closes several tabs of `pane` at once, through every guard a close
+    /// passes; see [`Workspace::request_close`].
     ///
     /// `victims` are tab indices into the strip as it stands, in any order.
-    /// They are removed from the highest down so that the ones still to go do
-    /// not shift out from under the list — which is the whole reason this is
-    /// not a loop over [`Workspace::close_tab`].
-    ///
-    /// The keyboard follows the same rule one close does, and is asked about
-    /// once rather than once per tab: only the active tab is rendered, so only
-    /// it can be holding the focus, and whatever is left on top afterwards
-    /// takes it. That is what makes "close the other tabs" leave the user
-    /// typing in the tab they kept.
+    /// They are turned into the tabs' identities before anything is asked, so
+    /// a question answered a moment later still closes the tabs it was asked
+    /// about.
     pub(super) fn close_tabs(
         &mut self,
         pane: PaneId,
@@ -156,23 +123,65 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if victims.is_empty() {
+        let Some(target) = self.work_area().and_then(|area| area.panes.get(pane)) else {
+            return;
+        };
+        let tabs: Vec<gpui::EntityId> = victims
+            .iter()
+            .filter_map(|index| target.items().get(*index).map(PaneItem::entity_id))
+            .collect();
+        if tabs.is_empty() {
             return;
         }
-        if self.refuse_close(pane, victims, window, cx) {
-            return;
+        self.request_close(
+            closing::CloseRequest::Tabs { pane, tabs },
+            closing::CloseAnswers::default(),
+            window,
+            cx,
+        );
+    }
+
+    /// Closes several tabs of `pane`, now and unasked.
+    ///
+    /// They are removed from the highest index down so that the ones still to
+    /// go do not shift out from under the list. Every query and builder tab
+    /// among them is remembered for "Reopen closed tab" first.
+    ///
+    /// The keyboard follows the rule one close always followed, and is asked
+    /// about once rather than once per tab: only the active tab is rendered,
+    /// so only it can be holding the focus, and whatever is left on top
+    /// afterwards takes it — which is what makes "close the other tabs" leave
+    /// the user typing in the tab they kept, and closing a tab in the
+    /// background leave the keyboard where it was. The neighbor that takes a
+    /// closed tab's place inherits the keyboard when the closed tab had it,
+    /// because the tab strip is a place a user closes several tabs in a row
+    /// from, and a focus that fell back to the shell every time would swallow
+    /// the editor shortcuts in between.
+    pub(super) fn close_tabs_now(
+        &mut self,
+        pane: PaneId,
+        victims: &[usize],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .map(Pane::active_index);
+        let held = active.is_some_and(|active| victims.contains(&active))
+            && self.pane_holds_focus(pane, window, cx);
+        let mut order = victims.to_vec();
+        order.sort_unstable();
+        order.dedup();
+        for index in &order {
+            self.remember_closed(pane, *index, cx);
         }
-        let held = self.pane_holds_focus(pane, window, cx);
         let Some(target) = self
             .work_area_mut()
             .and_then(|area| area.panes.get_mut(pane))
         else {
             return;
         };
-
-        let mut order = victims.to_vec();
-        order.sort_unstable();
-        order.dedup();
         // Dropping the tabs drops the views in them, and with those whatever
         // cursor or fetch each was holding.
         let mut closed = Vec::new();
@@ -594,21 +603,50 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Closes the active pane, unless it is the last one of its work area.
+    /// Closes the active pane, unless it is the last one of its work area,
+    /// through every guard a close passes; see [`Workspace::request_close`].
     ///
-    /// The marker moves to the pane that follows the closed one in layout order,
-    /// which is the neighbor that grew into the freed space.
+    /// The guards are the same ones a close of each of its tabs would meet:
+    /// a pane is closed by `Alt+W` (`Cmd+W` on macOS) and by its strip's menu,
+    /// and a pane holding a tab with staged edits, or a file with changes, is
+    /// holding them whichever of the two gestures reaches for it.
     pub(super) fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.active_pane() else {
             return;
         };
+        self.request_close(
+            closing::CloseRequest::Pane(target),
+            closing::CloseAnswers::default(),
+            window,
+            cx,
+        );
+    }
+
+    /// Closes `pane`, now and unasked, unless it is the last one of its work
+    /// area.
+    ///
+    /// The marker moves to the pane that follows the closed one in layout
+    /// order, which is the neighbor that grew into the freed space.
+    pub(super) fn close_pane_now(
+        &mut self,
+        target: PaneId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(area) = self.work_area() else {
             return;
         };
+        if area.panes.leaf_count() <= 1 {
+            return;
+        }
+        let count = area.panes.get(target).map_or(0, |pane| pane.items().len());
         let next = area.panes.next_leaf(target).unwrap_or(target);
         // Asked before the pane goes, because afterwards there is nothing left
         // to ask whether its editor or its detail panel had the keyboard.
         let held = self.pane_holds_focus(target, window, cx);
+        for index in 0..count {
+            self.remember_closed(target, index, cx);
+        }
         let Some(area) = self.work_area_mut() else {
             return;
         };
@@ -730,6 +768,7 @@ impl Workspace {
     pub(super) fn dialog_open(&self, cx: &App) -> bool {
         self.rename_tab.is_some()
             || self.confirm.is_some()
+            || self.close_question.is_some()
             || self.about.read(cx).is_open()
             || self.connect.read(cx).is_open()
             || self.settings.read(cx).is_open()

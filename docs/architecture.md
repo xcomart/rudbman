@@ -899,6 +899,18 @@ nothing, `Escape` asks whether to stop the job, and `close_overlays` leaves the
 card standing and reports that the screen is not clear, so no other dialog
 opens over it.
 
+Every close — a tab, several tabs, a pane, a connection tab, the application —
+goes through `Workspace::request_close` (`workspace/closing.rs`). A tab with
+staged edits refuses, bringing itself forward to say why, whichever door the
+close came through; a query tab bound to a file with changes the file lacks
+asks Save / Don't save / Cancel, one tab at a time; a connection with an
+uncommitted transaction (which the bridge rolls back as the session closes) or a
+running statement asks once; and a quit asks once with everything at stake
+listed (`Workspace::unsaved_work`). After each answer the close is run again
+from the top rather than resumed, so a tab saved meanwhile is not asked about
+and a tab gone meanwhile is not closed twice. On Linux and Windows `Ctrl+W`
+closes the tab on top; on macOS `Cmd+W` remains "close pane" for now.
+
 Workspaces are saved as `workspaces/<profile-uuid>.json` in the configuration
 directory. The versioned snapshot holds all six tab kinds, tab order and custom
 names, the selected tab in each pane, the active pane, nested splits and ratios,
@@ -931,7 +943,9 @@ profile's saved state; when several change together, the foreground one wins.
 Restoring SQL never executes it. Database results, cursors, transactions and
 unapplied row/schema edits are not serialized; object tabs reload their current
 data or metadata. Closing an individual tab deliberately removes it from the
-next snapshot. ERD positions continue to use the existing per-profile layout
+next snapshot; the last ten query and builder tabs closed on each connection are
+kept in memory only, as the snapshot of them a restart would restore, for
+"Reopen closed tab" (`Ctrl`/`Cmd+Shift+T`). ERD positions continue to use the existing per-profile layout
 file (§7.6).
 
 ### 7.2 The UI theme

@@ -1111,6 +1111,8 @@ context:
   close_tab: Close tab
   close_others: Close other tabs
   close_right: Close tabs to the right
+  # Brings back the query or builder tab closed most recently.
+  reopen_tab: Reopen closed tab
   split_right: Split right
   split_below: Split below
   close_pane: Close pane
@@ -1198,3 +1200,30 @@ lob:
   discard_question: "Discard the changes in this LOB editor?"
   keep_editing: "Keep editing"
   invalid_hex: "Enter pairs of hexadecimal digits (00–FF), separated by spaces or newlines."
+
+closing:
+  # A query tab bound to a .sql file is being closed with changes the file
+  # does not have. The same three answers rulogman's editor and rudbgen's
+  # template tabs give.
+  unsaved_title: Unsaved changes
+  unsaved_body: "“%{name}” has changes that have not been saved to its file yet."
+  dont_save: Don't save
+  # "Save" while the write is out.
+  saving: Saving…
+  # A connection tab is being closed that would lose what only the session
+  # holds. One sentence per loss is listed under the title.
+  connection_title: "Close “%{name}”?"
+  close_connection: Close connection
+  risk_uncommitted: Its uncommitted transaction will be rolled back.
+  risk_running: "The statement running in “%{tab}” will be stopped."
+  # Quitting would lose what is listed, one line each.
+  quit_title: "Quit %{app}?"
+  quit_body: "Quitting now loses:"
+  quit_anyway: Quit anyway
+  work_staged: "“%{tab}” on %{connection}: changes not applied"
+  work_unsaved: "“%{tab}”: changes not saved to its file"
+  work_running: "“%{tab}” on %{connection}: a statement still running"
+  work_uncommitted: "%{connection}: an uncommitted transaction, which will be rolled back"
+  work_extract: An extraction still running
+  work_transfer: A transfer still running
+  work_backup: A backup still running

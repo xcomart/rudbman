@@ -28,11 +28,12 @@
 pub(crate) use bootstrap::{editor_theme_for, theme_dirs};
 
 use crate::{
-    AddToBuilder, BackupSchema, CheckUpdates, ClosePane, DismissDialog, ExtractScript,
+    AddToBuilder, BackupSchema, CheckUpdates, ClosePane, CloseTab, DismissDialog, ExtractScript,
     FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery, OpenErd, OpenSettings,
-    OpenSqlFile, QueryObject, Quit, SaveSqlFile, SaveSqlFileAs, ShowAbout, SplitBelow, SplitRight,
-    ToggleExplorer, TransferTable, app_identity, app_settings, builder_pane, builder_sql,
-    connection, context_menu, erd_pane, explorer, i18n, icons, table_detail,
+    OpenSqlFile, QueryObject, Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, ShowAbout,
+    SplitBelow, SplitRight, ToggleExplorer, TransferTable, app_identity, app_settings,
+    builder_pane, builder_sql, connection, context_menu, erd_pane, explorer, i18n, icons,
+    table_detail,
 };
 
 mod actions;
@@ -40,6 +41,7 @@ mod bootstrap;
 mod events;
 mod startup;
 use bootstrap::{app_menus, apply_themes, chrome_titlebar, record_window_geometry};
+mod closing;
 mod connections;
 mod dialogs;
 mod menus;
@@ -166,6 +168,18 @@ const SAVE_AS_SHORTCUT: Option<(&str, &str)> = if cfg!(target_os = "macos") {
     None
 } else {
     Some(("ctrl-shift-s", "Ctrl+Shift+S"))
+};
+
+/// The chord "Close tab" is bound to, and the same chord as a menu hint
+/// writes it.
+///
+/// `Ctrl+W` where every editor and browser puts it, and none on macOS for now:
+/// there `Cmd+W` is [`ClosePane`] — `Cmd` is the pane modifier — and moving it
+/// is a decision that has been put on hold.
+const CLOSE_TAB_SHORTCUT: Option<(&str, &str)> = if cfg!(target_os = "macos") {
+    None
+} else {
+    Some(("ctrl-w", "Ctrl+W"))
 };
 
 /// [`PANE_SHORTCUT_MODIFIER`] as a menu hint writes it.
@@ -324,7 +338,8 @@ struct WorkArea {
     /// third query I opened on staging" rather than counting every editor in
     /// the window. Counts up for the life of the tab and is never reused: two
     /// tabs called "Query 3" — one of them a query that was closed and reopened
-    /// — would be worse than a gap in the numbering.
+    /// — would be worse than a gap in the numbering. A tab brought back by
+    /// "Reopen closed tab" is not a new one, and takes its old number back.
     next_query: u64,
     /// Number the next query builder tab of this connection is titled with.
     ///
@@ -333,6 +348,15 @@ struct WorkArea {
     /// "Query 1" and "Builder 2" would read as though a builder had been
     /// numbered by something it has nothing to do with.
     next_builder: u64,
+    /// The query and builder tabs closed here most recently, oldest first, as
+    /// "Reopen closed tab" brings them back; at most
+    /// [`closing::CLOSED_TABS_KEPT`] of them.
+    ///
+    /// Only those two kinds: they hold what the user wrote, where every other
+    /// tab is a view of something the database still has and is one click in
+    /// the explorer away. Not saved with the workspace — a restart is not a
+    /// mistake a moment ago.
+    closed: Vec<session::SavedTab>,
 }
 
 impl WorkArea {
@@ -347,6 +371,7 @@ impl WorkArea {
             checkpoint: None,
             next_query: 1,
             next_builder: 1,
+            closed: Vec::new(),
         }
     }
 
@@ -616,6 +641,8 @@ struct Workspace {
     /// Held here rather than in the pane because a modal centers itself in its
     /// nearest positioned ancestor, and inside a pane that is the wrong box.
     confirm: Option<PendingConfirm>,
+    /// A close waiting on the user's answer; see [`closing`].
+    close_question: Option<closing::CloseQuestion>,
     /// Where a dragged tab would land, while a drag is over a strip.
     ///
     /// Strips are tagged with a pane id for a pane's strip, and
@@ -746,6 +773,7 @@ impl Workspace {
             menu_open: false,
             context_menu: None,
             confirm: None,
+            close_question: None,
             tab_drop: TabDropState::new(),
             titlebar,
             _about_events: about_events,

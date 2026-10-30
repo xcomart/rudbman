@@ -670,6 +670,7 @@ context:
   close_tab: 关闭标签页
   close_others: 关闭其他标签页
   close_right: 关闭右侧标签页
+  reopen_tab: 重新打开关闭的标签页
   split_right: 向右拆分
   split_below: 向下拆分
   close_pane: 关闭窗格
@@ -730,3 +731,23 @@ lob:
   discard_question: "要放弃此 LOB 编辑器中的更改吗？"
   keep_editing: "继续编辑"
   invalid_hex: "请输入两位十六进制数字（00–FF），以空格或换行分隔。"
+
+closing:
+  unsaved_title: 未保存的更改
+  unsaved_body: "“%{name}”有尚未保存到文件的更改。"
+  dont_save: 不保存
+  saving: 正在保存…
+  connection_title: "关闭“%{name}”？"
+  close_connection: 关闭连接
+  risk_uncommitted: 未提交的事务将被回滚。
+  risk_running: "“%{tab}”中正在运行的语句将被停止。"
+  quit_title: "退出 %{app}？"
+  quit_body: "现在退出将丢失："
+  quit_anyway: 仍然退出
+  work_staged: "%{connection} 上的“%{tab}”：未应用的更改"
+  work_unsaved: "“%{tab}”：未保存到文件的更改"
+  work_running: "%{connection} 上的“%{tab}”：仍在运行的语句"
+  work_uncommitted: "%{connection}：未提交的事务（将被回滚）"
+  work_extract: 仍在运行的提取
+  work_transfer: 仍在运行的传输
+  work_backup: 仍在运行的备份
