@@ -1272,7 +1272,7 @@ impl StructPane {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .h(px(30.))
+            .h(rugpui::scaled(30., cx))
             .px(px(10.))
             .border_b_1()
             .border_color(chrome.border)
@@ -1284,7 +1284,7 @@ impl StructPane {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(chrome.text)
                     .child(self.heading()),
             )
@@ -1293,7 +1293,7 @@ impl StructPane {
                 header.child(
                     div()
                         .flex_none()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!("struct.loading")),
                 )
@@ -1302,7 +1302,7 @@ impl StructPane {
                 div()
                     .flex_none()
                     .whitespace_nowrap()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.accent)
                     .child(pending)
             }))
@@ -1343,7 +1343,7 @@ impl StructPane {
     }
 
     /// The one line that says why nothing here can be staged.
-    fn render_banner(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+    fn render_banner(&self, chrome: &Theme, cx: &App) -> Option<impl IntoElement + use<>> {
         let reason = self.read_only_reason()?;
         Some(
             div()
@@ -1353,7 +1353,7 @@ impl StructPane {
                 .border_b_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(reason),
         )
@@ -1362,8 +1362,8 @@ impl StructPane {
     /// The structure, or the one line that stands in for it.
     fn render_body(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let content = match &self.load {
-            Load::Running => note(ts!("struct.loading"), chrome.text_muted),
-            Load::Failed(message) => note(message.clone(), chrome.danger),
+            Load::Running => note(ts!("struct.loading"), chrome.text_muted, cx),
+            Load::Failed(message) => note(message.clone(), chrome.danger, cx),
             Load::Ready(structure) => self.render_structure(structure, chrome, cx),
         };
 
@@ -1416,11 +1416,11 @@ impl StructPane {
             .flex()
             .flex_col()
             .gap(px(14.))
-            .children(creating.then(|| self.render_name(chrome)))
+            .children(creating.then(|| self.render_name(chrome, cx)))
             .child(self.render_columns(structure, chrome, cx))
             .child(self.render_editor(chrome, cx))
             .child(self.render_constraints(structure, chrome, cx))
-            .children((!creating).then(|| self.render_name(chrome)))
+            .children((!creating).then(|| self.render_name(chrome, cx)))
             .children(self.render_statements(chrome, cx))
             .into_any_element()
     }
@@ -1472,6 +1472,7 @@ impl StructPane {
                         pane.select(Some(Selection::Column(index)), cx);
                     });
                 },
+                cx,
             )
             .child(
                 div()
@@ -1509,6 +1510,7 @@ impl StructPane {
                             pane.select(Some(Selection::Added(position)), cx);
                         });
                     },
+                    cx,
                 )
                 .child(
                     div()
@@ -1554,6 +1556,7 @@ impl StructPane {
                             ts!("struct.state"),
                         ],
                         chrome,
+                        cx,
                     )
                     .child(div().flex_none().w(px(84.))),
                 )
@@ -1561,6 +1564,7 @@ impl StructPane {
                 .children(added)
                 .child(div().flex().flex_row().pt(px(6.)).children(add)),
             chrome,
+            cx,
         )
         .into_any_element()
     }
@@ -1577,6 +1581,7 @@ impl StructPane {
         zebra: bool,
         chrome: &Theme,
         click: impl Fn(&mut Window, &mut App) + 'static,
+        cx: &App,
     ) -> gpui::Stateful<Div> {
         let cells = [
             (SharedString::from(draft.name.clone()), false),
@@ -1613,7 +1618,7 @@ impl StructPane {
             .when(zebra && !selected, |row| row.bg(chrome.surface))
             .when(selected, |row| row.bg(chrome.surface_hover))
             .children(cells.into_iter().map(|(text, muted)| {
-                cell(text, muted, chrome).when(struck, |cell| cell.line_through())
+                cell(text, muted, chrome, cx).when(struck, |cell| cell.line_through())
             }))
             .on_click(move |_, window, cx| click(window, cx))
     }
@@ -1624,10 +1629,11 @@ impl StructPane {
             return section(
                 ts!("struct.edit_column"),
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("struct.no_selection")),
                 chrome,
+                cx,
             )
             .into_any_element();
         };
@@ -1672,6 +1678,7 @@ impl StructPane {
                 )
                 .when(!writable, |form| form.opacity(0.6)),
             chrome,
+            cx,
         )
         .into_any_element()
     }
@@ -1720,6 +1727,7 @@ impl StructPane {
                     dropped,
                     index % 2 == 1,
                     chrome,
+                    cx,
                 )
                 .child(div().flex_none().w(px(84.)).px(px(4.)).children(
                     writable.then(|| {
@@ -1745,6 +1753,7 @@ impl StructPane {
                     false,
                     (structure.constraints.len() + position) % 2 == 1,
                     chrome,
+                    cx,
                 )
                 .child(div().flex_none().w(px(84.)).px(px(4.)).children(
                     writable.then(|| {
@@ -1761,7 +1770,7 @@ impl StructPane {
 
         let listing = if structure.constraints.is_empty() && added.is_empty() {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(ts!("struct.empty"))
         } else {
@@ -1777,6 +1786,7 @@ impl StructPane {
                             ts!("struct.columns"),
                         ],
                         chrome,
+                        cx,
                     )
                     .child(div().flex_none().w(px(84.))),
                 )
@@ -1785,7 +1795,7 @@ impl StructPane {
                 .children((!droppable && !structure.constraints.is_empty()).then(|| {
                     div()
                         .pt(px(6.))
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!(
                             "struct.no_constraint_drop",
@@ -1803,7 +1813,7 @@ impl StructPane {
                 (creating && writable).then(|| self.render_add_constraint(structure, chrome, cx)),
             );
 
-        section(ts!("struct.constraints"), body, chrome).into_any_element()
+        section(ts!("struct.constraints"), body, chrome, cx).into_any_element()
     }
 
     /// The form that gives a table being created a key or a reference.
@@ -1877,7 +1887,7 @@ impl StructPane {
             .border_color(chrome.border)
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("struct.new_constraint")),
             )
@@ -1891,7 +1901,7 @@ impl StructPane {
                         div()
                             .flex_none()
                             .w(px(120.))
-                            .text_size(px(11.))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.text_muted)
                             .child(ts!("struct.kind")),
                     )
@@ -1907,14 +1917,14 @@ impl StructPane {
                         div()
                             .flex_none()
                             .w(px(120.))
-                            .text_size(px(11.))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.text_muted)
                             .child(ts!("struct.columns")),
                     )
                     .when(candidates.is_empty(), |row| {
                         row.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(rugpui::TextSize::Xs.size(cx))
                                 .text_color(chrome.text_muted)
                                 .child(ts!("struct.empty")),
                         )
@@ -1976,12 +1986,18 @@ impl StructPane {
     /// starts empty and is the one field the statement cannot be written
     /// without. The same input and the same staging slot either way — there is
     /// one name being typed — and only the words around it differ.
-    fn render_name(&self, chrome: &Theme) -> AnyElement {
+    fn render_name(&self, chrome: &Theme, cx: &App) -> AnyElement {
         let (title, label) = match self.mode {
             Mode::Alter => (ts!("struct.rename_table"), ts!("struct.new_name")),
             Mode::Create => (ts!("struct.new_table"), ts!("struct.table_name")),
         };
-        section(title, form_row(label, self.rename_input.clone()), chrome).into_any_element()
+        section(
+            title,
+            form_row(label, self.rename_input.clone()),
+            chrome,
+            cx,
+        )
+        .into_any_element()
     }
 
     /// The statements the staged edits would send, or the refusal they earned.
@@ -1996,13 +2012,13 @@ impl StructPane {
                 .flex_col()
                 .gap(px(2.))
                 .font_family(mono)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text)
                 .children(statements.into_iter().map(SharedString::from)),
             // The generator's own sentence, which already names the product and
             // the reason it cannot do this — see `struct_edit::PlanError`.
             Err(error) => div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(SharedString::from(error.to_string())),
         };
@@ -2019,6 +2035,7 @@ impl StructPane {
                     .border_color(chrome.border)
                     .child(body),
                 chrome,
+                cx,
             )
             .into_any_element(),
         )
@@ -2047,7 +2064,7 @@ impl StructPane {
             div()
                 .when(index > 0, |block| block.mt(px(8.)))
                 .font_family(mono.clone())
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text)
                 .child(SharedString::from(statement.clone()))
         });
@@ -2058,7 +2075,7 @@ impl StructPane {
             .gap(px(12.))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.danger)
                     .child(ts!("struct.apply_no_undo")),
             )
@@ -2131,7 +2148,7 @@ impl StructPane {
     /// still on screen — the reloaded one, which is the point — and a failure
     /// drawn in its place would take away the one reading that says what the
     /// committed half did.
-    fn render_apply_error(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+    fn render_apply_error(&self, chrome: &Theme, cx: &App) -> Option<impl IntoElement + use<>> {
         let problem = self.apply_error.as_ref()?;
         Some(
             div()
@@ -2144,10 +2161,10 @@ impl StructPane {
                 .border_b_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .child(error_lines(&problem.error, chrome))
+                .child(error_lines(&problem.error, chrome, cx))
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.danger)
                         .child(problem.stopped.clone()),
                 ),
@@ -2166,7 +2183,7 @@ impl Render for StructPane {
         self.watch_scroll(cx);
         let chrome = theme(cx);
         let header = self.render_header(&chrome, cx);
-        let banner = self.render_banner(&chrome);
+        let banner = self.render_banner(&chrome, cx);
         self.notice_clock
             .watch(self.notice.as_ref(), cx, |pane, shown| {
                 let still = pane.notice.as_ref() == Some(shown);
@@ -2187,9 +2204,10 @@ impl Render for StructPane {
                         cx.notify();
                     });
                 },
+                cx,
             )
         });
-        let failure = self.render_apply_error(&chrome);
+        let failure = self.render_apply_error(&chrome, cx);
         let body = self.render_body(&chrome, cx);
         let preview = self.render_apply_preview(&chrome, cx);
 
@@ -2236,6 +2254,7 @@ fn section<E: IntoElement>(
     title: SharedString,
     body: E,
     chrome: &Theme,
+    cx: &App,
 ) -> impl IntoElement + use<E> {
     div()
         .flex()
@@ -2243,7 +2262,7 @@ fn section<E: IntoElement>(
         .gap(px(6.))
         .child(
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(title),
         )
@@ -2256,14 +2275,14 @@ fn section<E: IntoElement>(
 /// widest cell truncates: [`crate::table_detail`]'s idiom, and for its reason —
 /// a column list is tens of rows and never the millions the result grid has to
 /// survive.
-fn cell(text: SharedString, muted: bool, chrome: &Theme) -> Div {
+fn cell(text: SharedString, muted: bool, chrome: &Theme, cx: &App) -> Div {
     div()
         .flex_1()
         .min_w_0()
         .truncate()
         .px(px(6.))
         .py(px(3.))
-        .text_size(px(11.))
+        .text_size(rugpui::TextSize::Xs.size(cx))
         .text_color(if muted {
             chrome.text_muted
         } else {
@@ -2273,13 +2292,13 @@ fn cell(text: SharedString, muted: bool, chrome: &Theme) -> Div {
 }
 
 /// The heading row of one of the pane's tables.
-fn headings<const N: usize>(headers: [SharedString; N], chrome: &Theme) -> Div {
+fn headings<const N: usize>(headers: [SharedString; N], chrome: &Theme, cx: &App) -> Div {
     div()
         .flex()
         .flex_row()
         .border_b_1()
         .border_color(chrome.border)
-        .children(headers.into_iter().map(|text| cell(text, true, chrome)))
+        .children(headers.into_iter().map(|text| cell(text, true, chrome, cx)))
 }
 
 /// One row of the constraint table, up to the button at the end of it.
@@ -2294,6 +2313,7 @@ fn constraint_row(
     struck: bool,
     zebra: bool,
     chrome: &Theme,
+    cx: &App,
 ) -> Div {
     let named = if name.is_empty() {
         NOTHING
@@ -2309,7 +2329,7 @@ fn constraint_row(
             [(kind, false), (named, true), (columns, true)]
                 .into_iter()
                 .map(|(text, muted)| {
-                    cell(text, muted, chrome).when(struck, |cell| cell.line_through())
+                    cell(text, muted, chrome, cx).when(struck, |cell| cell.line_through())
                 }),
         )
 }

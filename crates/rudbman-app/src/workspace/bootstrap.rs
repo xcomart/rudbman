@@ -32,7 +32,8 @@ pub(super) fn reload_themes(cx: &mut App) {
     }
 }
 
-/// Installs both palettes the settings name.
+/// Installs both palettes the settings name, and the scale the interface
+/// size asks for.
 ///
 /// The chrome theme comes straight from the configured id; the editor theme
 /// goes through [`editor_theme_for`], which is where "follow the UI theme" is
@@ -54,6 +55,14 @@ pub(super) fn apply_themes(settings: &AppSettings, cx: &mut App) {
     let editor = EditorThemeRegistry::resolve(&editor_id, cx);
     set_theme(ui, cx);
     set_editor_theme(editor, cx);
+    // The interface size, as the scale every widget and every size of the
+    // shell's own is drawn at: the default 14 pt is 1.0, where nothing moves.
+    // Here, with the palettes, because it is applied — and previewed — from
+    // the same three places they are.
+    rugpui::set_ui_scale(
+        settings.ui_font_size / rudbman_core::settings::DEFAULT_UI_FONT_SIZE,
+        cx,
+    );
 }
 
 /// The editor theme to install, given the configured one and the chrome theme.

@@ -791,7 +791,7 @@ impl BuilderPane {
             .child(pick("builder-join-from", from, true))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(chrome.text_muted)
                     .child("="),
             )
@@ -858,7 +858,7 @@ impl BuilderPane {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_size(rugpui::TextSize::Sm.size(cx))
                             .text_color(chrome.text)
                             .child(SharedString::from(format!(
                                 "{} = {}",
@@ -874,13 +874,13 @@ impl BuilderPane {
         // With no join yet, the gesture is said out loud beside the form.
         let hint = self.joins.is_empty().then(|| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(ts!("builder.join_hint"))
         });
         let form = (self.tables.len() >= 2).then(|| self.render_join_form(chrome, cx));
         Some(
-            section(ts!("builder.joins"), chrome)
+            section(ts!("builder.joins"), chrome, cx)
                 .children(rows)
                 .children(hint)
                 .children(form)
@@ -922,7 +922,7 @@ impl BuilderPane {
                 })
         };
 
-        section(ts!("builder.where"), chrome)
+        section(ts!("builder.where"), chrome, cx)
             .children(rows)
             .child(div().flex().flex_row().child(add))
             .into_any_element()
@@ -991,7 +991,7 @@ impl BuilderPane {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_size(rugpui::TextSize::Sm.size(cx))
                             .text_color(chrome.text)
                             .child(self.label_of(at)),
                     )
@@ -1001,7 +1001,7 @@ impl BuilderPane {
             .collect();
 
         Some(
-            section(ts!("builder.columns"), chrome)
+            section(ts!("builder.columns"), chrome, cx)
                 .children(rows)
                 .into_any_element(),
         )
@@ -1019,7 +1019,7 @@ impl BuilderPane {
                 this.update(cx, |pane, cx| pane.open_in_editor(cx));
             });
 
-        section(ts!("builder.sql"), chrome)
+        section(ts!("builder.sql"), chrome, cx)
             .child(
                 div()
                     .w_full()
@@ -1031,7 +1031,7 @@ impl BuilderPane {
                     // SQL is columnar text, and the editor it is about to be
                     // put into draws it the same way.
                     .font_family(crate::app_settings::monospace_family(cx))
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(if empty {
                         chrome.text_muted
                     } else {
@@ -1093,7 +1093,7 @@ impl Render for BuilderPane {
                 if empty {
                     canvas
                         .p(px(10.))
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!("builder.canvas_hint"))
                 } else {
@@ -1108,7 +1108,7 @@ impl Render for BuilderPane {
         // has no other way of saying that its rows are buttons.
         let pick_hint = (!self.tables.is_empty() && self.selected.is_empty()).then(|| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(ts!("builder.pick_hint"))
         });
@@ -1179,10 +1179,10 @@ fn sort_label(direction: Option<SortDir>) -> SharedString {
 }
 
 /// One labeled block of the form.
-fn section(title: SharedString, chrome: &Theme) -> gpui::Div {
+fn section(title: SharedString, chrome: &Theme, cx: &App) -> gpui::Div {
     div().flex().flex_col().gap(px(6.)).child(
         div()
-            .text_size(px(11.))
+            .text_size(rugpui::TextSize::Xs.size(cx))
             .text_color(chrome.text_muted)
             .child(title),
     )

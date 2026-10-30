@@ -405,7 +405,7 @@ impl TableDetail {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .h(px(30.))
+            .h(rugpui::scaled(30., cx))
             .px(px(10.))
             .border_b_1()
             .border_color(chrome.border)
@@ -417,7 +417,7 @@ impl TableDetail {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(chrome.text)
                     .child(SharedString::from(self.target.qualified())),
             )
@@ -426,7 +426,7 @@ impl TableDetail {
                     .min_w_0()
                     .max_w(px(320.))
                     .truncate()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(remarks)
             }))
@@ -435,7 +435,7 @@ impl TableDetail {
                 header.child(
                     div()
                         .flex_none()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!("detail.loading")),
                 )
@@ -485,7 +485,7 @@ impl TableDetail {
                     .px(px(10.))
                     .py(px(5.))
                     .cursor_pointer()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .border_b_2()
                     .border_color(if active {
                         chrome.accent
@@ -520,8 +520,8 @@ impl TableDetail {
     /// The body of whichever tab is showing.
     fn render_body(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let content = match &self.load {
-            Load::Running => note(ts!("detail.loading"), chrome.text_muted).into_any_element(),
-            Load::Failed(message) => note(message.clone(), chrome.danger).into_any_element(),
+            Load::Running => note(ts!("detail.loading"), chrome.text_muted, cx).into_any_element(),
+            Load::Failed(message) => note(message.clone(), chrome.danger, cx).into_any_element(),
             Load::Ready(details) => self.render_tab_body(details, chrome, cx),
         };
 
@@ -574,6 +574,7 @@ impl TableDetail {
                 ],
                 &details.columns,
                 chrome,
+                cx,
             )
             .into_any_element(),
 
@@ -587,8 +588,10 @@ impl TableDetail {
                         [ts!("detail.name"), ts!("detail.column"), ts!("detail.seq")],
                         &details.primary_key,
                         chrome,
+                        cx,
                     ),
                     chrome,
+                    cx,
                 ))
                 .child(section(
                     ts!("detail.indexes"),
@@ -601,8 +604,10 @@ impl TableDetail {
                         ],
                         &details.indexes,
                         chrome,
+                        cx,
                     ),
                     chrome,
+                    cx,
                 ))
                 .into_any_element(),
 
@@ -625,8 +630,10 @@ impl TableDetail {
                         ],
                         &details.imported,
                         chrome,
+                        cx,
                     ),
                     chrome,
+                    cx,
                 ))
                 .child(section(
                     ts!("detail.references_in"),
@@ -640,8 +647,10 @@ impl TableDetail {
                         ],
                         &details.exported,
                         chrome,
+                        cx,
                     ),
                     chrome,
+                    cx,
                 ))
                 .into_any_element(),
 
@@ -651,6 +660,7 @@ impl TableDetail {
                 [ts!("detail.name"), ts!("detail.value")],
                 &details.properties,
                 chrome,
+                cx,
             )
             .into_any_element(),
         }
@@ -665,10 +675,10 @@ impl TableDetail {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         if let Some(message) = details.ddl_error.as_ref() {
-            return note(message.clone(), chrome.danger).into_any_element();
+            return note(message.clone(), chrome.danger, cx).into_any_element();
         }
         let Some(ddl) = details.ddl.as_ref() else {
-            return note(ts!("detail.no_ddl"), chrome.text_muted).into_any_element();
+            return note(ts!("detail.no_ddl"), chrome.text_muted, cx).into_any_element();
         };
         let this = cx.entity();
         let text = ddl.text.clone();
@@ -693,7 +703,7 @@ impl TableDetail {
                 .border_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(rebuilt)
         });
@@ -732,7 +742,7 @@ impl TableDetail {
                     .border_1()
                     .border_color(chrome.border)
                     .font_family(crate::app_settings::monospace_family(cx))
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .child(self.ddl_editor.clone()),
             )
             .into_any_element()
@@ -1320,6 +1330,7 @@ fn section<E: IntoElement>(
     title: SharedString,
     body: E,
     chrome: &Theme,
+    cx: &App,
 ) -> impl IntoElement + use<E> {
     div()
         .flex()
@@ -1327,7 +1338,7 @@ fn section<E: IntoElement>(
         .gap(px(6.))
         .child(
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(title),
         )
@@ -1335,10 +1346,10 @@ fn section<E: IntoElement>(
 }
 
 /// A one-line message where a table would be.
-fn note(message: SharedString, color: gpui::Hsla) -> impl IntoElement {
+fn note(message: SharedString, color: gpui::Hsla, cx: &App) -> impl IntoElement {
     div()
         .py(px(6.))
-        .text_size(px(12.))
+        .text_size(rugpui::TextSize::Sm.size(cx))
         .text_color(color)
         .child(message)
 }
@@ -1352,9 +1363,10 @@ fn table<const N: usize>(
     headers: [SharedString; N],
     rows: &[Row],
     chrome: &Theme,
+    cx: &App,
 ) -> impl IntoElement + use<N> {
     if rows.is_empty() {
-        return note(ts!("detail.empty"), chrome.text_muted).into_any_element();
+        return note(ts!("detail.empty"), chrome.text_muted, cx).into_any_element();
     }
 
     let cell = |text: SharedString, muted: bool| {
@@ -1364,7 +1376,7 @@ fn table<const N: usize>(
             .truncate()
             .px(px(6.))
             .py(px(3.))
-            .text_size(px(11.))
+            .text_size(rugpui::TextSize::Xs.size(cx))
             .text_color(if muted {
                 chrome.text_muted
             } else {

@@ -620,8 +620,12 @@ impl Workspace {
                 });
             }
         };
-        let line =
-            |text: SharedString| div().text_size(px(12.)).text_color(chrome.text).child(text);
+        let line = |text: SharedString| {
+            div()
+                .text_size(rugpui::TextSize::Sm.size(cx))
+                .text_color(chrome.text)
+                .child(text)
+        };
         let (title, body, discard, save): (SharedString, Vec<SharedString>, SharedString, _) =
             match &question.ask {
                 CloseAsk::Unsaved { name, saving, .. } => (

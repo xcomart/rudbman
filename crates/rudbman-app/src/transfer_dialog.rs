@@ -1066,7 +1066,7 @@ impl TransferDialog {
         // appearing is the signal.
         let skipped = (running.rows_skipped > 0).then(|| {
             div()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(chrome.danger)
                 .child(ts!("transfer.skipped", skipped = running.rows_skipped))
         });
@@ -1078,7 +1078,7 @@ impl TransferDialog {
             .child(self.render_object(cx))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(chrome.text_muted)
                     .child(if running.canceling {
                         ts!("transfer.canceling")
@@ -1126,7 +1126,12 @@ impl TransferDialog {
             .flex_col()
             .gap(px(10.))
             .child(self.render_object(cx))
-            .child(div().text_size(px(12.)).text_color(color).child(message))
+            .child(
+                div()
+                    .text_size(rugpui::TextSize::Sm.size(cx))
+                    .text_color(color)
+                    .child(message),
+            )
     }
 
     /// The button row, which is a different pair in each stage.
@@ -1143,7 +1148,7 @@ impl TransferDialog {
             div()
                 .flex_1()
                 .min_w_0()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(message)
         });
@@ -1175,7 +1180,7 @@ impl TransferDialog {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .text_color(chrome.danger)
                         .child(text),
                 )

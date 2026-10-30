@@ -943,6 +943,16 @@ ERD and builder canvases are pointer-only: a strip never holds the keyboard,
 and a canvas menu is about whatever is under the pointer. A middle click on a
 tab closes it through the same `request_close` as its × button.
 
+The **Interface size** setting is the scale every widget is drawn at
+(`rugpui::set_ui_scale(ui_font_size / 14)`, applied with the palettes at
+start-up, on apply and in the live preview). The shell's own sizes follow it:
+text through `rugpui::TextSize` (11/12/13/14 → `Xs`/`Sm`/`Body`/`Title`) or
+`rugpui::scaled` for the odd one, and the heights that hold text — the toolbar
+(which must match the tab strip's own scaled height), the status bar, pane
+toolbars, log and completion rows — through `rugpui::scaled`. Borders, gaps,
+paddings and icons stay fixed. At the default 14 pt the scale is 1.0 and
+nothing moves. The macOS traffic-light offset is still the 1.0 one.
+
 Feedback that belongs to no pane goes to a toast (`rugpui_shell::show_toast`,
 drawn by `toast_stack()` as the root's last child, above the status bar): a
 chord that opens a tab over no session (`Workspace::say_not_live` — no

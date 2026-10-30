@@ -428,7 +428,7 @@ impl Render for DragGhost {
                 .bg(chrome.surface)
                 .border_1()
                 .border_color(chrome.border)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text)
                 .child(icons::icon(self.icon, px(12.), chrome.text_muted))
                 .child(self.label.clone()),
@@ -699,7 +699,7 @@ impl TreeSource for ExplorerSource {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.danger)
                         .child(label),
                 )
@@ -723,7 +723,7 @@ impl TreeSource for ExplorerSource {
         let badge = self.counts.get(id).map(|count| {
             div()
                 .flex_none()
-                .text_size(px(10.))
+                .text_size(rugpui::scaled(10., cx))
                 .text_color(chrome.text_muted)
                 .child(SharedString::from(count.to_string()))
         });
@@ -743,7 +743,7 @@ impl TreeSource for ExplorerSource {
                 .flex_none()
                 .max_w(px(160.))
                 .truncate()
-                .text_size(px(10.))
+                .text_size(rugpui::scaled(10., cx))
                 .text_color(chrome.text_muted)
                 .tooltip(rugpui::tooltip_label(remarks.clone()))
                 .child(remarks.clone())
@@ -801,7 +801,7 @@ impl TreeSource for ExplorerSource {
 
     fn render_loading(&self, _window: &mut Window, cx: &mut App) -> AnyElement {
         div()
-            .text_size(px(11.))
+            .text_size(rugpui::TextSize::Xs.size(cx))
             .text_color(theme(cx).text_muted)
             .child(ts!("explorer.loading"))
             .into_any_element()
@@ -1290,9 +1290,9 @@ impl Render for Explorer {
                     .flex_none()
                     .items_center()
                     .justify_between()
-                    .h(px(32.))
+                    .h(rugpui::scaled(32., cx))
                     .px(px(10.))
-                    .text_size(px(10.))
+                    .text_size(rugpui::scaled(10., cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("explorer.title"))
                     .child(
@@ -1315,7 +1315,7 @@ impl Render for Explorer {
                     .items_center()
                     .justify_center()
                     .px(px(12.))
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("explorer.empty"))
                     .into_any_element()

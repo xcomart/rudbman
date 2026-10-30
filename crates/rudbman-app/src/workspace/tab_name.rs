@@ -113,7 +113,7 @@ impl Workspace {
             .child(rename.input.clone())
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(theme.text_muted)
                     .child(ts!("tab_name.hint")),
             )

@@ -203,3 +203,29 @@ fn the_two_titlebar_spellings_are_one_setting() {
         rugpui_shell::TitlebarStyle::default()
     );
 }
+
+/// The interface size drives the widget scale: previewed while the dialog
+/// shows it, back to the saved size once the preview goes, and 1.0 at the
+/// default 14 pt, where nothing moves.
+#[gpui::test]
+fn the_interface_size_sets_the_ui_scale(cx: &mut gpui::TestAppContext) {
+    let window = workspace_over_welcome(&[], cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.apply_preview(window, cx);
+            assert_eq!(rugpui::ui_scale(cx), 1.0, "the default size is scale 1");
+
+            let mut larger = app_settings::current(cx);
+            larger.ui_font_size = 21.0;
+            app_settings::set_preview(larger, cx);
+            workspace.apply_preview(window, cx);
+            assert_eq!(rugpui::ui_scale(cx), 1.5);
+            assert_eq!(rugpui::TextSize::Xs.size(cx), px(16.5));
+
+            app_settings::clear_preview(cx);
+            workspace.apply_preview(window, cx);
+            assert_eq!(rugpui::ui_scale(cx), 1.0, "the preview was undone");
+        })
+        .expect("the window is open");
+}

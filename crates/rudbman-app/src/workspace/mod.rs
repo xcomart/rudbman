@@ -111,10 +111,12 @@ const KEY_CONTEXT: &str = "Workspace";
 /// Height of the toolbar row holding the application menu and the tab strip.
 ///
 /// Must match the height [`TabBar`] gives itself, otherwise the menu button cell
-/// and the tab strip would not line up.
+/// and the tab strip would not line up — at the interface size's scale, as the
+/// strip's is (`rugpui::scaled`).
 const TOOLBAR_HEIGHT: f32 = 36.;
 
-/// Height of the status bar along the bottom of the window.
+/// Height of the status bar along the bottom of the window, before the
+/// interface size scales it.
 const STATUS_BAR_HEIGHT: f32 = 24.;
 
 /// Distance from the top left of the window to the top left of the macOS

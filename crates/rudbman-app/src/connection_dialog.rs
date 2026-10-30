@@ -1687,9 +1687,6 @@ impl ConnectionDialog {
             move |id, _window, cx| {
                 this.update(cx, |dialog, cx| dialog.select(id, cx));
             },
-            // No menu here: the form beside the list is already open on the
-            // selected profile, so every command a menu would carry is a
-            // control the user can see.
             None,
             Some(ProfileFolderControls {
                 collapsed: &self.collapsed_folders,
@@ -1697,6 +1694,7 @@ impl ConnectionDialog {
                     folders_this.update(cx, |dialog, cx| dialog.toggle_folder(folder, cx));
                 }),
             }),
+            cx,
         );
 
         div()
@@ -1829,7 +1827,7 @@ impl ConnectionDialog {
                                 .gap(px(8.))
                                 .child(
                                     div()
-                                        .text_size(px(11.))
+                                        .text_size(rugpui::TextSize::Xs.size(cx))
                                         .text_color(chrome.text_muted)
                                         .child(label),
                                 )
@@ -1873,7 +1871,7 @@ impl ConnectionDialog {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(11.))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.danger)
                             .child(if downloadable {
                                 ts!("connect.driver_has_no_jar_download")
@@ -2033,7 +2031,7 @@ impl ConnectionDialog {
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.text_muted)
                             .child(if overridden {
                                 ts!("connect.url_overridden")
@@ -2198,7 +2196,7 @@ impl ConnectionDialog {
                 ))
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!("connect.tunnel_hint")),
                 )
@@ -2356,7 +2354,12 @@ impl ConnectionDialog {
                         })
                     }))
                     .child(form_row(ts!("connect.props"), props))
-                    .child(section(ts!("connect.section.behavior"), chrome, behavior))
+                    .child(section(
+                        ts!("connect.section.behavior"),
+                        chrome,
+                        behavior,
+                        cx,
+                    ))
                     // No `section` title over this one: the collapsible's own
                     // header is the heading, and a second copy of the words
                     // above it would only say them twice.
@@ -2383,7 +2386,7 @@ impl ConnectionDialog {
             })
             .map(|(level, message)| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(match level {
                         Level::Ok => chrome.success,
                         Level::Error => chrome.danger,
@@ -2410,7 +2413,7 @@ impl ConnectionDialog {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .child(ts!("connect.delete_confirm", name = name)),
                 )
                 .child(
@@ -2469,7 +2472,7 @@ impl ConnectionDialog {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text)
                         .child(ts!(
                             "connect.host_key_question",
@@ -2519,7 +2522,7 @@ impl ConnectionDialog {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .child(ts!("connect.discard_question")),
                 )
                 .child(
@@ -2812,6 +2815,7 @@ pub(crate) fn profile_rows(
     on_click: impl Fn(Uuid, &mut Window, &mut App) + Clone + 'static,
     on_context: Option<ProfileContextHandler>,
     folders: Option<ProfileFolderControls<'_>>,
+    cx: &App,
 ) -> Vec<gpui::AnyElement> {
     let mut groups: Vec<(Option<String>, Vec<&ConnectionProfile>)> = Vec::new();
     for profile in profiles {
@@ -2844,7 +2848,7 @@ pub(crate) fn profile_rows(
                     .rounded_md()
                     .border_1()
                     .border_color(gpui::transparent_black())
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .when_some(folders.as_ref(), |heading, controls| {
                         let on_toggle = controls.on_toggle.clone();
@@ -2938,7 +2942,7 @@ pub(crate) fn profile_rows(
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_size(rugpui::TextSize::Sm.size(cx))
                             .text_color(chrome.text)
                             .child(name),
                     )
@@ -3004,6 +3008,7 @@ fn section<E: IntoElement>(
     title: SharedString,
     chrome: &Theme,
     body: E,
+    cx: &App,
 ) -> impl IntoElement + use<E> {
     card(
         chrome,
@@ -3013,7 +3018,7 @@ fn section<E: IntoElement>(
             .gap(px(10.))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(title),
             )

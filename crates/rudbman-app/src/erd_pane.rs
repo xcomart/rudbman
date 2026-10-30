@@ -740,14 +740,14 @@ impl ErdPane {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .h(px(30.))
+            .h(rugpui::scaled(30., cx))
             .px(px(10.))
             .border_b_1()
             .border_color(chrome.border)
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(chrome.text)
                     .child(self.target.title()),
             )
@@ -756,7 +756,7 @@ impl ErdPane {
                 bar.child(
                     div()
                         .flex_none()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!("erd.loading")),
                 )
@@ -766,7 +766,7 @@ impl ErdPane {
                     .flex_none()
                     .max_w(px(360.))
                     .truncate()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(if notice.error {
                         chrome.danger
                     } else {
@@ -841,7 +841,7 @@ impl ErdPane {
                     .gap(px(10.))
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(rugpui::TextSize::Sm.size(cx))
                             .text_color(chrome.text_muted)
                             .child(text),
                     )
@@ -858,12 +858,15 @@ impl ErdPane {
             Load::Failed(message) => note(
                 ts!("erd.load_failed", error = message.to_string()),
                 chrome.danger,
+                cx,
             )
             .into_any_element(),
-            Load::Canceled => note(ts!("erd.load_canceled"), chrome.text_muted).into_any_element(),
+            Load::Canceled => {
+                note(ts!("erd.load_canceled"), chrome.text_muted, cx).into_any_element()
+            }
             // A schema with no tables draws an empty canvas, which reads as a
             // diagram that failed rather than as a schema with nothing in it.
-            Load::Ready(0) => note(ts!("erd.empty"), chrome.text_muted).into_any_element(),
+            Load::Ready(0) => note(ts!("erd.empty"), chrome.text_muted, cx).into_any_element(),
             Load::Ready(_) => self.view.clone().into_any_element(),
         }
     }
@@ -926,10 +929,10 @@ fn remember_names(mode: NameMode, cx: &mut App) {
 }
 
 /// A one-line message where the canvas would be.
-fn note(message: SharedString, color: gpui::Hsla) -> impl IntoElement {
+fn note(message: SharedString, color: gpui::Hsla, cx: &App) -> impl IntoElement {
     div()
         .p(px(10.))
-        .text_size(px(12.))
+        .text_size(rugpui::TextSize::Sm.size(cx))
         .text_color(color)
         .child(message)
 }

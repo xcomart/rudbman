@@ -25,8 +25,9 @@ const MAX_BACKGROUND_OPACITY: f32 = 1.0;
 const MIN_FONT_SIZE: f32 = 6.0;
 /// Largest font size worth offering.
 const MAX_FONT_SIZE: f32 = 32.0;
-/// Font size used by the interface chrome when none is configured.
-const DEFAULT_UI_FONT_SIZE: f32 = 14.0;
+/// Font size used by the interface chrome when none is configured, and the
+/// size the chrome is drawn at scale 1.0.
+pub const DEFAULT_UI_FONT_SIZE: f32 = 14.0;
 /// Font size used by the SQL editor and the result grid when none is
 /// configured.
 const DEFAULT_EDITOR_FONT_SIZE: f32 = 14.0;

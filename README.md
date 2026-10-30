@@ -164,10 +164,17 @@ JVM bridge.
   query or builder tab closed most recently.
 - **Context menus** on every surface that has actions worth reaching for —
   the explorer tree, the result grid, the editor, the ERD and builder
-  canvases, and the tab strips.
+  canvases, and the tab strips. <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu
+  key opens the one where the keyboard is, and <kbd>F10</kbd> opens the ☰
+  menu (Linux and Windows).
+- **Short notices in the corner** for what belongs to no tab: a shortcut that
+  needs a live connection, a file that could not be read, a builder table
+  whose columns could not be read, a keychain that is not available.
 - **Themes and languages**: UI and editor theme registries with live
   preview, import/export, and a user theme directory; eight UI languages
-  (en, ko, ja, zh-CN, de, es, fr, ru).
+  (en, ko, ja, zh-CN, de, es, fr, ru). **Interface size** in Settings scales
+  the whole chrome — text, buttons, rows, tab strips, the toolbar and the
+  status bar — from the default 14 pt, with a live preview.
 
 ## Keyboard shortcuts
 

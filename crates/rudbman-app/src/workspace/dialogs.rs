@@ -699,7 +699,8 @@ impl Workspace {
     /// Re-applies the palettes the settings dialog is currently showing.
     ///
     /// The unsaved half of [`Workspace::apply_settings`], and deliberately much
-    /// smaller: only the two palettes and the fonts are previewed, so this
+    /// smaller: only the two palettes and the fonts — the interface size's
+    /// scale among them — are previewed, so this
     /// touches no platform state beyond the native caption's colors, which have
     /// to follow the chrome theme or the window would be half repainted.
     ///

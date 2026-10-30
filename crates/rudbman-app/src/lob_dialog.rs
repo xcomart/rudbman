@@ -655,13 +655,13 @@ impl Render for LobDialog {
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(status),
             )
             .children(self.truncated.then(|| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("lob.truncated"))
             }))
@@ -676,12 +676,12 @@ impl Render for LobDialog {
                     .border_1()
                     .border_color(chrome.border)
                     .font_family(crate::app_settings::monospace_family(cx))
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .child(self.editor.clone()),
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(if !self.writable {
                         ts!("lob.read_only")
@@ -693,13 +693,13 @@ impl Render for LobDialog {
             )
             .children(self.error.clone().map(|error| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.danger)
                     .child(error)
             }))
             .children(self.message.clone().map(|message| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(message)
             }))
@@ -708,7 +708,11 @@ impl Render for LobDialog {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(div().text_size(px(12.)).child(ts!("lob.discard_question")))
+                    .child(
+                        div()
+                            .text_size(rugpui::TextSize::Sm.size(cx))
+                            .child(ts!("lob.discard_question")),
+                    )
                     .child(
                         div()
                             .flex()

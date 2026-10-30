@@ -231,7 +231,7 @@ pub(super) fn render_pane(
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
                 // — never because there is nothing to connect to.
-                None => render_placeholder(theme),
+                None => render_placeholder(theme, cx),
             };
             div()
                 .id(("pane", id.as_u64()))
@@ -328,7 +328,7 @@ pub(super) fn render_pane(
 /// It paints no fill of its own. The work area behind it already carries the
 /// tinted fill for these pixels, and a second one here would compose back to
 /// opaque; see [`app_settings::window_tint`].
-pub(super) fn render_placeholder(theme: &Theme) -> AnyElement {
+pub(super) fn render_placeholder(theme: &Theme, cx: &App) -> AnyElement {
     let (title, hint) = (ts!("empty.connected_title"), ts!("empty.connected_hint"));
     div()
         .flex()
@@ -339,10 +339,15 @@ pub(super) fn render_placeholder(theme: &Theme) -> AnyElement {
         .items_center()
         .justify_center()
         .gap(px(8.))
-        .child(div().text_size(px(18.)).text_color(theme.text).child(title))
         .child(
             div()
-                .text_size(px(13.))
+                .text_size(rugpui::scaled(18., cx))
+                .text_color(theme.text)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(rugpui::TextSize::Body.size(cx))
                 .text_color(theme.text_muted)
                 .child(hint),
         )
@@ -568,7 +573,10 @@ impl Render for Workspace {
             // bar: feedback that belongs to no pane (`Workspace::say_not_live`
             // and the failures behind a command) has to be readable whatever
             // is open.
-            .child(rugpui_shell::toast_stack().bottom_inset(px(STATUS_BAR_HEIGHT + 8.)));
+            .child(
+                rugpui_shell::toast_stack()
+                    .bottom_inset(rugpui::scaled(STATUS_BAR_HEIGHT, cx) + px(8.)),
+            );
 
         let Some(tiling) = tiling else {
             // A server-decorated window: the compositor frames and shadows it,
@@ -649,7 +657,7 @@ impl Workspace {
                 .flex_none()
                 .items_center()
                 .gap(px(2.))
-                .h(px(TOOLBAR_HEIGHT))
+                .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
                 .px(px(4.))
                 .bg(theme.surface)
                 .border_b_1()
@@ -666,7 +674,7 @@ impl Workspace {
                 div()
                     .flex_none()
                     .w(px(TRAFFIC_LIGHT_GAP))
-                    .h(px(TOOLBAR_HEIGHT))
+                    .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
                     .bg(theme.surface)
                     .border_b_1()
                     .border_color(theme.border)
@@ -705,14 +713,14 @@ impl Workspace {
                 .flex_none()
                 .items_center()
                 .gap(px(6.))
-                .h(px(TOOLBAR_HEIGHT))
+                .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
                 .px(px(10.))
                 .bg(theme.surface)
                 .border_b_1()
                 .border_color(theme.border)
                 // A shade quieter than a tab title, which is the one label in
                 // this row that has to be read.
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(titlebar_text)
                 .children(icon)
                 .child(APP_NAME)
@@ -731,7 +739,7 @@ impl Workspace {
             .flex_none()
             .items_center()
             .w_full()
-            .h(px(TOOLBAR_HEIGHT))
+            .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
             .when(custom, |this| {
                 // Occluding is load-bearing, not just hygiene: the workspace
                 // root tracks focus, and gpui's focus transfer marks every
@@ -1248,12 +1256,15 @@ impl Workspace {
         }
 
         let question = host_key.map(|offer| {
-            div().text_size(px(12.)).text_color(theme.text).child(ts!(
-                "connect.host_key_question",
-                host = offer.host.clone(),
-                algorithm = offer.algorithm.clone(),
-                fingerprint = offer.fingerprint.clone()
-            ))
+            div()
+                .text_size(rugpui::TextSize::Sm.size(cx))
+                .text_color(theme.text)
+                .child(ts!(
+                    "connect.host_key_question",
+                    host = offer.host.clone(),
+                    algorithm = offer.algorithm.clone(),
+                    fingerprint = offer.fingerprint.clone()
+                ))
         });
         let text = div()
             .flex()
@@ -1262,7 +1273,11 @@ impl Workspace {
             .min_w_0()
             .child(
                 div()
-                    .text_size(px(if band { 13. } else { 16. }))
+                    .text_size(if band {
+                        rugpui::TextSize::Body.size(cx)
+                    } else {
+                        rugpui::scaled(16., cx)
+                    })
                     .text_color(theme.text)
                     .child(title),
             )
@@ -1271,7 +1286,7 @@ impl Workspace {
                     .id("connection-card-message")
                     .max_h(px(if band { 60. } else { 220. }))
                     .overflow_y_scroll()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(theme.danger)
                     .child(message)
             }))
@@ -1279,7 +1294,7 @@ impl Workspace {
             // "could not connect: …" — so an arrow, not a sentence, leads in.
             .children(hint.map(|hint| {
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(theme.text_muted)
                     .child(SharedString::from(format!("→ {hint}")))
             }))
@@ -1370,6 +1385,7 @@ impl Workspace {
                 },
             )),
             None,
+            cx,
         );
 
         // A first run has nothing saved and no habit of the chord yet, so the
@@ -1389,7 +1405,7 @@ impl Workspace {
                 .w(px(WELCOME_WIDTH))
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(theme.text_muted)
                         .child(ts!("welcome.saved")),
                 )
@@ -1405,13 +1421,13 @@ impl Workspace {
             .gap(px(14.))
             .child(
                 div()
-                    .text_size(px(30.))
+                    .text_size(rugpui::scaled(30., cx))
                     .text_color(theme.text)
                     .child(APP_NAME),
             )
             .child(
                 div()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(theme.text_muted)
                     .child(hint),
             )
@@ -1680,7 +1696,7 @@ impl Workspace {
             .flex_none()
             .items_center()
             .gap(px(14.))
-            .h(px(STATUS_BAR_HEIGHT))
+            .h(rugpui::scaled(STATUS_BAR_HEIGHT, cx))
             .px(px(10.))
             // The bar is inert, so a press on it must not move the keyboard.
             // Without this the workspace root's `track_focus` would claim the
@@ -1689,7 +1705,7 @@ impl Workspace {
             .bg(theme.surface)
             .border_t_1()
             .border_color(theme.border)
-            .text_size(px(11.))
+            .text_size(rugpui::TextSize::Xs.size(cx))
             .text_color(theme.text_muted)
             .child(div().flex_none().whitespace_nowrap().child(connection))
             .child(
@@ -1745,7 +1761,7 @@ impl Workspace {
             .gap(px(12.))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(theme.text)
                     .child(ts!("query.confirm_body", count = pending.request.count)),
             )
@@ -1760,7 +1776,7 @@ impl Workspace {
                     .bg(theme.surface)
                     .border_1()
                     .border_color(theme.border)
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(theme.text_muted)
                     .child(pending.request.preview.clone()),
             )

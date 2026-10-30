@@ -673,7 +673,7 @@ impl BackupDialog {
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .text_color(color)
                         .child(text),
                 )
@@ -781,7 +781,7 @@ impl BackupDialog {
             .child(self.render_scope(cx))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(chrome.text_muted)
                     .child(if running.canceling {
                         ts!("backup.canceling")
@@ -827,7 +827,12 @@ impl BackupDialog {
             .flex_col()
             .gap(px(10.))
             .child(self.render_scope(cx))
-            .child(div().text_size(px(12.)).text_color(color).child(message))
+            .child(
+                div()
+                    .text_size(rugpui::TextSize::Sm.size(cx))
+                    .text_color(color)
+                    .child(message),
+            )
     }
 
     /// The button row, which is a different pair in each stage.
@@ -839,7 +844,7 @@ impl BackupDialog {
             div()
                 .flex_1()
                 .min_w_0()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(message)
         });

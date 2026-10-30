@@ -198,12 +198,17 @@ pub(crate) fn render_discard_confirm(
         .flex()
         .flex_col()
         .gap(px(12.))
-        .child(div().text_size(px(12.)).text_color(chrome.text).child(ts!(
-            "data.discard_body",
-            changed = counts.changed,
-            inserted = counts.inserted,
-            deleted = counts.deleted
-        )))
+        .child(
+            div()
+                .text_size(rugpui::TextSize::Sm.size(cx))
+                .text_color(chrome.text)
+                .child(ts!(
+                    "data.discard_body",
+                    changed = counts.changed,
+                    inserted = counts.inserted,
+                    deleted = counts.deleted
+                )),
+        )
         .child(
             div()
                 .flex()
@@ -276,13 +281,13 @@ pub(crate) fn render_apply_preview(
             .child(
                 div()
                     .font_family(mono.clone())
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text)
                     .child(SharedString::from(statement.sql.clone())),
             )
             .children(values.map(|values| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(values)
             }))
@@ -294,7 +299,7 @@ pub(crate) fn render_apply_preview(
         .gap(px(12.))
         .children((!transactional).then(|| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(ts!("data.apply_no_rollback"))
         }))
@@ -354,6 +359,7 @@ pub(crate) fn render_apply_preview(
 pub(crate) fn render_apply_error(
     problem: &ApplyProblem,
     chrome: &Theme,
+    cx: &App,
 ) -> impl IntoElement + use<> {
     div()
         .flex()
@@ -367,7 +373,7 @@ pub(crate) fn render_apply_error(
         .bg(chrome.surface)
         .children(problem.message.clone().map(|message| {
             div()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(chrome.danger)
                 .child(message)
         }))
@@ -375,18 +381,18 @@ pub(crate) fn render_apply_error(
             problem
                 .error
                 .as_ref()
-                .map(|error| error_lines(error, chrome)),
+                .map(|error| error_lines(error, chrome, cx)),
         )
         .children(problem.reconnect_required.then(|| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(ts!("data.apply_reconnect_required"))
         }))
         .children(
             (problem.half_applied && !problem.reconnect_required).then(|| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.danger)
                     .child(ts!("data.apply_half_applied"))
             }),

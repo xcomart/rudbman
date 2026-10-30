@@ -1780,7 +1780,7 @@ impl DataPane {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .h(px(30.))
+            .h(rugpui::scaled(30., cx))
             .px(px(10.))
             .border_b_1()
             .border_color(chrome.border)
@@ -1792,7 +1792,7 @@ impl DataPane {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(chrome.text)
                     .child(SharedString::from(self.target.qualified())),
             )
@@ -1801,7 +1801,7 @@ impl DataPane {
                 div()
                     .flex_none()
                     .whitespace_nowrap()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     // In the accent the grid marks a changed row with, so that
                     // the line and the markers under it read as one thing.
                     .text_color(chrome.accent)
@@ -1811,7 +1811,7 @@ impl DataPane {
                 div()
                     .flex_none()
                     .whitespace_nowrap()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(count)
             }))
@@ -1880,7 +1880,7 @@ impl DataPane {
     /// Understated on purpose: it is a standing fact about the object, not a
     /// failure, and it has to live above the grid rather than in a dialog
     /// because it is the answer to a question the user has not asked yet.
-    fn render_banner(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+    fn render_banner(&self, chrome: &Theme, cx: &App) -> Option<impl IntoElement + use<>> {
         let reason = self.read_only_reason()?;
         Some(
             div()
@@ -1890,7 +1890,7 @@ impl DataPane {
                 .border_b_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(reason),
         )
@@ -1935,7 +1935,7 @@ impl DataPane {
                     .items_center()
                     .justify_center()
                     .gap(px(10.))
-                    .child(note(ts!("data.loading"), chrome.text_muted))
+                    .child(note(ts!("data.loading"), chrome.text_muted, cx))
                     .child(
                         Button::new("data-cancel-load", ts!("common.cancel"))
                             .compact()
@@ -1946,9 +1946,9 @@ impl DataPane {
                     )
                     .into_any_element()
             }
-            Load::Failed(error) => render_error(error, chrome),
+            Load::Failed(error) => render_error(error, chrome, cx),
             Load::Ready(rows) if rows.grid.read(cx).source().row_count() == 0 => {
-                note(ts!("data.empty"), chrome.text_muted)
+                note(ts!("data.empty"), chrome.text_muted, cx)
             }
             Load::Ready(rows) => {
                 let bounds = self.grid_bounds.clone();
@@ -1982,7 +1982,7 @@ impl Render for DataPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
         let toolbar = self.render_toolbar(&chrome, cx);
-        let banner = self.render_banner(&chrome);
+        let banner = self.render_banner(&chrome, cx);
         self.notice_clock
             .watch(self.notice.as_ref(), cx, |pane, shown| {
                 let still = pane.notice.as_ref() == Some(shown);
@@ -2003,12 +2003,13 @@ impl Render for DataPane {
                         cx.notify();
                     });
                 },
+                cx,
             )
         });
         let failure = self
             .apply_error
             .as_ref()
-            .map(|problem| render_apply_error(problem, &chrome));
+            .map(|problem| render_apply_error(problem, &chrome, cx));
         let body = self.render_body(&chrome, cx);
         let menu = self.render_context_menu(cx);
         // Both modals are `row_apply`'s; what each button does is this pane's,

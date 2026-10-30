@@ -1514,7 +1514,7 @@ impl SettingsDialog {
 
         let status = self.status.clone().map(|message| {
             div()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(StatusLevel::Error.color(&chrome))
                 .child(message)
         });

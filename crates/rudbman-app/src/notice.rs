@@ -79,6 +79,7 @@ pub fn render_notice(
     notice: &Notice,
     chrome: &Theme,
     on_close: impl Fn(&mut gpui::Window, &mut App) + 'static,
+    cx: &App,
 ) -> Div {
     let color = match notice.level {
         NoticeLevel::Info => chrome.text_muted,
@@ -96,7 +97,7 @@ pub fn render_notice(
         .border_b_1()
         .border_color(chrome.border)
         .bg(chrome.surface)
-        .text_size(px(11.))
+        .text_size(rugpui::TextSize::Xs.size(cx))
         .text_color(color)
         .child(div().flex_1().min_w_0().child(notice.text.clone()))
         .child(

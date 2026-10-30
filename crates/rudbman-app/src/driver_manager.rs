@@ -875,14 +875,14 @@ impl DriverManager {
                     })
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(rugpui::TextSize::Sm.size(cx))
                             .text_color(chrome.text)
                             .truncate()
                             .child(name),
                     )
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(rugpui::scaled(10., cx))
                             .text_color(if driver.jars.is_empty() {
                                 chrome.danger
                             } else {
@@ -985,7 +985,7 @@ impl DriverManager {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_size(px(11.))
+                                    .text_size(rugpui::TextSize::Xs.size(cx))
                                     .text_color(chrome.text)
                                     .child(SharedString::from(class.clone())),
                             )
@@ -993,7 +993,7 @@ impl DriverManager {
                                 row.child(
                                     div()
                                         .flex_none()
-                                        .text_size(px(10.))
+                                        .text_size(rugpui::scaled(10., cx))
                                         .text_color(chrome.accent)
                                         .child(ts!("driver.probe_recommended")),
                                 )
@@ -1137,7 +1137,7 @@ impl DriverManager {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(11.))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(if missing { chrome.danger } else { chrome.text })
                             .child(SharedString::from(path.display().to_string())),
                     )
@@ -1149,7 +1149,7 @@ impl DriverManager {
                         row.child(
                             div()
                                 .flex_none()
-                                .text_size(px(10.))
+                                .text_size(rugpui::scaled(10., cx))
                                 .text_color(chrome.danger)
                                 .child(ts!("driver.jar_missing")),
                         )
@@ -1229,7 +1229,7 @@ impl DriverManager {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(11.))
+                                .text_size(rugpui::TextSize::Xs.size(cx))
                                 .text_color(chrome.text_muted)
                                 .child(label),
                         )
@@ -1346,7 +1346,7 @@ impl DriverManager {
                 .min_w_0()
                 .items_center()
                 .justify_center()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(chrome.text_muted)
                 .child(ts!("driver.none_selected"))
                 .into_any_element();
@@ -1404,7 +1404,7 @@ impl DriverManager {
 
         let status = self.status.clone().map(|message| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(if self.status_is_error {
                     chrome.danger
                 } else {
@@ -1431,7 +1431,7 @@ impl DriverManager {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .child(ts!("driver.delete_confirm", name = name)),
                 )
                 .child(
@@ -1603,7 +1603,7 @@ fn file_name_of(path: &std::path::Path) -> String {
 fn hint(text: SharedString, cx: &App) -> impl IntoElement + use<> {
     let chrome = theme(cx);
     div()
-        .text_size(px(11.))
+        .text_size(rugpui::TextSize::Xs.size(cx))
         .text_color(chrome.text_muted)
         .child(text)
 }
