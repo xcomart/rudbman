@@ -8,6 +8,8 @@ common:
   cancel: Annuler
   save: Enregistrer
   close: Fermer
+  keep_running: Continuer
+  stop_job: Arrêter
 
 menu:
   new_connection: Gérer les connexions…
@@ -538,6 +540,7 @@ extract:
   canceling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
   canceled: "Annulé. Rien n’a été écrit dans %{path}."
+  stop_question: Arrêter l’extraction ? Rien ne sera écrit dans le fichier.
   failed: "L’extraction a échoué : %{error}"
   failed_unknown: L’extraction a échoué sans que le pont en donne la raison.
 
@@ -564,6 +567,7 @@ transfer:
   done: "%{rows} lignes transférées dans %{table}."
   done_skipped: "%{skipped} lignes ont été rejetées et ignorées."
   canceled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
+  stop_question: Arrêter le transfert ? Les lignes déjà validées restent dans la table cible.
   failed: "Le transfert a échoué : %{error}"
   failed_unknown: Le transfert a échoué sans que le pont en donne la raison.
   choose_target: Choisissez la connexion dans laquelle copier les lignes.
@@ -591,6 +595,7 @@ backup:
   canceling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
   canceled: "Annulé. Rien n’a été écrit dans %{path}."
+  stop_question: Arrêter la sauvegarde ? Rien ne sera écrit dans le fichier.
   failed: "La sauvegarde a échoué : %{error}"
   failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
 

@@ -887,6 +887,18 @@ path that hides or removes a subtree (sidebar toggle, closing a tab or pane,
 switching connections) has to take focus back within the same update, or every
 menu and shortcut afterwards is silently dropped.
 
+A second discipline guards work against gestures that do not mean to destroy
+it. Every dialog is a child of the workspace root, so a chord pressed inside one
+still matches the `Workspace` key context; the workspace's own commands are
+registered through `unless_held`, which ignores them while a dialog — or a sheet
+the active pane has put up over itself, such as an apply preview — is on
+screen. A dialog that wants one of those chords binds it in a key context of its
+own, which gpui prefers for being deeper. The extraction, transfer and backup
+dialogs are never closed under a running job: a press on the backdrop does
+nothing, `Escape` asks whether to stop the job, and `close_overlays` leaves the
+card standing and reports that the screen is not clear, so no other dialog
+opens over it.
+
 Workspaces are saved as `workspaces/<profile-uuid>.json` in the configuration
 directory. The versioned snapshot holds all six tab kinds, tab order and custom
 names, the selected tab in each pane, the active pane, nested splits and ratios,

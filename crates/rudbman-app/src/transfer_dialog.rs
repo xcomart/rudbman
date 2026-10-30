@@ -372,6 +372,9 @@ pub struct TransferDialog {
     on_error_list_open: bool,
     /// Which half of the dialog is on screen.
     stage: Stage,
+    /// Whether `Escape` over a running job has asked "stop it?" and is
+    /// waiting for the answer; see [`crate::extract_dialog::render_stop_question`].
+    asking_stop: bool,
     /// A refusal to show under the form — a specification the bridge would not
     /// accept.
     notice: Option<SharedString>,
@@ -419,6 +422,7 @@ impl TransferDialog {
             on_error: OnError::default(),
             on_error_list_open: false,
             stage: Stage::Form,
+            asking_stop: false,
             notice: None,
             truncate: None,
             _poll: None,
@@ -463,6 +467,7 @@ impl TransferDialog {
         self.mode_list_open = false;
         self.on_error_list_open = false;
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self.notice = None;
         self.truncate = None;
         self._poll = None;
@@ -474,6 +479,27 @@ impl TransferDialog {
     /// Whether the dialog is visible.
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Whether a job is running under the card.
+    ///
+    /// The one state nothing but the user's own answer may close the dialog
+    /// from: closing cancels (see [`TransferDialog::close`]), and a job of
+    /// minutes lost to a stray click or chord is not something anyone asked
+    /// for. The shell asks this before it closes the dialog to open another.
+    pub fn is_running(&self) -> bool {
+        self.open && matches!(self.stage, Stage::Running(_))
+    }
+
+    /// What a press on the backdrop means: nothing while a job runs, and
+    /// `Escape` otherwise.
+    ///
+    /// A press beside the card is the least deliberate gesture there is, so
+    /// it is the one gesture that never stops a job — not even by asking.
+    pub fn backdrop(&mut self, cx: &mut Context<Self>) {
+        if !self.is_running() {
+            self.escape(cx);
+        }
     }
 
     /// Hides the dialog without emitting an event.
@@ -490,6 +516,7 @@ impl TransferDialog {
         self.mode_list_open = false;
         self.on_error_list_open = false;
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self._poll = None;
         self.source = None;
         self.targets = Vec::new();
@@ -524,8 +551,18 @@ impl TransferDialog {
             cx.notify();
             return;
         }
-        if matches!(self.stage, Stage::Running(_)) {
-            self.request_cancel(cx);
+        if let Stage::Running(running) = &self.stage {
+            // Asked rather than done: `Escape` is the key a user reaches for
+            // to get out of *anything*, and over a running job getting out
+            // means throwing the job away. A second `Escape` answers "keep
+            // it running", and a cancel already on its way is not asked
+            // about again.
+            if self.asking_stop {
+                self.asking_stop = false;
+            } else if !running.canceling {
+                self.asking_stop = true;
+            }
+            cx.notify();
             return;
         }
         self.dismiss(cx);
@@ -720,6 +757,23 @@ impl TransferDialog {
         cx.notify();
     }
 
+    /// Presses "Transfer", for the shell's tests, which cannot reach the
+    /// button through a window they do not lay out.
+    #[cfg(test)]
+    pub(crate) fn press_start(&mut self, cx: &mut Context<Self>) {
+        self.start(cx);
+    }
+
+    /// Points the form at candidate `target` and table `table`, for the same
+    /// tests: the dropdown and the field are a click and some typing away.
+    #[cfg(test)]
+    pub(crate) fn point_at_for_test(&mut self, target: usize, table: &str, cx: &mut Context<Self>) {
+        self.selected_target = Some(target);
+        let table = table.to_string();
+        self.table_input
+            .update(cx, |input, cx| input.set_content(table, cx));
+    }
+
     /// Switches the card into progress mode, before the first reading.
     fn enter_progress(&mut self, job: Arc<Mutex<Job>>, cx: &mut Context<Self>) {
         self.stage = Stage::Running(Running {
@@ -751,6 +805,7 @@ impl TransferDialog {
         let progress = match reading {
             Ok(progress) => progress,
             Err(error) => {
+                self.asking_stop = false;
                 self.stage = Stage::Ended(Ended::Failed(SharedString::from(format!("{error}"))));
                 cx.notify();
                 return false;
@@ -766,6 +821,9 @@ impl TransferDialog {
             return true;
         }
 
+        // A job that ended while "stop it?" was up has answered the question
+        // itself.
+        self.asking_stop = false;
         self.stage = Stage::Ended(match progress.state {
             JobState::Done => Ended::Done {
                 rows: progress.rows_done,
@@ -795,6 +853,7 @@ impl TransferDialog {
     /// `SELECT` and the target batch — and the state that follows is still read
     /// by a poll.
     fn request_cancel(&mut self, cx: &mut Context<Self>) {
+        self.asking_stop = false;
         let Stage::Running(running) = &mut self.stage else {
             return;
         };
@@ -1132,6 +1191,24 @@ impl TransferDialog {
                             }),
                     )
             }
+            Stage::Running(_) if self.asking_stop => {
+                let keep = this.clone();
+                let stop = this.clone();
+                return crate::extract_dialog::render_stop_question(
+                    "transfer",
+                    ts!("transfer.stop_question"),
+                    move |cx| {
+                        keep.update(cx, |dialog, cx| {
+                            dialog.asking_stop = false;
+                            cx.notify();
+                        });
+                    },
+                    move |cx| {
+                        stop.update(cx, |dialog, cx| dialog.request_cancel(cx));
+                    },
+                    cx,
+                );
+            }
             Stage::Running(running) => div().flex().flex_row().gap(px(8.)).child(
                 Button::new("transfer-stop", ts!("common.cancel"))
                     .variant(ButtonVariant::Secondary)
@@ -1212,7 +1289,7 @@ impl Render for TransferDialog {
         let on_dismiss = {
             let this = cx.entity();
             move |_window: &mut Window, cx: &mut App| {
-                this.update(cx, |dialog, cx| dialog.escape(cx));
+                this.update(cx, |dialog, cx| dialog.backdrop(cx));
             }
         };
 
@@ -1741,7 +1818,12 @@ mod tests {
             .expect("the window is open");
         cx.run_until_parked();
 
-        for (skipped, canceling) in [(0, false), (4, false), (4, true)] {
+        for (skipped, canceling, asking) in [
+            (0, false, false),
+            (4, false, false),
+            (4, true, false),
+            (0, false, true),
+        ] {
             window
                 .update(&mut cx, |dialog, _window, cx| {
                     let Stage::Running(running) = &mut dialog.stage else {
@@ -1750,6 +1832,7 @@ mod tests {
                     running.rows_skipped = skipped;
                     running.canceling = canceling;
                     running.phase = SharedString::from("transfer");
+                    dialog.asking_stop = asking;
                     cx.notify();
                 })
                 .expect("the window is open");
@@ -1949,7 +2032,20 @@ mod tests {
                     matches!(dialog.stage, Stage::Running(_)),
                     "the job was accepted and the card is showing it"
                 );
+                // A press on the backdrop stops nothing and asks nothing.
+                dialog.backdrop(cx);
+                assert!(dialog.is_running() && !dialog.asking_stop);
+                // `Escape` asks, a second one answers "keep running", and
+                // neither of them has stopped the job.
+                dialog.escape(cx);
+                assert!(dialog.asking_stop);
+                dialog.escape(cx);
+                assert!(!dialog.asking_stop);
+                assert!(dialog.is_running(), "two presses of Escape stopped nothing");
+                dialog.escape(cx);
+                // "Stop", which is the cancel the question stood in for.
                 dialog.request_cancel(cx);
+                assert!(!dialog.asking_stop);
             })
             .expect("the window is open");
 

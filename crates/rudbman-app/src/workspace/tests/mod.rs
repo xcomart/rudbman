@@ -315,6 +315,7 @@ fn relation_labels() -> Vec<String> {
 
 mod connections;
 mod files;
+mod guards;
 mod menus;
 mod panes;
 mod settings;

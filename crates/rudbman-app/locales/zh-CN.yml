@@ -8,6 +8,8 @@ common:
   cancel: 取消
   save: 保存
   close: 关闭
+  keep_running: 继续运行
+  stop_job: 停止
 
 menu:
   new_connection: 管理连接…
@@ -538,6 +540,7 @@ extract:
   canceling: 正在取消…
   done: "已将 %{rows} 行（%{bytes}）写入 %{path}。"
   canceled: "已取消。没有向 %{path} 写入任何内容。"
+  stop_question: 要停止提取吗？不会向文件写入任何内容。
   failed: "提取失败：%{error}"
   failed_unknown: 提取失败，桥接层没有给出原因。
 
@@ -564,6 +567,7 @@ transfer:
   done: "已将 %{rows} 行传输到 %{table}。"
   done_skipped: "有 %{skipped} 行无法写入，已跳过。"
   canceled: "已取消。已经提交的 %{rows} 行仍留在 %{table} 中。"
+  stop_question: 要停止传输吗？已经提交的行会留在目标表中。
   failed: "传输失败：%{error}"
   failed_unknown: 传输失败，桥接层没有给出原因。
   choose_target: 请选择要把数据行复制到的连接。
@@ -591,6 +595,7 @@ backup:
   canceling: 正在取消…
   done: "已将 %{rows} 行（%{bytes}）写入 %{path}。"
   canceled: "已取消。没有向 %{path} 写入任何内容。"
+  stop_question: 要停止备份吗？不会向文件写入任何内容。
   failed: "备份失败：%{error}"
   failed_unknown: 备份失败，桥接层没有给出原因。
 

@@ -8,6 +8,8 @@ common:
   cancel: 취소
   save: 저장
   close: 닫기
+  keep_running: 계속 실행
+  stop_job: 중지
 
 menu:
   new_connection: 연결 관리…
@@ -538,6 +540,7 @@ extract:
   canceling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
   canceled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
+  stop_question: 추출을 중지할까요? 파일에는 아무것도 쓰지 않습니다.
   failed: "추출에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 추출에 실패했습니다.
 
@@ -564,6 +567,7 @@ transfer:
   done: "%{rows}행을 %{table}에 전송했습니다."
   done_skipped: "%{skipped}행은 들어가지 못해 건너뛰었습니다."
   canceled: "취소했습니다. 이미 커밋된 %{rows}행은 %{table}에 남아 있습니다."
+  stop_question: 전송을 중지할까요? 이미 커밋된 행은 대상 테이블에 남습니다.
   failed: "전송에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 전송에 실패했습니다.
   choose_target: 행을 복사할 연결을 고르세요.
@@ -591,6 +595,7 @@ backup:
   canceling: 취소하는 중…
   done: "%{rows}행(%{bytes})을 %{path}에 썼습니다."
   canceled: "취소했습니다. %{path}에는 아무것도 쓰지 않았습니다."
+  stop_question: 백업을 중지할까요? 파일에는 아무것도 쓰지 않습니다.
   failed: "백업에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 백업에 실패했습니다.
 

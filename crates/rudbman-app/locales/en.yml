@@ -24,6 +24,10 @@ common:
   cancel: Cancel
   save: Save
   close: Close
+  # The two answers to "stop the running job?", which Escape asks over a
+  # running extraction, transfer or backup.
+  keep_running: Keep running
+  stop_job: Stop
 
 # The in-app dropdown menu, and the macOS menu bar below it. The two differ
 # only in capitalization in English, but a translation may need to distinguish
@@ -879,6 +883,8 @@ extract:
   # — an earlier extract — is left as it was. The message says so.
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
   canceled: "Canceled. Nothing was written to %{path}."
+  # Asked when Escape is pressed while the job runs.
+  stop_question: Stop the extraction? Nothing will be written to the file.
   failed: "The extraction failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The extraction failed for a reason the bridge did not give.
@@ -924,6 +930,8 @@ transfer:
   done: "Transferred %{rows} rows into %{table}."
   done_skipped: "%{skipped} rows would not go in and were skipped."
   canceled: "Canceled. %{rows} rows had already been committed to %{table} and are still there."
+  # Asked when Escape is pressed while the job runs.
+  stop_question: Stop the transfer? Rows already committed stay in the target table.
   failed: "The transfer failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The transfer failed for a reason the bridge did not give.
@@ -970,6 +978,8 @@ backup:
   canceling: Canceling…
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
   canceled: "Canceled. Nothing was written to %{path}."
+  # Asked when Escape is pressed while the job runs.
+  stop_question: Stop the backup? Nothing will be written to the file.
   failed: "The backup failed: %{error}"
   failed_unknown: The backup failed for a reason the bridge did not give.
 

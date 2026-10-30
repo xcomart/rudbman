@@ -18,7 +18,15 @@ impl Workspace {
     /// announcement floating over the window — except while it is installing,
     /// when its own `close` refuses and the swap is allowed to finish; see
     /// [`UpdateDialog::close`].
-    pub(super) fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    ///
+    /// The three job dialogs are left standing while their job runs, for the
+    /// update dialog's reason and a stronger one: closing one cancels its job,
+    /// and minutes of transfer are not something a command reached for
+    /// elsewhere may throw away. So this answers whether the screen is clear,
+    /// and every `open_*` that would put a dialog up opens nothing when it is
+    /// not — two modals at once would be two sheets fighting over one press.
+    #[must_use]
+    pub(super) fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.rename_tab.is_some() {
             self.finish_tab_name(false, window, cx);
         }
@@ -38,25 +46,29 @@ impl Workspace {
             self.settings.update(cx, |dialog, cx| dialog.close(cx));
             self.apply_preview(window, cx);
         }
-        if self.extract.read(cx).is_open() {
-            // A job still running is canceled by the close, through the drop
-            // chain `extract_dialog` documents. That is the honest reading of
-            // "the card is gone": a job whose progress nobody can see is one
-            // nobody can stop either.
+        // A job dialog that is merely a form or a finished card goes like any
+        // other. One with a job under it stays: the close would cancel the job
+        // through the drop chain `extract_dialog` documents.
+        if self.extract.read(cx).is_open() && !self.extract.read(cx).is_running() {
             self.extract.update(cx, |dialog, cx| dialog.close(cx));
         }
-        if self.transfer.read(cx).is_open() {
-            // Same reading, and the same drop chain — a transfer's cancel rolls
-            // back the uncommitted tail and leaves what was committed, which is
-            // §6's contract and not something closing a window can change.
+        if self.transfer.read(cx).is_open() && !self.transfer.read(cx).is_running() {
             self.transfer.update(cx, |dialog, cx| dialog.close(cx));
         }
-        if self.backup.read(cx).is_open() {
+        if self.backup.read(cx).is_open() && !self.backup.read(cx).is_running() {
             self.backup.update(cx, |dialog, cx| dialog.close(cx));
         }
         if self.update.read(cx).is_open() {
             self.update.update(cx, |dialog, cx| dialog.close(cx));
         }
+        !self.job_running(cx) && !self.update.read(cx).is_open()
+    }
+
+    /// Whether one of the three job dialogs has a job running under it.
+    pub(super) fn job_running(&self, cx: &App) -> bool {
+        self.extract.read(cx).is_running()
+            || self.transfer.read(cx).is_running()
+            || self.backup.read(cx).is_running()
     }
 
     /// Shows or hides the application dropdown menu.
@@ -155,7 +167,9 @@ impl Workspace {
 
     /// Opens the about dialog, closing whatever else was showing.
     pub(super) fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.about.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
     }
@@ -173,14 +187,18 @@ impl Workspace {
         if self.update.read(cx).is_busy() {
             return;
         }
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.update.update(cx, |dialog, cx| dialog.start_check(cx));
         cx.notify();
     }
 
     /// Opens the settings dialog, closing whatever else was showing.
     pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.settings.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
     }
@@ -203,7 +221,9 @@ impl Workspace {
         let Some(session) = self.session_of(target.connection) else {
             return;
         };
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.extract
             .update(cx, |dialog, cx| dialog.open(target, session, cx));
         cx.notify();
@@ -229,7 +249,9 @@ impl Workspace {
             return;
         };
         let candidates = self.transfer_targets();
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.transfer.update(cx, |dialog, cx| {
             dialog.open(target, session, candidates, cx)
         });
@@ -273,7 +295,9 @@ impl Workspace {
         let Some(session) = self.session_of(connection) else {
             return;
         };
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.backup
             .update(cx, |dialog, cx| dialog.open(scope, session, cx));
         cx.notify();
@@ -601,7 +625,9 @@ impl Workspace {
 
     /// Opens the connection dialog, closing whatever else was showing.
     pub(super) fn open_connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.connect.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
     }
@@ -612,7 +638,9 @@ impl Workspace {
     /// the same dialog the button beside the list opens, showing the profile
     /// that was right-clicked rather than the first one saved.
     pub(super) fn edit_profile(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.connect.update(cx, |dialog, cx| dialog.open_at(id, cx));
         cx.notify();
     }

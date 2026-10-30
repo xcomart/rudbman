@@ -208,7 +208,7 @@ mod tests {
         // asks about, drawn next to `common.cancel`. A translation that words it
         // as "cancel" too — the Korean "취소" once did for discarding changes —
         // leaves two identical buttons that do opposite things.
-        const GO_AHEAD: [&str; 7] = [
+        const GO_AHEAD: [&str; 9] = [
             "data.discard",
             "struct.discard",
             "data.apply",
@@ -216,6 +216,8 @@ mod tests {
             "connect.delete",
             "driver.delete",
             "common.save",
+            "common.stop_job",
+            "transfer.truncate_start",
         ];
         for (tag, _) in supported() {
             let cancel = t!("common.cancel", locale = tag);

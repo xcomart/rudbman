@@ -197,6 +197,17 @@ impl PaneItem {
         }
     }
 
+    /// Whether this tab has a sheet of its own up, over which the window's
+    /// shortcuts are held back as they are over a dialog.
+    pub fn modal_open(&self, cx: &App) -> bool {
+        match self {
+            PaneItem::TableData(panel) => panel.read(cx).modal_open(),
+            PaneItem::TableStruct(panel) => panel.read(cx).modal_open(),
+            PaneItem::Query { pane, .. } => pane.read(cx).modal_open(),
+            PaneItem::TableDetail(_) | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => false,
+        }
+    }
+
     /// Whether this tab holds text its file does not, which its tab marks.
     ///
     /// Only a query pane bound to a file can say yes. Not a reason to refuse a

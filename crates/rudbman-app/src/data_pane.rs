@@ -554,6 +554,13 @@ impl DataPane {
         }
     }
 
+    /// Whether the pane has a sheet of its own up — the batch preview, the
+    /// discard question or a value viewer — which the window's shortcuts must
+    /// not act behind.
+    pub fn modal_open(&self) -> bool {
+        self.preview.is_some() || self.confirm_discard || self.lob_dialog.is_some()
+    }
+
     /// Says, in the pane itself, why the gesture that was just tried is being
     /// refused while changes are staged.
     ///

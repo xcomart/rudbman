@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// `handler`, held back while [`Workspace::shortcuts_held`] says so.
+///
+/// Wrapped around the workspace's own commands where the root registers them
+/// rather than written into each, so that a command added later is held back
+/// by being registered the same way — and the one handler that must *not* be,
+/// [`Workspace::dismiss_dialog_action`], is the one registered without it.
+pub(super) fn unless_held<A: gpui::Action>(
+    handler: fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>),
+) -> impl Fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>) + 'static {
+    move |workspace, action, window, cx| {
+        if workspace.shortcuts_held(cx) {
+            return;
+        }
+        handler(workspace, action, window, cx);
+    }
+}
+
 impl Workspace {
     /// Opens the connection dialog.
     pub(super) fn new_connection_action(
@@ -326,9 +343,9 @@ impl Workspace {
         }
         if self.extract.read(cx).is_open() {
             // Routed through the dialog: it stacks a dropdown, and while a job
-            // is running `Escape` is the cancel button rather than a close —
-            // dismissing the card would leave a job writing to a file with
-            // nobody left to stop it.
+            // is running `Escape` asks whether to stop it rather than closing
+            // anything — dismissing the card would cancel a job the user may
+            // have waited minutes on.
             self.extract.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }
@@ -340,7 +357,7 @@ impl Workspace {
         }
         if self.backup.read(cx).is_open() {
             // No dropdown of its own, but a running job still has to take
-            // `Escape` as its cancel button rather than as a close.
+            // `Escape` as its question rather than as a close.
             self.backup.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }

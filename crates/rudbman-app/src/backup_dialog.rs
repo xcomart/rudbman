@@ -253,6 +253,9 @@ pub struct BackupDialog {
     batch_input: Entity<TextInput>,
     /// Which half of the dialog is on screen.
     stage: Stage,
+    /// Whether `Escape` over a running job has asked "stop it?" and is
+    /// waiting for the answer; see [`crate::extract_dialog::render_stop_question`].
+    asking_stop: bool,
     /// A refusal to show under the form.
     notice: Option<SharedString>,
     /// The task that starts the job and then polls it.
@@ -284,6 +287,7 @@ impl BackupDialog {
             data: true,
             batch_input,
             stage: Stage::Form,
+            asking_stop: false,
             notice: None,
             _poll: None,
         }
@@ -307,6 +311,7 @@ impl BackupDialog {
         self.batch_input
             .update(cx, |input, cx| input.set_content("1", cx));
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self.notice = None;
         self._poll = None;
         self.open = true;
@@ -319,6 +324,27 @@ impl BackupDialog {
         self.open
     }
 
+    /// Whether a job is running under the card.
+    ///
+    /// The one state nothing but the user's own answer may close the dialog
+    /// from: closing cancels (see [`BackupDialog::close`]), and a job of
+    /// minutes lost to a stray click or chord is not something anyone asked
+    /// for. The shell asks this before it closes the dialog to open another.
+    pub fn is_running(&self) -> bool {
+        self.open && matches!(self.stage, Stage::Running(_))
+    }
+
+    /// What a press on the backdrop means: nothing while a job runs, and
+    /// `Escape` otherwise.
+    ///
+    /// A press beside the card is the least deliberate gesture there is, so
+    /// it is the one gesture that never stops a job — not even by asking.
+    pub fn backdrop(&mut self, cx: &mut Context<Self>) {
+        if !self.is_running() {
+            self.escape(cx);
+        }
+    }
+
     /// Hides the dialog without emitting an event.
     ///
     /// **A job still running is canceled**, by the drop chain
@@ -328,6 +354,7 @@ impl BackupDialog {
         self.open = false;
         self.pending_focus = false;
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self._poll = None;
         self.session = None;
         self.scope = None;
@@ -347,8 +374,18 @@ impl BackupDialog {
     /// `Escape` is the cancel button and *not* a close, so that the card cannot
     /// be dismissed into a poll loop nobody is watching.
     pub fn escape(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.stage, Stage::Running(_)) {
-            self.request_cancel(cx);
+        if let Stage::Running(running) = &self.stage {
+            // Asked rather than done: `Escape` is the key a user reaches for
+            // to get out of *anything*, and over a running job getting out
+            // means throwing the job away. A second `Escape` answers "keep
+            // it running", and a cancel already on its way is not asked
+            // about again.
+            if self.asking_stop {
+                self.asking_stop = false;
+            } else if !running.canceling {
+                self.asking_stop = true;
+            }
+            cx.notify();
             return;
         }
         self.dismiss(cx);
@@ -521,6 +558,7 @@ impl BackupDialog {
         let progress = match reading {
             Ok(progress) => progress,
             Err(error) => {
+                self.asking_stop = false;
                 self.stage = Stage::Ended(Ended::Failed(SharedString::from(format!("{error}"))));
                 cx.notify();
                 return false;
@@ -536,6 +574,9 @@ impl BackupDialog {
             return true;
         }
 
+        // A job that ended while "stop it?" was up has answered the question
+        // itself.
+        self.asking_stop = false;
         self.stage = Stage::Ended(match progress.state {
             JobState::Done => Ended::Done {
                 rows: progress.rows_done,
@@ -559,6 +600,7 @@ impl BackupDialog {
 
     /// Asks the job to stop. The card stays up until a poll says it did.
     fn request_cancel(&mut self, cx: &mut Context<Self>) {
+        self.asking_stop = false;
         let Stage::Running(running) = &mut self.stage else {
             return;
         };
@@ -830,6 +872,24 @@ impl BackupDialog {
                             }),
                     )
             }
+            Stage::Running(_) if self.asking_stop => {
+                let keep = this.clone();
+                let stop = this.clone();
+                return crate::extract_dialog::render_stop_question(
+                    "backup",
+                    ts!("backup.stop_question"),
+                    move |cx| {
+                        keep.update(cx, |dialog, cx| {
+                            dialog.asking_stop = false;
+                            cx.notify();
+                        });
+                    },
+                    move |cx| {
+                        stop.update(cx, |dialog, cx| dialog.request_cancel(cx));
+                    },
+                    cx,
+                );
+            }
             Stage::Running(running) => div().flex().flex_row().gap(px(8.)).child(
                 Button::new("backup-stop", ts!("common.cancel"))
                     .variant(ButtonVariant::Secondary)
@@ -892,7 +952,7 @@ impl Render for BackupDialog {
         let on_dismiss = {
             let this = cx.entity();
             move |_window: &mut Window, cx: &mut App| {
-                this.update(cx, |dialog, cx| dialog.escape(cx));
+                this.update(cx, |dialog, cx| dialog.backdrop(cx));
             }
         };
 

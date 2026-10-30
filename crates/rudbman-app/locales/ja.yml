@@ -8,6 +8,8 @@ common:
   cancel: キャンセル
   save: 保存
   close: 閉じる
+  keep_running: 実行を続ける
+  stop_job: 停止
 
 menu:
   new_connection: 接続の管理…
@@ -538,6 +540,7 @@ extract:
   canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
   canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  stop_question: 抽出を停止しますか？ファイルには何も書き込まれません。
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
 
@@ -564,6 +567,7 @@ transfer:
   done: "%{rows} 行を %{table} に転送しました。"
   done_skipped: "%{skipped} 行は挿入できなかったためスキップしました。"
   canceled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
+  stop_question: 転送を停止しますか？すでにコミットされた行は転送先テーブルに残ります。
   failed: "転送に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま転送に失敗しました。
   choose_target: 行のコピー先の接続を選んでください。
@@ -591,6 +595,7 @@ backup:
   canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
   canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  stop_question: バックアップを停止しますか？ファイルには何も書き込まれません。
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
 

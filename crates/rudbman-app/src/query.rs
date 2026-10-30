@@ -1080,6 +1080,13 @@ impl QueryPane {
         })
     }
 
+    /// Whether the pane has a sheet of its own up — the batch preview, the
+    /// discard question or a value viewer — which the window's shortcuts must
+    /// not act behind.
+    pub fn modal_open(&self) -> bool {
+        self.preview.is_some() || self.confirm_discard || self.lob_dialog.is_some()
+    }
+
     /// Whether a statement is in flight.
     pub fn is_running(&self) -> bool {
         matches!(self.run, RunState::Running(_))

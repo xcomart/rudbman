@@ -480,6 +480,12 @@ impl StructPane {
         !self.edits.is_empty() || self.applying
     }
 
+    /// Whether the pane has a sheet of its own up — the batch preview — which
+    /// the window's shortcuts must not act behind.
+    pub fn modal_open(&self) -> bool {
+        self.preview.is_some()
+    }
+
     /// Says, in the pane itself, why the gesture that was just tried is being
     /// refused while changes are staged.
     ///

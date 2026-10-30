@@ -723,10 +723,10 @@ impl Workspace {
     /// and the context menus: those are transient and dismiss themselves on the
     /// next press, so a dialog appearing over one takes nothing away.
     ///
-    /// One caller, and the reason this exists at all: the start-up update check
-    /// announces itself only into an empty window. It is the one dialog nobody
-    /// asked for, and it must not land on top of a half-typed connection form
-    /// or a running backup.
+    /// Two callers. The start-up update check announces itself only into an
+    /// empty window — it is the one dialog nobody asked for, and it must not
+    /// land on top of a half-typed connection form or a running backup. And
+    /// [`Workspace::shortcuts_held`], below.
     pub(super) fn dialog_open(&self, cx: &App) -> bool {
         self.rename_tab.is_some()
             || self.confirm.is_some()
@@ -737,5 +737,27 @@ impl Workspace {
             || self.transfer.read(cx).is_open()
             || self.backup.read(cx).is_open()
             || self.update.read(cx).is_open()
+    }
+
+    /// Whether the window's own shortcuts are held back, because something
+    /// modal is up in front of the panes they act on.
+    ///
+    /// Every dialog is a child of the workspace root, so a chord pressed inside
+    /// one still walks up to the `Workspace` key context and matches there:
+    /// `Ctrl+N` inside the connection dialog would close it and open it again
+    /// over the first profile, `Ctrl+S` would save the query tab behind it, and
+    /// `Alt+W` would close the pane under it. A dialog that wants one of those
+    /// chords for itself binds it in its own key context, which gpui prefers
+    /// for being deeper. The sheets a pane puts up over itself — an apply
+    /// preview, a discard question, a value viewer — hold them back too, but
+    /// only the active pane's: a sheet in a pane the marker is not on covers
+    /// nothing the shortcuts would act on.
+    pub(super) fn shortcuts_held(&self, cx: &App) -> bool {
+        self.dialog_open(cx)
+            || self
+                .work_area()
+                .and_then(|area| area.panes.get(area.active()))
+                .and_then(Pane::active)
+                .is_some_and(|item| item.modal_open(cx))
     }
 }

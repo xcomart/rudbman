@@ -8,6 +8,8 @@ common:
   cancel: Abbrechen
   save: Speichern
   close: Schließen
+  keep_running: Weiterlaufen lassen
+  stop_job: Stoppen
 
 menu:
   new_connection: Verbindungen verwalten…
@@ -538,6 +540,7 @@ extract:
   canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
   canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  stop_question: Extraktion stoppen? In die Datei wird nichts geschrieben.
   failed: "Die Extraktion schlug fehl: %{error}"
   failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.
 
@@ -564,6 +567,7 @@ transfer:
   done: "%{rows} Zeilen nach %{table} übertragen."
   done_skipped: "%{skipped} Zeilen konnten nicht eingefügt werden und wurden übersprungen."
   canceled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
+  stop_question: Übertragung stoppen? Bereits festgeschriebene Zeilen bleiben in der Zieltabelle.
   failed: "Die Übertragung schlug fehl: %{error}"
   failed_unknown: Die Übertragung schlug fehl; die Bridge nannte keinen Grund.
   choose_target: Wählen Sie die Verbindung, in die die Zeilen kopiert werden sollen.
@@ -591,6 +595,7 @@ backup:
   canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
   canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  stop_question: Sicherung stoppen? In die Datei wird nichts geschrieben.
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
 

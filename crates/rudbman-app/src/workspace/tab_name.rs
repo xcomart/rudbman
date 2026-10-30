@@ -32,7 +32,9 @@ impl Workspace {
             .get(&tab)
             .cloned()
             .unwrap_or_else(|| item.title(cx).to_string());
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         let this = cx.weak_entity();
         let input = cx.new(|cx| {
             let mut input = TextInput::new(cx).on_submit(move |_, window, cx| {
