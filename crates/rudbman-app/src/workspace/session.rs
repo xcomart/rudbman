@@ -855,7 +855,12 @@ mod tests {
         reopened
             .update(cx, |workspace, _window, cx| {
                 let pane = workspace.work_area().unwrap().data_panes().pop().unwrap();
-                assert_eq!(pane.read(cx).row_count(cx), Some(0));
+                assert_eq!(
+                    pane.read(cx).row_count(cx),
+                    Some(0),
+                    "{}",
+                    pane.read(cx).load_state()
+                );
             })
             .unwrap();
     }

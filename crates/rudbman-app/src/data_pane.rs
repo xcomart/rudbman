@@ -606,6 +606,16 @@ impl DataPane {
         self.session.is_some()
     }
 
+    /// Where the load stands, in words, for a test's failure message.
+    #[cfg(test)]
+    pub(crate) fn load_state(&self) -> String {
+        match &self.load {
+            Load::Running => "running".into(),
+            Load::Failed(error) => format!("failed: {}", error.message),
+            Load::Ready(_) => "ready".into(),
+        }
+    }
+
     /// Whether the keyboard is anywhere inside this pane, as the last drawn
     /// frame had it.
     ///
