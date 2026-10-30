@@ -36,6 +36,9 @@ menu:
   add_to_builder: クエリビルダーに追加
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 新規クエリビルダー
+  in_explorer: "エクスプローラーで %{shortcut}"
+  next_pane: 次のペイン
+  prev_pane: 前のペイン
   about: rudbman について
   check_updates: 更新を確認
   quit: 終了
@@ -433,6 +436,7 @@ query:
   result: "結果 %{index}"
   tab: "クエリ %{index}"
   empty: 文を書いて実行してください。
+  empty_keys: "文を書いて実行してください。%{statement} でカーソル位置の文を、%{all} ですべてを実行します。"
   no_results: 文は結果を返しませんでした。
   running: 実行中…
   rows_affected: "%{count} 行処理されました"

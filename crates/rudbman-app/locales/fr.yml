@@ -36,6 +36,9 @@ menu:
   add_to_builder: Ajouter au concepteur de requêtes
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Nouveau concepteur de requêtes
+  in_explorer: "%{shortcut} dans l’explorateur"
+  next_pane: Volet suivant
+  prev_pane: Volet précédent
   about: À propos de rudbman
   check_updates: Rechercher les mises à jour
   quit: Quitter
@@ -433,6 +436,7 @@ query:
   result: "Résultat %{index}"
   tab: "Requête %{index}"
   empty: Écrivez une instruction puis exécutez-la.
+  empty_keys: "Écrivez une instruction puis exécutez-la : %{statement} exécute celle sous le curseur, %{all} les exécute toutes."
   no_results: L’instruction n’a produit aucun résultat.
   running: en cours…
   rows_affected: "%{count} lignes modifiées"

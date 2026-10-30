@@ -163,6 +163,52 @@ JVM bridge.
   preview, import/export, and a user theme directory; eight UI languages
   (en, ko, ja, zh-CN, de, es, fr, ru).
 
+## Keyboard shortcuts
+
+On macOS read <kbd>Cmd</kbd> for <kbd>Ctrl</kbd> in the table, except where a
+row says otherwise. The pane chords use <kbd>Alt</kbd> on Linux and Windows and
+<kbd>Cmd</kbd> on macOS. Every command is also in the ☰ menu (the menu bar on
+macOS), with its chord beside it.
+
+| Where | Keys | Does |
+|---|---|---|
+| Window | <kbd>Ctrl</kbd>+<kbd>N</kbd> | Manage connections (in the connection dialog: new profile) |
+| | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
+| | <kbd>Ctrl</kbd>+<kbd>B</kbd> | Show or hide the explorer |
+| | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit (asks first when something would be lost) |
+| Tabs | <kbd>Ctrl</kbd>+<kbd>T</kbd> | New query tab |
+| | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the tab on top (Linux and Windows) |
+| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | Reopen the query or builder tab closed last |
+| | <kbd>Ctrl</kbd>+<kbd>PgDn</kbd> / <kbd>PgUp</kbd>, <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab of the pane (macOS: <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd> / <kbd>←</kbd>) |
+| | <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>8</kbd>, <kbd>Ctrl</kbd>+<kbd>9</kbd> | That tab, the last tab |
+| | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PgDn</kbd> / <kbd>PgUp</kbd> | Next / previous connection tab (Linux and Windows) |
+| Panes | <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> / <kbd>S</kbd> | Split right / below |
+| | <kbd>Alt</kbd>+<kbd>W</kbd> | Close the pane |
+| | <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>[</kbd> | Next / previous pane, keyboard included |
+| | <kbd>F6</kbd> / <kbd>Shift</kbd>+<kbd>F6</kbd> | Explorer → editor → results, and back |
+| Files | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Open a `.sql` file |
+| | <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save the query tab / save as (no save-as chord on macOS) |
+| Explorer | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Query the selected object |
+| | <kbd>Ctrl</kbd>+<kbd>E</kbd> | ERD of the selection's schema |
+| SQL editor | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Run the statement under the caret |
+| | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd> | Run the selection |
+| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Run everything |
+| | <kbd>Esc</kbd> | Stop the running statement (also in the results) |
+| | <kbd>F11</kbd> / <kbd>F12</kbd> | Commit / roll back (manual-commit connections) |
+| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Format SQL |
+| | <kbd>Ctrl</kbd>+<kbd>Space</kbd> | Completion |
+| | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>H</kbd> | Find / replace |
+| | <kbd>Ctrl</kbd>+<kbd>/</kbd> | Toggle comment |
+| Data grid | <kbd>Delete</kbd> | Mark the row for deletion, or unmark it |
+| | <kbd>Ctrl</kbd>+<kbd>0</kbd>, <kbd>Shift</kbd>+<kbd>Delete</kbd> | Set the cell to NULL |
+| | <kbd>Alt</kbd>+<kbd>Insert</kbd> | Add a row |
+| | <kbd>Ctrl</kbd>+<kbd>S</kbd>, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Apply (shows the statements first) |
+| | <kbd>F5</kbd> | Read the rows again |
+| | <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy the selected cells |
+| ERD | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Zoom in / out / actual size |
+| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>L</kbd> | Auto-arrange / switch to comment names |
+| Dialogs | <kbd>Esc</kbd> | Close; over a running extraction, transfer or backup, ask whether to stop it |
+
 ## Installing
 
 Download the build for your platform from

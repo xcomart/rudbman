@@ -36,6 +36,9 @@ menu:
   add_to_builder: Добавить в конструктор запросов
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Новый конструктор запросов
+  in_explorer: "%{shortcut} в обозревателе"
+  next_pane: Следующая область
+  prev_pane: Предыдущая область
   about: О программе rudbman
   check_updates: Проверить обновления
   quit: Выход
@@ -433,6 +436,7 @@ query:
   result: "Результат %{index}"
   tab: "Запрос %{index}"
   empty: Напишите инструкцию и выполните её.
+  empty_keys: "Напишите инструкцию и выполните её: %{statement} выполняет инструкцию под курсором, %{all} — все."
   no_results: Инструкция не вернула результата.
   running: выполнение…
   rows_affected: "Изменено строк: %{count}"

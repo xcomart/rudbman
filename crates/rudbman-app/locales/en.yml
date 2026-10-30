@@ -79,6 +79,12 @@ menu:
   add_to_builder: Add to query builder
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: New query builder
+  # A chord that only works with the keyboard in the explorer: in the SQL
+  # editor the same keys run a statement.
+  in_explorer: "%{shortcut} in the explorer"
+  # Move the pane frame, and the keyboard with it, along the layout.
+  next_pane: Next pane
+  prev_pane: Previous pane
   about: About rudbman
   # Both the in-app row and the macOS menu-bar item, and also the title of the
   # dialog it opens — so no trailing ellipsis, which would read oddly as a
@@ -645,6 +651,9 @@ query:
   # The result area before anything has been run, and after a run that produced
   # nothing at all.
   empty: Write a statement and run it.
+  # The same, with the chords that run the statement under the caret and
+  # the whole script.
+  empty_keys: "Write a statement and run it: %{statement} runs the one under the caret, %{all} runs them all."
   no_results: The statement produced no result.
   # While a statement is in flight. Also the status bar's row cell then, which
   # is why it is a state rather than a sentence.

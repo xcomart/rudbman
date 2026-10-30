@@ -530,7 +530,13 @@ impl QueryPane {
             } else if self.ran {
                 ts!("query.no_results")
             } else {
-                ts!("query.empty")
+                // The chords, because the run buttons are three icons among a
+                // dozen and the first thing a new pane is for is running SQL.
+                ts!(
+                    "query.empty_keys",
+                    statement = format!("{SHORTCUT_MODIFIER}+Enter"),
+                    all = format!("{SHORTCUT_MODIFIER}+Shift+Enter")
+                )
             };
             return note(text, chrome.text_muted);
         }

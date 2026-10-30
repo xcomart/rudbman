@@ -36,6 +36,9 @@ menu:
   add_to_builder: Añadir al generador de consultas
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Nuevo generador de consultas
+  in_explorer: "%{shortcut} en el explorador"
+  next_pane: Panel siguiente
+  prev_pane: Panel anterior
   about: Acerca de rudbman
   check_updates: Buscar actualizaciones
   quit: Salir
@@ -433,6 +436,7 @@ query:
   result: "Resultado %{index}"
   tab: "Consulta %{index}"
   empty: Escribe una sentencia y ejecútala.
+  empty_keys: "Escribe una sentencia y ejecútala: %{statement} ejecuta la que está bajo el cursor, %{all} las ejecuta todas."
   no_results: La sentencia no devolvió ningún resultado.
   running: ejecutando…
   rows_affected: "%{count} filas afectadas"

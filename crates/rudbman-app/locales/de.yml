@@ -36,6 +36,9 @@ menu:
   add_to_builder: Zum Abfrage-Builder hinzufügen
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Neuer Abfrage-Builder
+  in_explorer: "%{shortcut} im Explorer"
+  next_pane: Nächster Bereich
+  prev_pane: Vorheriger Bereich
   about: Über rudbman
   check_updates: Nach Updates suchen
   quit: Beenden
@@ -433,6 +436,7 @@ query:
   result: "Ergebnis %{index}"
   tab: "Abfrage %{index}"
   empty: Schreiben Sie eine Anweisung und führen Sie sie aus.
+  empty_keys: "Schreiben Sie eine Anweisung und führen Sie sie aus: %{statement} führt die unter dem Cursor aus, %{all} alle."
   no_results: Die Anweisung lieferte kein Ergebnis.
   running: läuft…
   rows_affected: "%{count} Zeilen betroffen"

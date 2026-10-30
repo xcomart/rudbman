@@ -751,14 +751,17 @@ impl Workspace {
     /// Builds the dropdown menu shown on the platforms without a native one.
     ///
     /// Every row dispatches the action its keyboard shortcut dispatches, so the
-    /// menu adds a way in rather than a second implementation.
+    /// menu adds a way in rather than a second implementation — and it is the
+    /// one list of every command and its chord that the window has, which is
+    /// why the pane and tab commands are on it too and why a chord that only
+    /// works from the explorer says so beside it.
     ///
-    /// The pane commands are deliberately absent. They act on panes that hold
-    /// nothing yet, so a row offering to split the empty state would promise
-    /// something it cannot deliver; the shortcuts stay bound so that the layout
-    /// code is exercised, and the rows arrive with the panels in M2.
+    /// Grouped by what the rows act on, with a rule between groups: the
+    /// connections, the query tab and its file, the object selected in the
+    /// explorer, the window's layout, and the application. A list of
+    /// twenty-odd rows without them reads as one undifferentiated column.
     ///
-    /// Every other row is grayed exactly when the action behind it would return
+    /// Every row is grayed exactly when the action behind it would return
     /// without doing anything — the welcome screen has no session, so all but
     /// the connection, settings and about rows arrive muted. Drawn rather than
     /// dropped, for the reason the explorer's menu draws its own: a command that
@@ -784,72 +787,92 @@ impl Workspace {
             && self.active_connection().map(|open| open.id)
                 == relation.as_ref().map(|target| target.connection);
         let query = self.active_query().is_some();
+        let (tabs, panes, reopenable) = self.work_area().map_or((0, 0, false), |area| {
+            (
+                area.panes
+                    .get(area.active())
+                    .map_or(0, |pane| pane.items().len()),
+                area.panes.leaf_count(),
+                !area.closed.is_empty(),
+            )
+        });
+        let row = |label: SharedString, action: Box<dyn gpui::Action>| {
+            MenuEntry::new(label)
+                .on_activate(move |window, cx| window.dispatch_action(action.boxed_clone(), cx))
+        };
+        let chord = |key: &str| format!("{SHORTCUT_MODIFIER}+{key}");
+        let pane_chord = |key: &str| format!("{PANE_SHORTCUT_LABEL}+{key}");
+        // The two chords bound in the explorer's key context only: in the SQL
+        // editor the same keys run a statement and move the caret.
+        let in_explorer = |key: &str| ts!("menu.in_explorer", shortcut = chord(key));
         let save_as = match SAVE_AS_SHORTCUT {
-            Some((_, label)) => MenuEntry::new(ts!("menu.save_sql_file_as")).shortcut(label),
-            None => MenuEntry::new(ts!("menu.save_sql_file_as")),
+            Some((_, label)) => {
+                row(ts!("menu.save_sql_file_as"), Box::new(SaveSqlFileAs)).shortcut(label)
+            }
+            None => row(ts!("menu.save_sql_file_as"), Box::new(SaveSqlFileAs)),
+        };
+        let close_tab = match CLOSE_TAB_SHORTCUT {
+            Some((_, label)) => row(ts!("context.close_tab"), Box::new(CloseTab)).shortcut(label),
+            None => row(ts!("context.close_tab"), Box::new(CloseTab)),
         };
         let entries = vec![
-            MenuEntry::new(ts!("menu.new_connection"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+N"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(NewConnection), cx)),
-            MenuEntry::new(ts!("menu.new_query"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+T"))
-                .disabled(!live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(NewQuery), cx)),
-            MenuEntry::new(ts!("menu.query_object"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+Enter"))
-                .disabled(!(live && relation.is_some()))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(QueryObject), cx)),
-            MenuEntry::new(ts!("menu.open_sql_file"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+O"))
-                .disabled(!live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSqlFile), cx)),
+            row(ts!("menu.new_connection"), Box::new(NewConnection)).shortcut(chord("N")),
+            MenuEntry::separator(),
+            row(ts!("menu.new_query"), Box::new(NewQuery))
+                .shortcut(chord("T"))
+                .disabled(!live),
+            row(ts!("menu.open_sql_file"), Box::new(OpenSqlFile))
+                .shortcut(chord("O"))
+                .disabled(!live),
             // Not gated on the session: saving writes the editor's text, which
             // a pane whose connection has gone still holds.
-            MenuEntry::new(ts!("menu.save_sql_file"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+S"))
-                .disabled(!query)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(SaveSqlFile), cx)),
-            save_as
-                .disabled(!query)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(SaveSqlFileAs), cx)),
-            MenuEntry::new(ts!("menu.extract_script"))
-                .disabled(!relation_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(ExtractScript), cx)),
-            MenuEntry::new(ts!("menu.transfer_table"))
-                .disabled(!relation_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(TransferTable), cx)),
-            MenuEntry::new(ts!("menu.backup_schema"))
-                .disabled(!scope_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(BackupSchema), cx)),
-            MenuEntry::new(ts!("menu.erd"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+E"))
-                .disabled(!scope_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenErd), cx)),
-            MenuEntry::new(ts!("menu.new_builder"))
-                .disabled(!live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(NewBuilder), cx)),
-            MenuEntry::new(ts!("menu.add_to_builder"))
-                .disabled(!addable)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(AddToBuilder), cx)),
-            MenuEntry::new(ts!("menu.toggle_explorer"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
-                .disabled(self.connections.is_empty())
-                .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
-            MenuEntry::new(ts!("menu.settings"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+,"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
+            row(ts!("menu.save_sql_file"), Box::new(SaveSqlFile))
+                .shortcut(chord("S"))
+                .disabled(!query),
+            save_as.disabled(!query),
+            close_tab.disabled(tabs == 0),
+            row(ts!("context.reopen_tab"), Box::new(ReopenClosedTab))
+                .shortcut(chord("Shift+T"))
+                .disabled(!(live && reopenable)),
             MenuEntry::separator(),
+            row(ts!("menu.query_object"), Box::new(QueryObject))
+                .shortcut(in_explorer("Enter"))
+                .disabled(!(live && relation.is_some())),
+            row(ts!("menu.erd"), Box::new(OpenErd))
+                .shortcut(in_explorer("E"))
+                .disabled(!scope_live),
+            row(ts!("menu.extract_script"), Box::new(ExtractScript)).disabled(!relation_live),
+            row(ts!("menu.transfer_table"), Box::new(TransferTable)).disabled(!relation_live),
+            row(ts!("menu.backup_schema"), Box::new(BackupSchema)).disabled(!scope_live),
+            row(ts!("menu.new_builder"), Box::new(NewBuilder)).disabled(!live),
+            row(ts!("menu.add_to_builder"), Box::new(AddToBuilder)).disabled(!addable),
+            MenuEntry::separator(),
+            row(ts!("menu.toggle_explorer"), Box::new(ToggleExplorer))
+                .shortcut(chord("B"))
+                .disabled(self.connections.is_empty()),
+            row(ts!("context.split_right"), Box::new(SplitRight))
+                .shortcut(pane_chord("Shift+D"))
+                .disabled(!live),
+            row(ts!("context.split_below"), Box::new(SplitBelow))
+                .shortcut(pane_chord("Shift+S"))
+                .disabled(!live),
+            row(ts!("context.close_pane"), Box::new(ClosePane))
+                .shortcut(pane_chord("W"))
+                .disabled(panes < 2),
+            row(ts!("menu.next_pane"), Box::new(FocusNextPane))
+                .shortcut(pane_chord("]"))
+                .disabled(panes < 2),
+            row(ts!("menu.prev_pane"), Box::new(FocusPrevPane))
+                .shortcut(pane_chord("["))
+                .disabled(panes < 2),
+            MenuEntry::separator(),
+            row(ts!("menu.settings"), Box::new(OpenSettings)).shortcut(chord(",")),
             // Next to About, where a Help menu would put it and where users of
             // every other desktop application look for it.
-            MenuEntry::new(ts!("menu.check_updates"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(CheckUpdates), cx)),
-            MenuEntry::new(ts!("menu.about"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(ShowAbout), cx)),
+            row(ts!("menu.check_updates"), Box::new(CheckUpdates)),
+            row(ts!("menu.about"), Box::new(ShowAbout)),
             MenuEntry::separator(),
-            MenuEntry::new(ts!("menu.quit"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+Q"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(Quit), cx)),
+            row(ts!("menu.quit"), Box::new(Quit)).shortcut(chord("Q")),
         ];
 
         MenuButton::new("app-menu")

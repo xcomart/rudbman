@@ -36,6 +36,9 @@ menu:
   add_to_builder: 添加到查询构建器
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 新建查询构建器
+  in_explorer: "在资源管理器中按 %{shortcut}"
+  next_pane: 下一个窗格
+  prev_pane: 上一个窗格
   about: 关于 rudbman
   check_updates: 检查更新
   quit: 退出
@@ -433,6 +436,7 @@ query:
   result: "结果 %{index}"
   tab: "查询 %{index}"
   empty: 请编写语句并执行。
+  empty_keys: "请编写语句并执行：%{statement} 执行光标所在的语句，%{all} 执行全部。"
   no_results: 该语句没有产生任何结果。
   running: 正在执行…
   rows_affected: "影响 %{count} 行"

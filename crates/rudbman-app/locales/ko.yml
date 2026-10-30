@@ -36,6 +36,9 @@ menu:
   add_to_builder: 쿼리 빌더에 추가
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 새 쿼리 빌더
+  in_explorer: "탐색기에서 %{shortcut}"
+  next_pane: 다음 분할 창
+  prev_pane: 이전 분할 창
   about: rudbman 정보
   check_updates: 업데이트 확인
   quit: 종료
@@ -433,6 +436,7 @@ query:
   result: "결과 %{index}"
   tab: "쿼리 %{index}"
   empty: SQL 문을 작성한 뒤 실행하세요.
+  empty_keys: "SQL 문을 작성한 뒤 실행하세요. %{statement}는 커서가 있는 문장을, %{all}은 전체를 실행합니다."
   no_results: SQL 문이 결과를 반환하지 않았습니다.
   running: 실행 중…
   rows_affected: "%{count}행 처리됨"
