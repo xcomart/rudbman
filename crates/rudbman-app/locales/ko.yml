@@ -727,7 +727,7 @@ update:
   title: 업데이트 있음
   available: "%{app} %{version}을(를) 사용할 수 있습니다."
   installed: "현재 실행 중인 버전은 %{version}입니다."
-  update: 업데이트
+  update: "업데이트 후 다시 시작"
   ignore: 이 버전 무시
   checking: 업데이트를 확인하는 중…
   up_to_date: 최신 버전입니다.
@@ -780,9 +780,6 @@ closing:
   close_connection: 연결 닫기
   risk_uncommitted: 커밋하지 않은 트랜잭션이 롤백됩니다.
   risk_running: "“%{tab}”에서 실행 중인 문장이 중지됩니다."
-  quit_title: "%{app}을(를) 종료할까요?"
-  quit_body: "지금 종료하면 다음을 잃습니다:"
-  quit_anyway: 그래도 종료
   work_staged: "%{connection}의 “%{tab}”: 적용하지 않은 변경"
   work_unsaved: "“%{tab}”: 파일에 저장하지 않은 변경"
   work_running: "%{connection}의 “%{tab}”: 실행 중인 문장"
@@ -790,3 +787,14 @@ closing:
   work_extract: 실행 중인 추출
   work_transfer: 실행 중인 전송
   work_backup: 실행 중인 백업
+
+close_guard:
+  title_window: "저장하지 않은 작업이 있는데 창을 닫을까요?"
+  title_quit: "저장하지 않은 작업이 있는데 종료할까요?"
+  title_restart: "저장하지 않은 작업이 있는데 다시 시작할까요?"
+  message: "계속하면 다음 작업을 잃습니다:"
+  more: "…외 %{count}개"
+  close_anyway: "그래도 닫기"
+  quit_anyway: "그래도 종료"
+  restart_anyway: "그래도 다시 시작"
+  save_all: "모두 저장"

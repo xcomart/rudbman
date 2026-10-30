@@ -1216,7 +1216,7 @@ update:
   installed: "You are currently running %{version}."
   # Downloads the release built for this platform and restarts into it. Falls
   # back to opening the release page where the project publishes no such build.
-  update: Update
+  update: "Update and restart"
   # Never mention *this* release again. A later one still announces itself, so
   # the wording has to name the version rather than promise silence in general.
   ignore: Ignore this version
@@ -1287,10 +1287,6 @@ closing:
   close_connection: Close connection
   risk_uncommitted: Its uncommitted transaction will be rolled back.
   risk_running: "The statement running in “%{tab}” will be stopped."
-  # Quitting would lose what is listed, one line each.
-  quit_title: "Quit %{app}?"
-  quit_body: "Quitting now loses:"
-  quit_anyway: Quit anyway
   work_staged: "“%{tab}” on %{connection}: changes not applied"
   work_unsaved: "“%{tab}”: changes not saved to its file"
   work_running: "“%{tab}” on %{connection}: a statement still running"
@@ -1298,3 +1294,16 @@ closing:
   work_extract: An extraction still running
   work_transfer: A transfer still running
   work_backup: A backup still running
+
+# The window's close guard: asked before a quit, a close of the window or the
+# restart an update ends in would lose what is listed under the message.
+close_guard:
+  title_window: "Close the window with unsaved work?"
+  title_quit: "Quit with unsaved work?"
+  title_restart: "Restart with unsaved work?"
+  message: "If you go on, this is lost:"
+  more: "…and %{count} more"
+  close_anyway: "Close anyway"
+  quit_anyway: "Quit anyway"
+  restart_anyway: "Restart anyway"
+  save_all: "Save all"

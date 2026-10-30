@@ -727,7 +727,7 @@ update:
   title: Доступно обновление
   available: "Доступна версия %{app} %{version}."
   installed: "Сейчас у вас запущена версия %{version}."
-  update: Обновить
+  update: "Обновить и перезапустить"
   ignore: Игнорировать эту версию
   checking: Проверка обновлений…
   up_to_date: У вас последняя версия.
@@ -780,9 +780,6 @@ closing:
   close_connection: Закрыть подключение
   risk_uncommitted: Незафиксированная транзакция будет откачена.
   risk_running: "Выполняемая в «%{tab}» инструкция будет остановлена."
-  quit_title: "Выйти из %{app}?"
-  quit_body: "При выходе сейчас будет потеряно:"
-  quit_anyway: Всё равно выйти
   work_staged: "«%{tab}» в %{connection}: неприменённые изменения"
   work_unsaved: "«%{tab}»: изменения, не сохранённые в файл"
   work_running: "«%{tab}» в %{connection}: ещё выполняемая инструкция"
@@ -790,3 +787,14 @@ closing:
   work_extract: Ещё выполняемое извлечение
   work_transfer: Ещё выполняемый перенос
   work_backup: Ещё выполняемое резервное копирование
+
+close_guard:
+  title_window: "Закрыть окно с несохранённой работой?"
+  title_quit: "Выйти с несохранённой работой?"
+  title_restart: "Перезапустить с несохранённой работой?"
+  message: "Если продолжить, будет потеряно:"
+  more: "…и ещё %{count}"
+  close_anyway: "Всё равно закрыть"
+  quit_anyway: "Всё равно выйти"
+  restart_anyway: "Всё равно перезапустить"
+  save_all: "Сохранить всё"

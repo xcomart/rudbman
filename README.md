@@ -155,7 +155,9 @@ JVM bridge.
   to a `.sql` file with unsaved changes asks Save / Don't save / Cancel
   wherever it is closed from; a tab bound to no file is a draft and closes
   without asking. Closing a connection with an uncommitted transaction or a
-  running statement asks first, and quitting lists everything it would lose.
+  running statement asks first. Quitting, closing the window and the restart
+  after an update list everything they would lose and offer **Save all** for
+  the files.
   <kbd>Ctrl</kbd>+<kbd>W</kbd> closes the tab on top (on macOS
   <kbd>Cmd</kbd>+<kbd>W</kbd> still closes the pane), and
   <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens the
@@ -179,7 +181,7 @@ macOS), with its chord beside it.
 | Window | <kbd>Ctrl</kbd>+<kbd>N</kbd> | Manage connections (in the connection dialog: new profile) |
 | | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | | <kbd>Ctrl</kbd>+<kbd>B</kbd> | Show or hide the explorer |
-| | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit (asks first when something would be lost) |
+| | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit (asks first when something would be lost, as closing the window does) |
 | Tabs | <kbd>Ctrl</kbd>+<kbd>T</kbd> | New query tab |
 | | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the tab on top (Linux and Windows) |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | Reopen the query or builder tab closed last |

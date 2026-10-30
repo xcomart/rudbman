@@ -727,7 +727,7 @@ update:
   title: Actualización disponible
   available: "%{app} %{version} ya está disponible."
   installed: "Ahora mismo estás usando la %{version}."
-  update: Actualizar
+  update: "Actualizar y reiniciar"
   ignore: Ignorar esta versión
   checking: Buscando actualizaciones…
   up_to_date: Ya tienes la última versión.
@@ -780,9 +780,6 @@ closing:
   close_connection: Cerrar la conexión
   risk_uncommitted: Su transacción sin confirmar se revertirá.
   risk_running: "La sentencia que se está ejecutando en «%{tab}» se detendrá."
-  quit_title: "¿Salir de %{app}?"
-  quit_body: "Si sales ahora se pierde:"
-  quit_anyway: Salir de todos modos
   work_staged: "«%{tab}» en %{connection}: cambios sin aplicar"
   work_unsaved: "«%{tab}»: cambios sin guardar en su archivo"
   work_running: "«%{tab}» en %{connection}: una sentencia aún en ejecución"
@@ -790,3 +787,14 @@ closing:
   work_extract: Una extracción aún en curso
   work_transfer: Una transferencia aún en curso
   work_backup: Una copia de seguridad aún en curso
+
+close_guard:
+  title_window: "¿Cerrar la ventana con trabajo sin guardar?"
+  title_quit: "¿Salir con trabajo sin guardar?"
+  title_restart: "¿Reiniciar con trabajo sin guardar?"
+  message: "Si continúas, se perderá lo siguiente:"
+  more: "…y %{count} más"
+  close_anyway: "Cerrar de todos modos"
+  quit_anyway: "Salir de todos modos"
+  restart_anyway: "Reiniciar de todos modos"
+  save_all: "Guardar todo"

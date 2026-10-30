@@ -21,8 +21,12 @@
 //!   manual commit, which the bridge rolls back when the session closes, and a
 //!   statement still running — is asked about when the connection tab closes.
 //!
-//! The application's own quit asks once, listing everything at stake across
-//! every connection, because there is no tab left to bring forward.
+//! The application's quit, the window's close (the caption's button, the
+//! platform's own) and the restart an update ends in ask once, listing
+//! everything at stake across every connection, because there is no tab left
+//! to bring forward. That question is `rugpui_shell::CloseGuard`'s, fed by
+//! [`Workspace::unsaved_work`] and able to save every file-bound tab first
+//! ([`Workspace::save_all_files`]).
 //!
 //! # One question at a time, and the close is asked again after each
 //!
@@ -57,8 +61,6 @@ pub(super) enum CloseRequest {
     Pane(PaneId),
     /// A connection tab, with its whole work area and its session.
     Connection(ConnectionId),
-    /// The application.
-    Quit,
 }
 
 /// What has been answered so far for one [`CloseRequest`].
@@ -99,11 +101,6 @@ pub(super) enum CloseAsk {
         /// One sentence per thing that would be lost.
         reasons: Vec<SharedString>,
     },
-    /// Quitting would lose what is listed.
-    Quit {
-        /// One line per thing that would be lost.
-        lines: Vec<SharedString>,
-    },
 }
 
 /// The answers a [`CloseQuestion`] offers.
@@ -111,7 +108,7 @@ pub(super) enum CloseAsk {
 pub(super) enum CloseAnswer {
     /// Close nothing.
     Cancel,
-    /// Close without saving, or accept what the connection or the quit loses.
+    /// Close without saving, or accept what the connection loses.
     Discard,
     /// Save the file first, then close.
     Save,
@@ -206,17 +203,6 @@ impl Workspace {
                     }
                 }
                 self.close_connection_now(index, window, cx);
-            }
-            CloseRequest::Quit => {
-                if !answers.accepted {
-                    let lines = self.unsaved_work(cx);
-                    if !lines.is_empty() {
-                        self.raise_close_question(request, answers, CloseAsk::Quit { lines }, cx);
-                        return;
-                    }
-                }
-                self.flush_workspaces(cx);
-                cx.quit();
             }
         }
     }
@@ -388,11 +374,12 @@ impl Workspace {
         reasons
     }
 
-    /// Everything quitting now would lose, one line each, across every
-    /// connection; empty when quitting loses nothing.
+    /// Everything closing the window now would lose, one line each, across
+    /// every connection; empty when closing loses nothing.
     ///
-    /// The list a quit confirmation shows, and so the whole of what "unsaved
-    /// work" means in this window: rows or columns staged and not applied, a
+    /// The list the close guard shows before a quit, a close of the window or
+    /// the restart an update ends in, and so the whole of what "unsaved work"
+    /// means in this window: rows or columns staged and not applied, a
     /// query tab whose file is behind its text, a statement still running, a
     /// transaction not yet committed, and a job of the three dialogs still
     /// writing. A draft bound to no file is not on it — the workspace keeps
@@ -447,7 +434,7 @@ impl Workspace {
     /// Answers the question a close is waiting on.
     ///
     /// "Cancel" puts it away and closes nothing. "Don't save" — and "close
-    /// anyway" over a connection or a quit — records the answer and runs the
+    /// anyway" over a connection — records the answer and runs the
     /// close again from the top. "Save" writes the tab to its file and runs
     /// the close again once the write is in ([`Workspace::after_close_save`]);
     /// a save that fails or is abandoned cancels the close, and the tab says
@@ -470,7 +457,7 @@ impl Workspace {
                     CloseAsk::Unsaved { pane, .. } => {
                         question.answers.discard.insert(pane.entity_id());
                     }
-                    CloseAsk::Connection { .. } | CloseAsk::Quit { .. } => {
+                    CloseAsk::Connection { .. } => {
                         question.answers.accepted = true;
                     }
                 }
@@ -649,18 +636,6 @@ impl Workspace {
                     ts!("closing.close_connection"),
                     None,
                 ),
-                CloseAsk::Quit { lines } => (
-                    ts!("closing.quit_title", app = APP_NAME),
-                    std::iter::once(ts!("closing.quit_body"))
-                        .chain(
-                            lines
-                                .iter()
-                                .map(|line| SharedString::from(format!("• {line}"))),
-                        )
-                        .collect(),
-                    ts!("closing.quit_anyway"),
-                    None,
-                ),
             };
         let saving = save == Some(true);
 
@@ -727,5 +702,67 @@ impl Workspace {
             )
             .into_any_element(),
         )
+    }
+}
+
+impl Workspace {
+    /// Saves every query tab bound to a file whose text the file does not
+    /// have, across every connection — the close guard's "Save all" — and
+    /// answers whether every one of them was written.
+    ///
+    /// Each goes to its own file only while that file is as the tab last saw
+    /// it: one changed on disk since is not written over, the tab says so, and
+    /// the answer is `false`, which leaves the guard's question up with the
+    /// tab still on its list. A tab bound to no file is a draft, not on the
+    /// list, and not asked where to go.
+    pub(super) fn save_all_files(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<bool> {
+        let panes: Vec<Entity<QueryPane>> = self
+            .connections
+            .iter()
+            .flat_map(|open| open.work.queries())
+            .filter(|pane| pane.read(cx).is_modified(cx))
+            .collect();
+        let mut writes = Vec::new();
+        for pane in panes {
+            let (path, stamp) = {
+                let query = pane.read(cx);
+                (query.file().map(Path::to_path_buf), query.file_stamp())
+            };
+            let Some(path) = path else {
+                continue;
+            };
+            let Some(SaveJob { text, edits }) = pane.update(cx, |pane, cx| pane.begin_save(cx))
+            else {
+                // Already writing, or rereading its file: not saved by this.
+                writes.push(None);
+                continue;
+            };
+            let write = cx.background_spawn({
+                let path = path.clone();
+                async move { write_sql_file(&path, &text, Overwrite::IfUnchanged(stamp)) }
+            });
+            writes.push(Some((pane, path, edits, write)));
+        }
+        cx.spawn_in(window, async move |workspace, cx| {
+            let mut all = true;
+            for write in writes {
+                let Some((pane, path, edits, write)) = write else {
+                    all = false;
+                    continue;
+                };
+                let outcome = write.await;
+                let saved = workspace
+                    .update(cx, |_, cx| {
+                        pane.update(cx, |pane, cx| pane.finish_save(path, edits, outcome, cx))
+                    })
+                    .unwrap_or(Saved::Failed);
+                all &= matches!(saved, Saved::InPlace | Saved::Rebound);
+            }
+            all
+        })
     }
 }

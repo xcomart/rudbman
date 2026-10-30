@@ -270,24 +270,6 @@ impl Workspace {
         self.reopen_closed_tab(window, cx);
     }
 
-    /// Quits, once what quitting would lose has been accepted.
-    ///
-    /// Handled here, on the workspace root, rather than application-wide: the
-    /// window is what knows what is unsaved, and the application-wide handler
-    /// `bootstrap` registers stays as the fallback for a quit dispatched with
-    /// no window to answer it.
-    pub(super) fn quit_action(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.close_question.is_some() {
-            return;
-        }
-        self.request_close(
-            closing::CloseRequest::Quit,
-            closing::CloseAnswers::default(),
-            window,
-            cx,
-        );
-    }
-
     /// Closes the active pane.
     pub(super) fn close_pane_action(
         &mut self,

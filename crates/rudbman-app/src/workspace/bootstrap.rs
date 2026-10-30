@@ -419,7 +419,10 @@ pub(super) fn run() {
         // background of their own; see [`app_settings::window_tint`].
         set_window_tint(settings.window.background_opacity, cx);
 
-        cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+        // Through the window's close guard, which asks first when something
+        // would be lost (see the workspace's `closing` module) and quits on its
+        // own when nothing would.
+        cx.on_action(|_: &Quit, cx: &mut App| rugpui_shell::request_quit(cx));
         // The window's geometry is only in memory until here; this is the one
         // write of `settings.json` the shell performs. Nothing in the closure
         // re-enters gpui — the file write is the whole of it — which is what

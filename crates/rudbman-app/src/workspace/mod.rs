@@ -772,6 +772,10 @@ struct Workspace {
     /// carries, and once the settings dialog can switch a live window this field
     /// is what follows the platform call rather than the stored preference.
     titlebar: TitlebarStyle,
+    /// The window's close guard: asks before a quit, a close of the window
+    /// or an update's restart would lose what [`Workspace::unsaved_work`]
+    /// lists. Drawn last of everything, so its question is on top.
+    close_guard: Entity<rugpui_shell::CloseGuard>,
     /// Keeps the about dialog subscription alive.
     _about_events: Subscription,
     /// Keeps the connection dialog subscription alive.
@@ -856,6 +860,24 @@ impl Workspace {
 
         let settings_snapshot = app_settings::current(cx);
 
+        // Read synchronously when the platform asks whether the window may
+        // close, so the list has to be a plain read of state — which
+        // `unsaved_work` is.
+        let workspace = cx.weak_entity();
+        let saver = workspace.clone();
+        let close_guard = cx.new(|cx| {
+            rugpui_shell::CloseGuard::new(window, cx, move |_intent, _window, cx| {
+                workspace
+                    .read_with(cx, |workspace, cx| workspace.unsaved_work(cx))
+                    .unwrap_or_default()
+            })
+            .with_save_all(move |window, cx| {
+                saver
+                    .update(cx, |workspace, cx| workspace.save_all_files(window, cx))
+                    .unwrap_or_else(|_| Task::ready(false))
+            })
+        });
+
         cx.observe_self(|workspace, cx| workspace.schedule_workspace_save(cx))
             .detach();
         cx.on_release(|workspace, cx| workspace.flush_workspaces(cx))
@@ -894,6 +916,7 @@ impl Workspace {
             focus_origin: FocusOrigin::Shell,
             tab_drop: TabDropState::new(),
             titlebar,
+            close_guard,
             _about_events: about_events,
             _connect_events: connect_events,
             _explorer_events: explorer_events,

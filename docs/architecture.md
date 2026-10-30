@@ -905,8 +905,13 @@ staged edits refuses, bringing itself forward to say why, whichever door the
 close came through; a query tab bound to a file with changes the file lacks
 asks Save / Don't save / Cancel, one tab at a time; a connection with an
 uncommitted transaction (which the bridge rolls back as the session closes) or a
-running statement asks once; and a quit asks once with everything at stake
-listed (`Workspace::unsaved_work`). After each answer the close is run again
+running statement asks once. Quitting, closing the window — the caption's
+button, Alt+F4, the platform's own title bar, macOS's red button — and the
+restart an update ends in all go through the window's close guard
+(`rugpui_shell::CloseGuard`, the last child of the root), which lists
+everything at stake (`Workspace::unsaved_work`) and offers Save all for the
+file-bound tabs (`Workspace::save_all_files`); the guard reads state only,
+since the platform asks it synchronously. After each answer the close is run again
 from the top rather than resumed, so a tab saved meanwhile is not asked about
 and a tab gone meanwhile is not closed twice. On Linux and Windows `Ctrl+W`
 closes the tab on top; on macOS `Cmd+W` remains "close pane" for now.

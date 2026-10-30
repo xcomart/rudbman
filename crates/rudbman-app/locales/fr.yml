@@ -727,7 +727,7 @@ update:
   title: Mise à jour disponible
   available: "%{app} %{version} est disponible."
   installed: "Vous utilisez actuellement la %{version}."
-  update: Mettre à jour
+  update: "Mettre à jour et redémarrer"
   ignore: Ignorer cette version
   checking: Recherche de mises à jour…
   up_to_date: Vous utilisez la dernière version.
@@ -780,9 +780,6 @@ closing:
   close_connection: Fermer la connexion
   risk_uncommitted: Sa transaction non validée sera annulée.
   risk_running: "L’instruction en cours dans « %{tab} » sera arrêtée."
-  quit_title: "Quitter %{app} ?"
-  quit_body: "Quitter maintenant fait perdre :"
-  quit_anyway: Quitter quand même
   work_staged: "« %{tab} » sur %{connection} : modifications non appliquées"
   work_unsaved: "« %{tab} » : modifications non enregistrées dans son fichier"
   work_running: "« %{tab} » sur %{connection} : une instruction encore en cours"
@@ -790,3 +787,14 @@ closing:
   work_extract: Une extraction encore en cours
   work_transfer: Un transfert encore en cours
   work_backup: Une sauvegarde encore en cours
+
+close_guard:
+  title_window: "Fermer la fenêtre malgré le travail non enregistré ?"
+  title_quit: "Quitter malgré le travail non enregistré ?"
+  title_restart: "Redémarrer malgré le travail non enregistré ?"
+  message: "Si vous continuez, ceci sera perdu :"
+  more: "…et %{count} de plus"
+  close_anyway: "Fermer quand même"
+  quit_anyway: "Quitter quand même"
+  restart_anyway: "Redémarrer quand même"
+  save_all: "Tout enregistrer"

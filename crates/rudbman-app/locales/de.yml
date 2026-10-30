@@ -727,7 +727,7 @@ update:
   title: Update verfügbar
   available: "%{app} %{version} ist verfügbar."
   installed: "Sie verwenden derzeit %{version}."
-  update: Update installieren
+  update: "Aktualisieren und neu starten"
   ignore: Diese Version ignorieren
   checking: Suche nach Updates…
   up_to_date: Sie verwenden die neueste Version.
@@ -780,9 +780,6 @@ closing:
   close_connection: Verbindung schließen
   risk_uncommitted: Die nicht festgeschriebene Transaktion wird zurückgerollt.
   risk_running: "Die in „%{tab}“ laufende Anweisung wird gestoppt."
-  quit_title: "%{app} beenden?"
-  quit_body: "Beim Beenden geht jetzt verloren:"
-  quit_anyway: Trotzdem beenden
   work_staged: "„%{tab}“ auf %{connection}: nicht angewendete Änderungen"
   work_unsaved: "„%{tab}“: nicht in der Datei gespeicherte Änderungen"
   work_running: "„%{tab}“ auf %{connection}: eine noch laufende Anweisung"
@@ -790,3 +787,14 @@ closing:
   work_extract: Eine noch laufende Extraktion
   work_transfer: Eine noch laufende Übertragung
   work_backup: Eine noch laufende Sicherung
+
+close_guard:
+  title_window: "Fenster mit nicht gespeicherter Arbeit schließen?"
+  title_quit: "Mit nicht gespeicherter Arbeit beenden?"
+  title_restart: "Mit nicht gespeicherter Arbeit neu starten?"
+  message: "Wenn Sie fortfahren, geht Folgendes verloren:"
+  more: "…und %{count} weitere"
+  close_anyway: "Trotzdem schließen"
+  quit_anyway: "Trotzdem beenden"
+  restart_anyway: "Trotzdem neu starten"
+  save_all: "Alle speichern"

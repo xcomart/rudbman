@@ -727,7 +727,7 @@ update:
   title: 有可用更新
   available: "%{app} %{version} 已发布。"
   installed: "当前运行的是 %{version}。"
-  update: 更新
+  update: "更新并重新启动"
   ignore: 忽略此版本
   checking: 正在检查更新…
   up_to_date: 已是最新版本。
@@ -780,9 +780,6 @@ closing:
   close_connection: 关闭连接
   risk_uncommitted: 未提交的事务将被回滚。
   risk_running: "“%{tab}”中正在运行的语句将被停止。"
-  quit_title: "退出 %{app}？"
-  quit_body: "现在退出将丢失："
-  quit_anyway: 仍然退出
   work_staged: "%{connection} 上的“%{tab}”：未应用的更改"
   work_unsaved: "“%{tab}”：未保存到文件的更改"
   work_running: "%{connection} 上的“%{tab}”：仍在运行的语句"
@@ -790,3 +787,14 @@ closing:
   work_extract: 仍在运行的提取
   work_transfer: 仍在运行的传输
   work_backup: 仍在运行的备份
+
+close_guard:
+  title_window: "有未保存的工作，要关闭窗口吗？"
+  title_quit: "有未保存的工作，要退出吗？"
+  title_restart: "有未保存的工作，要重新启动吗？"
+  message: "如果继续，以下内容将会丢失："
+  more: "…另外 %{count} 项"
+  close_anyway: "仍然关闭"
+  quit_anyway: "仍然退出"
+  restart_anyway: "仍然重新启动"
+  save_all: "全部保存"

@@ -324,24 +324,29 @@ fn closing_a_connection_with_an_open_transaction_asks(cx: &mut gpui::TestAppCont
             workspace.answer_close(closing::CloseAnswer::Cancel, window, cx);
             assert_eq!(workspace.connections.len(), 1);
 
-            // The quit list says the same, in its own words.
+            // The window's close guard lists it too, in its own words, and
+            // asks rather than letting a quit through.
             let lines = workspace.unsaved_work(cx);
             assert_eq!(lines.len(), 1);
-            workspace.quit_action(&Quit, window, cx);
-            assert!(matches!(
-                workspace
-                    .close_question
-                    .as_ref()
-                    .map(|question| &question.ask),
-                Some(closing::CloseAsk::Quit { .. })
-            ));
         })
         .expect("the window is open");
+    // From outside the workspace's own update, which is where the platform
+    // and the deferred `request_quit` ask from.
+    let guard = window
+        .update(&mut cx, |workspace, _window, _cx| {
+            workspace.close_guard.clone()
+        })
+        .expect("the window is open");
+    let free = cx.update(|window, cx| {
+        guard.update(cx, |guard, cx| {
+            guard.request(rugpui_shell::CloseIntent::Quit, window, cx)
+        })
+    });
+    assert!(!free, "the quit went through unasked");
+    cx.update(|_, cx| assert!(guard.read(cx).is_open()));
     cx.run_until_parked();
     window
         .update(&mut cx, |workspace, window, cx| {
-            workspace.answer_close(closing::CloseAnswer::Cancel, window, cx);
-
             workspace.close_connection(0, window, cx);
             workspace.answer_close(closing::CloseAnswer::Discard, window, cx);
             assert!(workspace.connections.is_empty(), "closed once accepted");
@@ -394,6 +399,43 @@ fn a_closed_query_tab_comes_back_as_it_went(cx: &mut gpui::TestAppContext) {
                 ts!("query.tab", index = 3).to_string(),
                 "the count carried on past the reopened tab"
             );
+        })
+        .expect("the window is open");
+}
+
+/// "Save all" from the close guard writes every file-bound tab with
+/// changes, after which nothing is left on the list.
+#[gpui::test]
+fn save_all_writes_every_modified_file_and_empties_the_list(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("guards-save-all", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("report.sql");
+    std::fs::write(&path, "select 1").expect("the fixture is written");
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.load_sql_file(path.clone(), window, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    cx.simulate_keystrokes(DOCUMENT_END);
+    cx.simulate_input(" -- edited");
+    let saving = window
+        .update(&mut cx, |workspace, window, cx| {
+            assert_eq!(workspace.unsaved_work(cx).len(), 1);
+            workspace.save_all_files(window, cx)
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    let saved = cx.foreground_executor().block_test(saving);
+    assert!(saved, "the one file was written");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "select 1 -- edited"
+    );
+    window
+        .update(&mut cx, |workspace, _window, cx| {
+            assert!(workspace.unsaved_work(cx).is_empty());
         })
         .expect("the window is open");
 }

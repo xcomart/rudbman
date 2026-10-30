@@ -542,9 +542,6 @@ impl Render for Workspace {
             .on_action(cx.listener(actions::unless_held(Self::next_region_action)))
             .on_action(cx.listener(actions::unless_held(Self::prev_region_action)))
             .on_action(cx.listener(actions::unless_held(Self::reopen_closed_tab_action)))
-            // Not held: quitting is never a command acting behind a dialog, and
-            // it asks for itself when it would lose something.
-            .on_action(cx.listener(Self::quit_action))
             .on_action(cx.listener(Self::dismiss_dialog_action))
             .child(toolbar)
             .child(body)
@@ -558,8 +555,10 @@ impl Render for Workspace {
             .children(update)
             .children(confirm)
             .children(rename_tab)
-            // Over every other dialog: a quit can be asked for with one up.
             .children(close_question)
+            // Over every other dialog: a quit, or a close of the window, can
+            // be asked for with one up.
+            .child(self.close_guard.clone())
             // Last: it paints above the dialogs, as its own backdrop already
             // implies, and it takes no room in the column — the element is an
             // empty absolute box whose two halves are anchored to the window.

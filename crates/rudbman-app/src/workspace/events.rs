@@ -201,17 +201,12 @@ impl Workspace {
                 // update merely spends its restart applying itself and
                 // re-executing once more.
                 //
-                // The path comes from the shell because only it knows that
-                // the install just renamed the running image aside:
-                // `restart_path` is the `current_exe()` of the moment
-                // `init_process_identity` ran, before any of that happened.
-                // `None` — the platform never said, or no identity was
-                // installed — is left unset, which is gpui's own default
-                // and therefore exactly the same thing.
-                if let Some(path) = rugpui_shell::restart_path() {
-                    cx.set_restart_path(path);
-                }
-                cx.restart();
+                // Through the close guard, which asks first when the restart
+                // would lose something — a file not saved, a transaction not
+                // committed — and otherwise restarts at once, on the
+                // `restart_path` the shell recorded before the install renamed
+                // the running image aside.
+                rugpui_shell::request_restart(window, cx);
             }
             UpdateDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));

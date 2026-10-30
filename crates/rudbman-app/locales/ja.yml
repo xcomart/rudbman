@@ -727,7 +727,7 @@ update:
   title: 更新があります
   available: "%{app} %{version} が利用できます。"
   installed: "現在実行中のバージョンは %{version} です。"
-  update: 更新
+  update: "更新して再起動"
   ignore: このバージョンを無視
   checking: 更新を確認しています…
   up_to_date: 最新バージョンです。
@@ -780,9 +780,6 @@ closing:
   close_connection: 接続を閉じる
   risk_uncommitted: コミットしていないトランザクションはロールバックされます。
   risk_running: "「%{tab}」で実行中の文は停止されます。"
-  quit_title: "%{app} を終了しますか？"
-  quit_body: "今終了すると、次のものが失われます:"
-  quit_anyway: それでも終了
   work_staged: "%{connection} の「%{tab}」: 適用していない変更"
   work_unsaved: "「%{tab}」: ファイルに保存していない変更"
   work_running: "%{connection} の「%{tab}」: 実行中の文"
@@ -790,3 +787,14 @@ closing:
   work_extract: 実行中の抽出
   work_transfer: 実行中の転送
   work_backup: 実行中のバックアップ
+
+close_guard:
+  title_window: "未保存の作業があります。ウィンドウを閉じますか？"
+  title_quit: "未保存の作業があります。終了しますか？"
+  title_restart: "未保存の作業があります。再起動しますか？"
+  message: "続けると、次の内容が失われます:"
+  more: "…ほか %{count} 件"
+  close_anyway: "それでも閉じる"
+  quit_anyway: "それでも終了"
+  restart_anyway: "それでも再起動"
+  save_all: "すべて保存"
