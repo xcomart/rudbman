@@ -1077,7 +1077,7 @@ impl ConnectionDialog {
         let others = self
             .edited
             .iter()
-            .any(|id| *id != current.id && !self.store.get(*id).is_some_and(&untouched));
+            .any(|id| *id != current.id && !self.store.get(*id).is_some_and(untouched));
         let secrets = (
             text(&self.password_input, cx),
             text(&self.tunnel_secret_input, cx),
