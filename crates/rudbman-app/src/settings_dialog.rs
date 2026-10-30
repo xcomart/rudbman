@@ -365,6 +365,10 @@ pub struct SettingsDialog {
     jvm_heap_input: Entity<TextInput>,
     /// Extra JVM arguments, separated by spaces.
     jvm_args_input: Entity<TextInput>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl SettingsDialog {
@@ -472,6 +476,7 @@ impl SettingsDialog {
             editor_events: None,
             status: None,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
@@ -1237,43 +1242,55 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.ui_theme"),
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .child(theme_picker)
-                        .child(theme_actions),
-                ))
-                .child(form_row("", follows_ui))
-                .child(form_row(
-                    ts!("settings.editor_theme"),
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .child(editor_theme)
-                        .child(editor_theme_actions),
-                ))
-                .child(form_row(
-                    ts!("settings.ui_font_size"),
-                    suffixed(
-                        self.ui_font_size_input.clone(),
-                        ts!("settings.font_size_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row(ts!("settings.editor_font"), font))
-                .child(form_row(
-                    ts!("settings.editor_font_size"),
-                    suffixed(
-                        self.editor_font_size_input.clone(),
-                        ts!("settings.font_size_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row("", word_wrap)),
+                .child(
+                    form_row(
+                        ts!("settings.ui_theme"),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(theme_picker)
+                            .child(theme_actions),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", follows_ui).label_width(self.label_width))
+                .child(
+                    form_row(
+                        ts!("settings.editor_theme"),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(editor_theme)
+                            .child(editor_theme_actions),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(
+                        ts!("settings.ui_font_size"),
+                        suffixed(
+                            self.ui_font_size_input.clone(),
+                            ts!("settings.font_size_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row(ts!("settings.editor_font"), font).label_width(self.label_width))
+                .child(
+                    form_row(
+                        ts!("settings.editor_font_size"),
+                        suffixed(
+                            self.editor_font_size_input.clone(),
+                            ts!("settings.font_size_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", word_wrap).label_width(self.label_width)),
         )
     }
 
@@ -1322,12 +1339,15 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.opacity"),
-                    suffixed(self.opacity_input.clone(), ts!("settings.opacity_hint"), cx),
-                ))
-                .child(form_row("", blur))
-                .child(form_row(ts!("settings.titlebar"), titlebar)),
+                .child(
+                    form_row(
+                        ts!("settings.opacity"),
+                        suffixed(self.opacity_input.clone(), ts!("settings.opacity_hint"), cx),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", blur).label_width(self.label_width))
+                .child(form_row(ts!("settings.titlebar"), titlebar).label_width(self.label_width)),
         )
     }
 
@@ -1375,7 +1395,7 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(ts!("settings.language"), language))
+                .child(form_row(ts!("settings.language"), language).label_width(self.label_width))
                 .child(hint(ts!("settings.language_hint"), cx)),
         )
     }
@@ -1404,31 +1424,40 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.fetch_batch_rows"),
-                    suffixed(
-                        self.fetch_batch_input.clone(),
-                        ts!("settings.fetch_batch_rows_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row(
-                    ts!("settings.query_timeout"),
-                    suffixed(
-                        self.query_timeout_input.clone(),
-                        ts!("settings.query_timeout_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row(
-                    ts!("settings.login_timeout"),
-                    suffixed(
-                        self.login_timeout_input.clone(),
-                        ts!("settings.login_timeout_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row("", confirm_writes)),
+                .child(
+                    form_row(
+                        ts!("settings.fetch_batch_rows"),
+                        suffixed(
+                            self.fetch_batch_input.clone(),
+                            ts!("settings.fetch_batch_rows_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(
+                        ts!("settings.query_timeout"),
+                        suffixed(
+                            self.query_timeout_input.clone(),
+                            ts!("settings.query_timeout_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(
+                        ts!("settings.login_timeout"),
+                        suffixed(
+                            self.login_timeout_input.clone(),
+                            ts!("settings.login_timeout_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", confirm_writes).label_width(self.label_width)),
         )
     }
 
@@ -1441,18 +1470,21 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.jvm_heap"),
-                    suffixed(
-                        self.jvm_heap_input.clone(),
-                        ts!("settings.jvm_heap_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row(
-                    ts!("settings.jvm_args"),
-                    self.jvm_args_input.clone(),
-                ))
+                .child(
+                    form_row(
+                        ts!("settings.jvm_heap"),
+                        suffixed(
+                            self.jvm_heap_input.clone(),
+                            ts!("settings.jvm_heap_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(ts!("settings.jvm_args"), self.jvm_args_input.clone())
+                        .label_width(self.label_width),
+                )
                 .child(hint(ts!("settings.jvm_hint"), cx)),
         )
     }
@@ -1566,8 +1598,30 @@ impl Focusable for SettingsDialog {
     }
 }
 
+impl SettingsDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("settings.ui_theme"),
+            ts!("settings.editor_theme"),
+            ts!("settings.ui_font_size"),
+            ts!("settings.editor_font"),
+            ts!("settings.editor_font_size"),
+            ts!("settings.opacity"),
+            ts!("settings.titlebar"),
+            ts!("settings.language"),
+            ts!("settings.fetch_batch_rows"),
+            ts!("settings.query_timeout"),
+            ts!("settings.login_timeout"),
+            ts!("settings.jvm_heap"),
+            ts!("settings.jvm_args"),
+        ]
+    }
+}
+
 impl Render for SettingsDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("settings-dialog");
         }

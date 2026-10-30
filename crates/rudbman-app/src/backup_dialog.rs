@@ -262,6 +262,10 @@ pub struct BackupDialog {
     ///
     /// Dropping it cancels the job.
     _poll: Option<Task<()>>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl BackupDialog {
@@ -277,6 +281,7 @@ impl BackupDialog {
         Self {
             open: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             scope: None,
             session: None,
@@ -646,6 +651,7 @@ impl BackupDialog {
             ts!("backup.scope"),
             div().text_color(chrome.text).child(name),
         )
+        .label_width(self.label_width)
     }
 
     /// The output path cell and the button that picks it.
@@ -686,6 +692,7 @@ impl BackupDialog {
                         }),
                 ),
         )
+        .label_width(self.label_width)
     }
 
     /// The form half: everything the job is described by.
@@ -724,10 +731,13 @@ impl BackupDialog {
         // writes `INSERT`s and nothing else, so there is no format to choose
         // and the batch size is the whole of the row half's settings.
         let batch_row = self.data.then(|| {
-            div().pl(px(22.)).child(form_row(
-                ts!("backup.batch_rows"),
-                div().flex_none().w(px(96.)).child(self.batch_input.clone()),
-            ))
+            div().pl(px(22.)).child(
+                form_row(
+                    ts!("backup.batch_rows"),
+                    div().flex_none().w(px(96.)).child(self.batch_input.clone()),
+                )
+                .label_width(self.label_width),
+            )
         });
 
         div()
@@ -942,8 +952,20 @@ impl Focusable for BackupDialog {
     }
 }
 
+impl BackupDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("backup.scope"),
+            ts!("backup.output"),
+            ts!("backup.batch_rows"),
+        ]
+    }
+}
+
 impl Render for BackupDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("backup-dialog");
         }

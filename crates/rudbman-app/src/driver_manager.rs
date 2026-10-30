@@ -283,6 +283,10 @@ pub struct DriverManager {
     table_comments_input: Entity<TextInput>,
     /// Query answering column comments the driver leaves blank.
     column_comments_input: Entity<TextInput>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl DriverManager {
@@ -319,6 +323,7 @@ impl DriverManager {
             status,
             confirming: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             list_scroll: ScrollHandle::new(),
             list_scrollbar: ScrollbarState::new(),
             body_scroll: ScrollHandle::new(),
@@ -1377,21 +1382,33 @@ impl DriverManager {
                     .overflow_y_scroll()
                     .smooth_scroll(&self.body_scroll)
                     .restrict_scroll_to_axis()
-                    .child(form_row(ts!("driver.name"), self.name_input.clone()))
-                    .child(form_row(ts!("driver.class"), class_row))
-                    .child(form_row(
-                        ts!("driver.url_template"),
-                        self.url_template_input.clone(),
-                    ))
-                    .child(form_row(
-                        ts!("driver.default_port"),
-                        self.port_input.clone(),
-                    ))
-                    .child(form_row(ts!("driver.dialect"), self.dialect_input.clone()))
-                    .child(form_row(ts!("driver.maven"), maven))
-                    .child(form_row(ts!("driver.jars"), jars))
-                    .child(form_row(ts!("driver.table_comments"), table_comments))
-                    .child(form_row(ts!("driver.column_comments"), column_comments)),
+                    .child(
+                        form_row(ts!("driver.name"), self.name_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(form_row(ts!("driver.class"), class_row).label_width(self.label_width))
+                    .child(
+                        form_row(ts!("driver.url_template"), self.url_template_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("driver.default_port"), self.port_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("driver.dialect"), self.dialect_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(form_row(ts!("driver.maven"), maven).label_width(self.label_width))
+                    .child(form_row(ts!("driver.jars"), jars).label_width(self.label_width))
+                    .child(
+                        form_row(ts!("driver.table_comments"), table_comments)
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("driver.column_comments"), column_comments)
+                            .label_width(self.label_width),
+                    ),
             )
             .children(self.hovering_scrollbar(BODY_SCROLLBAR, cx).render(chrome))
             .into_any_element()
@@ -1535,8 +1552,26 @@ impl Focusable for DriverManager {
     }
 }
 
+impl DriverManager {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("driver.name"),
+            ts!("driver.class"),
+            ts!("driver.url_template"),
+            ts!("driver.default_port"),
+            ts!("driver.dialect"),
+            ts!("driver.maven"),
+            ts!("driver.jars"),
+            ts!("driver.table_comments"),
+            ts!("driver.column_comments"),
+        ]
+    }
+}
+
 impl Render for DriverManager {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         self.watch_scroll(cx);
         let chrome = theme(cx);
         let list = self.render_list(&chrome, cx);

@@ -401,6 +401,10 @@ pub struct TransferDialog {
     ///
     /// Dropping it cancels the job.
     _poll: Option<Task<()>>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl TransferDialog {
@@ -421,6 +425,7 @@ impl TransferDialog {
         Self {
             open: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             target: None,
             source: None,
@@ -934,6 +939,7 @@ impl TransferDialog {
             ts!("transfer.object"),
             div().text_color(chrome.text).child(name),
         )
+        .label_width(self.label_width)
     }
 
     /// The form half: everything the job is described by.
@@ -1035,18 +1041,24 @@ impl TransferDialog {
             .flex_col()
             .gap(px(10.))
             .child(self.render_object(cx))
-            .child(form_row(ts!("transfer.target_connection"), connection))
-            .child(form_row(
-                ts!("transfer.target_schema"),
-                self.schema_input.clone(),
-            ))
-            .child(form_row(
-                ts!("transfer.target_table"),
-                self.table_input.clone(),
-            ))
-            .child(form_row(ts!("transfer.mode"), mode))
-            .child(form_row(ts!("transfer.where"), self.where_input.clone()))
-            .child(form_row(ts!("transfer.on_error"), on_error))
+            .child(
+                form_row(ts!("transfer.target_connection"), connection)
+                    .label_width(self.label_width),
+            )
+            .child(
+                form_row(ts!("transfer.target_schema"), self.schema_input.clone())
+                    .label_width(self.label_width),
+            )
+            .child(
+                form_row(ts!("transfer.target_table"), self.table_input.clone())
+                    .label_width(self.label_width),
+            )
+            .child(form_row(ts!("transfer.mode"), mode).label_width(self.label_width))
+            .child(
+                form_row(ts!("transfer.where"), self.where_input.clone())
+                    .label_width(self.label_width),
+            )
+            .child(form_row(ts!("transfer.on_error"), on_error).label_width(self.label_width))
     }
 
     /// The progress half: what the job is doing, and how far it has got.
@@ -1316,8 +1328,24 @@ impl Focusable for TransferDialog {
     }
 }
 
+impl TransferDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("transfer.object"),
+            ts!("transfer.target_connection"),
+            ts!("transfer.target_schema"),
+            ts!("transfer.target_table"),
+            ts!("transfer.mode"),
+            ts!("transfer.where"),
+            ts!("transfer.on_error"),
+        ]
+    }
+}
+
 impl Render for TransferDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("transfer-dialog");
         }

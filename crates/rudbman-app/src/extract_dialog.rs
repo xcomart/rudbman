@@ -383,6 +383,10 @@ pub struct ExtractDialog {
     ///
     /// Dropping it cancels the job; see the module documentation.
     _poll: Option<Task<()>>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl ExtractDialog {
@@ -404,6 +408,7 @@ impl ExtractDialog {
         Self {
             open: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             target: None,
             session: None,
@@ -834,6 +839,7 @@ impl ExtractDialog {
             ts!("extract.object"),
             div().text_color(chrome.text).child(name),
         )
+        .label_width(self.label_width)
     }
 
     /// A read-only path cell with a "Browse…" button beside it.
@@ -882,6 +888,7 @@ impl ExtractDialog {
                         }),
                 ),
         )
+        .label_width(self.label_width)
     }
 
     /// The form half: everything the job is described by.
@@ -965,6 +972,7 @@ impl ExtractDialog {
                     ts!("extract.batch_rows"),
                     div().flex_none().w(px(96.)).child(self.batch_input.clone()),
                 )
+                .label_width(self.label_width)
             });
             let template = (self.mode == DataMode::Template).then(|| {
                 self.render_path_row(
@@ -985,7 +993,7 @@ impl ExtractDialog {
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .child(form_row(ts!("extract.mode"), mode))
+                .child(form_row(ts!("extract.mode"), mode).label_width(self.label_width))
                 .children(batch)
                 .children(template)
         });
@@ -1012,7 +1020,10 @@ impl ExtractDialog {
                 |dialog, value| dialog.data = value,
             ))
             .children(data_body)
-            .child(form_row(ts!("extract.where"), self.where_input.clone()))
+            .child(
+                form_row(ts!("extract.where"), self.where_input.clone())
+                    .label_width(self.label_width),
+            )
     }
 
     /// The progress half: what the job is doing, and how far it has got.
@@ -1292,8 +1303,23 @@ impl Focusable for ExtractDialog {
     }
 }
 
+impl ExtractDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("extract.object"),
+            ts!("extract.output"),
+            ts!("extract.template"),
+            ts!("extract.batch_rows"),
+            ts!("extract.mode"),
+            ts!("extract.where"),
+        ]
+    }
+}
+
 impl Render for ExtractDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("extract-dialog");
         }

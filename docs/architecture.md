@@ -953,6 +953,13 @@ toolbars, log and completion rows — through `rugpui::scaled`. Borders, gaps,
 paddings and icons stay fixed. At the default 14 pt the scale is 1.0 and
 nothing moves. The macOS traffic-light offset is still the 1.0 one.
 
+The connection, driver, settings, extraction, transfer and backup forms size
+their label column to the widest label in the language on screen
+(`rugpui::fit_label_width`, measured each frame from the dialog's
+`form_labels`, between 96 and 200 px at scale 1.0), so a German or Russian
+label is not broken mid-word and every row of a form lines up. A new row needs
+its label added to that list.
+
 Feedback that belongs to no pane goes to a toast (`rugpui_shell::show_toast`,
 drawn by `toast_stack()` as the root's last child, above the status bar): a
 chord that opens a tab over no session (`Workspace::say_not_live` — no

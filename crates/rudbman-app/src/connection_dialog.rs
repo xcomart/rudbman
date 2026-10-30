@@ -433,6 +433,10 @@ pub struct ConnectionDialog {
     focus_password: bool,
     /// A driver download started from the form, while one runs.
     download: Option<FormDownload>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 /// A driver JAR being fetched from the form's own "Download".
@@ -487,6 +491,7 @@ impl ConnectionDialog {
             test: None,
             confirming: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             list_scroll: ScrollHandle::new(),
             list_scrollbar: ScrollbarState::new(),
@@ -1992,7 +1997,7 @@ impl ConnectionDialog {
             .into_iter()
             .filter_map(|name| {
                 let input = self.url_parts.get(&name)?.clone();
-                Some(form_row(label_for(&name), input))
+                Some(form_row(label_for(&name), input).label_width(self.label_width))
             })
             .collect();
 
@@ -2009,12 +2014,8 @@ impl ConnectionDialog {
                 })
         });
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .children(parts)
-            .child(form_row(
+        div().flex().flex_col().gap(px(8.)).children(parts).child(
+            form_row(
                 ts!("connect.url"),
                 div()
                     .flex()
@@ -2039,7 +2040,9 @@ impl ConnectionDialog {
                                 ts!("connect.url_hint")
                             }),
                     ),
-            ))
+            )
+            .label_width(self.label_width),
+        )
     }
 
     /// The driver property rows.
@@ -2131,8 +2134,10 @@ impl ConnectionDialog {
                     }
                 });
 
-            let key_row = matches!(self.tunnel_auth, TunnelAuth::Key { .. })
-                .then(|| form_row(ts!("connect.tunnel_key"), self.tunnel_key_input.clone()));
+            let key_row = matches!(self.tunnel_auth, TunnelAuth::Key { .. }).then(|| {
+                form_row(ts!("connect.tunnel_key"), self.tunnel_key_input.clone())
+                    .label_width(self.label_width)
+            });
             // The agent holds its own credentials; asking for one would suggest
             // rudbman does something with it.
             let secret_row = (!matches!(self.tunnel_auth, TunnelAuth::Agent)).then(|| {
@@ -2143,57 +2148,64 @@ impl ConnectionDialog {
                     },
                     self.tunnel_secret_input.clone(),
                 )
+                .label_width(self.label_width)
             });
 
             div()
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .child(form_row(
-                    ts!("connect.tunnel_host"),
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(self.tunnel_host_input.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(72.))
-                                .child(self.tunnel_port_input.clone()),
-                        ),
-                ))
-                .child(form_row(
-                    ts!("connect.tunnel_user"),
-                    self.tunnel_user_input.clone(),
-                ))
-                .child(form_row(ts!("connect.tunnel_auth"), auth))
+                .child(
+                    form_row(
+                        ts!("connect.tunnel_host"),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(self.tunnel_host_input.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(72.))
+                                    .child(self.tunnel_port_input.clone()),
+                            ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(ts!("connect.tunnel_user"), self.tunnel_user_input.clone())
+                        .label_width(self.label_width),
+                )
+                .child(form_row(ts!("connect.tunnel_auth"), auth).label_width(self.label_width))
                 .children(key_row)
                 .children(secret_row)
-                .child(form_row(
-                    ts!("connect.tunnel_remote"),
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(self.tunnel_remote_host_input.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(72.))
-                                .child(self.tunnel_remote_port_input.clone()),
-                        ),
-                ))
+                .child(
+                    form_row(
+                        ts!("connect.tunnel_remote"),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(self.tunnel_remote_host_input.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(72.))
+                                    .child(self.tunnel_remote_port_input.clone()),
+                            ),
+                    )
+                    .label_width(self.label_width),
+                )
                 .child(
                     div()
                         .text_size(rugpui::TextSize::Xs.size(cx))
@@ -2325,35 +2337,44 @@ impl ConnectionDialog {
                     .overflow_y_scroll()
                     .smooth_scroll(&self.body_scroll)
                     .restrict_scroll_to_axis()
-                    .child(form_row(ts!("connect.name"), self.name_input.clone()))
-                    .child(form_row(ts!("connect.folder"), self.folder_input.clone()))
-                    .child(form_row(ts!("connect.color"), colors))
-                    .child(form_row(ts!("connect.driver"), driver))
+                    .child(
+                        form_row(ts!("connect.name"), self.name_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("connect.folder"), self.folder_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(form_row(ts!("connect.color"), colors).label_width(self.label_width))
+                    .child(form_row(ts!("connect.driver"), driver).label_width(self.label_width))
                     .child(url)
-                    .child(form_row(
-                        ts!("connect.username"),
-                        self.username_input.clone(),
-                    ))
-                    .child(form_row(
-                        ts!("connect.password"),
-                        self.password_input.clone(),
-                    ))
-                    .child(form_row("", {
-                        let this = cx.entity();
-                        Checkbox::new(
-                            "connect-remember-password",
-                            ts!("connect.remember_password"),
-                        )
-                        .checked(self.remember_password)
-                        .tab_index(tab::REMEMBER_PASSWORD)
-                        .on_toggle(move |checked, _window, cx| {
-                            this.update(cx, |dialog, cx| {
-                                dialog.remember_password = checked;
-                                cx.notify();
-                            });
+                    .child(
+                        form_row(ts!("connect.username"), self.username_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("connect.password"), self.password_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row("", {
+                            let this = cx.entity();
+                            Checkbox::new(
+                                "connect-remember-password",
+                                ts!("connect.remember_password"),
+                            )
+                            .checked(self.remember_password)
+                            .tab_index(tab::REMEMBER_PASSWORD)
+                            .on_toggle(move |checked, _window, cx| {
+                                this.update(cx, |dialog, cx| {
+                                    dialog.remember_password = checked;
+                                    cx.notify();
+                                });
+                            })
                         })
-                    }))
-                    .child(form_row(ts!("connect.props"), props))
+                        .label_width(self.label_width),
+                    )
+                    .child(form_row(ts!("connect.props"), props).label_width(self.label_width))
                     .child(section(
                         ts!("connect.section.behavior"),
                         chrome,
@@ -2633,8 +2654,43 @@ impl Focusable for ConnectionDialog {
     }
 }
 
+impl ConnectionDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        let template = self
+            .current_driver()
+            .map(|driver| driver.url_template.clone())
+            .unwrap_or_default();
+        [
+            ts!("connect.name"),
+            ts!("connect.folder"),
+            ts!("connect.color"),
+            ts!("connect.driver"),
+            ts!("connect.url"),
+            ts!("connect.username"),
+            ts!("connect.password"),
+            ts!("connect.props"),
+            ts!("connect.tunnel_host"),
+            ts!("connect.tunnel_user"),
+            ts!("connect.tunnel_auth"),
+            ts!("connect.tunnel_key"),
+            ts!("connect.tunnel_passphrase"),
+            ts!("connect.tunnel_password"),
+            ts!("connect.tunnel_remote"),
+        ]
+        .into_iter()
+        .chain(
+            placeholders_of(&template)
+                .iter()
+                .map(|name| label_for(name)),
+        )
+        .collect()
+    }
+}
+
 impl Render for ConnectionDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("connection-dialog");
         }
