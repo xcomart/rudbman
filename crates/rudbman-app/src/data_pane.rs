@@ -66,7 +66,8 @@ use rudbman_jdbc::{ColumnInfo, Cursor, Error as JdbcError, Session, StatementSpe
 use rudbman_sql::Dialect;
 use rugpui::{Button, ButtonVariant, ContextMenu, Theme, theme};
 use rugpui_grid::{
-    GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
+    GridEvent, GridRequest, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
+    SortDirection,
 };
 
 use crate::builder_sql;
@@ -269,8 +270,9 @@ struct Rows {
     more: Option<More>,
     /// Whether a page is out with a background fetch.
     fetching: bool,
-    /// Keeps the grid's subscription alive for as long as the rows.
-    _events: Subscription,
+    /// Keeps the grid's subscriptions — its events and its key requests —
+    /// alive for as long as the rows.
+    _events: [Subscription; 2],
 }
 
 /// Where the pane's rows have got to.
@@ -286,8 +288,6 @@ enum Load {
 gpui::actions!(
     data_pane,
     [
-        /// Strike the row under the cursor out, or take the mark off.
-        ToggleDeleteRow,
         /// Put NULL into the cell under the cursor.
         SetNullCell,
         /// Add a row to type into.
@@ -362,7 +362,6 @@ fn bind_keys(cx: &mut App) {
         "ctrl"
     };
     cx.bind_keys([
-        gpui::KeyBinding::new("delete", ToggleDeleteRow, Some(KEY_CONTEXT)),
         gpui::KeyBinding::new("shift-delete", SetNullCell, Some(KEY_CONTEXT)),
         gpui::KeyBinding::new(&format!("{modifier}-0"), SetNullCell, Some(KEY_CONTEXT)),
         gpui::KeyBinding::new("alt-insert", InsertRow, Some(KEY_CONTEXT)),
@@ -829,10 +828,14 @@ impl DataPane {
                 );
 
                 let table = self.qualified();
+                // `Delete`, `F2`, typing and `Ctrl+V` over the grid come back
+                // as requests (see `answer_grid`), because what each one means
+                // — a delete mark, a field, a staged paste — is this pane's.
                 let grid = cx.new(|cx| {
                     GridView::new(source, cx)
                         .insert_table(table)
                         .expand_tooltip(ts!("lob.open_text"))
+                        .key_requests(true)
                 });
                 // The marker the sort that asked for this run was for: the grid
                 // that was wearing it has just been replaced by this one.
@@ -891,13 +894,21 @@ impl DataPane {
                         },
                     );
 
+                let requests = cx.subscribe_in(
+                    &grid,
+                    window,
+                    |pane, _grid, request: &GridRequest, window, cx| {
+                        pane.answer_grid(request, window, cx);
+                    },
+                );
+
                 self.load = Load::Ready(Box::new(Rows {
                     grid,
                     columns: Arc::new(columns),
                     select,
                     more,
                     fetching: false,
-                    _events: events,
+                    _events: [events, requests],
                 }));
             }
             Err(error) => self.load = Load::Failed(Box::new(QueryError::new(error))),
@@ -1120,20 +1131,60 @@ impl DataPane {
         self.stage(row, column, StagedCell::Null, cx);
     }
 
-    /// `Delete`: strikes the row under the cursor out, or takes the mark off —
-    /// what the grid's menu row does, under the same conditions.
-    fn key_toggle_delete(&mut self, cx: &mut Context<Self>) {
-        let Some(grid) = self.grid() else {
+    /// What the grid asked for from the keyboard.
+    ///
+    /// * `Delete` (and `Backspace` on macOS) strikes the selected rows out, or
+    ///   takes the marks off once every one of them carries one —
+    ///   [`EditableSource::toggle_rows_deleted`]. A row added here is passed
+    ///   over; its menu offers Discard.
+    /// * `F2` or a typed character opens the cell the way a double click does,
+    ///   with the character already in the field — or, for a LOB or a
+    ///   multiline value, the viewer, which is where those are typed.
+    /// * `Ctrl+V` stages tab-separated clipboard text into the cells from the
+    ///   cursor on, or one value into every selected cell
+    ///   ([`crate::data_edit::paste_targets`]), passing over cells that take no
+    ///   typing.
+    ///
+    /// The grid only asks over an editable cell or a selection, so a request
+    /// that finds the pane read-only — a profile, a table with no key, a load
+    /// or apply running — is simply not acted on.
+    fn answer_grid(&mut self, request: &GridRequest, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid().cloned() else {
             return;
         };
-        let Some((row, _)) = self.menu_cell(cx) else {
-            return;
-        };
-        let source = grid.read(cx).source();
-        if !source.writable() || source.row_status(row) == RowStatus::Inserted {
+        if self.read_only_reason().is_some() || self.applying {
             return;
         }
-        self.toggle_delete(row, cx);
+        match request {
+            GridRequest::Delete => {
+                grid.update(cx, |grid, cx| {
+                    let rows = crate::data_edit::selected_rows(grid.selection());
+                    grid.source_mut(cx).toggle_rows_deleted(rows);
+                });
+                cx.notify();
+            }
+            GridRequest::Edit { row, column, text } => {
+                if grid.read(cx).source().uses_value_viewer(*row, *column) {
+                    self.open_value_editor(*row, *column, text.clone(), window, cx);
+                    return;
+                }
+                grid.update(cx, |grid, cx| match text {
+                    Some(text) => grid.begin_edit_with(*row, *column, text, window, cx),
+                    None => grid.begin_edit(*row, *column, window, cx),
+                });
+            }
+            GridRequest::Paste { text } => {
+                grid.update(cx, |grid, cx| {
+                    let cells = crate::data_edit::paste_targets(
+                        grid.selection(),
+                        &grid.visible_column_indices(),
+                        crate::data_edit::parse_tsv(text),
+                    );
+                    grid.source_mut(cx).paste(cells);
+                });
+                cx.notify();
+            }
+        }
     }
 
     /// `Ctrl+0`: NULL into the cell under the cursor, when it may hold one.
@@ -1987,9 +2038,6 @@ impl Render for DataPane {
         div()
             .id("data-pane")
             .key_context(KEY_CONTEXT)
-            .on_action(cx.listener(|pane, _: &ToggleDeleteRow, _window, cx| {
-                pane.key_toggle_delete(cx);
-            }))
             .on_action(cx.listener(|pane, _: &SetNullCell, _window, cx| {
                 pane.key_set_null(cx);
             }))
@@ -2905,6 +2953,62 @@ mod tests {
                 assert!(pane.preview.is_some(), "the apply preview was raised");
             })
             .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The grid's key requests reach the pane: `Delete` over two rows marks
+    /// both, a typed character opens the cell holding it, and `Ctrl+V` stages
+    /// a tab-separated block from the cursor on.
+    #[gpui::test]
+    fn the_grid_asks_the_pane_to_delete_type_and_paste(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-requests");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |pane, window, cx| pane.take_focus(window, cx))
+            .expect("the window is open");
+        visual.run_until_parked();
+        let grid = window
+            .update(&mut visual, |pane, _window, _cx| {
+                pane.grid().cloned().expect("the pane holds rows")
+            })
+            .expect("the window is open");
+
+        select(&window, 0, 1, &mut visual);
+        grid.update(&mut visual, |grid, cx| {
+            grid.extend_selection(1, 1, cx);
+        });
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Deleted);
+        assert_eq!(status(&window, 1, &mut visual), RowStatus::Deleted);
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Unchanged);
+        assert_eq!(status(&window, 1, &mut visual), RowStatus::Unchanged);
+
+        select(&window, 0, 1, &mut visual);
+        visual.simulate_keystrokes("q");
+        visual.run_until_parked();
+        grid.update(&mut visual, |grid, cx| {
+            assert_eq!(grid.editing(), Some((0, 1)), "typing opened the cell");
+            grid.cancel_edit(cx);
+        });
+
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        visual.write_to_clipboard(gpui::ClipboardItem::new_string("x\ty\n".into()));
+        select(&window, 1, 1, &mut visual);
+        visual.simulate_keystrokes(&format!("{modifier}-v"));
+        visual.run_until_parked();
+        grid.update(&mut visual, |grid, _cx| {
+            let edits = grid.source().edits();
+            assert_eq!(edits.staged(1, 1), Some(&StagedCell::Text("x".into())));
+            assert_eq!(edits.staged(1, 2), Some(&StagedCell::Text("y".into())));
+        });
         connected.close().expect("close");
     }
 

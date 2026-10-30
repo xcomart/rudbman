@@ -112,7 +112,8 @@ use rugpui_editor::editor::{
 };
 use rugpui_editor::{EditorEvent, EditorView};
 use rugpui_grid::{
-    GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
+    GridEvent, GridRequest, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
+    SortDirection,
 };
 
 use crate::SHORTCUT_MODIFIER;
@@ -491,8 +492,9 @@ struct RowsTab {
     more: Option<More>,
     /// Whether a page is out with a background fetch.
     fetching: bool,
-    /// Keeps the grid's subscription alive for as long as the tab.
-    _events: Subscription,
+    /// Keeps the grid's subscriptions — its events and its key requests —
+    /// alive for as long as the tab.
+    _events: [Subscription; 2],
 }
 
 /// What the pane is doing.

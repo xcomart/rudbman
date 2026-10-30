@@ -205,7 +205,9 @@ macOS), with its chord beside it.
 | | <kbd>Ctrl</kbd>+<kbd>Space</kbd> | Completion |
 | | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>H</kbd> | Find / replace |
 | | <kbd>Ctrl</kbd>+<kbd>/</kbd> | Toggle comment |
-| Data grid | <kbd>Delete</kbd> | Mark the row for deletion, or unmark it |
+| Data grid | <kbd>Delete</kbd> (macOS: also <kbd>Backspace</kbd>) | Mark the selected rows for deletion, or unmark them |
+| | <kbd>F2</kbd>, or start typing | Edit the cell (LOB and multiline values open the viewer) |
+| | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste tab-separated cells from the cursor on, or one value into every selected cell |
 | | <kbd>Ctrl</kbd>+<kbd>0</kbd>, <kbd>Shift</kbd>+<kbd>Delete</kbd> | Set the cell to NULL |
 | | <kbd>Alt</kbd>+<kbd>Insert</kbd> | Add a row |
 | | <kbd>Ctrl</kbd>+<kbd>S</kbd>, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Apply (shows the statements first) |
@@ -215,6 +217,9 @@ macOS), with its chord beside it.
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>L</kbd> | Auto-arrange / switch to comment names |
 | Dialogs | <kbd>Esc</kbd> | Close; over a running extraction, transfer or backup, ask whether to stop it; over unsaved connection edits, ask first |
 | | <kbd>Enter</kbd> | In a field: Connect, Start, or Close a finished job. On a focused button: that button — a write or discard question opens with Cancel focused |
+
+`Delete`, `F2`, typing and `Ctrl+V` work the same in a query result that can be
+written back to its table.
 
 ## Installing
 

@@ -41,7 +41,14 @@ impl QueryPane {
         // takes no edit (see [`TableSource`]).
         let source = EditableSource::new(source, &columns, false, TableSource::Inferred);
 
-        let grid = cx.new(|cx| GridView::new(source, cx).expand_tooltip(ts!("lob.open_text")));
+        // Key requests on from the start: the grid only raises one over a
+        // selection or an editable cell, and a result is read-only until
+        // `resolve_edits` finds its table, so nothing is asked before then.
+        let grid = cx.new(|cx| {
+            GridView::new(source, cx)
+                .expand_tooltip(ts!("lob.open_text"))
+                .key_requests(true)
+        });
         // The marker the sort that asked for this run was for, if it was one:
         // the grid it was set on has just been replaced by this one.
         if let Some(sort) = self.pending_sort.take() {
@@ -88,6 +95,14 @@ impl QueryPane {
             }
         });
 
+        let requests = cx.subscribe_in(
+            &grid,
+            window,
+            move |pane, _grid, request: &GridRequest, window, cx| {
+                pane.answer_grid(id, request, window, cx);
+            },
+        );
+
         let index = self
             .results
             .iter()
@@ -113,7 +128,7 @@ impl QueryPane {
                 read_only: None,
                 more,
                 fetching: false,
-                _events: events,
+                _events: [events, requests],
             })),
         });
         self.resolve_edits(id, cx);

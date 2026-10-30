@@ -67,7 +67,9 @@ use rudbman_jdbc::{ColumnInfo, LobFile, Param};
 use rudbman_sql::{
     Dialect, DmlError, DmlKind, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
-use rugpui_grid::{CellEditor, GridCell, GridColumn, GridSource, GridSourceState, RowStatus};
+use rugpui_grid::{
+    CellEditor, GridCell, GridColumn, GridSource, GridSourceState, RowStatus, Selection,
+};
 
 use crate::query_source::{ResultSource, bit_is_boolean, column_name, key_index, sql_types};
 
@@ -657,6 +659,61 @@ impl EditableSource {
         self.writable
     }
 
+    /// `Delete` over a selection: strikes every row in `rows` out, or — when
+    /// each of them already carries the mark — takes the marks off, and says
+    /// whether anything changed.
+    ///
+    /// All or nothing rather than row by row, so a selection that caught one
+    /// marked row among unmarked ones ends with all of them marked instead of
+    /// a checkerboard. A row the user added has no delete to mark (its menu
+    /// offers Discard instead) and is passed over, as is everything in a
+    /// source that takes no changes.
+    pub fn toggle_rows_deleted(&mut self, rows: impl IntoIterator<Item = usize>) -> bool {
+        if !self.writable {
+            return false;
+        }
+        let base = self.base.row_count();
+        let rows: BTreeSet<usize> = rows
+            .into_iter()
+            .filter_map(|row| match self.edits.locate(row, base) {
+                Some(RowRef::Base(row)) => Some(row),
+                _ => None,
+            })
+            .collect();
+        if rows.is_empty() {
+            return false;
+        }
+        let mark = rows.iter().any(|row| !self.edits.is_deleted(*row));
+        for row in rows {
+            if self.edits.is_deleted(row) != mark {
+                self.edits.toggle_deleted(row);
+            }
+        }
+        true
+    }
+
+    /// Stages pasted `cells` — grid row, source column, text — and says how
+    /// many took.
+    ///
+    /// A cell that takes no typing is passed over rather than refusing the
+    /// whole paste: a block copied from a result usually carries a key or a
+    /// computed column along, and the rest of it is still what the user
+    /// meant. So is a LOB column, whose body belongs to the viewer and not to
+    /// a line of clipboard text.
+    pub fn paste(&mut self, cells: impl IntoIterator<Item = (usize, usize, String)>) -> usize {
+        let mut staged = 0;
+        for (row, column, text) in cells {
+            if row < self.row_count()
+                && self.cell_editable(row, column)
+                && self.lob_kind(column).is_none()
+            {
+                self.stage(row, column, StagedCell::Text(text));
+                staged += 1;
+            }
+        }
+        staged
+    }
+
     /// Marks the key columns and opens the source for editing, together.
     ///
     /// For the caller whose key arrives *after* the rows do. The data pane
@@ -1135,6 +1192,123 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
             u8::from_str_radix(pair, 16).ok()
         })
         .collect()
+}
+
+/// The rows a selection touches, each once and in order.
+pub fn selected_rows(selection: &Selection) -> BTreeSet<usize> {
+    selection
+        .ranges()
+        .iter()
+        .flat_map(|range| range.rows())
+        .collect()
+}
+
+/// Reads clipboard text the way the grid's tab-separated copy writes it: one
+/// line per row, a tab between fields, and a field holding a tab, a line
+/// break or a quote wrapped in double quotes with its inner quotes doubled.
+///
+/// A trailing line break ends the last row rather than starting an empty
+/// one, and `\r\n` counts as one break, so text from a spreadsheet on any
+/// platform reads the same.
+pub fn parse_tsv(text: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    // Whether anything has been read since the last line break, so that the
+    // end of the text knows whether a row is still open.
+    let mut pending = false;
+    let mut field_start = true;
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        pending = true;
+        if quoted {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                }
+            } else {
+                field.push(c);
+            }
+            continue;
+        }
+        match c {
+            '"' if field_start => {
+                quoted = true;
+                field_start = false;
+            }
+            '\t' => {
+                row.push(std::mem::take(&mut field));
+                field_start = true;
+            }
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\n' => {
+                row.push(std::mem::take(&mut field));
+                rows.push(std::mem::take(&mut row));
+                field_start = true;
+                pending = false;
+            }
+            _ => {
+                field.push(c);
+                field_start = false;
+            }
+        }
+    }
+    if pending {
+        row.push(field);
+        rows.push(row);
+    }
+    rows
+}
+
+/// Where pasted `block` lands: laid down from the selection's cursor, one
+/// row per line and one display column per field — or, when the clipboard
+/// holds a single value, into every selected cell, the way a spreadsheet
+/// fills a range. `columns` maps the grid's display positions to source
+/// columns ([`rugpui_grid::GridView::visible_column_indices`]); a field past
+/// the last of them has nowhere to go and is dropped.
+pub fn paste_targets(
+    selection: &Selection,
+    columns: &[usize],
+    block: Vec<Vec<String>>,
+) -> Vec<(usize, usize, String)> {
+    let Some(cursor) = selection.cursor() else {
+        return Vec::new();
+    };
+    let single = match block.as_slice() {
+        [line] => match line.as_slice() {
+            [value] => Some(value.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let mut cells = Vec::new();
+    match single {
+        Some(value) => {
+            for range in selection.ranges() {
+                for row in range.rows() {
+                    for column in range.columns() {
+                        if let Some(&source) = columns.get(column) {
+                            cells.push((row, source, value.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+            for (offset, line) in block.into_iter().enumerate() {
+                for (step, value) in line.into_iter().enumerate() {
+                    if let Some(&source) = columns.get(cursor.column + step) {
+                        cells.push((cursor.row + offset, source, value));
+                    }
+                }
+            }
+        }
+    }
+    cells
 }
 
 #[cfg(test)]
@@ -1904,5 +2078,90 @@ mod tests {
         assert!(plan[1].values[0].as_ref().unwrap().contains("BLOB"));
         assert!(plan[1].values[2].as_ref().unwrap().contains("CLOB"));
         assert!(plan[0].checked && plan[1].checked && !plan[2].checked);
+    }
+
+    /// The grid's tab-separated copy reads back as it was written: quoted
+    /// fields keep their tabs, breaks and quotes, `\r\n` is one break, and a
+    /// trailing break opens no empty row.
+    #[test]
+    fn pasted_text_reads_back_as_the_copy_wrote_it() {
+        assert_eq!(parse_tsv(""), Vec::<Vec<String>>::new());
+        assert_eq!(parse_tsv("a"), [["a"]]);
+        assert_eq!(parse_tsv("a\tb\r\nc\t\n"), [vec!["a", "b"], vec!["c", ""]]);
+        assert_eq!(
+            parse_tsv("\"x\ty\"\t\"say \"\"hi\"\"\"\t\"two\nlines\""),
+            [["x\ty", "say \"hi\"", "two\nlines"]]
+        );
+    }
+
+    /// A block lands from the cursor, one display column per field, and a
+    /// single value fills the whole selection; fields past the last column
+    /// are dropped.
+    #[test]
+    fn a_paste_lands_from_the_cursor_or_fills_the_selection() {
+        let mut selection = Selection::new();
+        selection.replace(rugpui_grid::CellAddress::new(1, 1));
+        // Display column 1 is source column 2: column 1 is hidden.
+        let columns = [0, 2];
+        assert_eq!(
+            paste_targets(&selection, &columns, parse_tsv("p\tq\nr\ts")),
+            [(1, 2, "p".to_owned()), (2, 2, "r".to_owned())]
+        );
+
+        selection.replace(rugpui_grid::CellAddress::new(0, 0));
+        selection.extend_to(rugpui_grid::CellAddress::new(1, 1));
+        let mut filled = paste_targets(&selection, &columns, parse_tsv("v\n"));
+        filled.sort();
+        assert_eq!(
+            filled,
+            [
+                (0, 0, "v".to_owned()),
+                (0, 2, "v".to_owned()),
+                (1, 0, "v".to_owned()),
+                (1, 2, "v".to_owned())
+            ]
+        );
+    }
+
+    /// Only cells that take typing are staged, and the count says so; a
+    /// read-only source takes nothing.
+    #[test]
+    fn a_paste_stages_only_the_cells_that_take_typing() {
+        let mut source = source(true);
+        let staged = source.paste([
+            (0, 1, "n".to_owned()),
+            (1, 2, "m".to_owned()),
+            // Past the last row: nowhere to go.
+            (5, 1, "x".to_owned()),
+        ]);
+        assert_eq!(staged, 2);
+        assert_eq!(
+            source.edits().staged(0, 1),
+            Some(&StagedCell::Text("n".into()))
+        );
+        assert_eq!(
+            source.edits().staged(1, 2),
+            Some(&StagedCell::Text("m".into()))
+        );
+
+        let mut read_only = self::source(false);
+        assert_eq!(read_only.paste([(0, 1, "n".to_owned())]), 0);
+        assert!(read_only.edits().is_empty());
+    }
+
+    /// `Delete` over several rows marks them all while any is unmarked, and
+    /// takes every mark off once all of them carry one.
+    #[test]
+    fn deleting_a_selection_marks_every_row_or_none() {
+        let mut source = source(true);
+        source.edits_mut().toggle_deleted(1);
+        assert!(source.toggle_rows_deleted([0, 1]));
+        assert!(source.edits().is_deleted(0) && source.edits().is_deleted(1));
+        assert!(source.toggle_rows_deleted([0, 1]));
+        assert!(!source.edits().is_deleted(0) && !source.edits().is_deleted(1));
+
+        let mut read_only = self::source(false);
+        assert!(!read_only.toggle_rows_deleted([0]));
+        assert!(!read_only.edits().is_deleted(0));
     }
 }

@@ -68,6 +68,55 @@ impl QueryPane {
         cx.notify();
     }
 
+    /// What result `id`'s grid asked for from the keyboard: the data pane's
+    /// answers ([`crate::data_pane`]'s `answer_grid`), within what a result
+    /// takes — no inserted rows to pass over, since a result has none, and
+    /// nothing at all while it is read-only or an apply is out.
+    pub(super) fn answer_grid(
+        &mut self,
+        id: u64,
+        request: &GridRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(grid) = self.grid_of(id).cloned() else {
+            return;
+        };
+        if !grid.read(cx).source().writable() || self.applying {
+            return;
+        }
+        match request {
+            GridRequest::Delete => {
+                grid.update(cx, |grid, cx| {
+                    let rows = crate::data_edit::selected_rows(grid.selection());
+                    grid.source_mut(cx).toggle_rows_deleted(rows);
+                });
+                cx.notify();
+            }
+            GridRequest::Edit { row, column, text } => {
+                if grid.read(cx).source().uses_value_viewer(*row, *column) {
+                    self.open_value_editor(id, *row, *column, text.clone(), window, cx);
+                    return;
+                }
+                grid.update(cx, |grid, cx| match text {
+                    Some(text) => grid.begin_edit_with(*row, *column, text, window, cx),
+                    None => grid.begin_edit(*row, *column, window, cx),
+                });
+            }
+            GridRequest::Paste { text } => {
+                grid.update(cx, |grid, cx| {
+                    let cells = crate::data_edit::paste_targets(
+                        grid.selection(),
+                        &grid.visible_column_indices(),
+                        crate::data_edit::parse_tsv(text),
+                    );
+                    grid.source_mut(cx).paste(cells);
+                });
+                cx.notify();
+            }
+        }
+    }
+
     /// Throws away everything staged against one row.
     pub(super) fn discard_row(&mut self, id: u64, row: usize, cx: &mut Context<Self>) {
         let Some(grid) = self.grid_of(id).cloned() else {
