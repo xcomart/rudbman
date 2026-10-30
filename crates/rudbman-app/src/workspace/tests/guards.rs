@@ -298,7 +298,12 @@ fn closing_a_connection_with_an_open_transaction_asks(cx: &mut gpui::TestAppCont
                 panic!("the connection is open");
             };
             // What a write under manual commit leaves behind.
-            connected.handle().mark_uncommitted();
+            assert!(workspace.transaction_cell().is_none());
+            connected.handle().mark_uncommitted_by("Query 7");
+            // Said in the status bar, naming the tab to commit from.
+            let (label, tip) = workspace.transaction_cell().expect("the cell shows");
+            assert_eq!(label, ts!("statusbar.uncommitted"));
+            assert_eq!(tip, ts!("statusbar.uncommitted_in", tab = "Query 7"));
 
             workspace.close_connection(0, window, cx);
             match workspace

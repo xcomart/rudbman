@@ -1224,7 +1224,12 @@ impl DataPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -1277,7 +1282,12 @@ impl DataPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -1535,9 +1545,20 @@ impl DataPane {
     fn render_toolbar(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let loading = matches!(self.load, Load::Running);
-        let count = self
-            .row_count(cx)
-            .map(|count| ts!("data.row_count", count = count));
+        // "500+ rows" while the table has more than have been paged in: the
+        // number is how far the grid has read, and with nothing after it read
+        // as the size of the table.
+        let more = matches!(
+            &self.load,
+            Load::Ready(rows) if rows.grid.read(cx).source().state() == GridSourceState::HasMore
+        );
+        let count = self.row_count(cx).map(|count| {
+            if more {
+                ts!("data.row_count_more", count = count)
+            } else {
+                ts!("data.row_count", count = count)
+            }
+        });
         let writable = self.read_only_reason().is_none();
         let counts = self.counts(cx);
         let pending = counts.map(|counts| {

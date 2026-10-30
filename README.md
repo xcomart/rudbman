@@ -71,9 +71,17 @@ JVM bridge.
   **Format SQL** (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>)
   lays out the selection, or the whole editor, in the sqlstyle.guide river
   layout. On a connection that does not commit each statement as it runs, the
-  editor's **Commit** and **Rollback** buttons end the transaction; while it
-  is open, grid applies, structure changes and transfers on that connection
-  are refused rather than committing or discarding it.
+  editor's **Commit** and **Rollback** buttons (<kbd>F11</kbd> /
+  <kbd>F12</kbd>) end the transaction; while it is open the status bar says
+  so, the connection tab wears a dot, the two buttons are lit, and grid
+  applies, structure changes and transfers on that connection are refused —
+  naming the query tab to commit from — rather than committing or discarding
+  it. <kbd>Esc</kbd> in the editor or the results stops a running statement.
+  A script that fails part way logs which statement of how many failed, with
+  its SQL and the error, keeps the results of the statements before it, and
+  selects the failed statement in the editor; error messages and log rows can
+  be copied. The row count reads "500+ rows" while more remain to be fetched,
+  and a run of writes reports the rows they affected.
   Completion opens while typing or with <kbd>Ctrl</kbd>+<kbd>Space</kbd>:
   use ↑/↓ to choose, Enter/Tab to insert, and Esc to dismiss. Names come from
   the current connection, with columns loaded on demand; comments and string

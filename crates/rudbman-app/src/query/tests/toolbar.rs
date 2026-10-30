@@ -371,3 +371,76 @@ fn a_format_of_text_edited_meanwhile_is_dropped(cx: &mut TestAppContext) {
         .unwrap();
     connected.close().expect("close");
 }
+
+/// A write under manual commit records which tab sent it, and what refuses to
+/// run behind the transaction says so; `F11` commits from the keyboard and
+/// clears both.
+#[gpui::test]
+fn the_open_transaction_names_its_tab_and_f11_commits_it(cx: &mut TestAppContext) {
+    let (connected, mut profile) = h2("toolbar-writer", &["create table entries (id int)"]);
+    profile.auto_commit = false;
+    connected.session().set_auto_commit(false).unwrap();
+    let handle = connected.handle();
+    let window = pane(&connected, &profile, 500, cx);
+    window
+        .update(cx, |pane, _window, _cx| pane.set_tab_number(3))
+        .unwrap();
+
+    run(&window, "insert into entries values (1)", cx);
+    let tab = ts!("query.tab", index = 3).to_string();
+    assert_eq!(handle.uncommitted_writer(), Some(tab.clone()));
+    assert_eq!(
+        handle.uncommitted_refusal(),
+        ts!("query.uncommitted_pending_in", tab = tab)
+    );
+
+    window
+        .update(cx, |pane, window, cx| {
+            pane.focus_editor(window, cx);
+            window.dispatch_action(Box::new(super::keys::CommitTransaction), cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(!handle.has_uncommitted(), "F11 left the transaction open");
+    assert_eq!(handle.uncommitted_writer(), None);
+    assert_eq!(server_rows(&connected, "select id from entries"), vec!["1"]);
+    connected.close().expect("close");
+}
+
+/// `Escape` inside the pane stops a running statement, and with nothing
+/// running passes on untouched.
+#[gpui::test]
+fn escape_stops_a_running_statement_and_otherwise_passes_on(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-escape", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |pane, window, cx| pane.focus_editor(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.simulate_keystrokes("escape");
+    window
+        .update(&mut cx, |pane, _window, _cx| {
+            assert!(!pane.is_running());
+            // Standing in for a statement in flight: the cancel goes to the
+            // driver through the canceller, which an idle session shrugs off.
+            pane.run = RunState::Running(Box::new(Running {
+                generation: pane.generation,
+                started: Instant::now(),
+                canceller: connected.session().canceller(),
+                canceling: false,
+            }));
+        })
+        .unwrap();
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    window
+        .update(&mut cx, |pane, _window, _cx| {
+            assert!(
+                matches!(&pane.run, RunState::Running(running) if running.canceling),
+                "Escape did not reach the cancel"
+            );
+        })
+        .unwrap();
+    connected.close().expect("close");
+}

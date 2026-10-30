@@ -701,7 +701,7 @@ impl TransferDialog {
         // failure, on the target's own session — the one its query editors
         // share — so it would end an open transaction of theirs along the way.
         if target.has_uncommitted() {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(target.uncommitted_refusal());
             cx.notify();
             return;
         }

@@ -315,6 +315,75 @@ fn a_script_keeps_result_sets_separate_and_appends_messages_to_one_log(cx: &mut 
     assert_eq!(column_zero(&window, 1, cx), ["x", "x", "c"]);
 }
 
+/// A script that stops part way says where in the log — which statement of
+/// how many, its SQL, the driver's words — selects that statement in the
+/// editor, and leaves the results of the statements before it to be read.
+#[gpui::test]
+fn a_script_that_fails_part_way_logs_the_failure_and_keeps_what_ran(cx: &mut TestAppContext) {
+    let (connected, profile) = h2(
+        "script-failure",
+        &[
+            "create table T (ID int primary key)",
+            "insert into T values (1), (2)",
+        ],
+    );
+    let window = pane(&connected, &profile, 500, cx);
+    let script = "select ID from T order by ID;\nselect * from MISSING;\nselect 3;";
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.editor.update(cx, |editor, cx| {
+                editor.set_text(script, cx);
+                cx.emit(EditorEvent::RunAll);
+            });
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut visual, |pane, _window, cx| {
+            assert!(pane.error.is_some(), "the run is still a failed one");
+            assert_eq!(
+                pane.results.len(),
+                2,
+                "the log and the first statement's grid"
+            );
+            assert_eq!(pane.active_result, 0, "the log came to the front");
+            let log = pane.log_at(0);
+            assert_eq!(log.len(), 2, "the third statement never ran");
+            assert!(!log[0].failed);
+            assert!(log[1].failed);
+            assert!(
+                log[1].message.starts_with(
+                    ts!("query.statement_failed", index = 2, total = 3, error = "").trim_end()
+                ),
+                "{}",
+                log[1].message
+            );
+            assert!(log[1].sql.starts_with("select * from MISSING"));
+            // The statement is selected where it was written.
+            let selection = pane.editor.read(cx).selection();
+            assert_eq!(&script[selection], "select * from MISSING");
+            // And the grid of the statement before it can still be shown.
+            pane.active_result = 1;
+            cx.notify();
+        })
+        .expect("the window is open");
+    visual.run_until_parked();
+    // The log's rows copy what they say.
+    let rows = window
+        .update(&mut visual, |pane, _window, _cx| pane.log_rows(1))
+        .expect("the window is open");
+    assert_eq!(
+        context_menu::labels(&rows),
+        [
+            ts!("context.copy_message").to_string(),
+            ts!("context.copy_sql").to_string()
+        ]
+    );
+    assert_eq!(column_zero(&window, 0, cx), ["1", "2"]);
+}
+
 #[gpui::test]
 fn a_write_only_script_has_one_log_and_the_next_run_starts_fresh(cx: &mut TestAppContext) {
     let (connected, profile) = h2("script-log", &[]);

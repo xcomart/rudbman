@@ -604,6 +604,10 @@ impl Workspace {
             let area = self.work_area_mut().unwrap();
             if let Some(item) = area.panes.get(area.active()).and_then(|pane| pane.active()) {
                 area.tab_names.insert(item.entity_id(), name.clone());
+                if let PaneItem::Query { pane, .. } = item {
+                    let (pane, name) = (pane.clone(), name.clone());
+                    pane.update(cx, |pane, _| pane.set_tab_name(Some(name)));
+                }
             }
         }
     }

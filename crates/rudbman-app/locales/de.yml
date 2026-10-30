@@ -70,6 +70,9 @@ statusbar:
   disconnected: getrennt
   failed: "fehlgeschlagen: %{error}"
   tunnel_lost: "Der SSH-Tunnel wurde geschlossen: %{reason}"
+  uncommitted: nicht festgeschriebene Transaktion
+  uncommitted_in: "Schreibzugriffe aus „%{tab}“ sind noch nicht festgeschrieben. Führen Sie dort Commit oder Rollback aus."
+  uncommitted_tip: Schreibzugriffe auf dieser Verbindung sind noch nicht festgeschrieben.
 
 about:
   title: Über rudbman
@@ -411,6 +414,7 @@ query:
   rollback_failed: "Rollback fehlgeschlagen: %{message}"
   rollback_auto: "Rollback (automatisches Commit ist aktiviert)"
   uncommitted_pending: "Diese Verbindung hat nicht festgeschriebene Änderungen aus einem Abfrageeditor. Führen Sie dort zuerst Commit oder Rollback aus."
+  uncommitted_pending_in: "Diese Verbindung hat nicht festgeschriebene Änderungen aus „%{tab}“. Führen Sie dort zuerst Commit oder Rollback aus."
   commit: "Commit"
   committing: "Commit läuft…"
   committed: "Transaktion festgeschrieben."
@@ -426,7 +430,9 @@ query:
   running: läuft…
   rows_affected: "%{count} Zeilen betroffen"
   executed: Anweisung ausgeführt.
+  statement_failed: "Anweisung %{index} von %{total} ist fehlgeschlagen: %{error}"
   row_count: "%{count} Zeilen"
+  row_count_more: "%{count}+ Zeilen"
   elapsed: "%{seconds} s"
   busy: In diesem Bereich läuft bereits eine Anweisung.
   no_statement: Es gibt keine Anweisung zum Ausführen.
@@ -454,6 +460,7 @@ data:
   refresh: Aktualisieren
   empty: Diese Tabelle hat keine Zeilen.
   row_count: "%{count} Zeilen"
+  row_count_more: "%{count}+ Zeilen"
   no_primary_key: "Diese Tabelle hat keinen Primärschlüssel; ihre Zeilen lassen sich lesen, aber nicht ändern."
   read_only: "Diese Verbindung ist schreibgeschützt; ihre Zeilen lassen sich lesen, aber nicht ändern."
   discard_first: Wenden Sie die ausstehenden Änderungen zuerst an oder verwerfen Sie sie.
@@ -666,6 +673,7 @@ context:
   show_columns: Alle Spalten einblenden
   copy_column_name: Spaltenname kopieren
   copy_message: Meldung kopieren
+  copy_sql: SQL kopieren
   cut: Ausschneiden
   copy: Kopieren
   paste: Einfügen

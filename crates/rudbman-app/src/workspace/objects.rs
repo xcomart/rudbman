@@ -406,6 +406,7 @@ impl Workspace {
         let area = self.work_area_mut()?;
         let number = area.next_query;
         area.next_query += 1;
+        pane.update(cx, |pane, _| pane.set_tab_number(number));
         self.append_tab(
             PaneItem::Query {
                 pane: pane.clone(),

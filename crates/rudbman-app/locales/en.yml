@@ -150,6 +150,11 @@ statusbar:
   # transport and is not translated.
   failed: "failed: %{error}"
   tunnel_lost: "the SSH tunnel closed: %{reason}"
+  # Shown only while the session holds writes nobody has committed or rolled
+  # back; the hover names the query tab they came from.
+  uncommitted: uncommitted transaction
+  uncommitted_in: "Writes from “%{tab}” are not committed yet. Commit or roll them back there."
+  uncommitted_tip: Writes on this connection are not committed yet.
 
 # The about box. The version, the license name and the names of the libraries
 # are values, not words, and are never translated.
@@ -603,6 +608,8 @@ query:
   rollback_failed: "Rollback failed: %{message}"
   rollback_auto: "Rollback (automatic commit is enabled)"
   uncommitted_pending: "This connection has uncommitted changes from a query editor. Commit or roll them back there first."
+  # The same refusal, naming the query tab the open transaction came from.
+  uncommitted_pending_in: "This connection has uncommitted changes from “%{tab}”. Commit or roll them back there first."
   commit: "Commit"
   committing: "Committing…"
   committed: "Transaction committed."
@@ -631,8 +638,12 @@ query:
   # say. These messages accumulate in one log tab.
   rows_affected: "%{count} rows affected"
   executed: Statement executed.
+  # The execution log's row for the statement a run of several stopped at.
+  statement_failed: "Statement %{index} of %{total} failed: %{error}"
   # The status bar's row and elapsed cells. `seconds` arrives already rounded.
   row_count: "%{count} rows"
+  # More rows remain than the grids have read so far.
+  row_count_more: "%{count}+ rows"
   elapsed: "%{seconds} s"
   # Refused rather than queued: a second statement would wait behind the first
   # on the session's own worker thread and look like a hang.
@@ -693,6 +704,8 @@ data:
   empty: This table has no rows.
   # How much of the table has been paged in so far, in the pane's own toolbar.
   row_count: "%{count} rows"
+  # More rows remain than have been paged in so far.
+  row_count_more: "%{count}+ rows"
   # The one line above the grid that says why nothing here can be changed.
   # Neither is a failure: both are standing facts about what is being shown, so
   # they are stated once rather than raised when a key is pressed.
@@ -1106,6 +1119,7 @@ context:
   copy_column_name: Copy column name
   # Copies an error message as it reads, for a search or a colleague.
   copy_message: Copy message
+  copy_sql: Copy SQL
   # The SQL editor. Every one of these is also a keyboard chord; the menu and
   # the chord run the same command.
   cut: Cut

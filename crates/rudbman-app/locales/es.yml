@@ -70,6 +70,9 @@ statusbar:
   disconnected: desconectado
   failed: "error: %{error}"
   tunnel_lost: "el túnel SSH se cerró: %{reason}"
+  uncommitted: transacción sin confirmar
+  uncommitted_in: "Las escrituras de «%{tab}» aún no están confirmadas. Confírmalas o reviértelas en esa pestaña."
+  uncommitted_tip: Las escrituras en esta conexión aún no están confirmadas.
 
 about:
   title: Acerca de rudbman
@@ -411,6 +414,7 @@ query:
   rollback_failed: "Error al revertir: %{message}"
   rollback_auto: "Revertir (la confirmación automática está activada)"
   uncommitted_pending: "Esta conexión tiene cambios sin confirmar de un editor de consultas. Confírmalos o reviértelos allí primero."
+  uncommitted_pending_in: "Esta conexión tiene cambios sin confirmar de «%{tab}». Confírmalos o reviértelos allí primero."
   commit: "Confirmar transacción"
   committing: "Confirmando…"
   committed: "Transacción confirmada."
@@ -426,7 +430,9 @@ query:
   running: ejecutando…
   rows_affected: "%{count} filas afectadas"
   executed: Sentencia ejecutada.
+  statement_failed: "La sentencia %{index} de %{total} falló: %{error}"
   row_count: "%{count} filas"
+  row_count_more: "%{count}+ filas"
   elapsed: "%{seconds} s"
   busy: Ya hay una sentencia ejecutándose en este panel.
   no_statement: No hay ninguna sentencia que ejecutar.
@@ -454,6 +460,7 @@ data:
   refresh: Recargar
   empty: Esta tabla no tiene filas.
   row_count: "%{count} filas"
+  row_count_more: "%{count}+ filas"
   no_primary_key: "Esta tabla no tiene clave primaria; sus filas se pueden leer pero no modificar."
   read_only: "Esta conexión es de solo lectura; sus filas se pueden leer pero no modificar."
   discard_first: Aplica o descarta primero los cambios pendientes.
@@ -666,6 +673,7 @@ context:
   show_columns: Mostrar todas las columnas
   copy_column_name: Copiar el nombre de la columna
   copy_message: Copiar el mensaje
+  copy_sql: Copiar el SQL
   cut: Cortar
   copy: Copiar
   paste: Pegar

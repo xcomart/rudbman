@@ -58,6 +58,8 @@ use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent,
 
 pub use rudbkit_core::url::{CATALOG_PLACEHOLDERS, placeholders_of, redirect_url, substitute};
 
+use crate::i18n::ts;
+
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
 ///
@@ -246,6 +248,9 @@ struct Live {
     /// Whether a query editor has sent writes under manual commit that nothing
     /// has committed or rolled back yet; see [`SessionHandle::has_uncommitted`].
     uncommitted: AtomicBool,
+    /// The title of the query tab that sent the last of those writes, when
+    /// it said; see [`SessionHandle::uncommitted_refusal`].
+    writer: Mutex<Option<String>>,
     /// The tunnel underneath, if any. Declared last, so it lies down last.
     lease: Option<TunnelLease>,
 }
@@ -288,9 +293,36 @@ impl SessionHandle {
         self.0.uncommitted.store(true, Ordering::Release);
     }
 
+    /// [`SessionHandle::mark_uncommitted`], naming the query tab that sent
+    /// the write, so that what refuses to run behind the transaction can say
+    /// where it is.
+    pub fn mark_uncommitted_by(&self, writer: &str) {
+        *self.0.writer.lock() = Some(writer.to_string());
+        self.mark_uncommitted();
+    }
+
+    /// The query tab that sent the last write of the open transaction, when
+    /// one is open and the tab said.
+    pub fn uncommitted_writer(&self) -> Option<String> {
+        self.has_uncommitted()
+            .then(|| self.0.writer.lock().clone())
+            .flatten()
+    }
+
+    /// Why a grid apply, a structure change or a transfer will not run while
+    /// the transaction is open — naming the tab to commit it from, when that
+    /// is known.
+    pub fn uncommitted_refusal(&self) -> gpui::SharedString {
+        match self.uncommitted_writer() {
+            Some(tab) => ts!("query.uncommitted_pending_in", tab = tab),
+            None => ts!("query.uncommitted_pending"),
+        }
+    }
+
     /// Records that the session's transaction was committed or rolled back.
     pub fn clear_uncommitted(&self) {
         self.0.uncommitted.store(false, Ordering::Release);
+        *self.0.writer.lock() = None;
     }
 }
 
@@ -555,6 +587,7 @@ fn connect_once(
         live: Arc::new(Live {
             session,
             uncommitted: AtomicBool::new(false),
+            writer: Mutex::new(None),
             lease,
         }),
         info,

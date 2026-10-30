@@ -70,6 +70,9 @@ statusbar:
   disconnected: déconnecté
   failed: "échec : %{error}"
   tunnel_lost: "le tunnel SSH s’est fermé : %{reason}"
+  uncommitted: transaction non validée
+  uncommitted_in: "Les écritures de « %{tab} » ne sont pas encore validées. Validez-les ou annulez-les dans cet onglet."
+  uncommitted_tip: Les écritures sur cette connexion ne sont pas encore validées.
 
 about:
   title: À propos de rudbman
@@ -411,6 +414,7 @@ query:
   rollback_failed: "Échec de l’annulation de la transaction : %{message}"
   rollback_auto: "Annuler la transaction (validation automatique activée)"
   uncommitted_pending: "Cette connexion contient des modifications non validées d’un éditeur de requêtes. Validez-les ou annulez-les d’abord dans celui-ci."
+  uncommitted_pending_in: "Cette connexion contient des modifications non validées de « %{tab} ». Validez-les ou annulez-les d’abord dans cet onglet."
   commit: "Valider la transaction"
   committing: "Validation en cours…"
   committed: "Transaction validée."
@@ -426,7 +430,9 @@ query:
   running: en cours…
   rows_affected: "%{count} lignes modifiées"
   executed: Instruction exécutée.
+  statement_failed: "L’instruction %{index} sur %{total} a échoué : %{error}"
   row_count: "%{count} lignes"
+  row_count_more: "%{count}+ lignes"
   elapsed: "%{seconds} s"
   busy: Une instruction est déjà en cours dans ce volet.
   no_statement: Il n’y a aucune instruction à exécuter.
@@ -454,6 +460,7 @@ data:
   refresh: Actualiser
   empty: Cette table ne contient aucune ligne.
   row_count: "%{count} lignes"
+  row_count_more: "%{count}+ lignes"
   no_primary_key: Cette table n’a pas de clé primaire ; ses lignes peuvent être lues mais pas modifiées.
   read_only: Cette connexion est en lecture seule ; ses lignes peuvent être lues mais pas modifiées.
   discard_first: Appliquez ou abandonnez d’abord les modifications en attente.
@@ -666,6 +673,7 @@ context:
   show_columns: Afficher toutes les colonnes
   copy_column_name: Copier le nom de la colonne
   copy_message: Copier le message
+  copy_sql: Copier le SQL
   cut: Couper
   copy: Copier
   paste: Coller

@@ -70,6 +70,9 @@ statusbar:
   disconnected: 切断済み
   failed: "失敗: %{error}"
   tunnel_lost: "SSH トンネルが閉じました: %{reason}"
+  uncommitted: 未コミットのトランザクション
+  uncommitted_in: "「%{tab}」で実行した書き込みはまだコミットされていません。そのタブでコミットまたはロールバックしてください。"
+  uncommitted_tip: この接続の書き込みはまだコミットされていません。
 
 about:
   title: rudbman について
@@ -411,6 +414,7 @@ query:
   rollback_failed: "ロールバックに失敗しました: %{message}"
   rollback_auto: "ロールバック（自動コミットが有効です）"
   uncommitted_pending: "この接続にはクエリエディターで実行した未コミットの変更があります。先にクエリタブでコミットまたはロールバックしてください。"
+  uncommitted_pending_in: "この接続には「%{tab}」で実行した未コミットの変更があります。先にそのタブでコミットまたはロールバックしてください。"
   commit: "コミット"
   committing: "コミット中…"
   committed: "トランザクションをコミットしました。"
@@ -426,7 +430,9 @@ query:
   running: 実行中…
   rows_affected: "%{count} 行処理されました"
   executed: 文を実行しました。
+  statement_failed: "%{total} 文中 %{index} 番目の文が失敗しました: %{error}"
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   elapsed: "%{seconds} 秒"
   busy: このペインでは既に文が実行中です。
   no_statement: 実行する文がありません。
@@ -454,6 +460,7 @@ data:
   refresh: 再読み込み
   empty: このテーブルに行はありません。
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   no_primary_key: このテーブルには主キーがないため、行の閲覧のみできます。
   read_only: 読み取り専用の接続のため、行の閲覧のみできます。
   discard_first: 保留中の変更を先に適用するか破棄してください。
@@ -666,6 +673,7 @@ context:
   show_columns: すべての列を表示
   copy_column_name: 列名をコピー
   copy_message: メッセージをコピー
+  copy_sql: SQL をコピー
   cut: 切り取り
   copy: コピー
   paste: 貼り付け

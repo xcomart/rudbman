@@ -489,6 +489,7 @@ impl Workspace {
                             for open in &mut workspace.connections {
                                 open.work.tab_names.remove(&tab);
                             }
+                            pane.update(cx, |pane, _| pane.set_tab_name(None));
                         }
                         // The pane is bound, so the dialog suggests its own file
                         // and the title goes unused.

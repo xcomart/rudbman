@@ -70,6 +70,9 @@ statusbar:
   disconnected: 已断开
   failed: "失败：%{error}"
   tunnel_lost: "SSH 隧道已关闭：%{reason}"
+  uncommitted: 未提交的事务
+  uncommitted_in: "来自“%{tab}”的写入尚未提交。请在该标签页中提交或回滚。"
+  uncommitted_tip: 此连接上的写入尚未提交。
 
 about:
   title: 关于 rudbman
@@ -411,6 +414,7 @@ query:
   rollback_failed: "回滚失败：%{message}"
   rollback_auto: "回滚（自动提交已启用）"
   uncommitted_pending: "此连接有来自查询编辑器的未提交更改。请先在该查询标签页中提交或回滚。"
+  uncommitted_pending_in: "此连接有来自“%{tab}”的未提交更改。请先在该标签页中提交或回滚。"
   commit: "提交"
   committing: "正在提交…"
   committed: "事务已提交。"
@@ -426,7 +430,9 @@ query:
   running: 正在执行…
   rows_affected: "影响 %{count} 行"
   executed: 语句已执行。
+  statement_failed: "第 %{index} 条语句（共 %{total} 条）失败：%{error}"
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   elapsed: "%{seconds} 秒"
   busy: 此窗格中已有语句在执行。
   no_statement: 没有可执行的语句。
@@ -454,6 +460,7 @@ data:
   refresh: 刷新
   empty: 该表没有任何行。
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   no_primary_key: 该表没有主键，只能查看行而不能修改。
   read_only: 此连接为只读，只能查看行而不能修改。
   discard_first: 请先应用或放弃待处理的更改。
@@ -666,6 +673,7 @@ context:
   show_columns: 显示所有列
   copy_column_name: 复制列名
   copy_message: 复制消息
+  copy_sql: 复制 SQL
   cut: 剪切
   copy: 复制
   paste: 粘贴

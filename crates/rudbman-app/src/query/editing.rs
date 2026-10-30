@@ -138,7 +138,12 @@ impl QueryPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -204,7 +209,12 @@ impl QueryPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(Notice::warn(ts!("query.uncommitted_pending")));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }

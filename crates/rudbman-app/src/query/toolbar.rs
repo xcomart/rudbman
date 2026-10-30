@@ -75,8 +75,24 @@ impl QueryPane {
                 .border_color(chrome.border)
                 .children(buttons)
         };
+        // Lit only while there is something to commit: the buttons stay
+        // usable under manual commit — a procedure or a `SELECT … FOR UPDATE`
+        // opens a transaction the bookkeeping cannot see — but are drawn to be
+        // seen only when the session is known to hold writes.
+        let pending = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.has_uncommitted());
+        let lit = |button: Stateful<Div>| {
+            button.when(pending, |button| {
+                button
+                    .bg(chrome.accent.opacity(0.18))
+                    .border_1()
+                    .border_color(chrome.accent)
+            })
+        };
         let this = cx.entity();
-        let commit = tool_button(
+        let commit = lit(tool_button(
             "query-commit",
             icons::icon(icons::COMMIT, px(16.), chrome.icon),
             if self.transaction == Some(TransactionAction::Commit) {
@@ -84,11 +100,11 @@ impl QueryPane {
             } else if self.restore_auto_commit {
                 ts!("query.commit_auto")
             } else {
-                ts!("query.commit")
+                format!("{} (F11)", ts!("query.commit")).into()
             },
             self.can_finish_transaction(),
             chrome,
-        )
+        ))
         .when(self.can_finish_transaction(), |button| {
             button.on_click(move |_, _, cx| {
                 this.update(cx, |pane, cx| {
@@ -97,7 +113,7 @@ impl QueryPane {
             })
         });
         let this = cx.entity();
-        let rollback = tool_button(
+        let rollback = lit(tool_button(
             "query-rollback",
             icons::icon(icons::ROLLBACK, px(16.), chrome.icon),
             if self.transaction == Some(TransactionAction::Rollback) {
@@ -105,11 +121,11 @@ impl QueryPane {
             } else if self.restore_auto_commit {
                 ts!("query.rollback_auto")
             } else {
-                ts!("query.rollback")
+                format!("{} (F12)", ts!("query.rollback")).into()
             },
             self.can_finish_transaction(),
             chrome,
-        )
+        ))
         .when(self.can_finish_transaction(), |button| {
             button.on_click(move |_, _, cx| {
                 this.update(cx, |pane, cx| {
@@ -124,7 +140,7 @@ impl QueryPane {
             if canceling {
                 ts!("query.canceling")
             } else {
-                ts!("query.cancel")
+                format!("{} (Esc)", ts!("query.cancel")).into()
             },
             running && !canceling,
             chrome,

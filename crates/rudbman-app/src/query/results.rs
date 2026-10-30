@@ -513,7 +513,12 @@ impl QueryPane {
             RunState::Idle => return,
         };
         self.run = RunState::Idle;
-        self.finished = Some(Finished { rows: 0, elapsed });
+        self.finished = Some(Finished {
+            rows: 0,
+            more: false,
+            affected: self.affected,
+            elapsed,
+        });
         // Keep the final total in view when the user was following the log.
         for tab in &self.results {
             if let ResultBody::Log(log) = &tab.body

@@ -81,6 +81,7 @@ pub(crate) use file::{
     FileStamp, Overwrite, SaveJob, Saved, decode_sql_file, read_sql_file, write_sql_file,
 };
 mod format;
+mod keys;
 mod menus;
 mod render;
 use render::{elapsed_label, preview};
@@ -422,6 +423,9 @@ struct ResultLogEntry {
     sql: SharedString,
     message: SharedString,
     elapsed: Duration,
+    /// Whether this is the statement a run stopped at, drawn in the danger
+    /// color; see [`QueryPane::deliver`].
+    failed: bool,
 }
 
 #[derive(Default)]
@@ -518,7 +522,12 @@ struct Running {
 
 /// How a finished run is summarized in the status bar.
 struct Finished {
+    /// Rows the grids of the run have read so far.
     rows: usize,
+    /// Whether any of those grids has more to read than it has.
+    more: bool,
+    /// Rows the run's writes reported changing, for a run with no grid.
+    affected: u64,
     elapsed: Duration,
 }
 
@@ -553,6 +562,13 @@ enum PaneMenu {
         /// Where the pointer was, in window coordinates.
         position: Point<Pixels>,
     },
+    /// On one row of the execution log, by its index there.
+    Log {
+        /// The row.
+        index: usize,
+        /// Where the pointer was, in window coordinates.
+        position: Point<Pixels>,
+    },
     /// In the grid of one result tab.
     Grid {
         /// The tab, by [`ResultTab::id`] rather than by position: a menu is
@@ -579,6 +595,11 @@ pub struct QueryPane {
     session: Option<SessionHandle>,
     /// Which connection tab this pane belongs to.
     connection: ConnectionId,
+    /// The number its tab is titled with until it has a file or a name of the
+    /// user's; the workspace's to give, see [`QueryPane::set_tab_number`].
+    number: u64,
+    /// The name the user gave its tab, when they did.
+    custom_name: Option<String>,
     dialect: Dialect,
     /// The profile refuses writes outright rather than confirming them.
     ///
@@ -621,8 +642,17 @@ pub struct QueryPane {
     /// Whether anything has been run in this pane at all.
     ran: bool,
     finished: Option<Finished>,
+    /// Rows the writes of the run in flight have reported changing so far.
+    affected: u64,
     /// The statements the write confirmation is holding up.
     pending: Option<Vec<String>>,
+    /// Where in the editor each statement of the next run was cut from, when
+    /// the editor is where it came from; see [`QueryPane::start`].
+    run_spans: Vec<Option<std::ops::Range<usize>>>,
+    /// The same, for the run in flight, and the edit count it was taken at:
+    /// a failed statement is selected in the editor only while the text it
+    /// was cut from is still the text there.
+    active_spans: (Vec<Option<std::ops::Range<usize>>>, u64),
     /// The statement a sort round trip should keep offering to wrap.
     ///
     /// Set while a run was started by [`QueryPane::reorder`], whose SQL is a
@@ -775,6 +805,7 @@ impl QueryPane {
     ) -> Self {
         completion::init(cx);
         format::init(cx);
+        keys::init(cx);
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
             let mut editor = EditorView::new(cx)
@@ -797,22 +828,27 @@ impl QueryPane {
                     EditorEvent::RunStatement { span } => {
                         let text = editor.read(cx).text();
                         let sql = span.sql(&text).to_string();
-                        pane.request(vec![sql], window, cx);
+                        pane.request_from_editor(vec![(sql, Some(span.sql_range()))], window, cx);
                     }
                     EditorEvent::RunSelection { span } => {
                         let text = editor.read(cx).text();
                         let selected = text.get(span.clone()).unwrap_or_default().to_string();
-                        pane.request(vec![selected], window, cx);
+                        pane.request_from_editor(vec![(selected, Some(span.clone()))], window, cx);
                     }
                     EditorEvent::RunAll => {
                         let text = editor.read(cx).text();
                         // Split rather than sent whole: one cursor per statement is
                         // what makes two `SELECT`s two independently pageable grids.
-                        let statements: Vec<String> = split_statements(&text, &pane.dialect)
-                            .into_iter()
-                            .map(|span| span.sql(&text).to_string())
-                            .collect();
-                        pane.request(statements, window, cx);
+                        // Each keeps where it was cut from, so a failure can point
+                        // at its statement in the editor.
+                        let statements: Vec<(String, Option<std::ops::Range<usize>>)> =
+                            split_statements(&text, &pane.dialect)
+                                .into_iter()
+                                .map(|span| {
+                                    (span.sql(&text).to_string(), Some(span.start..span.sql_end))
+                                })
+                                .collect();
+                        pane.request_from_editor(statements, window, cx);
                     }
                     // The editor holds no strings, so its menu is drawn here
                     // (architecture document, §7.8).
@@ -851,6 +887,8 @@ impl QueryPane {
             editor,
             session: Some(session),
             connection,
+            number: 0,
+            custom_name: None,
             dialect,
             read_only: profile.read_only,
             confirm_writes: profile.confirm_writes,
@@ -868,7 +906,10 @@ impl QueryPane {
             generation: 0,
             ran: false,
             finished: None,
+            affected: 0,
             pending: None,
+            run_spans: Vec::new(),
+            active_spans: (Vec::new(), 0),
             sort_base: None,
             pending_sort: None,
             next_tab_id: 1,
@@ -908,6 +949,33 @@ impl QueryPane {
     /// Which connection tab this pane runs against.
     pub fn connection(&self) -> ConnectionId {
         self.connection
+    }
+
+    /// Tells the pane how its tab is titled: the number it was opened under,
+    /// and the name the user gave it, if any.
+    ///
+    /// The tab strip is the workspace's, so the title is too; the pane keeps a
+    /// copy for one purpose — a write it sends under manual commit records
+    /// which tab sent it, so that whatever refuses to run behind the open
+    /// transaction can say which tab to commit it from. The name is given by
+    /// [`QueryPane::set_tab_name`].
+    pub fn set_tab_number(&mut self, number: u64) {
+        self.number = number;
+    }
+
+    /// The name the user gave the tab, or `None` once it has none.
+    pub fn set_tab_name(&mut self, name: Option<String>) {
+        self.custom_name = name.filter(|name| !name.trim().is_empty());
+    }
+
+    /// The title the pane's tab carries, as far as the pane knows it; `None`
+    /// for a pane no workspace has numbered.
+    pub fn tab_label(&self) -> Option<SharedString> {
+        if let Some(name) = &self.custom_name {
+            return Some(SharedString::from(name.clone()));
+        }
+        self.file_title()
+            .or_else(|| (self.number > 0).then(|| ts!("query.tab", index = self.number)))
     }
 
     /// Lets the session go, leaving the tab standing.
@@ -1115,28 +1183,53 @@ impl QueryPane {
                 ts!("query.running"),
                 elapsed_label(running.started.elapsed()),
             ),
+            // What the run read, with a "+" while there is more to read — the
+            // number alone would pass for the size of the answer — and for a
+            // run that read nothing, what its writes changed, which is the
+            // number the log reports.
             (RunState::Idle, Some(finished)) => (
-                ts!("query.row_count", count = finished.rows),
+                if finished.more {
+                    ts!("query.row_count_more", count = finished.rows)
+                } else if finished.rows == 0 && finished.affected > 0 {
+                    ts!("query.rows_affected", count = finished.affected)
+                } else {
+                    ts!("query.row_count", count = finished.rows)
+                },
                 elapsed_label(finished.elapsed),
             ),
             (RunState::Idle, None) => (SharedString::default(), SharedString::default()),
         }
     }
 
-    /// Runs `statements`, once the profile's guards allow it.
+    /// Runs `statements`, once the profile's guards allow it — for the tests,
+    /// which send SQL that was never in the editor.
+    #[cfg(test)]
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let statements = statements.into_iter().map(|sql| (sql, None)).collect();
+        self.request_from_editor(statements, window, cx);
+    }
+
+    /// Runs `statements`, once the profile's guards allow it, each with the
+    /// range of the editor it was cut from when it was: what a failure selects
+    /// in the editor ([`QueryPane::deliver`]).
+    fn request_from_editor(
+        &mut self,
+        statements: Vec<(String, Option<std::ops::Range<usize>>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_completion(cx);
         if self.lob_dialog.is_some() || self.transaction.is_some() {
             return;
         }
-        let statements: Vec<String> = statements
+        let (statements, spans): (Vec<String>, Vec<_>) = statements
             .into_iter()
-            .filter(|sql| {
+            .filter(|(sql, _)| {
                 !split_statements(sql, &self.dialect).is_empty()
                     || sql.contains("/*!")
                     || sql.contains("/*M!")
             })
-            .collect();
+            .unzip();
         self.notice = None;
 
         if statements.is_empty() {
@@ -1192,12 +1285,14 @@ impl QueryPane {
                     preview: preview(first),
                 };
                 self.pending = Some(statements);
+                self.run_spans = spans;
                 cx.emit(QueryPaneEvent::ConfirmWrites(Box::new(request)));
                 cx.notify();
                 return;
             }
         }
 
+        self.run_spans = spans;
         self.start(statements, None, window, cx);
     }
 

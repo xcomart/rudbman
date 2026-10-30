@@ -877,8 +877,17 @@ impl Workspace {
                 // different tab after every reorder, shuffling whatever gpui
                 // keeps per element — including the drag the reorder itself
                 // started.
-                TabItem::new(("connection", connection.id.0), title)
-                    .status(connection.state.tab_status())
+                let tab = TabItem::new(("connection", connection.id.0), title)
+                    .status(connection.state.tab_status());
+                // The same dot a file with unsaved changes wears, for a
+                // transaction with uncommitted ones: both are work that has not
+                // been made to stick, and either is lost by closing the tab.
+                match &connection.state {
+                    ConnectionState::Open(connected) if connected.handle().has_uncommitted() => {
+                        tab.mark(icons::UNSAVED, ts!("statusbar.uncommitted"))
+                    }
+                    _ => tab,
+                }
             })
             .collect();
 
@@ -1573,6 +1582,30 @@ impl Workspace {
         (label, state)
     }
 
+    /// The status bar's transaction cell, and its hover text: present only
+    /// while the session on screen holds writes nobody has committed or rolled
+    /// back.
+    ///
+    /// The cell the architecture document's window layout always had a place
+    /// for. Under manual commit it is the one thing on screen saying that the
+    /// grid applies, structure changes and transfers on this connection will
+    /// refuse, and that closing the tab would roll the writes back; the hover
+    /// names the query tab they came from, which is where Commit is.
+    pub(super) fn transaction_cell(&self) -> Option<(SharedString, SharedString)> {
+        let ConnectionState::Open(connected) = &self.active_connection()?.state else {
+            return None;
+        };
+        let handle = connected.handle();
+        if !handle.has_uncommitted() {
+            return None;
+        }
+        let tip = match handle.uncommitted_writer() {
+            Some(tab) => ts!("statusbar.uncommitted_in", tab = tab),
+            None => ts!("statusbar.uncommitted_tip"),
+        };
+        Some((ts!("statusbar.uncommitted"), tip))
+    }
+
     /// The two right-hand status bar cells — rows and elapsed time — which the
     /// active query pane owns.
     ///
@@ -1588,6 +1621,7 @@ impl Workspace {
         let theme = theme(cx);
         let (connection, state) = self.status_cells();
         let (rows, elapsed) = self.query_cells(cx);
+        let transaction = self.transaction_cell();
         let state_color = match self.active_connection().map(|open| &open.state) {
             Some(ConnectionState::Open(_)) => Some(theme.success),
             Some(ConnectionState::Failed(_) | ConnectionState::Dead(_)) => Some(theme.danger),
@@ -1624,6 +1658,15 @@ impl Workspace {
                     .tooltip(rugpui::tooltip_label(state.clone()))
                     .child(state),
             )
+            .children(transaction.map(|(label, tip)| {
+                div()
+                    .id("status-transaction")
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_color(theme.accent)
+                    .tooltip(rugpui::tooltip_label(tip))
+                    .child(label)
+            }))
             .child(
                 div()
                     .flex_none()

@@ -47,11 +47,27 @@ pub fn note(text: SharedString, color: Hsla) -> AnyElement {
 /// reads the same wherever the statement came from, and the hint is chosen from
 /// the `SQLSTATE` class rather than from anything about the pane.
 pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
+    // The words a user pastes into a search or a message to whoever runs the
+    // database, so they can be had without retyping them.
+    let mut copied = error.message.to_string();
+    if let Some(state) = &error.sql_state {
+        copied.push_str(&format!(" (SQLSTATE {state})"));
+    }
     error_lines(error, chrome)
         .flex_1()
         .min_w_0()
         .min_h_0()
         .p(px(16.))
+        .child(
+            div().pt(px(4.)).child(
+                Button::new("query-error-copy", ts!("context.copy_message"))
+                    .variant(ButtonVariant::Secondary)
+                    .compact()
+                    .on_click(move |_, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone()));
+                    }),
+            ),
+        )
         .into_any_element()
 }
 
@@ -175,6 +191,28 @@ impl Render for QueryPane {
         });
 
         div()
+            .key_context(super::keys::KEY_CONTEXT)
+            .on_action(
+                cx.listener(|pane, _: &super::keys::CancelRun, _window, cx| {
+                    // Only a run to stop takes the key; otherwise it goes on up,
+                    // where it closes whatever the workspace has open.
+                    if pane.is_running() {
+                        pane.cancel(cx);
+                    } else {
+                        cx.propagate();
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|pane, _: &super::keys::CommitTransaction, _, cx| {
+                    pane.finish_transaction(TransactionAction::Commit, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane, _: &super::keys::RollbackTransaction, _, cx| {
+                    pane.finish_transaction(TransactionAction::Rollback, cx);
+                }),
+            )
             .flex()
             .flex_col()
             .size_full()
@@ -455,6 +493,7 @@ impl QueryPane {
     ) -> Option<impl IntoElement + use<>> {
         let (position, rows) = match self.context_menu.as_ref()? {
             PaneMenu::Editor { position } => (*position, self.editor_rows(cx)),
+            PaneMenu::Log { index, position } => (*position, self.log_rows(*index)),
             PaneMenu::Grid {
                 id,
                 target,
@@ -477,7 +516,12 @@ impl QueryPane {
 
     /// The result area's body: a grid, the execution log, a failure, or an empty state.
     pub(super) fn render_results(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(error) = &self.error {
+        // A run of several statements that failed part way has its failure
+        // in the log, beside the results the statements before it left; only
+        // a failure with nothing else to show takes the whole area.
+        if let Some(error) = &self.error
+            && self.results.is_empty()
+        {
             return render_error(error, chrome);
         }
         if self.results.is_empty() {
@@ -507,6 +551,7 @@ impl QueryPane {
                 ..
             }) => {
                 let pane = cx.entity();
+                let menu = pane.clone();
                 let id = *id;
                 let chrome = chrome.clone();
                 gpui::uniform_list(
@@ -524,6 +569,7 @@ impl QueryPane {
                         range
                             .filter_map(|index| {
                                 let row = div()
+                                    .id(("query-log-row", index))
                                     .flex()
                                     .items_center()
                                     .h(px(52.))
@@ -547,38 +593,65 @@ impl QueryPane {
                                     });
                                 }
                                 log.entries.get(index).map(|entry| {
-                                    row.child(
-                                        div()
-                                            .flex_none()
-                                            .w(px(36.))
-                                            .text_color(chrome.text_muted)
-                                            .child((index + 1).to_string()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child(
-                                                div()
-                                                    .truncate()
-                                                    .text_color(chrome.text)
-                                                    .child(entry.message.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .truncate()
-                                                    .text_color(chrome.text_muted)
-                                                    .child(entry.sql.clone()),
+                                    // The two lines are cut at the row's width;
+                                    // the whole of both is a hover away, and a
+                                    // right-click copies either.
+                                    let full = format!("{}\n{}", entry.message, entry.sql);
+                                    let menu = menu.clone();
+                                    row.tooltip(rugpui::tooltip_label(full))
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Right,
+                                            move |event, _window, cx| {
+                                                let position = event.position;
+                                                menu.update(cx, |pane, cx| {
+                                                    pane.close_completion(cx);
+                                                    pane.context_menu =
+                                                        Some(PaneMenu::Log { index, position });
+                                                    cx.notify();
+                                                });
+                                            },
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .w(px(36.))
+                                                .text_color(chrome.text_muted)
+                                                .child((index + 1).to_string()),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_color(if entry.failed {
+                                                            chrome.danger
+                                                        } else {
+                                                            chrome.text
+                                                        })
+                                                        .child(entry.message.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_color(chrome.text_muted)
+                                                        .child(entry.sql.clone()),
+                                                ),
+                                        )
+                                        .child(
+                                            div().flex_none().text_color(chrome.text_muted).child(
+                                                ts!(
+                                                    "query.execution_time",
+                                                    seconds = format!(
+                                                        "{:.3}",
+                                                        entry.elapsed.as_secs_f64()
+                                                    )
+                                                ),
                                             ),
-                                    )
-                                    .child(
-                                        div().flex_none().text_color(chrome.text_muted).child(ts!(
-                                            "query.execution_time",
-                                            seconds = format!("{:.3}", entry.elapsed.as_secs_f64())
-                                        )),
-                                    )
+                                        )
                                 })
                             })
                             .collect()

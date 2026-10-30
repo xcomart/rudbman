@@ -83,7 +83,17 @@ impl Workspace {
                 if name.is_empty() {
                     open.work.tab_names.remove(&rename.tab);
                 } else {
-                    open.work.tab_names.insert(rename.tab, name);
+                    open.work.tab_names.insert(rename.tab, name.clone());
+                }
+                // A query pane keeps a copy, for naming itself as the tab a
+                // transaction was opened from.
+                let query = open
+                    .work
+                    .queries()
+                    .into_iter()
+                    .find(|pane| pane.entity_id() == rename.tab);
+                if let Some(query) = query {
+                    query.update(cx, |pane, _| pane.set_tab_name(Some(name)));
                 }
             }
         }

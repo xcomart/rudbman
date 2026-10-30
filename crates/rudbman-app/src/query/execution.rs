@@ -78,6 +78,7 @@ impl QueryPane {
     /// The write confirmation was declined.
     pub fn declined(&mut self, cx: &mut Context<Self>) {
         self.pending = None;
+        self.run_spans.clear();
         cx.notify();
     }
 
@@ -113,6 +114,7 @@ impl QueryPane {
         self.error = None;
         self.notice = None;
         self.finished = None;
+        self.affected = 0;
         self.ran = true;
         // A menu naming a result tab that is about to be dropped would act on
         // whichever tab took its place, or on none at all.
@@ -128,6 +130,9 @@ impl QueryPane {
             self.pending_sort = None;
         }
         self.sort_base = sort_base;
+        // Whatever the editor's events left for this run; a sort round trip
+        // and an apply's re-run leave nothing, and the spans then go unused.
+        self.active_spans = (std::mem::take(&mut self.run_spans), self.edits);
         self.run = RunState::Running(Box::new(Running {
             generation,
             started: Instant::now(),
@@ -136,6 +141,7 @@ impl QueryPane {
         }));
 
         let fetch_rows = self.fetch_rows;
+        let writer = self.tab_label().map(|label| label.to_string());
         // What each statement does to the books [`SessionHandle::has_uncommitted`]
         // keeps, worked out here because the dialect stays with the pane. Only a
         // session that is really in a transaction of the user's — manual commit,
@@ -169,20 +175,42 @@ impl QueryPane {
         // subscribed to with a window, because answering a double click with
         // [`GridView::begin_edit`] means putting the keyboard in a field and
         // there is no window to be had inside a plain `cx.subscribe` (§7.9).
+        let total = statements.len();
         cx.spawn_in(window, async move |pane, cx| {
-            for (sql, effect, pager, server_cursor) in statements {
+            for (position, (sql, effect, pager, server_cursor)) in
+                statements.into_iter().enumerate()
+            {
+                let failed_sql = sql.clone();
+                let writer = writer.clone();
                 let outcome = cx
                     .background_spawn({
                         let session = session.clone();
                         async move {
-                            execute(&session, sql, effect, pager, server_cursor, fetch_rows)
+                            let started = Instant::now();
+                            let outcome = execute(
+                                &session,
+                                sql,
+                                Statement {
+                                    effect,
+                                    pager,
+                                    server_cursor,
+                                    writer: writer.as_deref(),
+                                },
+                                fetch_rows,
+                            );
+                            (outcome, started.elapsed())
                         }
                     })
                     .await;
 
+                let at = Position {
+                    index: position,
+                    total,
+                    sql: failed_sql,
+                };
                 let carry_on = pane
                     .update_in(cx, |pane, window, cx| {
-                        pane.deliver(generation, outcome, window, cx)
+                        pane.deliver(generation, at, outcome, window, cx)
                     })
                     .unwrap_or(false);
                 if !carry_on {
@@ -222,10 +250,21 @@ impl QueryPane {
     }
 
     /// Records what one statement produced. Answers whether the run goes on.
+    ///
+    /// A failure of a run of several statements becomes a row of the
+    /// execution log — which statement of how many, its SQL, and the error —
+    /// and the log comes to the front, while the results of the statements
+    /// before it stay where they are and can still be looked at: a script that
+    /// stops at its thirtieth statement has run the first twenty-nine, and
+    /// the user needs to see both halves of that. A run of one statement keeps
+    /// the whole error view it always had. Either way the failed statement is
+    /// selected in the editor, when the editor still holds the text it was cut
+    /// from.
     pub(super) fn deliver(
         &mut self,
         generation: u64,
-        outcome: Result<Executed, JdbcError>,
+        at: Position,
+        (outcome, elapsed): (Result<Executed, JdbcError>, Duration),
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -247,11 +286,51 @@ impl QueryPane {
                 true
             }
             Err(error) => {
-                self.error = Some(QueryError::new(error));
+                let error = QueryError::new(error);
+                if at.total > 1 {
+                    let mut message = ts!(
+                        "query.statement_failed",
+                        index = at.index + 1,
+                        total = at.total,
+                        error = error.message.to_string()
+                    )
+                    .to_string();
+                    if let Some(state) = &error.sql_state {
+                        message.push_str(&format!(" ({state})"));
+                    }
+                    if let Some(hint) = error.hint() {
+                        message.push_str(" — ");
+                        message.push_str(&hint);
+                    }
+                    self.append_log_entry(&at.sql, message.into(), elapsed, true);
+                    if let Some(log) = self
+                        .results
+                        .iter()
+                        .position(|tab| matches!(tab.body, ResultBody::Log(_)))
+                    {
+                        self.active_result = log;
+                    }
+                }
+                self.select_failed(at.index, cx);
+                self.error = Some(error);
                 self.finish(generation, cx);
                 false
             }
         }
+    }
+
+    /// Selects statement `index` of the run in the editor, when the editor
+    /// still holds the text it was cut from.
+    fn select_failed(&mut self, index: usize, cx: &mut Context<Self>) {
+        let (spans, edits) = &self.active_spans;
+        if *edits != self.edits {
+            return;
+        }
+        let Some(Some(range)) = spans.get(index).cloned() else {
+            return;
+        };
+        self.editor
+            .update(cx, |editor, cx| editor.select_range(range, cx));
     }
 
     /// Turns one statement's results into tabs.
@@ -305,6 +384,7 @@ impl QueryPane {
                     );
                 }
                 Step::Message { update_count } => {
+                    self.affected += u64::try_from(update_count).unwrap_or(0);
                     let text = if update_count > 0 {
                         ts!("query.rows_affected", count = update_count)
                     } else {
@@ -318,6 +398,17 @@ impl QueryPane {
 
     /// Records every result's execution in the same log, including result sets.
     fn append_log(&mut self, sql: &str, message: SharedString, elapsed: Duration) {
+        self.append_log_entry(sql, message, elapsed, false);
+    }
+
+    /// The same, saying whether the entry is the failure the run stopped at.
+    fn append_log_entry(
+        &mut self,
+        sql: &str,
+        message: SharedString,
+        elapsed: Duration,
+        failed: bool,
+    ) {
         let index = self
             .results
             .iter()
@@ -339,6 +430,7 @@ impl QueryPane {
             sql: preview(sql).replace(['\r', '\n'], " ").into(),
             message,
             elapsed,
+            failed,
         });
         if follow {
             log.scroll.scroll_to_bottom();
@@ -347,16 +439,18 @@ impl QueryPane {
 
     /// Re-reads the row count the status bar shows.
     pub(super) fn recount(&mut self, cx: &App) {
-        let rows: usize = self
-            .results
-            .iter()
-            .filter_map(|tab| match &tab.body {
-                ResultBody::Rows(rows) => Some(rows.grid.read(cx).source().row_count()),
-                ResultBody::Log(_) => None,
-            })
-            .sum();
+        let mut rows = 0;
+        let mut more = false;
+        for tab in &self.results {
+            if let ResultBody::Rows(grid) = &tab.body {
+                let source = grid.grid.read(cx).source();
+                rows += source.row_count();
+                more |= source.state() == GridSourceState::HasMore;
+            }
+        }
         if let Some(finished) = &mut self.finished {
             finished.rows = rows;
+            finished.more = more;
         }
     }
 
@@ -395,14 +489,21 @@ impl QueryPane {
 fn execute(
     session: &SessionHandle,
     sql: String,
-    effect: Effect,
-    pager: Option<Pager>,
-    server_cursor: bool,
+    statement: Statement<'_>,
     fetch_rows: u32,
 ) -> Result<Executed, JdbcError> {
+    let Statement {
+        effect,
+        pager,
+        server_cursor,
+        writer,
+    } = statement;
     let started = Instant::now();
     if effect == Effect::Opens {
-        session.mark_uncommitted();
+        match writer {
+            Some(writer) => session.mark_uncommitted_by(writer),
+            None => session.mark_uncommitted(),
+        }
     }
     let (steps, more) = match pager {
         Some(pager) => match pager.read(session.session(), 0)? {
@@ -431,6 +532,30 @@ fn execute(
         elapsed: started.elapsed(),
         more,
     })
+}
+
+/// How one statement of a run is to be sent, worked out on the UI thread
+/// where the dialect is.
+struct Statement<'a> {
+    /// What it does to the transaction.
+    effect: Effect,
+    /// How it is paged, when it is read a page at a time.
+    pager: Option<Pager>,
+    /// Whether it keeps a server cursor.
+    server_cursor: bool,
+    /// The title of the tab sending it, which a write under manual commit
+    /// records against the session.
+    writer: Option<&'a str>,
+}
+
+/// Which statement of a run an answer is for, and what it was.
+pub(super) struct Position {
+    /// Its place in the run, from zero.
+    index: usize,
+    /// How many statements the run has.
+    total: usize,
+    /// The statement, as it was sent.
+    sql: String,
 }
 
 /// What one statement of a run does to the transaction its session keeps

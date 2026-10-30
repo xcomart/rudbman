@@ -35,6 +35,30 @@ impl QueryPane {
         }
     }
 
+    /// The menu of row `index` of the execution log: its two lines, to copy.
+    pub(super) fn log_rows(&self, index: usize) -> Vec<MenuRow> {
+        let entry = self.results.iter().find_map(|tab| match &tab.body {
+            ResultBody::Log(log) => log.entries.get(index),
+            ResultBody::Rows(_) => None,
+        });
+        let copy = |text: Option<SharedString>| {
+            let enabled = text.is_some();
+            let text = text.unwrap_or_default();
+            move |label: SharedString| {
+                let text = text.clone();
+                MenuRow::new(label).enabled(enabled).on_activate(
+                    move |_window: &mut Window, cx: &mut App| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()));
+                    },
+                )
+            }
+        };
+        vec![
+            copy(entry.map(|entry| entry.message.clone()))(ts!("context.copy_message")),
+            copy(entry.map(|entry| entry.sql.clone()))(ts!("context.copy_sql")),
+        ]
+    }
+
     /// The editor's right-click menu: everything a SQL buffer can be asked to
     /// do, in the order the keyboard already offers it.
     ///
