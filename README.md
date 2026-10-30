@@ -115,7 +115,9 @@ JVM bridge.
   lines in the same viewer, then stage and Apply as usual. Copying and database
   writes keep the original line breaks; ordinary text remains a string value.
 - **ERD diagrams** of a whole schema or catalog, from the explorer with
-  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>E</kbd>. Tables are placed by a
+  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>E</kbd>. A large schema says how many
+  tables' keys have been read and can be canceled; so can a table's rows
+  while they load or re-sort. Tables are placed by a
   hierarchical (Sugiyama) layout of rudbman's own and joined by orthogonal
   routed edges; drag a table and the new position is saved per connection and
   restored next time. Export the diagram as SVG.

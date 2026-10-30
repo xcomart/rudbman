@@ -468,6 +468,7 @@ query:
 
 data:
   loading: cargando…
+  load_canceled: Se canceló la carga de las filas.
   refresh: Recargar
   empty: Esta tabla no tiene filas.
   row_count: "%{count} filas"
@@ -632,6 +633,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: cargando…
+  loading_tables: "Leyendo las claves: %{done} de %{total} tablas…"
+  load_canceled: Se canceló la carga del diagrama.
   load_failed: "No se pudo dibujar el diagrama: %{error}"
   empty: Este esquema no tiene tablas.
   auto_arrange: Organizar

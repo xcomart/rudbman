@@ -468,6 +468,7 @@ query:
 
 data:
   loading: 正在加载…
+  load_canceled: 已取消加载数据行。
   refresh: 刷新
   empty: 该表没有任何行。
   row_count: "%{count} 行"
@@ -632,6 +633,8 @@ erd:
   tab: "ER 图 — %{scope}"
   tab_all: ER 图
   loading: 正在加载…
+  loading_tables: "正在读取表的键：%{done} / %{total}…"
+  load_canceled: 已取消加载图表。
   load_failed: "无法绘制图表：%{error}"
   empty: 该模式中没有表。
   auto_arrange: 自动布局

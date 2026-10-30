@@ -468,6 +468,7 @@ query:
 
 data:
   loading: chargement…
+  load_canceled: Le chargement des lignes a été annulé.
   refresh: Actualiser
   empty: Cette table ne contient aucune ligne.
   row_count: "%{count} lignes"
@@ -632,6 +633,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: chargement…
+  loading_tables: "Lecture des clés : %{done} tables sur %{total}…"
+  load_canceled: Le chargement du diagramme a été annulé.
   load_failed: "Le diagramme n’a pas pu être dessiné : %{error}"
   empty: Ce schéma ne contient aucune table.
   auto_arrange: Disposer

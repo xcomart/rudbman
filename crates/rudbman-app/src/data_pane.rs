@@ -435,6 +435,9 @@ pub struct DataPane {
     notice: Option<Notice>,
     /// Takes an informational notice away after a while.
     notice_clock: NoticeClock,
+    /// Reaches the driver under the load in flight, for its "Cancel"; `None`
+    /// while nothing is loading.
+    canceller: Option<rudbman_jdbc::Canceller>,
     /// The generation of the newest load. Every delivery carries one, and one
     /// that is not this is an answer a later load has already replaced.
     generation: u64,
@@ -507,6 +510,7 @@ impl DataPane {
             order: None,
             notice: None,
             notice_clock: NoticeClock::default(),
+            canceller: None,
             generation: 0,
             context_menu: None,
             confirm_discard: false,
@@ -735,6 +739,10 @@ impl DataPane {
 
         self.generation += 1;
         let generation = self.generation;
+        // A read of a big table sorted by a column with no index can take as
+        // long as the server needs to sort it; the canceller reaches the
+        // statement without queueing behind it, as the query pane's does.
+        self.canceller = Some(session.session().canceller());
         // Dropping what was there drops its cursor, which closes it.
         self.load = Load::Running;
         self.keys_read = false;
@@ -780,6 +788,7 @@ impl DataPane {
             // kept one open.
             return;
         }
+        self.canceller = None;
         match outcome {
             Ok(opened) => {
                 let Opened {
@@ -1821,10 +1830,56 @@ impl DataPane {
         )
     }
 
+    /// "Cancel" under a load: stops the statement and stops waiting for it.
+    ///
+    /// The answer is dropped by the generation, whichever way it ends — the
+    /// rows the driver read before the cancel took are not worth showing half
+    /// of — and the pane says the load was canceled, with "Refresh" beside it.
+    fn cancel_load(&mut self, cx: &mut Context<Self>) {
+        let Some(canceller) = self.canceller.take() else {
+            return;
+        };
+        if !matches!(self.load, Load::Running) {
+            return;
+        }
+        self.generation += 1;
+        cx.background_spawn(async move {
+            if let Err(error) = canceller.cancel() {
+                log::warn!("canceling the data load failed: {error}");
+            }
+        })
+        .detach();
+        self.load = Load::Failed(Box::new(QueryError {
+            message: ts!("data.load_canceled"),
+            sql_state: None,
+            kind: rudbman_jdbc::BridgeErrorKind::Interrupted,
+        }));
+        cx.notify();
+    }
+
     /// The rows, or the one line that stands in for them.
-    fn render_body(&self, chrome: &Theme, cx: &App) -> AnyElement {
+    fn render_body(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
         match &self.load {
-            Load::Running => note(ts!("data.loading"), chrome.text_muted),
+            Load::Running => {
+                let this = cx.entity();
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(10.))
+                    .child(note(ts!("data.loading"), chrome.text_muted))
+                    .child(
+                        Button::new("data-cancel-load", ts!("common.cancel"))
+                            .compact()
+                            .variant(ButtonVariant::Secondary)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| pane.cancel_load(cx));
+                            }),
+                    )
+                    .into_any_element()
+            }
             Load::Failed(error) => render_error(error, chrome),
             Load::Ready(rows) if rows.grid.read(cx).source().row_count() == 0 => {
                 note(ts!("data.empty"), chrome.text_muted)
@@ -2844,6 +2899,40 @@ mod tests {
                 assert!(pane.preview.is_some(), "the apply preview was raised");
             })
             .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// "Cancel" under a load stops waiting for it at once: the pane says the
+    /// load was canceled, and a late answer is dropped by the generation.
+    #[gpui::test]
+    fn a_canceled_load_says_so_and_drops_its_answer(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-cancel");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let canceller = connected.session().canceller();
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |pane, _window, cx| {
+                // Standing in for a load in flight.
+                pane.load = Load::Running;
+                pane.canceller = Some(canceller);
+                cx.notify();
+            })
+            .expect("the window is open");
+        // Drawn with its Cancel.
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |pane, _window, cx| {
+                let generation = pane.generation;
+                pane.cancel_load(cx);
+                assert_ne!(pane.generation, generation, "a late answer would be taken");
+                let Load::Failed(error) = &pane.load else {
+                    panic!("the pane is still loading");
+                };
+                assert!(error.is_canceled());
+                assert_eq!(error.message, ts!("data.load_canceled"));
+            })
+            .expect("the window is open");
+        visual.run_until_parked();
         connected.close().expect("close");
     }
 

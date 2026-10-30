@@ -468,6 +468,7 @@ query:
 
 data:
   loading: загрузка…
+  load_canceled: Загрузка строк отменена.
   refresh: Обновить
   empty: В этой таблице нет строк.
   row_count: "Строк: %{count}"
@@ -632,6 +633,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: загрузка…
+  loading_tables: "Чтение ключей таблиц: %{done} из %{total}…"
+  load_canceled: Загрузка диаграммы отменена.
   load_failed: "Не удалось построить диаграмму: %{error}"
   empty: В этой схеме нет таблиц.
   auto_arrange: Расставить

@@ -290,9 +290,11 @@ impl Workspace {
             return;
         };
         let profile = self.profile_of(target.connection);
+        let progress = panel.read(cx).progress();
+        let counted = progress.clone();
 
         let fetch = cx.background_spawn(async move {
-            let model = erd_pane::load_model(session.session(), &target)?;
+            let model = erd_pane::load_model(session.session(), &target, &counted)?;
             let saved = profile
                 .map(|profile| match ErdLayouts::load(profile) {
                     Ok(layouts) => layouts.positions(&target.scope),
@@ -306,7 +308,7 @@ impl Workspace {
         });
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            panel.update(cx, |panel, cx| panel.deliver(outcome, cx));
+            panel.update(cx, |panel, cx| panel.deliver_for(&progress, outcome, cx));
         })
         .detach();
     }

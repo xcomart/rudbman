@@ -723,6 +723,8 @@ query:
 # Never translated: the table's own name, which titles the tab.
 data:
   loading: loading…
+  # The load or sort was stopped with Cancel; Refresh starts it again.
+  load_canceled: Loading the rows was canceled.
   refresh: Refresh
   # A table that has no rows at all, as against one that could not be read.
   empty: This table has no rows.
@@ -1046,6 +1048,10 @@ erd:
   # skipped, so there is no scope to name.
   tab_all: ERD
   loading: loading…
+  # While a diagram's tables are being read, one at a time.
+  loading_tables: "Reading the keys of %{done} of %{total} tables…"
+  # The load was stopped with Cancel; Reload starts it again.
+  load_canceled: Loading the diagram was canceled.
   load_failed: "The diagram could not be drawn: %{error}"
   # A scope with no tables in it, as against one that could not be read.
   empty: This schema has no tables.

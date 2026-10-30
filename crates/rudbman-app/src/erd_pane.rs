@@ -35,6 +35,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Pixels, Point, Render,
@@ -194,6 +195,40 @@ pub struct ErdDiagram {
     pub saved: HashMap<String, (f32, f32)>,
 }
 
+/// How far a diagram's load has got, shared between the panel and the
+/// background task reading the catalog.
+///
+/// A diagram of a large schema asks for every table's keys one table at a
+/// time, which over a slow link is minutes; the panel reads the two counts to
+/// say so, and the flag is how its "Cancel" reaches a loop that would
+/// otherwise run to the end with nobody waiting for it.
+#[derive(Default)]
+pub struct LoadProgress {
+    /// Tables whose keys have been read.
+    done: std::sync::atomic::AtomicUsize,
+    /// Tables there are to read, once the list is in.
+    total: std::sync::atomic::AtomicUsize,
+    /// Whether the panel has stopped waiting.
+    canceled: std::sync::atomic::AtomicBool,
+}
+
+impl LoadProgress {
+    /// The two counts, done and in all; `None` until the list is in.
+    fn counts(&self) -> Option<(usize, usize)> {
+        use std::sync::atomic::Ordering;
+        let total = self.total.load(Ordering::Acquire);
+        (total > 0).then(|| (self.done.load(Ordering::Acquire), total))
+    }
+
+    /// Whether the panel has stopped waiting.
+    fn is_canceled(&self) -> bool {
+        self.canceled.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+/// What [`load_model`] answers when the panel stopped waiting for it.
+pub const LOAD_CANCELED: &str = "canceled";
+
 /// Where the panel's data has got to.
 enum Load {
     /// A fetch is out.
@@ -202,6 +237,8 @@ enum Load {
     Ready(usize),
     /// It failed; the driver's own message.
     Failed(SharedString),
+    /// The user stopped waiting for it.
+    Canceled,
 }
 
 /// What an export last reported.
@@ -247,6 +284,10 @@ pub struct ErdPane {
     target: ErdTarget,
     /// Where the fetch has got to.
     load: Load,
+    /// The load in flight's progress, shared with the task reading it.
+    progress: Arc<LoadProgress>,
+    /// Redraws the progress line while a load runs.
+    _ticker: Option<gpui::Task<()>>,
     /// The canvas.
     view: Entity<ErdView>,
     /// The table names, in the order the canvas indexes them by.
@@ -274,6 +315,7 @@ impl ErdPane {
     /// "loading…" for ever. The host subscribes and then calls
     /// [`ErdPane::refresh`].
     pub fn new(target: ErdTarget, cx: &mut Context<Self>) -> Self {
+        let progress = Arc::new(LoadProgress::default());
         // Whatever the last diagram was left showing. A preference the user set
         // on one schema is a preference about them rather than about that
         // schema, so a diagram opened afterwards opens the same way.
@@ -304,6 +346,8 @@ impl ErdPane {
         Self {
             target,
             load: Load::Running,
+            progress,
+            _ticker: None,
             view,
             tables: Vec::new(),
             focus_handle: cx.focus_handle(),
@@ -325,7 +369,14 @@ impl ErdPane {
 
     /// Asks for the model again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        // A new count for the new load; one still running on the old one is
+        // told to stop, and its answer will not be taken.
+        self.progress
+            .canceled
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.progress = Arc::new(LoadProgress::default());
         self.load = Load::Running;
+        self.start_ticker(cx);
         self.notice = None;
         // A menu naming a box of the diagram being replaced would act on
         // whatever took that index in the new one.
@@ -334,8 +385,66 @@ impl ErdPane {
         cx.notify();
     }
 
+    /// The progress the next load reports into, for the host to hand the
+    /// task that reads the catalog.
+    pub fn progress(&self) -> Arc<LoadProgress> {
+        self.progress.clone()
+    }
+
+    /// Redraws the panel a few times a second while a load runs, so the count
+    /// moves; stops on its own once the load is over.
+    fn start_ticker(&mut self, cx: &mut Context<Self>) {
+        self._ticker = Some(cx.spawn(async move |pane, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(250))
+                    .await;
+                let running = pane
+                    .update(cx, |pane, cx| {
+                        cx.notify();
+                        pane.is_loading()
+                    })
+                    .unwrap_or(false);
+                if !running {
+                    return;
+                }
+            }
+        }));
+    }
+
+    /// "Cancel": stops waiting for the load in flight.
+    ///
+    /// The loop reading the keys stops at the next table, and the panel says
+    /// it was canceled with "Reload" beside it; nothing it read so far is kept.
+    pub fn cancel_load(&mut self, cx: &mut Context<Self>) {
+        if !self.is_loading() {
+            return;
+        }
+        self.progress
+            .canceled
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.load = Load::Canceled;
+        self._ticker = None;
+        cx.notify();
+    }
+
+    /// Records what the fetch reporting into `progress` produced — nothing,
+    /// when that is not the load the panel is waiting on any more.
+    pub fn deliver_for(
+        &mut self,
+        progress: &Arc<LoadProgress>,
+        outcome: Result<ErdDiagram, SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if !Arc::ptr_eq(progress, &self.progress) || progress.is_canceled() {
+            return;
+        }
+        self.deliver(outcome, cx);
+    }
+
     /// Records what a fetch produced.
     pub fn deliver(&mut self, outcome: Result<ErdDiagram, SharedString>, cx: &mut Context<Self>) {
+        self._ticker = None;
         match outcome {
             Ok(diagram) => {
                 self.load = Load::Ready(diagram.model.tables.len());
@@ -715,14 +824,43 @@ impl ErdPane {
     }
 
     /// The body: the canvas, or the one line that stands in for it.
-    fn render_body(&self, chrome: &Theme) -> gpui::AnyElement {
+    fn render_body(&self, chrome: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         match &self.load {
-            Load::Running => note(ts!("erd.loading"), chrome.text_muted).into_any_element(),
+            Load::Running => {
+                let text = match self.progress.counts() {
+                    Some((done, total)) => ts!("erd.loading_tables", done = done, total = total),
+                    None => ts!("erd.loading"),
+                };
+                let this = cx.entity();
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(chrome.text_muted)
+                            .child(text),
+                    )
+                    .child(
+                        Button::new("erd-cancel-load", ts!("common.cancel"))
+                            .compact()
+                            .variant(ButtonVariant::Secondary)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| pane.cancel_load(cx));
+                            }),
+                    )
+                    .into_any_element()
+            }
             Load::Failed(message) => note(
                 ts!("erd.load_failed", error = message.to_string()),
                 chrome.danger,
             )
             .into_any_element(),
+            Load::Canceled => note(ts!("erd.load_canceled"), chrome.text_muted).into_any_element(),
             // A schema with no tables draws an empty canvas, which reads as a
             // diagram that failed rather than as a schema with nothing in it.
             Load::Ready(0) => note(ts!("erd.empty"), chrome.text_muted).into_any_element(),
@@ -743,7 +881,7 @@ impl Render for ErdPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
         let toolbar = self.render_toolbar(&chrome, cx);
-        let body = self.render_body(&chrome);
+        let body = self.render_body(&chrome, cx);
         let context_menu = self.render_context_menu(cx);
 
         div()
@@ -807,7 +945,12 @@ fn note(message: SharedString, color: gpui::Hsla) -> impl IntoElement {
 /// leave from. That is not tidiness — the box positions saved in
 /// `erd/<profile-uuid>.json` are keyed by table name, and a layout that came
 /// out differently on the next fetch would make the saved file look wrong.
-pub fn load_model(session: &Session, target: &ErdTarget) -> Result<ErdModel, String> {
+pub fn load_model(
+    session: &Session,
+    target: &ErdTarget,
+    progress: &LoadProgress,
+) -> Result<ErdModel, String> {
+    use std::sync::atomic::Ordering;
     let scope = &target.scope;
     let scoped = |kind: &str| {
         let mut request = DescribeRequest::new(kind);
@@ -862,7 +1005,13 @@ pub fn load_model(session: &Session, target: &ErdTarget) -> Result<ErdModel, Str
 
     let mut tables: Vec<ErdTable> = Vec::with_capacity(names.len());
     let mut edges: Vec<Edge> = Vec::new();
+    progress.total.store(names.len(), Ordering::Release);
     for name in &names {
+        // Between tables, where the session is free: the two calls of one
+        // table are each a round trip that runs to its end.
+        if progress.is_canceled() {
+            return Err(LOAD_CANCELED.to_string());
+        }
         let keyed = |kind: &str| {
             let mut request = scoped(kind);
             request.table = Some(name.clone());
@@ -907,6 +1056,7 @@ pub fn load_model(session: &Session, target: &ErdTarget) -> Result<ErdModel, Str
             columns,
         });
         edges.extend(edges_of(name, &imported, scope));
+        progress.done.fetch_add(1, Ordering::AcqRel);
     }
 
     let model = ErdModel {
@@ -1075,12 +1225,39 @@ mod tests {
             .unwrap_or_else(|| panic!("no column {name} in {:?}", table.columns))
     }
 
+    /// The load counts the tables it has read the keys of, out of how many
+    /// there are, and stops between tables once the panel stops waiting.
+    #[test]
+    fn a_load_counts_its_tables_and_stops_when_canceled() {
+        let connected = crate::explorer::tests::h2_fixture("erd-progress");
+        let progress = LoadProgress::default();
+        load_model(connected.session(), &target("APP"), &progress).expect("H2 answers");
+        let (done, total) = progress.counts().expect("the list came in");
+        assert_eq!(done, total);
+        assert!(total >= 2);
+
+        let canceled = LoadProgress::default();
+        canceled
+            .canceled
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            load_model(connected.session(), &target("APP"), &canceled).map(|_| ()),
+            Err(LOAD_CANCELED.to_string())
+        );
+        connected.close().expect("close");
+    }
+
     /// The whole loader against a real product: two tables, one foreign key
     /// between them, and the marks a box is drawn with.
     #[test]
     fn a_schema_with_a_foreign_key_becomes_two_boxes_and_one_line() {
         let connected = crate::explorer::tests::h2_fixture("erd-model");
-        let model = load_model(connected.session(), &target("APP")).expect("H2 answers");
+        let model = load_model(
+            connected.session(),
+            &target("APP"),
+            &LoadProgress::default(),
+        )
+        .expect("H2 answers");
 
         // The view is not a table and the sequence is not either, so the
         // fixture's four objects come down to two boxes.
@@ -1144,8 +1321,18 @@ mod tests {
     #[test]
     fn the_same_schema_loads_the_same_way_twice() {
         let connected = crate::explorer::tests::h2_fixture("erd-determinism");
-        let once = load_model(connected.session(), &target("APP")).expect("H2 answers");
-        let twice = load_model(connected.session(), &target("APP")).expect("H2 answers");
+        let once = load_model(
+            connected.session(),
+            &target("APP"),
+            &LoadProgress::default(),
+        )
+        .expect("H2 answers");
+        let twice = load_model(
+            connected.session(),
+            &target("APP"),
+            &LoadProgress::default(),
+        )
+        .expect("H2 answers");
         assert_eq!(once, twice);
     }
 
@@ -1153,8 +1340,12 @@ mod tests {
     #[test]
     fn an_unknown_schema_is_an_empty_diagram() {
         let connected = crate::explorer::tests::h2_fixture("erd-empty");
-        let model =
-            load_model(connected.session(), &target("NOSUCHSCHEMA")).expect("an empty scope loads");
+        let model = load_model(
+            connected.session(),
+            &target("NOSUCHSCHEMA"),
+            &LoadProgress::default(),
+        )
+        .expect("an empty scope loads");
         assert!(model.tables.is_empty(), "{:?}", model.tables);
         assert!(model.relations.is_empty());
     }
@@ -1258,6 +1449,53 @@ mod tests {
             assert!(panel.read(cx).is_loading());
             assert!(panel.read(cx).table_count().is_none());
         });
+    }
+
+    /// "Cancel" stops the wait at once, and the answer of the load it stopped
+    /// waiting for is not taken when it arrives after all.
+    #[gpui::test]
+    fn a_canceled_load_ignores_its_late_answer(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::app_settings::init(cx);
+            rugpui::init(cx);
+        });
+        let window = cx.add_window(|_window, cx| ErdPane::new(target("PUBLIC"), cx));
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut cx, |panel, _window, cx| {
+                panel.refresh(cx);
+                panel
+                    .progress
+                    .total
+                    .store(40, std::sync::atomic::Ordering::Release);
+                panel
+                    .progress
+                    .done
+                    .store(12, std::sync::atomic::Ordering::Release);
+            })
+            .expect("the window is open");
+        // Drawn with its count and its Cancel.
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |panel, _window, cx| {
+                let late = panel.progress();
+                panel.cancel_load(cx);
+                assert!(!panel.is_loading());
+                panel.deliver_for(
+                    &late,
+                    Ok(ErdDiagram {
+                        model: ErdModel {
+                            tables: Vec::new(),
+                            relations: Vec::new(),
+                        },
+                        saved: HashMap::new(),
+                    }),
+                    cx,
+                );
+                assert!(panel.table_count().is_none(), "the late answer was taken");
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
     }
 
     /// The request has to reach a subscriber registered *after* the panel was

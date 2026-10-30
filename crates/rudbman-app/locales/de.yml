@@ -468,6 +468,7 @@ query:
 
 data:
   loading: wird geladen…
+  load_canceled: Das Laden der Zeilen wurde abgebrochen.
   refresh: Aktualisieren
   empty: Diese Tabelle hat keine Zeilen.
   row_count: "%{count} Zeilen"
@@ -632,6 +633,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: wird geladen…
+  loading_tables: "Schlüssel von %{done} von %{total} Tabellen gelesen…"
+  load_canceled: Das Laden des Diagramms wurde abgebrochen.
   load_failed: "Das Diagramm konnte nicht gezeichnet werden: %{error}"
   empty: Dieses Schema enthält keine Tabellen.
   auto_arrange: Anordnen

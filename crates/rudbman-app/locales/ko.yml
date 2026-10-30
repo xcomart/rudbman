@@ -468,6 +468,7 @@ query:
 
 data:
   loading: 불러오는 중…
+  load_canceled: 행 불러오기를 취소했습니다.
   refresh: 새로 고침
   empty: 이 테이블에는 행이 없습니다.
   row_count: "%{count}행"
@@ -632,6 +633,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: 불러오는 중…
+  loading_tables: "테이블 %{total}개 중 %{done}개의 키를 읽었습니다…"
+  load_canceled: 다이어그램 불러오기를 취소했습니다.
   load_failed: "다이어그램을 그리지 못했습니다: %{error}"
   empty: 이 스키마에는 테이블이 없습니다.
   auto_arrange: 자동 배치

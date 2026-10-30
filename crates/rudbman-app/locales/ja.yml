@@ -468,6 +468,7 @@ query:
 
 data:
   loading: 読み込み中…
+  load_canceled: 行の読み込みをキャンセルしました。
   refresh: 再読み込み
   empty: このテーブルに行はありません。
   row_count: "%{count} 行"
@@ -632,6 +633,8 @@ erd:
   tab: "ER図 — %{scope}"
   tab_all: ER図
   loading: 読み込み中…
+  loading_tables: "%{total} 個のテーブルのうち %{done} 個のキーを読み込みました…"
+  load_canceled: ダイアグラムの読み込みをキャンセルしました。
   load_failed: "図を描画できませんでした: %{error}"
   empty: このスキーマにはテーブルがありません。
   auto_arrange: 自動整列
