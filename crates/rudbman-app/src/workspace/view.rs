@@ -512,6 +512,7 @@ impl Render for Workspace {
                     workspace.clear_tab_drop(cx);
                 }),
             )
+            .on_action(cx.listener(Self::open_app_menu_action))
             .on_action(cx.listener(actions::unless_held(Self::new_connection_action)))
             .on_action(cx.listener(actions::unless_held(Self::open_settings_action)))
             .on_action(cx.listener(actions::unless_held(Self::show_about_action)))
@@ -601,6 +602,7 @@ impl Workspace {
         Some(
             rugpui::ContextMenu::new("workspace-context")
                 .position(menu.position)
+                .highlight_first(menu.by_keyboard)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
                     this.update(cx, |workspace, cx| {
@@ -881,7 +883,11 @@ impl Workspace {
 
         MenuButton::new("app-menu")
             .tooltip(ts!("menu.tip_menu"))
+            // A tab stop, so the menu is a keyboard's way in as well as
+            // `F10`'s; Enter, Space or Down open it on its first row.
+            .tab_index(0)
             .open(self.menu_open)
+            .highlight_first(self.menu_by_keyboard)
             .entries(entries)
             .on_open_change(move |open, _window, cx| {
                 this.update(cx, |workspace, cx| workspace.set_menu_open(open, cx));
@@ -1355,11 +1361,14 @@ impl Workspace {
                     this.update(cx, |workspace, cx| workspace.open_profile(id, window, cx));
                 }
             },
-            Some(std::rc::Rc::new(move |id, position, _window, cx| {
-                this.update(cx, |workspace, cx| {
-                    workspace.open_context_menu(ContextTarget::Profile(id), position, cx);
-                });
-            })),
+            Some(std::rc::Rc::new(
+                move |id, position, by_keyboard, _window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.open_context_menu(ContextTarget::Profile(id), position, cx);
+                        workspace.context_by_keyboard(by_keyboard);
+                    });
+                },
+            )),
             None,
         );
 

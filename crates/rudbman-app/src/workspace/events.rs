@@ -87,13 +87,18 @@ impl Workspace {
             // nothing — it is the sentence saying why its parent could not
             // be read — so every command would be grayed, and a panel of
             // nothing but grayed rows says less than no panel.
-            ExplorerEvent::ContextMenu { node, position } => {
+            ExplorerEvent::ContextMenu {
+                node,
+                position,
+                by_keyboard,
+            } => {
                 if !matches!(node, NodeId::Error(_)) {
                     self.open_context_menu(
                         ContextTarget::Explorer(Box::new(node.clone())),
                         *position,
                         cx,
                     );
+                    self.context_by_keyboard(*by_keyboard);
                 }
             }
         }

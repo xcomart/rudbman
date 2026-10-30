@@ -437,6 +437,13 @@ pub struct DataPane {
     /// The Cancel button of the apply preview and the discard question, which
     /// takes the keyboard when either opens.
     confirm_focus: FocusHandle,
+    /// Whether `Shift+F10` or the Menu key opened the menu showing, so it
+    /// opens on its first row.
+    menu_by_keyboard: bool,
+    /// Where the grid was drawn last, for the menu `Shift+F10` opens over it:
+    /// the grid does not say where its cells are, so the menu hangs just
+    /// inside its top edge.
+    grid_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     /// Reaches the driver under the load in flight, for its "Cancel"; `None`
     /// while nothing is loading.
     canceller: Option<rudbman_jdbc::Canceller>,
@@ -521,6 +528,8 @@ impl DataPane {
             apply_error: None,
             focus_handle: cx.focus_handle(),
             confirm_focus: cx.focus_handle(),
+            menu_by_keyboard: false,
+            grid_bounds: std::rc::Rc::default(),
             lob_dialog: None,
             lob_events: None,
         }
@@ -889,6 +898,7 @@ impl DataPane {
                                     target: *target,
                                     position: *position,
                                 });
+                                pane.menu_by_keyboard = false;
                                 cx.notify();
                             }
                         },
@@ -1712,6 +1722,7 @@ impl DataPane {
         Some(
             ContextMenu::new("data-context")
                 .position(position)
+                .highlight_first(self.menu_by_keyboard)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
                     this.update(cx, |pane, cx| {
@@ -1939,13 +1950,22 @@ impl DataPane {
             Load::Ready(rows) if rows.grid.read(cx).source().row_count() == 0 => {
                 note(ts!("data.empty"), chrome.text_muted)
             }
-            Load::Ready(rows) => div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .child(rows.grid.clone())
-                .into_any_element(),
+            Load::Ready(rows) => {
+                let bounds = self.grid_bounds.clone();
+                div()
+                    .relative()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(rows.grid.clone())
+                    .child(
+                        gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    )
+                    .into_any_element()
+            }
         }
     }
 }
@@ -2038,6 +2058,25 @@ impl Render for DataPane {
         div()
             .id("data-pane")
             .key_context(KEY_CONTEXT)
+            // `Shift+F10` and the Menu key over the grid: its cell menu, hung
+            // just inside the grid's top edge.
+            .on_action(
+                cx.listener(|pane, _: &rugpui::OpenContextMenu, window, cx| {
+                    let focused = pane.grid().is_some_and(|grid| {
+                        grid.read(cx).focus_handle(cx).contains_focused(window, cx)
+                    });
+                    if !focused {
+                        cx.propagate();
+                        return;
+                    }
+                    pane.context_menu = Some(GridMenu {
+                        target: MenuTarget::Cell,
+                        position: pane.grid_bounds.get().origin + gpui::point(px(16.), px(16.)),
+                    });
+                    pane.menu_by_keyboard = true;
+                    cx.notify();
+                }),
+            )
             .on_action(cx.listener(|pane, _: &SetNullCell, _window, cx| {
                 pane.key_set_null(cx);
             }))
@@ -2958,7 +2997,8 @@ mod tests {
 
     /// The grid's key requests reach the pane: `Delete` over two rows marks
     /// both, a typed character opens the cell holding it, and `Ctrl+V` stages
-    /// a tab-separated block from the cursor on.
+    /// a tab-separated block from the cursor on. `Shift+F10` opens the cell
+    /// menu.
     #[gpui::test]
     fn the_grid_asks_the_pane_to_delete_type_and_paste(cx: &mut TestAppContext) {
         let (connected, profile) = person("data-requests");
@@ -3009,6 +3049,15 @@ mod tests {
             assert_eq!(edits.staged(1, 1), Some(&StagedCell::Text("x".into())));
             assert_eq!(edits.staged(1, 2), Some(&StagedCell::Text("y".into())));
         });
+
+        // `Shift+F10` over the grid: its cell menu, on its first row.
+        visual.dispatch_action(rugpui::OpenContextMenu);
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |pane, _window, _cx| {
+                assert!(pane.context_menu.is_some() && pane.menu_by_keyboard);
+            })
+            .expect("the window is open");
         connected.close().expect("close");
     }
 

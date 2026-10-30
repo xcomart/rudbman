@@ -676,6 +676,13 @@ pub struct QueryPane {
     /// The Cancel button of the apply preview and the discard question, which
     /// takes the keyboard when either opens.
     confirm_focus: FocusHandle,
+    /// Whether `Shift+F10` or the Menu key opened the menu showing, so it
+    /// opens on its first row.
+    menu_by_keyboard: bool,
+    /// Where the result grid on screen was drawn last, for the menu
+    /// `Shift+F10` opens over it: the grid does not say where its cells are,
+    /// so the menu hangs just inside its top edge.
+    grid_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     /// Whether "throw the staged edits away" is waiting to be confirmed.
     ///
     /// A modal of the pane's own, exactly as the data pane's is and for the
@@ -862,6 +869,7 @@ impl QueryPane {
                         pane.context_menu = Some(PaneMenu::Editor {
                             position: *position,
                         });
+                        pane.menu_by_keyboard = false;
                         cx.notify();
                     }
                     // The toolbar belongs to the pane, so editor changes must
@@ -920,6 +928,8 @@ impl QueryPane {
             next_tab_id: 1,
             context_menu: None,
             confirm_discard: false,
+            menu_by_keyboard: false,
+            grid_bounds: std::rc::Rc::default(),
             confirm_focus: cx.focus_handle(),
             preview: None,
             applying: false,

@@ -91,6 +91,9 @@ impl Workspace {
         if open {
             self.close_context_menus(cx);
         }
+        // `F10` sets it again after this; every other way in is the pointer's
+        // or the trigger's own, which highlights by itself.
+        self.menu_by_keyboard = false;
         if self.menu_open != open {
             self.menu_open = open;
             cx.notify();
@@ -110,8 +113,20 @@ impl Workspace {
     ) {
         self.menu_open = false;
         self.close_pane_context_menus(cx);
-        self.context_menu = Some(OpenContextMenu { target, position });
+        self.context_menu = Some(OpenContextMenu {
+            target,
+            position,
+            by_keyboard: false,
+        });
         cx.notify();
+    }
+
+    /// Marks the shell's open context menu as raised from the keyboard, so it
+    /// opens on its first row; see [`Workspace::open_context_menu`].
+    pub(super) fn context_by_keyboard(&mut self, by_keyboard: bool) {
+        if let Some(menu) = &mut self.context_menu {
+            menu.by_keyboard = by_keyboard;
+        }
     }
 
     /// Puts away every context menu anywhere in the window.

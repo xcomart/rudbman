@@ -670,6 +670,9 @@ struct OpenContextMenu {
     target: ContextTarget,
     /// Where the pointer was, in window coordinates.
     position: Point<Pixels>,
+    /// Whether `Shift+F10` or the Menu key opened it, so it opens on its
+    /// first row.
+    by_keyboard: bool,
 }
 
 /// A query pane's write confirmation, waiting for an answer.
@@ -740,6 +743,8 @@ struct Workspace {
     update: Entity<UpdateDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
+    /// Whether `F10` opened it, so it opens on its first row.
+    menu_by_keyboard: bool,
     /// The shell's own right-click menu, while one is open.
     ///
     /// Mutually exclusive with [`Workspace::menu_open`]: the dropdown and a
@@ -915,6 +920,7 @@ impl Workspace {
             backup,
             update,
             menu_open: false,
+            menu_by_keyboard: false,
             context_menu: None,
             confirm: None,
             close_question: None,

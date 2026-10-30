@@ -31,6 +31,26 @@ impl Workspace {
         self.open_connect(window, cx);
     }
 
+    /// `F10`: the application menu, on its first row.
+    ///
+    /// Off macOS only, which is where the ☰ menu is: on macOS the commands are
+    /// the menu bar's, and the key is left to whatever it means there. Held
+    /// like the other shell commands while a dialog or a sheet is up.
+    pub(super) fn open_app_menu_action(
+        &mut self,
+        _: &rugpui::OpenAppMenu,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if cfg!(target_os = "macos") || self.shortcuts_held(cx) {
+            cx.propagate();
+            return;
+        }
+        self.set_menu_open(true, cx);
+        self.menu_by_keyboard = true;
+        cx.notify();
+    }
+
     /// Opens the settings dialog.
     pub(super) fn open_settings_action(
         &mut self,

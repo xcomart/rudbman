@@ -64,11 +64,13 @@
 //! is routine — permissions, a catalog the product exposes but will not open —
 //! and it must not cost the user the tree.
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Pixels,
-    Point, Render, SharedString, Subscription, Window, div, prelude::*, px,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    Pixels, Point, Render, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session};
 use rugpui::{
@@ -1035,10 +1037,14 @@ pub enum ExplorerEvent {
     /// the selection onto the node, so the menu the workspace builds and the
     /// row the user is looking at name the same thing.
     ContextMenu {
-        /// The node the pointer went down on.
+        /// The node the pointer went down on, or the selected one.
         node: NodeId,
-        /// Where the pointer was, in window coordinates.
+        /// Where the pointer was, in window coordinates, or — from the
+        /// keyboard — a point just inside the top of the tree.
         position: Point<Pixels>,
+        /// Whether `Shift+F10` or the Menu key asked, so the menu opens on its
+        /// first row for the arrow keys to start from.
+        by_keyboard: bool,
     },
 }
 
@@ -1046,6 +1052,10 @@ pub enum ExplorerEvent {
 pub struct Explorer {
     tree: Entity<TreeView<ExplorerSource>>,
     focus_handle: FocusHandle,
+    /// Where the tree was drawn last, for the menu `Shift+F10` opens: the
+    /// tree does not say where its rows are, so the menu hangs just inside
+    /// its top edge.
+    tree_bounds: Rc<Cell<Bounds<Pixels>>>,
     generation: u64,
     pending: HashMap<NodeId, u64>,
     /// Keeps the tree's subscription alive.
@@ -1081,6 +1091,7 @@ impl Explorer {
                 cx.emit(ExplorerEvent::ContextMenu {
                     node: id.clone(),
                     position: *position,
+                    by_keyboard: false,
                 });
             }
         });
@@ -1088,6 +1099,7 @@ impl Explorer {
         Self {
             tree,
             focus_handle: cx.focus_handle(),
+            tree_bounds: Rc::default(),
             generation: 0,
             pending: HashMap::new(),
             _events: events,
@@ -1308,13 +1320,35 @@ impl Render for Explorer {
                     .child(ts!("explorer.empty"))
                     .into_any_element()
             } else {
+                let bounds = self.tree_bounds.clone();
                 div()
+                    .relative()
                     .flex()
                     .flex_1()
                     .min_h_0()
                     .child(self.tree.clone())
+                    .child(
+                        gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    )
                     .into_any_element()
             })
+            // `Shift+F10` and the Menu key: the selected node's menu, the one a
+            // right click on it raises.
+            .on_action(
+                cx.listener(|explorer, _: &rugpui::OpenContextMenu, _window, cx| {
+                    let Some(node) = explorer.tree.read(cx).selected().cloned() else {
+                        return;
+                    };
+                    let origin = explorer.tree_bounds.get().origin;
+                    cx.emit(ExplorerEvent::ContextMenu {
+                        node,
+                        position: origin + gpui::point(px(16.), px(16.)),
+                        by_keyboard: true,
+                    });
+                }),
+            )
     }
 }
 

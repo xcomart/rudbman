@@ -182,8 +182,11 @@ macOS), with its chord beside it.
 | | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | | <kbd>Ctrl</kbd>+<kbd>B</kbd> | Show or hide the explorer |
 | | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit (asks first when something would be lost, as closing the window does) |
+| | <kbd>F10</kbd> | Open the ☰ menu on its first row (Linux and Windows; on macOS the commands are in the menu bar) |
+| | <kbd>Shift</kbd>+<kbd>F10</kbd>, <kbd>Menu</kbd> | Open the context menu of what has the keyboard: the explorer's selection, the SQL editor at the caret, the grid's cell, a saved connection on the welcome screen |
 | Tabs | <kbd>Ctrl</kbd>+<kbd>T</kbd> | New query tab |
 | | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the tab on top (Linux and Windows) |
+| | Middle-click a tab | Close it, asking first as <kbd>Ctrl</kbd>+<kbd>W</kbd> does (also on connection tabs) |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | Reopen the query or builder tab closed last |
 | | <kbd>Ctrl</kbd>+<kbd>PgDn</kbd> / <kbd>PgUp</kbd>, <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab of the pane (macOS: <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd> / <kbd>←</kbd>) |
 | | <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>8</kbd>, <kbd>Ctrl</kbd>+<kbd>9</kbd> | That tab, the last tab |

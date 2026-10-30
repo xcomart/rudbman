@@ -211,6 +211,11 @@ impl Render for QueryPane {
                 }),
             )
             .on_action(
+                cx.listener(|pane, _: &rugpui::OpenContextMenu, window, cx| {
+                    pane.open_menu_from_keyboard(window, cx);
+                }),
+            )
+            .on_action(
                 cx.listener(|pane, _: &super::keys::RollbackTransaction, _, cx| {
                     pane.finish_transaction(TransactionAction::Rollback, cx);
                 }),
@@ -507,6 +512,7 @@ impl QueryPane {
         Some(
             ContextMenu::new("query-context")
                 .position(position)
+                .highlight_first(self.menu_by_keyboard)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
                     this.update(cx, |pane, cx| {
@@ -546,13 +552,22 @@ impl QueryPane {
             Some(ResultTab {
                 body: ResultBody::Rows(rows),
                 ..
-            }) => div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .child(rows.grid.clone())
-                .into_any_element(),
+            }) => {
+                let bounds = self.grid_bounds.clone();
+                div()
+                    .relative()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(rows.grid.clone())
+                    .child(
+                        gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    )
+                    .into_any_element()
+            }
             Some(ResultTab {
                 id,
                 body: ResultBody::Log(log),

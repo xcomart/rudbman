@@ -930,6 +930,19 @@ from the top rather than resumed, so a tab saved meanwhile is not asked about
 and a tab gone meanwhile is not closed twice. On Linux and Windows `Ctrl+W`
 closes the tab on top; on macOS `Cmd+W` remains "close pane" for now.
 
+Menus open from the keyboard as well as the pointer. `F10` (off macOS, where
+the ☰ button is) opens the application menu, and the button itself is a tab
+stop. `Shift+F10` and the Menu key (`rugpui::OpenContextMenu`) open the menu of
+the surface that has the keyboard — the explorer's selected node, the SQL
+editor at its caret (`EditorView::caret_bounds`), a data or result grid over
+its cursor cell, a focused saved connection on the welcome screen — and every
+menu opened that way starts on its first row (`highlight_first`). Neither the
+tree nor the grid says where its rows are, so those menus hang just inside the
+surface's top edge, read from a `canvas` drawn over it. The tab strips and the
+ERD and builder canvases are pointer-only: a strip never holds the keyboard,
+and a canvas menu is about whatever is under the pointer. A middle click on a
+tab closes it through the same `request_close` as its × button.
+
 Feedback that belongs to no pane goes to a toast (`rugpui_shell::show_toast`,
 drawn by `toast_stack()` as the root's last child, above the status bar): a
 chord that opens a tab over no session (`Workspace::say_not_live` — no

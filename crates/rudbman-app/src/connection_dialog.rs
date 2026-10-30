@@ -90,13 +90,15 @@ const BODY_MAX_HEIGHT: f32 = 480.;
 /// Compiled away outside a test build; see [`profile_rows`].
 pub(crate) const ROW_SELECTOR: &str = "profile-row:";
 
-/// What a right-click on a saved-profile row is answered with.
+/// What a right-click on a saved-profile row is answered with, and
+/// `Shift+F10` or the Menu key on a focused one: the flag says it was the
+/// keyboard, so the menu opens on its first row.
 ///
 /// Shared rather than generic because the one list that has no menu — the
 /// dialog's own — passes `None`, and a `None` of an unnameable closure type is
 /// something the caller cannot write.
 pub(crate) type ProfileContextHandler =
-    std::rc::Rc<dyn Fn(Uuid, Point<Pixels>, &mut Window, &mut App)>;
+    std::rc::Rc<dyn Fn(Uuid, Point<Pixels>, bool, &mut Window, &mut App)>;
 
 /// Folder disclosure controls used by the connection dialog.
 pub(crate) struct ProfileFolderControls<'a> {
@@ -2903,6 +2905,7 @@ pub(crate) fn profile_rows(
                 });
             let on_click = on_click.clone();
             let on_context = on_context.clone();
+            let row_bounds = std::rc::Rc::new(std::cell::Cell::new(gpui::Bounds::default()));
             rows.push(
                 div()
                     .id(("profile-row", index))
@@ -2946,13 +2949,30 @@ pub(crate) fn profile_rows(
                     // belongs to the menu about to open rather than to the
                     // screen behind it.
                     .when_some(on_context, |row, on_context| {
-                        row.on_mouse_down(
-                            MouseButton::Right,
-                            move |event: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                on_context(id, event.position, window, cx);
-                            },
-                        )
+                        let keyed = on_context.clone();
+                        let drawn = row_bounds.clone();
+                        row.relative()
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                move |event: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    on_context(id, event.position, false, window, cx);
+                                },
+                            )
+                            // `Shift+F10` and the Menu key on the focused row:
+                            // the same menu, under the row.
+                            .on_action(move |_: &rugpui::OpenContextMenu, window, cx| {
+                                let below = drawn.get().bottom_left();
+                                keyed(id, below + gpui::point(px(16.), px(0.)), true, window, cx);
+                            })
+                            .child(
+                                gpui::canvas(
+                                    move |bounds, _, _| row_bounds.set(bounds),
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
+                            )
                     })
                     .into_any_element(),
             );

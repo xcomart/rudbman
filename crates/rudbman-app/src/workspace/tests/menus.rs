@@ -283,6 +283,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
                 cx.emit(ExplorerEvent::ContextMenu {
                     node: table.clone(),
                     position: at,
+                    by_keyboard: false,
                 });
             });
         })
@@ -306,6 +307,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
                 cx.emit(ExplorerEvent::ContextMenu {
                     node: NodeId::Error(Box::new(table.clone())),
                     position: at,
+                    by_keyboard: false,
                 });
             });
         })
@@ -638,4 +640,77 @@ fn escape_closes_the_context_menu_before_the_dialog_under_it(cx: &mut gpui::Test
             assert!(workspace.menu_open);
         })
         .expect("the window is open");
+}
+
+/// The menus open from the keyboard, on their first row: `F10` the
+/// application menu (off macOS, where the ☰ button is), `Shift+F10` the
+/// explorer's selected node and the SQL editor at its caret. The grid's half
+/// is the data pane's own test.
+#[gpui::test]
+fn the_menus_open_from_the_keyboard(cx: &mut gpui::TestAppContext) {
+    let (window, id) = workspace_over_h2_with(
+        "menus-keyboard",
+        &[
+            "create table KEYS_T (ID int primary key)",
+            "insert into KEYS_T values (1)",
+        ],
+        cx,
+    );
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.focus_shell(window, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+
+    if !cfg!(target_os = "macos") {
+        cx.dispatch_action(rugpui::OpenAppMenu);
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(workspace.menu_open && workspace.menu_by_keyboard);
+                workspace.set_menu_open(false, cx);
+            })
+            .expect("the window is open");
+    }
+
+    select_table(&window, &mut cx, id, "PUBLIC", "KEYS_T");
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace
+                .explorer
+                .update(cx, |explorer, cx| explorer.take_focus(window, cx));
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    cx.dispatch_action(rugpui::OpenContextMenu);
+    cx.run_until_parked();
+    window
+        .update(&mut cx, |workspace, _window, _cx| {
+            let menu = workspace.context_menu.as_ref().expect("a menu is open");
+            assert!(menu.by_keyboard);
+            assert!(matches!(&menu.target, ContextTarget::Explorer(_)));
+            workspace.context_menu = None;
+        })
+        .expect("the window is open");
+
+    let query = window
+        .update(&mut cx, |workspace, window, cx| {
+            let query = workspace
+                .open_query("select 1", window, cx)
+                .expect("a live connection");
+            query.update(cx, |pane, cx| pane.focus_editor(window, cx));
+            query
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    cx.dispatch_action(rugpui::OpenContextMenu);
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        assert!(
+            query.read(cx).has_context_menu(),
+            "the editor's menu opened"
+        );
+    });
 }

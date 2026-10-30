@@ -25,6 +25,39 @@ impl QueryPane {
         cx.notify();
     }
 
+    /// `Shift+F10` and the Menu key: the menu of whichever surface of the
+    /// pane has the keyboard, as a right click there would raise it — the
+    /// editor's at the caret, the result grid's over its cursor cell, hung
+    /// just inside the grid. Anywhere else the key goes on up.
+    pub(super) fn open_menu_from_keyboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.read(cx).focus_handle(cx).is_focused(window) {
+            let caret = self.editor.read(cx).caret_bounds();
+            let Some(caret) = caret else {
+                cx.propagate();
+                return;
+            };
+            self.close_completion(cx);
+            self.context_menu = Some(PaneMenu::Editor {
+                position: caret.bottom_left(),
+            });
+        } else if let Some(id) = self.active_id()
+            && self
+                .grid_of(id)
+                .is_some_and(|grid| grid.read(cx).focus_handle(cx).contains_focused(window, cx))
+        {
+            self.context_menu = Some(PaneMenu::Grid {
+                id,
+                target: MenuTarget::Cell,
+                position: self.grid_bounds.get().origin + gpui::point(px(16.), px(16.)),
+            });
+        } else {
+            cx.propagate();
+            return;
+        }
+        self.menu_by_keyboard = true;
+        cx.notify();
+    }
+
     /// Puts the pane's right-click menu away.
     ///
     /// What the workspace runs before it opens another overlay, so that only
