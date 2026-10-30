@@ -11,6 +11,13 @@
 //! convention among SQL workbenches that is not a letter chord: a `Ctrl+Alt`
 //! letter is `AltGr` on a Windows keyboard with a national layout, and would
 //! commit a transaction from under a user typing a `ć` into a string.
+//!
+//! macOS takes `F11` for itself (Show Desktop, even with `fn`), and its top
+//! row is media keys unless `fn` is held, so there the two are
+//! `Ctrl+Cmd+C` and `Ctrl+Cmd+R` instead: no `AltGr` to collide with, and a
+//! modifier pair no editing chord uses, so a slip off `Cmd+C` does not commit
+//! anything. `F11`/`F12` stay bound beside them for whoever has given the
+//! function keys back to applications.
 
 use gpui::{App, KeyBinding, actions};
 
@@ -25,6 +32,20 @@ actions!(
         RollbackTransaction,
     ]
 );
+
+/// The commit chord as the toolbar's tooltip names it.
+pub(super) const COMMIT_KEY: &str = if cfg!(target_os = "macos") {
+    "Ctrl+Cmd+C"
+} else {
+    "F11"
+};
+
+/// The rollback chord as the toolbar's tooltip names it.
+pub(super) const ROLLBACK_KEY: &str = if cfg!(target_os = "macos") {
+    "Ctrl+Cmd+R"
+} else {
+    "F12"
+};
 
 /// The key context the whole pane renders in.
 pub(super) const KEY_CONTEXT: &str = "QueryPane";
@@ -44,5 +65,11 @@ pub(super) fn init(cx: &mut App) {
         KeyBinding::new("f11", CommitTransaction, Some(KEY_CONTEXT)),
         KeyBinding::new("f12", RollbackTransaction, Some(KEY_CONTEXT)),
     ]);
+    if cfg!(target_os = "macos") {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-cmd-c", CommitTransaction, Some(KEY_CONTEXT)),
+            KeyBinding::new("ctrl-cmd-r", RollbackTransaction, Some(KEY_CONTEXT)),
+        ]);
+    }
     cx.set_global(Bindings);
 }

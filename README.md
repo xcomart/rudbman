@@ -200,7 +200,7 @@ macOS), with its chord beside it.
 | | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd> | Run the selection |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Run everything |
 | | <kbd>Esc</kbd> | Stop the running statement (also in the results) |
-| | <kbd>F11</kbd> / <kbd>F12</kbd> | Commit / roll back (manual-commit connections) |
+| | <kbd>F11</kbd> / <kbd>F12</kbd> | Commit / roll back (manual-commit connections; macOS: <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>C</kbd> / <kbd>R</kbd>, since F11 is Show Desktop there) |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Format SQL |
 | | <kbd>Ctrl</kbd>+<kbd>Space</kbd> | Completion |
 | | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>H</kbd> | Find / replace |

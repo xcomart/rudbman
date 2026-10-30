@@ -100,7 +100,7 @@ impl QueryPane {
             } else if self.restore_auto_commit {
                 ts!("query.commit_auto")
             } else {
-                format!("{} (F11)", ts!("query.commit")).into()
+                format!("{} ({})", ts!("query.commit"), keys::COMMIT_KEY).into()
             },
             self.can_finish_transaction(),
             chrome,
@@ -121,7 +121,7 @@ impl QueryPane {
             } else if self.restore_auto_commit {
                 ts!("query.rollback_auto")
             } else {
-                format!("{} (F12)", ts!("query.rollback")).into()
+                format!("{} ({})", ts!("query.rollback"), keys::ROLLBACK_KEY).into()
             },
             self.can_finish_transaction(),
             chrome,
