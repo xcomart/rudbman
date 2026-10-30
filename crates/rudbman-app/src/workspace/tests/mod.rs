@@ -219,6 +219,26 @@ const RUN_ALL: &str = if cfg!(target_os = "macos") {
     "ctrl-shift-enter"
 };
 
+/// The chord the shell binds "Save SQL file" to; see `bootstrap::bind_shortcuts`.
+const SAVE: &str = if cfg!(target_os = "macos") {
+    "cmd-s"
+} else {
+    "ctrl-s"
+};
+
+/// The chords the SQL editor binds "go to the end of the document" and
+/// "undo" to, following `rugpui_editor::init` as [`RUN_ALL`] does.
+pub(super) const DOCUMENT_END: &str = if cfg!(target_os = "macos") {
+    "cmd-end"
+} else {
+    "ctrl-end"
+};
+const UNDO: &str = if cfg!(target_os = "macos") {
+    "cmd-z"
+} else {
+    "ctrl-z"
+};
+
 /// Selects one table in the explorer, which is what the builder's action
 /// reads.
 fn select_table(
@@ -294,6 +314,7 @@ fn relation_labels() -> Vec<String> {
 }
 
 mod connections;
+mod files;
 mod menus;
 mod panes;
 mod settings;

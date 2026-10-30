@@ -22,6 +22,8 @@ menu:
   view_structure: 编辑结构
   new_table: 新建表
   open_sql_file: 打开 SQL 文件…
+  save_sql_file: 保存 SQL 文件
+  save_sql_file_as: SQL 文件另存为…
   extract_script: 提取脚本…
   transfer_table: 传输数据行…
   backup_schema: 备份模式（Schema）…
@@ -430,6 +432,10 @@ query:
   hint_network: 与数据库的连接已断开。
   hint_canceled: 语句已被取消。
   open_file_select: 选择 SQL 文件
+  save_failed: "无法保存文件：%{error}"
+  unsaved: 有未保存到文件的更改
+  save_busy: "仍在读取或写入文件，请稍后重试。"
+  file_changed: "自此标签页上次读取或保存以来，磁盘上的文件已被更改，因此未覆盖。请选择保存位置。"
 
 data:
   loading: 正在加载…

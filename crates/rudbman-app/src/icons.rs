@@ -122,6 +122,11 @@ pub const REPLACE: &str = "icons/replace.svg";
 /// Shows and hides the explorer.
 pub const SIDEBAR: &str = "icons/sidebar.svg";
 
+/// The mark behind a query tab's title while the editor holds changes its
+/// file does not: the filled dot editors put there, drawn as a tab mark so
+/// that it carries a tooltip saying so.
+pub const UNSAVED: &str = "icons/unsaved.svg";
+
 /// The explorer tree's disclosure mark on a closed node.
 ///
 /// The tree used to draw `▸` and `▾` as text, and no font size rescued them:
@@ -180,6 +185,7 @@ const OWN: &[(&str, &[u8])] = &[
     (REFRESH, include_bytes!("../assets/icons/refresh.svg")),
     (COPY, include_bytes!("../assets/icons/copy.svg")),
     (SIDEBAR, include_bytes!("../assets/icons/sidebar.svg")),
+    (UNSAVED, include_bytes!("../assets/icons/unsaved.svg")),
     (
         CHEVRON_RIGHT,
         include_bytes!("../assets/icons/chevron-right.svg"),

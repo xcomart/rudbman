@@ -191,6 +191,8 @@ pub(super) fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.new_query"), NewQuery),
                 MenuItem::action(ts!("menu.query_object"), QueryObject),
                 MenuItem::action(ts!("menu.open_sql_file"), OpenSqlFile),
+                MenuItem::action(ts!("menu.save_sql_file"), SaveSqlFile),
+                MenuItem::action(ts!("menu.save_sql_file_as"), SaveSqlFileAs),
                 MenuItem::action(ts!("menu.extract_script"), ExtractScript),
                 MenuItem::action(ts!("menu.transfer_table"), TransferTable),
                 MenuItem::action(ts!("menu.backup_schema"), BackupSchema),
@@ -225,7 +227,7 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
     };
     let pane = PANE_SHORTCUT_MODIFIER;
 
-    cx.bind_keys(vec![
+    let mut bindings = vec![
         KeyBinding::new(&format!("{modifier}-q"), Quit, None),
         KeyBinding::new(&format!("{modifier}-n"), NewConnection, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{modifier}-,"), OpenSettings, Some(KEY_CONTEXT)),
@@ -238,6 +240,9 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
         // `Ctrl+O` is "open a file" everywhere, and the SQL editor binds no `O`
         // chord of its own for it to be taken away from.
         KeyBinding::new(&format!("{modifier}-o"), OpenSqlFile, Some(KEY_CONTEXT)),
+        // Free in the SQL editor, the grid and every panel; "Save as" has its
+        // own entry below, because it has no chord on macOS.
+        KeyBinding::new(&format!("{modifier}-s"), SaveSqlFile, Some(KEY_CONTEXT)),
         // Scoped to the sidebar rather than the window, because the same chord
         // is the editor's "run the statement" — see `explorer::KEY_CONTEXT`.
         KeyBinding::new(
@@ -263,7 +268,11 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
         // binding would never match.
         KeyBinding::new(&format!("{pane}-shift-d"), SplitRight, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-shift-s"), SplitBelow, Some(KEY_CONTEXT)),
-    ]);
+    ];
+    if let Some((chord, _)) = SAVE_AS_SHORTCUT {
+        bindings.push(KeyBinding::new(chord, SaveSqlFileAs, Some(KEY_CONTEXT)));
+    }
+    cx.bind_keys(bindings);
 }
 
 pub(super) fn run() {

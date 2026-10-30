@@ -76,6 +76,10 @@
 mod completion;
 mod editing;
 mod execution;
+mod file;
+pub(crate) use file::{
+    FileStamp, Overwrite, SaveJob, Saved, decode_sql_file, read_sql_file, write_sql_file,
+};
 mod format;
 mod menus;
 mod render;
@@ -673,6 +677,20 @@ pub struct QueryPane {
     /// A "Format SQL" being worked out off the UI thread; see
     /// [`QueryPane::format_sql`]. Dropping it abandons that format.
     format_task: Option<gpui::Task<()>>,
+    /// The file the SQL was read from or last saved to; see [`file`].
+    file: Option<std::path::PathBuf>,
+    /// What that file looked like on disk then; see [`file::FileStamp`].
+    stamp: Option<FileStamp>,
+    /// Whether a save of this pane is writing; see [`QueryPane::begin_save`].
+    saving: bool,
+    /// Whether a restored pane is rereading its file; see
+    /// [`QueryPane::begin_reload`].
+    reloading: bool,
+    /// Whether the draft the workspace restored held changes the file did not.
+    ///
+    /// The editor's own dirty flag cannot carry that across a restart: setting
+    /// the restored text leaves it clean. Cleared by the next save.
+    draft_unsaved: bool,
     _completion_blur: Subscription,
     _editor_events: Subscription,
 }
@@ -859,6 +877,11 @@ impl QueryPane {
             edits: 0,
             saved_draft: RefCell::new(None),
             format_task: None,
+            file: None,
+            stamp: None,
+            saving: false,
+            reloading: false,
+            draft_unsaved: false,
             _completion_blur: completion_blur,
             _editor_events: editor_events,
         }

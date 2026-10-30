@@ -22,6 +22,8 @@ menu:
   view_structure: 構造を編集
   new_table: 新規テーブル
   open_sql_file: SQL ファイルを開く…
+  save_sql_file: SQL ファイルを保存
+  save_sql_file_as: 名前を付けて SQL ファイルを保存…
   extract_script: スクリプトを抽出…
   transfer_table: 行を転送…
   backup_schema: スキーマをバックアップ…
@@ -430,6 +432,10 @@ query:
   hint_network: データベースとの接続が失われました。
   hint_canceled: 文の実行はキャンセルされました。
   open_file_select: SQL ファイルを選択
+  save_failed: "ファイルを保存できませんでした: %{error}"
+  unsaved: ファイルに保存されていない変更
+  save_busy: "ファイルの読み込みまたは書き込みがまだ終わっていません。しばらくしてからもう一度お試しください。"
+  file_changed: "このタブが最後に読み込みまたは保存した後でディスク上のファイルが変更されたため、上書きしませんでした。保存先を選んでください。"
 
 data:
   loading: 読み込み中…

@@ -74,7 +74,10 @@ pub(super) fn render_tab_strip(
             // Stable while the tab lives: an index id would name a different
             // tab after every reorder, shuffling whatever gpui keeps per
             // element — including the drag the reorder itself started.
-            let tab = TabItem::new(("pane-tab", item.entity_id()), title);
+            let mut tab = TabItem::new(("pane-tab", item.entity_id()), title);
+            if item.unsaved(cx) {
+                tab = tab.mark(icons::UNSAVED, ts!("query.unsaved"));
+            }
             match chrome.colors.get(&item.connection(cx)) {
                 Some(color) => tab.dot(*color),
                 None => tab,
@@ -507,6 +510,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::new_query_action))
             .on_action(cx.listener(Self::query_object_action))
             .on_action(cx.listener(Self::open_sql_file_action))
+            .on_action(cx.listener(Self::save_sql_file_action))
+            .on_action(cx.listener(Self::save_sql_file_as_action))
             .on_action(cx.listener(Self::extract_script_action))
             .on_action(cx.listener(Self::transfer_table_action))
             .on_action(cx.listener(Self::backup_schema_action))
@@ -754,6 +759,11 @@ impl Workspace {
         let addable = relation_live
             && self.active_connection().map(|open| open.id)
                 == relation.as_ref().map(|target| target.connection);
+        let query = self.active_query().is_some();
+        let save_as = match SAVE_AS_SHORTCUT {
+            Some((_, label)) => MenuEntry::new(ts!("menu.save_sql_file_as")).shortcut(label),
+            None => MenuEntry::new(ts!("menu.save_sql_file_as")),
+        };
         let entries = vec![
             MenuEntry::new(ts!("menu.new_connection"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+N"))
@@ -770,6 +780,15 @@ impl Workspace {
                 .shortcut(format!("{SHORTCUT_MODIFIER}+O"))
                 .disabled(!live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSqlFile), cx)),
+            // Not gated on the session: saving writes the editor's text, which
+            // a pane whose connection has gone still holds.
+            MenuEntry::new(ts!("menu.save_sql_file"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+S"))
+                .disabled(!query)
+                .on_activate(|window, cx| window.dispatch_action(Box::new(SaveSqlFile), cx)),
+            save_as
+                .disabled(!query)
+                .on_activate(|window, cx| window.dispatch_action(Box::new(SaveSqlFileAs), cx)),
             MenuEntry::new(ts!("menu.extract_script"))
                 .disabled(!relation_live)
                 .on_activate(|window, cx| window.dispatch_action(Box::new(ExtractScript), cx)),

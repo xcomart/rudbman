@@ -882,6 +882,7 @@ Workspaces are saved as `workspaces/<profile-uuid>.json` in the configuration
 directory. The versioned snapshot holds all six tab kinds, tab order and custom
 names, the selected tab in each pane, the active pane, nested splits and ratios,
 query/builder counters, SQL drafts with their selections and editor split,
+the file a query tab is bound to and whether its draft held unsaved changes,
 table-data sorting, detail sub-tabs, and the builder's query and box positions.
 Splitting a pane copies its selected tab into a distinct view in the new pane,
 including its draft and custom name. Object clones bypass the normal navigation
@@ -899,7 +900,9 @@ Changes are coalesced into an autosave, with atomic replacement on a background
 thread. Closing a connection, closing the window, and quitting flush the latest
 snapshot before its views disappear. Restore happens only after a successful
 connection, binds targets to the new session identity, and preserves foreground
-focus when another connection finishes opening. A failed connection cannot
+focus when another connection finishes opening. A bound query tab whose draft
+was saved clean, or empty because it was past the draft size limit, is refilled
+from its file, and saves wait until that read is in. A failed connection cannot
 replace an existing workspace. An unreadable or newer-version snapshot is left
 intact. With multiple sessions on one profile, changed workspaces replace that
 profile's saved state; when several change together, the foreground one wins.
@@ -987,6 +990,18 @@ for.
   and replace, auto-indent, comment toggling, and SQL formatting
   (Ctrl/Cmd+Shift+F, the toolbar or the context menu; the selection or the
   whole script, as one undo step)
+- Files: a query pane is bound to the `.sql` file it was opened from, when the
+  file read as UTF-8, or to the file it was last saved to. Ctrl/Cmd+S writes
+  the editor's text back to that file, and asks where only for an unbound pane;
+  "Save as" (Ctrl+Shift+S, no chord on macOS, where `Cmd+Shift+S` splits the
+  pane) always asks. A bound tab is titled with the file name, a save that
+  binds a new file replaces a name the user gave the tab, and a dot behind the
+  title marks text the file does not hold. A file that did not read as UTF-8
+  opens unbound, so a save never writes replacement characters over it. The
+  binding also records the file's length and modification time; a save in
+  place first checks them, and a file written since — by another program, a
+  split copy, or the same script open on another connection — is left alone
+  while the save dialog asks where to write instead
 - Completion: dialect keywords and types, built-in aggregate/scalar functions,
   schemas, tables/views, and columns
   resolved through names and table aliases in the current query block. Typing

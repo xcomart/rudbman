@@ -113,7 +113,11 @@ JVM bridge.
 - **Script extraction**: any table to a replayable `.sql`, to CSV, or
   through a user template — streamed to the file inside the JVM with progress
   and cancellation. Script execution is the same editor pipeline: open a
-  `.sql` file, run it, get per-statement errors.
+  `.sql` file, run it, get per-statement errors. Ctrl/Cmd+S saves a query tab to
+  its `.sql` file (asking where the first time) and "Save SQL file as…" saves
+  it under a new name; the tab then takes the file's name, and a dot marks
+  changes not yet saved. A file changed on disk since the tab read or saved it
+  is never overwritten in place; the save asks where instead.
 - **Context menus** on every surface that has actions worth reaching for —
   the explorer tree, the result grid, the editor, the ERD and builder
   canvases, and the tab strips.

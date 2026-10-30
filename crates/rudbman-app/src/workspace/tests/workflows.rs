@@ -540,7 +540,8 @@ fn the_split_layout_is_per_connection(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 }
 
-/// Opening a `.sql` file is a query pane with the file already in it.
+/// Opening a `.sql` file is a query pane with the file already in it, bound
+/// to the file and named after it.
 ///
 /// Driven through [`Workspace::load_sql_file`] rather than the action: the
 /// action's first step is a platform file picker, which a headless test has
@@ -568,12 +569,18 @@ fn a_sql_file_opens_as_a_query_pane_with_its_text_in_it(cx: &mut gpui::TestAppCo
                 .active_query()
                 .expect("the file opened a query pane and brought it to the front");
             assert_eq!(pane.read(cx).editor_text(cx), script);
+            // Bound to the file, and named after it, with nothing to save yet.
+            assert_eq!(pane.read(cx).file(), Some(path.as_path()));
+            assert!(!pane.read(cx).is_modified(cx));
+            let pane = workspace.active_pane().unwrap();
+            assert_eq!(tab_titles(workspace, pane, cx), ["report.sql"]);
         })
         .expect("the window is open");
 }
 
 /// A file whose bytes are not UTF-8 still opens: the invalid runs are
-/// replaced rather than the whole file refused.
+/// replaced rather than the whole file refused, and the pane is not bound to
+/// it.
 #[gpui::test]
 fn a_file_that_is_not_utf8_opens_lossily(cx: &mut gpui::TestAppContext) {
     let (window, _id) = workspace_over_h2("open-latin1", cx);
@@ -608,6 +615,9 @@ fn a_file_that_is_not_utf8_opens_lossily(cx: &mut gpui::TestAppContext) {
                 text.contains('\u{fffd}'),
                 "the undecodable byte was dropped rather than replaced: {text:?}"
             );
+            // Writing the replaced text back would destroy the byte, so a
+            // save of this pane has to ask where.
+            assert!(pane.read(cx).file().is_none());
         })
         .expect("the window is open");
 }

@@ -290,6 +290,11 @@ impl Workspace {
     /// encoding is still mostly readable as UTF-8 — the ASCII half of it always
     /// is — and a user who can see their script can fix the part that came out
     /// wrong, which is more than an error message offers.
+    ///
+    /// A file that read as UTF-8 binds the pane to it, which names the tab
+    /// after the file and makes "Save" write back to it. One that did not stays
+    /// unbound, so that a save asks where to write instead of putting the
+    /// replacement characters over bytes the editor could not show.
     pub(super) fn load_sql_file(
         &mut self,
         path: PathBuf,
@@ -299,17 +304,23 @@ impl Workspace {
         if !self.has_live_connection() {
             return;
         }
-        let reading =
-            cx.background_spawn(async move { std::fs::read(&path).map(|bytes| (path, bytes)) });
+        let reading = cx.background_spawn(async move {
+            read_sql_file(&path).map(|(bytes, stamp)| (path, bytes, stamp))
+        });
 
         cx.spawn_in(window, async move |workspace, cx| {
             match reading.await {
-                Ok((path, bytes)) => {
-                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                Ok((path, bytes, stamp)) => {
+                    let (text, exact) = decode_sql_file(bytes);
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_query(&text, window, cx);
                             log::debug!("opened {}", path.display());
+                            let Some(pane) = workspace.open_query(&text, window, cx) else {
+                                return;
+                            };
+                            if exact {
+                                pane.update(cx, |pane, cx| pane.bind_file(path, stamp, cx));
+                            }
                         })
                         .ok();
                 }
@@ -318,6 +329,126 @@ impl Workspace {
                 // the user just picked has gone away is out of proportion.
                 Err(error) => log::error!("could not read the SQL file: {error}"),
             }
+        })
+        .detach();
+    }
+
+    /// Writes the SQL of the query tab on screen to its file.
+    ///
+    /// Straight to the bound file, unless there is none or `choose` asks for a
+    /// new one; then the platform's save dialog asks first. Writing in place
+    /// holds only while the file still looks the way the pane last saw it (see
+    /// [`crate::query`]'s `file` module); otherwise the pane says so and the
+    /// dialog asks after all.
+    ///
+    /// Not gated on the session: what is written is the editor's text, which a
+    /// pane whose connection has gone still holds.
+    pub(super) fn save_sql_file(&mut self, choose: bool, cx: &mut Context<Self>) {
+        let Some(area) = self.work_area() else {
+            return;
+        };
+        let Some(item) = area.panes.get(area.active()).and_then(|pane| pane.active()) else {
+            return;
+        };
+        let PaneItem::Query { pane, .. } = item else {
+            return;
+        };
+        let pane = pane.clone();
+        let title = area
+            .tab_names
+            .get(&item.entity_id())
+            .cloned()
+            .unwrap_or_else(|| item.title(cx).to_string());
+        let (bound, stamp) = {
+            let pane = pane.read(cx);
+            (pane.file().map(Path::to_path_buf), pane.file_stamp())
+        };
+        match bound {
+            Some(path) if !choose => {
+                self.save_pane_to(pane, path, Overwrite::IfUnchanged(stamp), cx)
+            }
+            _ => self.ask_where_to_save(pane, &title, cx),
+        }
+    }
+
+    /// Opens the platform's save dialog for `pane`, and writes where it says.
+    ///
+    /// It opens where the bound file is, suggesting its name; a pane bound to
+    /// none starts from the home directory, with the tab's `title` made into a
+    /// file name. Nothing waits on the prompt, for the reason
+    /// [`Workspace::open_sql_file`] gives.
+    fn ask_where_to_save(&mut self, pane: Entity<QueryPane>, title: &str, cx: &mut Context<Self>) {
+        let bound = pane.read(cx).file().map(Path::to_path_buf);
+        let directory = bound
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(crate::extract_dialog::default_directory);
+        let suggested = match bound.as_deref().and_then(Path::file_name) {
+            Some(name) => name.to_string_lossy().into_owned(),
+            None => suggested_file_name(title),
+        };
+        let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
+
+        cx.spawn(async move |workspace, cx| {
+            let path = match prompt.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    log::warn!("the save dialog could not be opened: {error:#}");
+                    return;
+                }
+            };
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.save_pane_to(pane, path, Overwrite::Chosen, cx)
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Writes `pane`'s text to `path` on a background task, as `overwrite`
+    /// allows, and tells the pane how it went.
+    ///
+    /// A pane that ends up bound to a file it was not bound to before gives up
+    /// any name the user had given its tab, so that the tab reads as the file
+    /// it now is; saving again to the same file leaves a name alone. A bound
+    /// file that has changed is left as it is, and the save dialog asks.
+    fn save_pane_to(
+        &mut self,
+        pane: Entity<QueryPane>,
+        path: PathBuf,
+        overwrite: Overwrite,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(SaveJob { text, edits }) = pane.update(cx, |pane, cx| pane.begin_save(cx)) else {
+            return;
+        };
+        let writing = cx.background_spawn(async move {
+            let outcome = write_sql_file(&path, &text, overwrite);
+            (path, outcome)
+        });
+
+        cx.spawn(async move |workspace, cx| {
+            let (path, outcome) = writing.await;
+            workspace
+                .update(cx, |workspace, cx| {
+                    match pane.update(cx, |pane, cx| pane.finish_save(path, edits, outcome, cx)) {
+                        Saved::Rebound => {
+                            let tab = pane.entity_id();
+                            for open in &mut workspace.connections {
+                                open.work.tab_names.remove(&tab);
+                            }
+                        }
+                        // The pane is bound, so the dialog suggests its own file
+                        // and the title goes unused.
+                        Saved::Changed => workspace.ask_where_to_save(pane, "", cx),
+                        Saved::InPlace | Saved::Failed => {}
+                    }
+                    cx.notify();
+                })
+                .ok();
         })
         .detach();
     }
@@ -509,5 +640,47 @@ impl Workspace {
                 .update(cx, |pane, cx| pane.focus_editor(window, cx));
         }
         cx.notify();
+    }
+}
+
+/// The file name a save dialog suggests for a tab titled `title`.
+///
+/// The title as it reads, with `.sql` after it unless it already ends that
+/// way, and with every character a file name cannot hold on one of the three
+/// platforms swapped for `_` — a tab the user named "매출/분석" is still a
+/// name worth starting from, but the slash would turn it into a directory.
+/// Trailing dots and spaces go too, which Windows would strip on its own.
+fn suggested_file_name(title: &str) -> String {
+    let cleaned: String = title
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let stem = cleaned.trim().trim_end_matches(['.', ' ']);
+    let stem = if stem.is_empty() { "query" } else { stem };
+    if stem.to_lowercase().ends_with(".sql") {
+        stem.to_string()
+    } else {
+        format!("{stem}.sql")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::suggested_file_name;
+
+    #[test]
+    fn a_tab_title_becomes_a_file_name_a_save_dialog_can_take() {
+        assert_eq!(suggested_file_name("쿼리 3"), "쿼리 3.sql");
+        assert_eq!(suggested_file_name("매출/분석"), "매출_분석.sql");
+        assert_eq!(suggested_file_name("a:b*c?"), "a_b_c_.sql");
+        assert_eq!(suggested_file_name("report.sql"), "report.sql");
+        assert_eq!(suggested_file_name("REPORT.SQL"), "REPORT.SQL");
+        assert_eq!(suggested_file_name("draft. "), "draft.sql");
+        assert_eq!(suggested_file_name("  "), "query.sql");
+        assert_eq!(suggested_file_name("tab\tname"), "tab_name.sql");
     }
 }

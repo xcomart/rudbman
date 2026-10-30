@@ -50,6 +50,16 @@ enum SavedContent {
         sql: Arc<str>,
         selection: std::ops::Range<usize>,
         editor_share: f32,
+        /// The file the pane is bound to. Left out for a pane bound to none,
+        /// so a workspace written before files were saved reads the same.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<PathBuf>,
+        /// Whether `sql` held changes that file did not.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        modified: bool,
+        /// What that file looked like when the pane last read or wrote it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stamp: Option<FileStamp>,
     },
     Detail {
         target: SavedObject,
@@ -146,11 +156,18 @@ impl WorkArea {
             content: match item {
                 PaneItem::Query { pane, number } => {
                     let query = pane.read(cx);
+                    // A path that is not UTF-8 cannot be written into the JSON
+                    // at all, and would fail the whole workspace's save; that
+                    // one tab comes back unbound instead.
+                    let file = query.file().filter(|path| path.to_str().is_some());
                     SavedContent::Query {
                         number: *number,
                         sql: query.workspace_sql(cx),
                         selection: query.workspace_selection(cx),
                         editor_share: query.workspace_editor_share(),
+                        file: file.map(Path::to_path_buf),
+                        modified: file.is_some() && query.is_modified(cx),
+                        stamp: file.and(query.file_stamp()),
                     }
                 }
                 PaneItem::TableDetail(pane) => SavedContent::Detail {
@@ -355,10 +372,15 @@ impl Workspace {
 
     /// Lets each query pane whose draft the last checkpoint found too large to
     /// keep say so; see [`QueryPane::warn_oversized_draft`].
+    ///
+    /// Not a pane whose file already holds its text: that one comes back from
+    /// its file after a restart, so there is nothing for it to warn about until
+    /// it is edited — and the warning, still owed, is said then.
     fn warn_oversized_drafts(&mut self, cx: &mut Context<Self>) {
         for open in &self.connections {
             for pane in open.work.queries() {
-                if pane.read(cx).owes_draft_warning() {
+                let query = pane.read(cx);
+                if query.owes_draft_warning() && (query.file().is_none() || query.is_modified(cx)) {
                     pane.update(cx, |pane, cx| pane.warn_oversized_draft(cx));
                 }
             }
@@ -462,13 +484,26 @@ impl Workspace {
                 sql,
                 selection,
                 editor_share,
+                file,
+                modified,
+                stamp,
             } => {
                 self.work_area_mut().unwrap().next_query = *number;
-                self.open_query(sql, window, cx);
-                if let Some(pane) = self.active_query().cloned() {
+                if let Some(pane) = self.open_query(sql, window, cx) {
                     pane.update(cx, |pane, cx| {
-                        pane.restore_workspace_editor(selection.clone(), *editor_share, cx)
+                        pane.restore_workspace_editor(selection.clone(), *editor_share, cx);
+                        if let Some(path) = file {
+                            pane.restore_file(path.clone(), *modified, *stamp, cx);
+                        }
                     });
+                    // A draft saved clean is the file's text as it was then, and
+                    // the file may have moved on since; an empty one over a file
+                    // is nearly always a draft too large to have been kept (see
+                    // `DRAFT_LIMIT`). Either way the file is the copy to show.
+                    if let Some(path) = file.clone().filter(|_| sql.is_empty() || !*modified) {
+                        pane.update(cx, |pane, _| pane.begin_reload());
+                        reload_from_file(pane, path, sql.clone(), cx);
+                    }
                 }
             }
             SavedContent::Detail { target, tab } => {
@@ -522,6 +557,22 @@ impl Workspace {
     }
 }
 
+/// Reads `path` on a background task and hands what came of it to `pane`,
+/// restored with `restored` as its draft; see [`QueryPane::reload_file`].
+fn reload_from_file(
+    pane: Entity<QueryPane>,
+    path: PathBuf,
+    restored: Arc<str>,
+    cx: &mut Context<Workspace>,
+) {
+    let reading = cx.background_spawn(async move { read_sql_file(&path) });
+    cx.spawn(async move |_, cx| {
+        let read = reading.await;
+        pane.update(cx, |pane, cx| pane.reload_file(&restored, read, cx));
+    })
+    .detach();
+}
+
 fn restore_layout<'a>(
     node: &'a SavedNode,
     tree: &mut PaneTree<Pane>,
@@ -568,7 +619,7 @@ fn split_above(node: &PaneNode<Pane>, pane: PaneId) -> Option<SplitId> {
 #[cfg(test)]
 mod tests {
     use super::super::tests::{
-        h2_connection, push_connection, workspace_over_h2, workspace_over_h2_with,
+        DOCUMENT_END, h2_connection, push_connection, workspace_over_h2, workspace_over_h2_with,
     };
     use super::*;
 
@@ -869,6 +920,193 @@ mod tests {
             saved.flush();
             assert_eq!(std::fs::read(&path).unwrap(), bytes);
         }
+    }
+
+    /// A query tab bound to a file comes back bound to it after a restart,
+    /// still named after it and still marked when its draft held unsaved
+    /// changes. One whose draft was clean, or came back empty, shows what its
+    /// file holds now.
+    #[gpui::test]
+    fn a_bound_query_keeps_its_file_and_its_mark_across_reopening(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let files = tempfile::tempdir().unwrap();
+        let edited = files.path().join("edited.sql");
+        let large = files.path().join("large.sql");
+        let clean = files.path().join("clean.sql");
+        std::fs::write(&edited, "select 1").unwrap();
+        std::fs::write(&large, "select 42").unwrap();
+        std::fs::write(&clean, "select 7").unwrap();
+        let (window, _) = workspace_over_h2("workspace-files", cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                // Standing in for a draft too large to keep: saved empty, over
+                // a file that has the text.
+                let pane = workspace.open_query("", window, cx).unwrap();
+                pane.update(cx, |pane, cx| pane.bind_file(large.clone(), None, cx));
+                let pane = workspace.open_query("select 7", window, cx).unwrap();
+                pane.update(cx, |pane, cx| pane.bind_file(clean.clone(), None, cx));
+                let pane = workspace.open_query("select 1", window, cx).unwrap();
+                pane.update(cx, |pane, cx| pane.bind_file(edited.clone(), None, cx));
+            })
+            .unwrap();
+        visual.simulate_keystrokes(DOCUMENT_END);
+        visual.simulate_input(" -- unsaved");
+        let (profile, expected) = window
+            .update(&mut visual, |workspace, window, cx| {
+                assert!(workspace.active_query().unwrap().read(cx).is_modified(cx));
+                let expected = workspace.connections[0].work.snapshot(cx);
+                let profile = workspace.connections[0].profile.clone();
+                workspace.close_connection(0, window, cx);
+                (profile, expected)
+            })
+            .unwrap();
+        assert_eq!(storage(directory.path()).load(profile.id), Some(expected));
+        cx.run_until_parked();
+        // Written by something else while the app was closed.
+        std::fs::write(&clean, "select 8").unwrap();
+
+        let connected = connection::connect(
+            &profile,
+            &connection::h2::driver(),
+            &connection::Credentials::typed(Some(String::new()), None),
+            &AppSettings::default(),
+        )
+        .unwrap();
+        let reopened =
+            cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+        reopened
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                push_connection(workspace, profile, connected, window, cx);
+                workspace.restore_connection_workspace(0, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        reopened
+            .update(cx, |workspace, _window, cx| {
+                let queries = workspace.connections[0].work.queries();
+                let [large_pane, clean_pane, edited_pane] = queries.as_slice() else {
+                    panic!("every query tab came back");
+                };
+                let clean_pane = clean_pane.read(cx);
+                assert_eq!(clean_pane.file(), Some(clean.as_path()));
+                assert_eq!(
+                    clean_pane.editor_text(cx),
+                    "select 8",
+                    "a clean draft gives way to what the file holds now"
+                );
+                assert!(!clean_pane.is_modified(cx));
+                let edited_pane = edited_pane.read(cx);
+                assert_eq!(edited_pane.file(), Some(edited.as_path()));
+                assert_eq!(edited_pane.editor_text(cx), "select 1 -- unsaved");
+                assert!(edited_pane.is_modified(cx), "the mark survives the restart");
+                assert_eq!(edited_pane.file_title().unwrap(), "edited.sql");
+                let large_pane = large_pane.read(cx);
+                assert_eq!(large_pane.file(), Some(large.as_path()));
+                assert_eq!(large_pane.editor_text(cx), "select 42");
+                assert!(!large_pane.is_modified(cx));
+            })
+            .unwrap();
+    }
+
+    /// A file name that is not UTF-8 cannot go into the JSON; the tab is saved
+    /// unbound rather than failing the whole workspace's save.
+    #[cfg(unix)]
+    #[gpui::test]
+    fn a_path_that_is_not_utf8_does_not_stop_the_workspace_saving(cx: &mut gpui::TestAppContext) {
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let (window, _) = workspace_over_h2("workspace-latin1-path", cx);
+        let profile = window
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                let pane = workspace.open_query("select 1", window, cx).unwrap();
+                let path = PathBuf::from(std::ffi::OsStr::from_bytes(b"/nowhere/caf\xe9.sql"));
+                pane.update(cx, |pane, cx| pane.bind_file(path, None, cx));
+                workspace.flush_workspaces(cx);
+                workspace.connections[0].profile.id
+            })
+            .unwrap();
+        let saved = storage(directory.path())
+            .load(profile)
+            .expect("the workspace was still saved");
+        assert!(matches!(
+            &saved.layout,
+            SavedNode::Pane { tabs, .. } if matches!(
+                &tabs[0].content,
+                SavedContent::Query { file: None, modified: false, stamp: None, .. }
+            )
+        ));
+    }
+
+    /// A draft too large to keep is not warned about while its file holds it
+    /// — it comes back from the file — and is once it has been edited.
+    #[gpui::test]
+    fn a_large_draft_its_file_holds_is_not_warned_about(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let files = tempfile::tempdir().unwrap();
+        let path = files.path().join("large.sql");
+        std::fs::write(&path, "-".repeat(crate::query::DRAFT_LIMIT + 1)).unwrap();
+        let (window, _) = workspace_over_h2("workspace-large-file", cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                workspace.load_sql_file(path.clone(), window, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |workspace, _window, cx| {
+                workspace.checkpoint_workspaces(cx);
+                workspace.warn_oversized_drafts(cx);
+                let pane = workspace.active_query().unwrap().read(cx);
+                assert_eq!(pane.file(), Some(path.as_path()));
+                assert!(pane.notice().is_none(), "the file keeps this draft");
+            })
+            .unwrap();
+        visual.simulate_input("x");
+        window
+            .update(&mut visual, |workspace, _window, cx| {
+                workspace.checkpoint_workspaces(cx);
+                workspace.warn_oversized_drafts(cx);
+                let pane = workspace.active_query().unwrap().read(cx);
+                assert!(pane.notice().is_some(), "the edit is kept nowhere");
+            })
+            .unwrap();
+    }
+
+    /// A tab bound to no file is written exactly as before files were saved,
+    /// and a workspace written then still reads.
+    #[test]
+    fn an_unbound_query_tab_reads_and_writes_as_it_always_did() {
+        let content = SavedContent::Query {
+            number: 3,
+            sql: "select 1".into(),
+            selection: 0..0,
+            editor_share: 0.5,
+            file: None,
+            modified: false,
+            stamp: None,
+        };
+        let json = serde_json::to_value(&content).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "kind": "query",
+                "number": 3,
+                "sql": "select 1",
+                "selection": {"start": 0, "end": 0},
+                "editor_share": 0.5,
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<SavedContent>(json).unwrap(),
+            content
+        );
     }
 
     #[gpui::test]

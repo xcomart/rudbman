@@ -55,6 +55,12 @@ menu:
   new_table: New table
   # Reads a .sql file into a new query pane on the connection showing.
   open_sql_file: Open SQL file…
+  # Writes the SQL of the query tab on screen to the file it was opened from
+  # or last saved to, asking where only when it has none. No ellipsis: the
+  # ordinary case asks nothing.
+  save_sql_file: Save SQL file
+  # Always asks where, and the tab is named after the file chosen.
+  save_sql_file_as: Save SQL file as…
   # Opens the extraction dialog over the object selected in the explorer.
   extract_script: Extract script…
   # Opens the transfer dialog over the same object: its rows, into a table on
@@ -644,6 +650,19 @@ query:
   hint_canceled: The statement was canceled.
   # Title of the file picker the "Open SQL file…" row opens.
   open_file_select: Choose a SQL file
+  # Said in the query pane when "Save SQL file" could not write. `error` is
+  # the operating system's own message.
+  save_failed: "The file could not be saved: %{error}"
+  # Tooltip of the dot behind a query tab's title, which says the editor holds
+  # changes the file it is named after does not.
+  unsaved: Changes not saved to the file
+  # Said when "Save SQL file" is asked for while the tab is still writing an
+  # earlier save, or still rereading its file after a restart.
+  save_busy: "The file is still being read or written. Try again in a moment."
+  # Said when "Save SQL file" found the tab's file changed on disk — by another
+  # program, or by another tab open on the same file. The save dialog opens
+  # right after it.
+  file_changed: "The file has changed on disk since this tab last read or saved it, so it was not overwritten. Choose where to save."
 
 # The data pane: one table's rows, in a grid. Opened with the explorer's "view
 # data" row or the detail panel's button of the same name.

@@ -30,9 +30,9 @@ pub(crate) use bootstrap::{editor_theme_for, theme_dirs};
 use crate::{
     AddToBuilder, BackupSchema, CheckUpdates, ClosePane, DismissDialog, ExtractScript,
     FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery, OpenErd, OpenSettings,
-    OpenSqlFile, QueryObject, Quit, ShowAbout, SplitBelow, SplitRight, ToggleExplorer,
-    TransferTable, app_identity, app_settings, builder_pane, builder_sql, connection, context_menu,
-    erd_pane, explorer, i18n, icons, table_detail,
+    OpenSqlFile, QueryObject, Quit, SaveSqlFile, SaveSqlFileAs, ShowAbout, SplitBelow, SplitRight,
+    ToggleExplorer, TransferTable, app_identity, app_settings, builder_pane, builder_sql,
+    connection, context_menu, erd_pane, explorer, i18n, icons, table_detail,
 };
 
 mod actions;
@@ -52,7 +52,7 @@ mod view;
 use view::centered_scroll;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, App, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, Hsla, KeyBinding,
@@ -94,7 +94,10 @@ use crate::explorer::{
 use crate::extract_dialog::{ExtractDialog, ExtractDialogEvent};
 use crate::i18n::ts;
 use crate::pane_tree::{Axis, Pane, PaneId, PaneItem, PaneLookup, PaneNode, PaneTree, SplitId};
-use crate::query::{ConfirmRequest, QueryPane, QueryPaneEvent};
+use crate::query::{
+    ConfirmRequest, FileStamp, Overwrite, QueryPane, QueryPaneEvent, SaveJob, Saved,
+    decode_sql_file, read_sql_file, write_sql_file,
+};
 use crate::settings_dialog::{SettingsDialog, SettingsDialogEvent};
 use crate::struct_pane::StructPane;
 use crate::table_detail::{TableDetail, TableDetailEvent};
@@ -152,6 +155,17 @@ const PANE_SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
     "cmd"
 } else {
     "alt"
+};
+
+/// The chord "Save SQL file as" is bound to, and the same chord as a menu
+/// hint writes it.
+///
+/// `Ctrl+Shift+S` where every editor puts it, and none on macOS: `Cmd` is the
+/// pane modifier there, so `Cmd+Shift+S` is already [`SplitBelow`].
+const SAVE_AS_SHORTCUT: Option<(&str, &str)> = if cfg!(target_os = "macos") {
+    None
+} else {
+    Some(("ctrl-shift-s", "Ctrl+Shift+S"))
 };
 
 /// [`PANE_SHORTCUT_MODIFIER`] as a menu hint writes it.

@@ -22,6 +22,8 @@ menu:
   view_structure: Editar la estructura
   new_table: Nueva tabla
   open_sql_file: Abrir archivo SQL…
+  save_sql_file: Guardar archivo SQL
+  save_sql_file_as: Guardar archivo SQL como…
   extract_script: Extraer script…
   transfer_table: Transferir filas…
   backup_schema: Copia de seguridad del esquema…
@@ -430,6 +432,10 @@ query:
   hint_network: Se perdió la conexión con la base de datos.
   hint_canceled: La sentencia se canceló.
   open_file_select: Elige un archivo SQL
+  save_failed: "No se pudo guardar el archivo: %{error}"
+  unsaved: Cambios no guardados en el archivo
+  save_busy: "El archivo todavía se está leyendo o escribiendo. Inténtalo de nuevo en un momento."
+  file_changed: "El archivo ha cambiado en el disco desde que esta pestaña lo leyó o guardó por última vez, así que no se ha sobrescrito. Elige dónde guardarlo."
 
 data:
   loading: cargando…

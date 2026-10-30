@@ -80,6 +80,11 @@ actions!(
         /// Read a `.sql` file into a query pane on the connection whose tab is
         /// showing.
         OpenSqlFile,
+        /// Write the SQL of the query tab on screen to its file, asking where
+        /// first when it has none.
+        SaveSqlFile,
+        /// Write the SQL of the query tab on screen to a file chosen anew.
+        SaveSqlFileAs,
         /// Open the extraction dialog over the object selected in the explorer.
         ExtractScript,
         /// Open the transfer dialog over the object selected in the explorer.

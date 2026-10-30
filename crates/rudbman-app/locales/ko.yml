@@ -22,6 +22,8 @@ menu:
   view_structure: 구조 편집
   new_table: 새 테이블
   open_sql_file: SQL 파일 열기…
+  save_sql_file: SQL 파일 저장
+  save_sql_file_as: 다른 이름으로 SQL 파일 저장…
   extract_script: 스크립트 추출…
   transfer_table: 행 전송…
   backup_schema: 스키마 백업…
@@ -430,6 +432,10 @@ query:
   hint_network: 데이터베이스와의 연결이 끊어졌습니다.
   hint_canceled: SQL 문 실행이 취소되었습니다.
   open_file_select: SQL 파일 선택
+  save_failed: "파일을 저장하지 못했습니다: %{error}"
+  unsaved: 파일에 저장되지 않은 변경 사항
+  save_busy: "파일을 아직 읽거나 쓰는 중입니다. 잠시 후 다시 시도하세요."
+  file_changed: "이 탭이 마지막으로 읽거나 저장한 뒤 디스크의 파일이 바뀌어 덮어쓰지 않았습니다. 저장할 위치를 고르세요."
 
 data:
   loading: 불러오는 중…

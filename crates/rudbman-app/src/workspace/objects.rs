@@ -360,12 +360,15 @@ impl Workspace {
     /// Nothing happens without a live session: a SQL editor with no connection
     /// behind it can be typed into and never run, which is worse than a pane
     /// that says there is nothing to connect to.
-    pub(super) fn open_query(&mut self, sql: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_connection() else {
-            return;
-        };
+    pub(super) fn open_query(
+        &mut self,
+        sql: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<QueryPane>> {
+        let open = self.active_connection()?;
         let ConnectionState::Open(connected) = &open.state else {
-            return;
+            return None;
         };
         let session = connected.handle();
         let id = open.id;
@@ -400,9 +403,7 @@ impl Workspace {
 
         // Numbered within this connection's own area, which the checks above
         // have already established exists.
-        let Some(area) = self.work_area_mut() else {
-            return;
-        };
+        let area = self.work_area_mut()?;
         let number = area.next_query;
         area.next_query += 1;
         self.append_tab(
@@ -414,6 +415,7 @@ impl Workspace {
             cx,
         );
         pane.update(cx, |pane, cx| pane.focus_editor(window, cx));
+        Some(pane)
     }
 
     /// The dialect one profile's statements are written for.
@@ -506,7 +508,9 @@ impl Workspace {
             &panel,
             window,
             |workspace, panel, event, window, cx| match event {
-                BuilderPaneEvent::OpenSql(sql) => workspace.open_query(sql, window, cx),
+                BuilderPaneEvent::OpenSql(sql) => {
+                    workspace.open_query(sql, window, cx);
+                }
                 // On the panel the pointer was released over, which is the one
                 // that emitted this — not whichever builder the action would have
                 // picked. Dropping on a builder is aiming at it.

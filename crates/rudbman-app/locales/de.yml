@@ -22,6 +22,8 @@ menu:
   view_structure: Struktur bearbeiten
   new_table: Neue Tabelle
   open_sql_file: SQL-Datei öffnen…
+  save_sql_file: SQL-Datei speichern
+  save_sql_file_as: SQL-Datei speichern unter…
   extract_script: Skript extrahieren…
   transfer_table: Zeilen übertragen…
   backup_schema: Schema sichern…
@@ -430,6 +432,10 @@ query:
   hint_network: Die Verbindung zur Datenbank ging verloren.
   hint_canceled: Die Anweisung wurde abgebrochen.
   open_file_select: SQL-Datei auswählen
+  save_failed: "Die Datei konnte nicht gespeichert werden: %{error}"
+  unsaved: Nicht in der Datei gespeicherte Änderungen
+  save_busy: "Die Datei wird noch gelesen oder geschrieben. Versuchen Sie es gleich noch einmal."
+  file_changed: "Die Datei wurde auf dem Datenträger geändert, seit dieser Tab sie zuletzt gelesen oder gespeichert hat, und deshalb nicht überschrieben. Wählen Sie einen Speicherort."
 
 data:
   loading: wird geladen…

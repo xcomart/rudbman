@@ -94,6 +94,28 @@ impl Workspace {
         self.open_sql_file(window, cx);
     }
 
+    /// Writes the query tab on screen to its file.
+    pub(super) fn save_sql_file_action(
+        &mut self,
+        _: &SaveSqlFile,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        self.save_sql_file(false, cx);
+    }
+
+    /// Writes the query tab on screen to a file chosen anew.
+    pub(super) fn save_sql_file_as_action(
+        &mut self,
+        _: &SaveSqlFileAs,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        self.save_sql_file(true, cx);
+    }
+
     /// Opens the extraction dialog over the object selected in the explorer.
     ///
     /// Gated exactly as [`Workspace::query_object_action`] is: without a

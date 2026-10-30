@@ -131,16 +131,20 @@ impl PaneItem {
     ///
     /// A detail panel is named after the object it describes, qualified by its
     /// schema; a structure pane the same, unless it is making a table that does
-    /// not exist yet; a query pane has no name of its own, so it takes its number; a
-    /// diagram is named after the scope it covers; a builder takes its number,
-    /// as the query pane does and for the same reason. A data pane is named
-    /// after its table, exactly as the detail panel is: the two never sit in
-    /// one pane without the user having opened both on purpose, and the icons
-    /// in the strip are what tell them apart.
+    /// not exist yet; a query pane is named after the file it was read from or
+    /// saved to, and until it has one it has no name of its own, so it takes
+    /// its number; a diagram is named after the scope it covers; a builder
+    /// takes its number, as the query pane does and for the same reason. A data
+    /// pane is named after its table, exactly as the detail panel is: the two
+    /// never sit in one pane without the user having opened both on purpose,
+    /// and the icons in the strip are what tell them apart.
     pub fn title(&self, cx: &App) -> SharedString {
         match self {
             PaneItem::TableDetail(panel) => SharedString::from(panel.read(cx).target().qualified()),
-            PaneItem::Query { number, .. } => ts!("query.tab", index = number),
+            PaneItem::Query { pane, number } => pane
+                .read(cx)
+                .file_title()
+                .unwrap_or_else(|| ts!("query.tab", index = number)),
             PaneItem::Erd(panel) => panel.read(cx).target().title(),
             PaneItem::TableData(panel) => SharedString::from(panel.read(cx).target().qualified()),
             // Asked of the pane rather than read off its target, because a
@@ -190,6 +194,22 @@ impl PaneItem {
             PaneItem::TableStruct(panel) => panel.read(cx).has_pending_edits(),
             PaneItem::Query { pane, .. } => pane.read(cx).has_pending_edits(cx),
             PaneItem::TableDetail(_) | PaneItem::Erd(_) | PaneItem::QueryBuilder { .. } => false,
+        }
+    }
+
+    /// Whether this tab holds text its file does not, which its tab marks.
+    ///
+    /// Only a query pane bound to a file can say yes. Not a reason to refuse a
+    /// close, unlike [`PaneItem::blocks_close`]: the SQL is the user's text,
+    /// and closing the tab is still how one gets rid of it.
+    pub fn unsaved(&self, cx: &App) -> bool {
+        match self {
+            PaneItem::Query { pane, .. } => pane.read(cx).is_modified(cx),
+            PaneItem::TableDetail(_)
+            | PaneItem::Erd(_)
+            | PaneItem::TableData(_)
+            | PaneItem::TableStruct(_)
+            | PaneItem::QueryBuilder { .. } => false,
         }
     }
 }
