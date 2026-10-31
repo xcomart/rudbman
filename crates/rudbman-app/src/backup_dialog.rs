@@ -734,7 +734,10 @@ impl BackupDialog {
             div().pl(px(22.)).child(
                 form_row(
                     ts!("backup.batch_rows"),
-                    div().flex_none().w(px(96.)).child(self.batch_input.clone()),
+                    div()
+                        .flex_none()
+                        .w(rugpui::scaled(96., cx))
+                        .child(self.batch_input.clone()),
                 )
                 .label_width(self.label_width),
             )
@@ -1004,7 +1007,7 @@ impl Render for BackupDialog {
                 modal(
                     "backup-modal",
                     ts!("backup.title"),
-                    px(DIALOG_WIDTH),
+                    rugpui::scaled(DIALOG_WIDTH, cx),
                     div()
                         .flex()
                         .flex_col()

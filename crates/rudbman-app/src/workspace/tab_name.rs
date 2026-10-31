@@ -146,7 +146,7 @@ impl Workspace {
             modal(
                 "tab-name-dialog",
                 ts!("tab_name.title"),
-                px(400.),
+                rugpui::scaled(400., cx),
                 body,
                 move |window, cx| {
                     dismiss.update(cx, |workspace, cx| {

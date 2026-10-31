@@ -1546,7 +1546,7 @@ impl SettingsDialog {
                             .flex_col()
                             .min_h_0()
                             .gap(px(14.))
-                            .max_h(px(BODY_MAX_HEIGHT))
+                            .max_h(rugpui::scaled(BODY_MAX_HEIGHT, cx))
                             .overflow_y_scroll()
                             .smooth_scroll(&self.body_scroll)
                             .restrict_scroll_to_axis()
@@ -1715,7 +1715,7 @@ impl Render for SettingsDialog {
             .child(modal(
                 "settings-modal",
                 title,
-                px(DIALOG_WIDTH),
+                rugpui::scaled(DIALOG_WIDTH, cx),
                 body,
                 on_dismiss,
             ))

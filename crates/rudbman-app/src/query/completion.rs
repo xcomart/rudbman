@@ -337,7 +337,7 @@ impl QueryPane {
                     )
                     .child(
                         div()
-                            .max_w(px(130.))
+                            .max_w(rugpui::scaled(130., cx))
                             .truncate()
                             .text_color(chrome.text_muted)
                             .child(item.detail.clone()),
@@ -351,7 +351,7 @@ impl QueryPane {
             .occlude()
             .flex()
             .flex_col()
-            .w(px(380.))
+            .w(rugpui::scaled(380., cx))
             .py(px(3.))
             .rounded_md()
             .bg(chrome.surface)

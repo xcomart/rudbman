@@ -1933,7 +1933,7 @@ impl DataPane {
             .border_color(chrome.border)
             .child(crate::icons::icon(
                 self.target.folder.icon(),
-                px(14.),
+                rugpui::scaled(14., cx),
                 chrome.text_muted,
             ))
             .child(

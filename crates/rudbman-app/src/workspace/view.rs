@@ -700,10 +700,12 @@ impl Workspace {
             // Use the shipped PNG so the title bar preserves the icon's
             // colors on every platform instead of tinting its alpha mask.
             let icon = (!cfg!(target_os = "macos")).then(|| {
-                let icon = img(icons::APP_ICON).size(px(16.)).flex_none();
+                let icon = img(icons::APP_ICON)
+                    .size(rugpui::scaled(16., cx))
+                    .flex_none();
                 if !titlebar_active {
                     div()
-                        .size(px(16.))
+                        .size(rugpui::scaled(16., cx))
                         .flex_none()
                         .opacity(0.55)
                         .child(icon)
@@ -1295,7 +1297,7 @@ impl Workspace {
             .children(message.map(|message| {
                 div()
                     .id("connection-card-message")
-                    .max_h(px(if band { 60. } else { 220. }))
+                    .max_h(rugpui::scaled(if band { 60. } else { 220. }, cx))
                     .overflow_y_scroll()
                     .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(theme.danger)
@@ -1346,7 +1348,7 @@ impl Workspace {
                         .flex()
                         .flex_col()
                         .gap(px(14.))
-                        .max_w(px(560.))
+                        .max_w(rugpui::scaled(560., cx))
                         .child(text)
                         .child(row),
                 )
@@ -1413,7 +1415,7 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .w(px(WELCOME_WIDTH))
+                .w(rugpui::scaled(WELCOME_WIDTH, cx))
                 .child(
                     div()
                         .text_size(rugpui::TextSize::Xs.size(cx))
@@ -1444,7 +1446,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .w(px(WELCOME_WIDTH))
+                    .w(rugpui::scaled(WELCOME_WIDTH, cx))
                     .debug_selector(|| WELCOME_NEW_SELECTOR.to_string())
                     .child(
                         Button::new("welcome-new", ts!("welcome.new_connection"))
@@ -1779,7 +1781,7 @@ impl Workspace {
             .child(
                 div()
                     .id("confirm-preview")
-                    .max_h(px(200.))
+                    .max_h(rugpui::scaled(200., cx))
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
                     .p(px(8.))
@@ -1825,7 +1827,7 @@ impl Workspace {
             modal(
                 "query-confirm",
                 ts!("query.confirm_title"),
-                px(460.),
+                rugpui::scaled(460., cx),
                 body,
                 move |window, cx| {
                     dismiss.update(cx, |workspace, cx| {

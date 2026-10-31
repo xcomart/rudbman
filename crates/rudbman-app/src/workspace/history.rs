@@ -383,7 +383,7 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(4.))
-                .max_h(px(140.))
+                .max_h(rugpui::scaled(140., cx))
                 .overflow_y_scroll()
                 .p(px(8.))
                 .rounded_sm()
@@ -567,7 +567,7 @@ impl Workspace {
             modal(
                 "history-dialog",
                 ts!("history.title", name = history.name.to_string()),
-                px(680.),
+                rugpui::scaled(680., cx),
                 body,
                 move |window, cx| {
                     dismiss.update(cx, |workspace, cx| workspace.close_history(window, cx));

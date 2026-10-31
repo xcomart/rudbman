@@ -1278,7 +1278,7 @@ impl StructPane {
             .border_color(chrome.border)
             .child(icons::icon(
                 self.target.folder.icon(),
-                px(14.),
+                rugpui::scaled(14., cx),
                 chrome.text_muted,
             ))
             .child(
@@ -1477,7 +1477,7 @@ impl StructPane {
             .child(
                 div()
                     .flex_none()
-                    .w(px(84.))
+                    .w(rugpui::scaled(84., cx))
                     .px(px(4.))
                     .children(writable.then(|| {
                         Button::new(("struct-drop", index), label)
@@ -1515,7 +1515,7 @@ impl StructPane {
                 .child(
                     div()
                         .flex_none()
-                        .w(px(84.))
+                        .w(rugpui::scaled(84., cx))
                         .px(px(4.))
                         .children(writable.then(|| {
                             Button::new(("struct-remove", position), ts!("struct.remove"))
@@ -1558,7 +1558,7 @@ impl StructPane {
                         chrome,
                         cx,
                     )
-                    .child(div().flex_none().w(px(84.))),
+                    .child(div().flex_none().w(rugpui::scaled(84., cx))),
                 )
                 .children(rows)
                 .children(added)
@@ -1729,34 +1729,41 @@ impl StructPane {
                     chrome,
                     cx,
                 )
-                .child(div().flex_none().w(px(84.)).px(px(4.)).children(
-                    writable.then(|| {
-                        Button::new(("struct-drop-constraint", index), label)
-                            .variant(ButtonVariant::Secondary)
-                            .disabled(!droppable)
-                            .on_click(move |_, _window, cx| {
-                                this.update(cx, |pane, cx| {
-                                    pane.toggle_constraint_drop(index, cx);
-                                });
-                            })
-                    }),
-                ))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(rugpui::scaled(84., cx))
+                        .px(px(4.))
+                        .children(writable.then(|| {
+                            Button::new(("struct-drop-constraint", index), label)
+                                .variant(ButtonVariant::Secondary)
+                                .disabled(!droppable)
+                                .on_click(move |_, _window, cx| {
+                                    this.update(cx, |pane, cx| {
+                                        pane.toggle_constraint_drop(index, cx);
+                                    });
+                                })
+                        })),
+                )
             });
 
-        let staged =
-            added.iter().enumerate().map(|(position, draft)| {
-                let this = this.clone();
-                constraint_row(
-                    SharedString::new_static(draft.kind.keyword()),
-                    &draft.name,
-                    reference_summary(draft),
-                    false,
-                    (structure.constraints.len() + position) % 2 == 1,
-                    chrome,
-                    cx,
-                )
-                .child(div().flex_none().w(px(84.)).px(px(4.)).children(
-                    writable.then(|| {
+        let staged = added.iter().enumerate().map(|(position, draft)| {
+            let this = this.clone();
+            constraint_row(
+                SharedString::new_static(draft.kind.keyword()),
+                &draft.name,
+                reference_summary(draft),
+                false,
+                (structure.constraints.len() + position) % 2 == 1,
+                chrome,
+                cx,
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(rugpui::scaled(84., cx))
+                    .px(px(4.))
+                    .children(writable.then(|| {
                         Button::new(("struct-remove-constraint", position), ts!("struct.remove"))
                             .variant(ButtonVariant::Secondary)
                             .on_click(move |_, _window, cx| {
@@ -1764,9 +1771,9 @@ impl StructPane {
                                     pane.remove_added_constraint(position, cx);
                                 });
                             })
-                    }),
-                ))
-            });
+                    })),
+            )
+        });
 
         let listing = if structure.constraints.is_empty() && added.is_empty() {
             div()
@@ -1788,7 +1795,7 @@ impl StructPane {
                         chrome,
                         cx,
                     )
-                    .child(div().flex_none().w(px(84.))),
+                    .child(div().flex_none().w(rugpui::scaled(84., cx))),
                 )
                 .children(loaded)
                 .children(staged)
@@ -1900,7 +1907,7 @@ impl StructPane {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(120.))
+                            .w(rugpui::scaled(120., cx))
                             .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.text_muted)
                             .child(ts!("struct.kind")),
@@ -1916,7 +1923,7 @@ impl StructPane {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(120.))
+                            .w(rugpui::scaled(120., cx))
                             .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.text_muted)
                             .child(ts!("struct.columns")),
@@ -2082,7 +2089,7 @@ impl StructPane {
             .child(
                 div()
                     .id("struct-apply-preview")
-                    .max_h(px(260.))
+                    .max_h(rugpui::scaled(260., cx))
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
                     .p(px(8.))
@@ -2125,7 +2132,7 @@ impl StructPane {
             modal(
                 "struct-apply-modal",
                 ts!("struct.apply_title", count = statements.len()),
-                px(560.),
+                rugpui::scaled(560., cx),
                 body,
                 move |_window, cx| {
                     dismiss.update(cx, |pane, cx| {

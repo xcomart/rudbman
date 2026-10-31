@@ -234,7 +234,7 @@ pub(crate) fn render_discard_confirm(
     modal(
         "data-discard",
         ts!("data.discard_title"),
-        px(420.),
+        rugpui::scaled(420., cx),
         body,
         move |window, cx| dismiss(window, cx),
     )
@@ -306,7 +306,7 @@ pub(crate) fn render_apply_preview(
         .child(
             div()
                 .id("data-apply-preview")
-                .max_h(px(260.))
+                .max_h(rugpui::scaled(260., cx))
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
                 .p(px(8.))
@@ -341,7 +341,7 @@ pub(crate) fn render_apply_preview(
     modal(
         "data-apply",
         ts!("data.apply_title", count = statements.len()),
-        px(560.),
+        rugpui::scaled(560., cx),
         body,
         move |window, cx| dismiss(window, cx),
     )

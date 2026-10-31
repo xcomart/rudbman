@@ -222,8 +222,9 @@ JVM bridge.
 - **Themes and languages**: UI and editor theme registries with live
   preview, import/export, and a user theme directory; eight UI languages
   (en, ko, ja, zh-CN, de, es, fr, ru). **Interface size** in Settings scales
-  the whole chrome — text, buttons, rows, tab strips, the toolbar and the
-  status bar — from the default 14 pt, with a live preview.
+  the whole chrome — text, buttons, icons, checkboxes, rows, tab strips, the
+  toolbar, the status bar and the dialogs — from the default 14 pt, with a live
+  preview. The SQL editor and the ERD keep their own font size and zoom.
 
 ## Keyboard shortcuts
 

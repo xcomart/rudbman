@@ -750,7 +750,7 @@ impl BuilderPane {
                 .selected(chosen.map(|place| self.label_of(place)))
                 .placeholder(ts!("builder.join_pick"))
                 .open(open == Some(first))
-                .width(px(180.))
+                .width(rugpui::scaled(180., cx))
                 .on_select(move |index, _label, _window, cx| {
                     let Some(place) = places.get(index).copied() else {
                         return;
@@ -817,7 +817,7 @@ impl BuilderPane {
                     .options(JoinKind::ALL.iter().map(|kind| join_label(*kind)))
                     .selected(Some(join_label(join.kind)))
                     .open(self.open_join == Some(index))
-                    .width(px(120.))
+                    .width(rugpui::scaled(120., cx))
                     .on_select({
                         let this = this.clone();
                         // By index: the labels are translated and say nothing
@@ -961,7 +961,7 @@ impl BuilderPane {
                     .options(SORTS.iter().map(|sort| sort_label(*sort)))
                     .selected(Some(sort_label(sorted)))
                     .open(self.open_order == Some(index))
-                    .width(px(130.))
+                    .width(rugpui::scaled(130., cx))
                     .on_select({
                         let this = this.clone();
                         move |chosen, _label, _window, cx| {
@@ -1131,7 +1131,7 @@ impl Render for BuilderPane {
                     .flex()
                     .flex_col()
                     .flex_none()
-                    .h(px(FORM_HEIGHT))
+                    .h(rugpui::scaled(FORM_HEIGHT, cx))
                     .min_w_0()
                     .gap(px(12.))
                     .p(px(10.))

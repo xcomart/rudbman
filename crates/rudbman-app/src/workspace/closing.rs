@@ -686,7 +686,7 @@ impl Workspace {
             modal(
                 "close-question",
                 title,
-                px(460.),
+                rugpui::scaled(460., cx),
                 div()
                     .flex()
                     .flex_col()
@@ -697,7 +697,7 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(4.))
-                            .max_h(px(240.))
+                            .max_h(rugpui::scaled(240., cx))
                             .overflow_y_scroll()
                             .children(body.into_iter().map(line)),
                     )

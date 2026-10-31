@@ -970,7 +970,10 @@ impl ExtractDialog {
             let batch = (self.mode == DataMode::Insert).then(|| {
                 form_row(
                     ts!("extract.batch_rows"),
-                    div().flex_none().w(px(96.)).child(self.batch_input.clone()),
+                    div()
+                        .flex_none()
+                        .w(rugpui::scaled(96., cx))
+                        .child(self.batch_input.clone()),
                 )
                 .label_width(self.label_width)
             });
@@ -1358,7 +1361,7 @@ impl Render for ExtractDialog {
                 modal(
                     "extract-modal",
                     ts!("extract.title"),
-                    px(DIALOG_WIDTH),
+                    rugpui::scaled(DIALOG_WIDTH, cx),
                     div()
                         .flex()
                         .flex_col()

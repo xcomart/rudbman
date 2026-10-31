@@ -647,7 +647,7 @@ impl QueryPane {
                                         .child(
                                             div()
                                                 .flex_none()
-                                                .w(px(36.))
+                                                .w(rugpui::scaled(36., cx))
                                                 .text_color(chrome.text_muted)
                                                 .child((index + 1).to_string()),
                                         )

@@ -104,7 +104,7 @@ pub fn render_notice(
             div()
                 .id(id)
                 .flex_none()
-                .size(px(18.))
+                .size(rugpui::scaled(18., cx))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -113,7 +113,7 @@ pub fn render_notice(
                 .hover(|style| style.bg(chrome.surface_hover))
                 .child(icons::icon(
                     rugpui_shell::icons::WINDOW_CLOSE,
-                    px(12.),
+                    rugpui::scaled(12., cx),
                     chrome.icon,
                 ))
                 .on_click(move |_, window, cx| on_close(window, cx)),

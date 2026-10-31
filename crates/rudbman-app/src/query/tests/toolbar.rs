@@ -445,3 +445,36 @@ fn escape_stops_a_running_statement_and_otherwise_passes_on(cx: &mut TestAppCont
         .unwrap();
     connected.close().expect("close");
 }
+
+#[gpui::test]
+fn the_toolbar_buttons_and_icons_grow_with_the_interface_size(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-scale", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let size_of = |id: &'static str, cx: &mut gpui::VisualTestContext| {
+        cx.debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is not drawn"))
+            .size
+    };
+    // At the default size, exactly the pixels the toolbar always had.
+    assert_eq!(
+        size_of("query-explain", &mut cx),
+        gpui::size(px(26.), px(26.))
+    );
+    assert_eq!(
+        size_of("query-explain-icon", &mut cx),
+        gpui::size(px(16.), px(16.))
+    );
+
+    cx.update(|_, cx| rugpui::set_ui_scale(1.5, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        size_of("query-explain", &mut cx),
+        gpui::size(px(39.), px(39.))
+    );
+    assert_eq!(
+        size_of("query-explain-icon", &mut cx),
+        gpui::size(px(24.), px(24.))
+    );
+}

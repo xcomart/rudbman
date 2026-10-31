@@ -430,7 +430,11 @@ impl Render for DragGhost {
                 .border_color(chrome.border)
                 .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text)
-                .child(icons::icon(self.icon, px(12.), chrome.text_muted))
+                .child(icons::icon(
+                    self.icon,
+                    rugpui::scaled(12., cx),
+                    chrome.text_muted,
+                ))
                 .child(self.label.clone()),
         )
     }
@@ -709,7 +713,7 @@ impl TreeSource for ExplorerSource {
         let mark = match id {
             NodeId::Connection(connection) => {
                 return self
-                    .render_root(*connection, label, &chrome)
+                    .render_root(*connection, label, &chrome, cx)
                     .into_any_element();
             }
             NodeId::Catalog { .. } | NodeId::Schema { .. } => icons::SCHEMA,
@@ -741,7 +745,7 @@ impl TreeSource for ExplorerSource {
             div()
                 .id(("tree-remarks", info.index))
                 .flex_none()
-                .max_w(px(160.))
+                .max_w(rugpui::scaled(160., cx))
                 .truncate()
                 .text_size(rugpui::scaled(10., cx))
                 .text_color(chrome.text_muted)
@@ -755,7 +759,11 @@ impl TreeSource for ExplorerSource {
             .items_center()
             .gap(px(6.))
             .min_w_0()
-            .child(icons::icon(mark, px(14.), chrome.text_muted))
+            .child(icons::icon(
+                mark,
+                rugpui::scaled(14., cx),
+                chrome.text_muted,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -815,6 +823,7 @@ impl ExplorerSource {
         connection: ConnectionId,
         label: SharedString,
         chrome: &Theme,
+        cx: &App,
     ) -> impl IntoElement + use<> {
         let info = self.info.get(&connection);
         let live = info.is_some_and(|info| info.live);
@@ -833,7 +842,13 @@ impl ExplorerSource {
             .items_center()
             .gap(px(6.))
             .min_w_0()
-            .child(div().flex_none().size(px(7.)).rounded_full().bg(dot))
+            .child(
+                div()
+                    .flex_none()
+                    .size(rugpui::scaled(7., cx))
+                    .rounded_full()
+                    .bg(dot),
+            )
             .child(
                 div()
                     .flex_1()

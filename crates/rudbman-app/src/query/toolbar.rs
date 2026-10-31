@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::icons;
-use gpui::{MouseButton, Stateful, Svg};
+use gpui::{MouseButton, Pixels, Stateful, Svg};
 use rugpui::tooltip_label;
 
 fn tool_button(
@@ -11,13 +11,14 @@ fn tool_button(
     label: SharedString,
     enabled: bool,
     chrome: &Theme,
+    size: Pixels,
 ) -> Stateful<Div> {
     div()
         .id(id)
         .debug_selector(move || id.to_string())
         .flex()
         .flex_none()
-        .size(px(26.))
+        .size(size)
         .items_center()
         .justify_center()
         .rounded_sm()
@@ -29,7 +30,7 @@ fn tool_button(
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         })
         .when(!enabled, |button| button.opacity(0.35))
-        .child(icon)
+        .child(icon.debug_selector(move || format!("{id}-icon")))
 }
 
 impl QueryPane {
@@ -47,14 +48,18 @@ impl QueryPane {
             self.session.is_some() && !running && !self.applying && self.transaction.is_none();
         let canceling = matches!(&self.run, RunState::Running(run) if run.canceling);
         let modifier = SHORTCUT_MODIFIER;
+        // The icons and the square around each, at the interface size.
+        let icon_size = rugpui::scaled(16., cx);
+        let button_size = rugpui::scaled(26., cx);
         let button = |id, icon, label: SharedString, shortcut, enabled, action: Box<dyn Action>| {
             let handle = handle.clone();
             tool_button(
                 id,
-                icons::icon(icon, px(16.), chrome.icon),
+                icons::icon(icon, icon_size, chrome.icon),
                 format!("{label} ({modifier}+{shortcut})").into(),
                 enabled,
                 chrome,
+                button_size,
             )
             .when(enabled, |button| {
                 button.on_click(move |_, window, cx| {
@@ -94,7 +99,7 @@ impl QueryPane {
         let this = cx.entity();
         let commit = lit(tool_button(
             "query-commit",
-            icons::icon(icons::COMMIT, px(16.), chrome.icon),
+            icons::icon(icons::COMMIT, icon_size, chrome.icon),
             if self.transaction == Some(TransactionAction::Commit) {
                 ts!("query.committing")
             } else if self.restore_auto_commit {
@@ -104,6 +109,7 @@ impl QueryPane {
             },
             self.can_finish_transaction(),
             chrome,
+            button_size,
         ))
         .when(self.can_finish_transaction(), |button| {
             button.on_click(move |_, _, cx| {
@@ -115,7 +121,7 @@ impl QueryPane {
         let this = cx.entity();
         let rollback = lit(tool_button(
             "query-rollback",
-            icons::icon(icons::ROLLBACK, px(16.), chrome.icon),
+            icons::icon(icons::ROLLBACK, icon_size, chrome.icon),
             if self.transaction == Some(TransactionAction::Rollback) {
                 ts!("query.rolling_back")
             } else if self.restore_auto_commit {
@@ -125,6 +131,7 @@ impl QueryPane {
             },
             self.can_finish_transaction(),
             chrome,
+            button_size,
         ))
         .when(self.can_finish_transaction(), |button| {
             button.on_click(move |_, _, cx| {
@@ -139,10 +146,11 @@ impl QueryPane {
             let handle = handle.clone();
             tool_button(
                 "query-explain",
-                icons::icon(icons::EXPLAIN, px(16.), chrome.icon),
+                icons::icon(icons::EXPLAIN, icon_size, chrome.icon),
                 format!("{} ({})", ts!("context.explain"), keys::EXPLAIN_KEY).into(),
                 can_run,
                 chrome,
+                button_size,
             )
             .when(can_run, |button| {
                 button.on_click(move |_, window, cx| {
@@ -154,7 +162,7 @@ impl QueryPane {
         let this = cx.entity();
         let cancel = tool_button(
             "query-cancel",
-            icons::icon(icons::STOP, px(16.), chrome.danger),
+            icons::icon(icons::STOP, icon_size, chrome.danger),
             if canceling {
                 ts!("query.canceling")
             } else {
@@ -162,6 +170,7 @@ impl QueryPane {
             },
             running && !canceling,
             chrome,
+            button_size,
         )
         .when(running && !canceling, |button| {
             button.on_click(move |_, _, cx| {

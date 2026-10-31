@@ -764,7 +764,7 @@ impl ErdPane {
             .children(self.notice.as_ref().map(|notice| {
                 div()
                     .flex_none()
-                    .max_w(px(360.))
+                    .max_w(rugpui::scaled(360., cx))
                     .truncate()
                     .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(if notice.error {
@@ -779,7 +779,7 @@ impl ErdPane {
                 // vocabularies, and "logical" only reads as the opposite of
                 // something once the something is on screen beside it.
                 let this = this.clone();
-                div().flex_none().w(px(160.)).child(
+                div().flex_none().w(rugpui::scaled(160., cx)).child(
                     Segmented::new("erd-names")
                         .options([
                             ("physical", ts!("erd.names_physical")),

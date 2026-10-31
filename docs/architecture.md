@@ -949,9 +949,20 @@ start-up, on apply and in the live preview). The shell's own sizes follow it:
 text through `rugpui::TextSize` (11/12/13/14 → `Xs`/`Sm`/`Body`/`Title`) or
 `rugpui::scaled` for the odd one, and the heights that hold text — the toolbar
 (which must match the tab strip's own scaled height), the status bar, pane
-toolbars, log and completion rows — through `rugpui::scaled`. Borders, gaps,
-paddings and icons stay fixed. At the default 14 pt the scale is 1.0 and
-nothing moves. The macOS traffic-light offset is still the 1.0 one.
+toolbars, log and completion rows — through `rugpui::scaled`. So do the
+icons the app draws itself (`icons::icon`, the query toolbar's buttons and
+their glyphs, the explorer's object marks and status dot, the panel headers,
+the notice's close button, the caption's app icon), the swatches and tags that
+stand beside text, the widths that hold text (list columns, the welcome list,
+the completion popup, short fields such as a port or a batch size, the
+structure editor's columns, the query builder's pickers and form) and the
+panel widths handed to `modal` — which rugpui caps at the window. Borders,
+gaps, paddings, corner radii, scroll bar and divider thickness, resize grips
+and the user-dragged explorer width stay fixed; so do the SQL and DDL editors'
+heights, which hold text in the editor's own font size, and the ERD and query
+builder canvases, which have a zoom of their own. At the default 14 pt the
+scale is 1.0 and nothing moves. The macOS traffic-light offset is still the
+1.0 one.
 
 The connection, driver, settings, extraction, transfer and backup forms size
 their label column to the widest label in the language on screen

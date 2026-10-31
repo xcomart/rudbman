@@ -756,7 +756,7 @@ impl Render for LobDialog {
             .child(modal(
                 "lob-dialog",
                 self.title.clone(),
-                px(760.),
+                rugpui::scaled(760., cx),
                 body,
                 move |_, cx| this.update(cx, |dialog, cx| dialog.request_close(cx)),
             ))

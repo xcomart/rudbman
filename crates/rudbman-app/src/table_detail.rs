@@ -411,7 +411,7 @@ impl TableDetail {
             .border_color(chrome.border)
             .child(icons::icon(
                 self.target.folder.icon(),
-                px(14.),
+                rugpui::scaled(14., cx),
                 chrome.text_muted,
             ))
             .child(
@@ -424,7 +424,7 @@ impl TableDetail {
             .children(remarks.map(|remarks| {
                 div()
                     .min_w_0()
-                    .max_w(px(320.))
+                    .max_w(rugpui::scaled(320., cx))
                     .truncate()
                     .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)

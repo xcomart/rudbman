@@ -1384,7 +1384,7 @@ impl Render for TransferDialog {
                 modal(
                     "transfer-modal",
                     ts!("transfer.title"),
-                    px(DIALOG_WIDTH),
+                    rugpui::scaled(DIALOG_WIDTH, cx),
                     div()
                         .flex()
                         .flex_col()
