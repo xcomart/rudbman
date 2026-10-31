@@ -201,6 +201,7 @@ pub(super) fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.open_sql_file"), OpenSqlFile),
                 MenuItem::action(ts!("menu.save_sql_file"), SaveSqlFile),
                 MenuItem::action(ts!("menu.save_sql_file_as"), SaveSqlFileAs),
+                MenuItem::action(ts!("context.explain"), ExplainQuery),
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.query_object"), QueryObject),
                 MenuItem::action(ts!("menu.extract_script"), ExtractScript),
@@ -336,6 +337,15 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
     bindings.push(KeyBinding::new(
         &format!("{modifier}-shift-t"),
         ReopenClosedTab,
+        Some(KEY_CONTEXT),
+    ));
+    // The query pane binds the same chord in its own context, where it
+    // explains in the pane that has the keyboard; this one is for the rest
+    // of the window, the explorer included, and the menu rows, and acts on
+    // the query tab on screen.
+    bindings.push(KeyBinding::new(
+        &format!("{modifier}-shift-e"),
+        ExplainQuery,
         Some(KEY_CONTEXT),
     ));
     cx.bind_keys(bindings);

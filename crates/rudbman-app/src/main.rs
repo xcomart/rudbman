@@ -106,6 +106,9 @@ actions!(
         /// Bring back the query or builder tab closed most recently on the
         /// connection whose tab is showing.
         ReopenClosedTab,
+        /// Show the plan of the statement under the caret of the query tab
+        /// on screen, without running it.
+        ExplainQuery,
         /// Bring the next tab of the active pane to the front.
         NextTab,
         /// Bring the previous tab of the active pane to the front.

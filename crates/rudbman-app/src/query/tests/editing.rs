@@ -487,6 +487,12 @@ fn every_label_the_pane_menus_draw_has_a_translation() {
         ts!("context.run_statement"),
         ts!("context.run_selection"),
         ts!("context.run_all"),
+        ts!("context.explain"),
+        ts!("query.plan", index = 1),
+        ts!("query.explained"),
+        ts!("query.explain_one"),
+        ts!("query.explain_unsupported", product = "db2"),
+        ts!("query.explain_restore_failed", message = "why"),
         ts!("context.find"),
         ts!("context.replace"),
         // The editing rows §7.9 gives a query result, which reuse the data

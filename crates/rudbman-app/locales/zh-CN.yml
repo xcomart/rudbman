@@ -441,6 +441,11 @@ query:
   running: 正在执行…
   rows_affected: "影响 %{count} 行"
   executed: 语句已执行。
+  plan: "执行计划 %{index}"
+  explained: 已读取执行计划，语句未执行。
+  explain_one: 请只选择一条语句来查看其执行计划。
+  explain_unsupported: "%{product} 不支持查看执行计划。"
+  explain_restore_failed: "读取执行计划后未能恢复连接状态（%{message}）。在此连接上执行其他操作前请重新连接。"
   statement_failed: "第 %{index} 条语句（共 %{total} 条）失败：%{error}"
   row_count: "%{count} 行"
   row_count_more: "%{count}+ 行"
@@ -708,6 +713,7 @@ context:
   run_statement: 执行语句
   run_selection: 执行所选内容
   run_all: 全部执行
+  explain: 查看执行计划
   find: 查找…
   replace: 替换…
   close_tab: 关闭标签页

@@ -527,6 +527,7 @@ impl Render for Workspace {
             .on_action(cx.listener(actions::unless_held(Self::query_object_action)))
             .on_action(cx.listener(actions::unless_held(Self::open_sql_file_action)))
             .on_action(cx.listener(actions::unless_held(Self::save_sql_file_action)))
+            .on_action(cx.listener(actions::unless_held(Self::explain_query_action)))
             .on_action(cx.listener(actions::unless_held(Self::save_sql_file_as_action)))
             .on_action(cx.listener(actions::unless_held(Self::extract_script_action)))
             .on_action(cx.listener(actions::unless_held(Self::transfer_table_action)))
@@ -848,6 +849,9 @@ impl Workspace {
             row(ts!("context.reopen_tab"), Box::new(ReopenClosedTab))
                 .shortcut(chord("Shift+T"))
                 .disabled(!(live && reopenable)),
+            row(ts!("context.explain"), Box::new(ExplainQuery))
+                .shortcut(crate::query::EXPLAIN_KEY)
+                .disabled(!(live && query)),
             MenuEntry::separator(),
             row(ts!("menu.query_object"), Box::new(QueryObject))
                 .shortcut(in_explorer("Enter"))

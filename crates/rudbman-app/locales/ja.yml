@@ -441,6 +441,11 @@ query:
   running: 実行中…
   rows_affected: "%{count} 行処理されました"
   executed: 文を実行しました。
+  plan: "実行計画 %{index}"
+  explained: 実行計画を取得しました。文は実行していません。
+  explain_one: 実行計画を表示する文を 1 つだけ選択してください。
+  explain_unsupported: "%{product} では実行計画の表示に対応していません。"
+  explain_restore_failed: "実行計画の取得後に接続の状態を元に戻せませんでした (%{message})。この接続で他の操作をする前に再接続してください。"
   statement_failed: "%{total} 文中 %{index} 番目の文が失敗しました: %{error}"
   row_count: "%{count} 行"
   row_count_more: "%{count}+ 行"
@@ -708,6 +713,7 @@ context:
   run_statement: 文を実行
   run_selection: 選択範囲を実行
   run_all: すべて実行
+  explain: 実行計画を表示
   find: 検索…
   replace: 置換…
   close_tab: タブを閉じる

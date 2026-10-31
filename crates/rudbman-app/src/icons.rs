@@ -107,6 +107,7 @@ pub const RUN_STATEMENT: &str = "icons/run-statement.svg";
 pub const RUN_SELECTION: &str = "icons/run-selection.svg";
 pub const RUN_ALL: &str = "icons/run-all.svg";
 pub const STOP: &str = "icons/stop.svg";
+pub const EXPLAIN: &str = "icons/explain.svg";
 pub const COMMIT: &str = "icons/commit.svg";
 pub const ROLLBACK: &str = "icons/rollback.svg";
 pub const UNDO: &str = "icons/undo.svg";
@@ -162,6 +163,7 @@ const OWN: &[(&str, &[u8])] = &[
     ),
     (RUN_ALL, include_bytes!("../assets/icons/run-all.svg")),
     (STOP, include_bytes!("../assets/icons/stop.svg")),
+    (EXPLAIN, include_bytes!("../assets/icons/explain.svg")),
     (UNDO, include_bytes!("../assets/icons/undo.svg")),
     (REDO, include_bytes!("../assets/icons/redo.svg")),
     (CUT, include_bytes!("../assets/icons/cut.svg")),

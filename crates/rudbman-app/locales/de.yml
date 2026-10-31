@@ -441,6 +441,11 @@ query:
   running: läuft…
   rows_affected: "%{count} Zeilen betroffen"
   executed: Anweisung ausgeführt.
+  plan: "Plan %{index}"
+  explained: Plan gelesen; die Anweisung wurde nicht ausgeführt.
+  explain_one: Wählen Sie eine einzelne Anweisung, um ihren Plan zu sehen.
+  explain_unsupported: "Auf %{product} kann kein Plan gelesen werden."
+  explain_restore_failed: "Die Verbindung konnte nach dem Lesen des Plans nicht zurückgesetzt werden (%{message}). Verbinden Sie sich neu, bevor Sie darauf etwas anderes ausführen."
   statement_failed: "Anweisung %{index} von %{total} ist fehlgeschlagen: %{error}"
   row_count: "%{count} Zeilen"
   row_count_more: "%{count}+ Zeilen"
@@ -708,6 +713,7 @@ context:
   run_statement: Anweisung ausführen
   run_selection: Auswahl ausführen
   run_all: Alles ausführen
+  explain: Ausführungsplan anzeigen
   find: Suchen…
   replace: Ersetzen…
   close_tab: Tab schließen

@@ -109,7 +109,12 @@ impl QueryPane {
             .filter(|tab| matches!(tab.body, ResultBody::Rows(_)))
             .count()
             + 1;
-        let label = ts!("query.result", index = index);
+        let plan = self.explaining;
+        let label = if plan {
+            ts!("query.plan", index = index)
+        } else {
+            ts!("query.result", index = index)
+        };
         // Keep the first grid visible by default while the log stays available
         // as the leading tab. Later results must not change the user's tab.
         if index == 1 {
@@ -128,10 +133,15 @@ impl QueryPane {
                 read_only: None,
                 more,
                 fetching: false,
+                plan,
                 _events: [events, requests],
             })),
         });
-        self.resolve_edits(id, cx);
+        // A plan is read-only by what it is, which needs no round trip and
+        // no line above the grid to say so.
+        if !plan {
+            self.resolve_edits(id, cx);
+        }
     }
 
     /// Works out whether result tab `id` may be written back to, and opens it
@@ -417,6 +427,11 @@ impl QueryPane {
         let Some(tab) = self.rows_tab(id) else {
             return;
         };
+        if tab.plan {
+            // Wrapping an `EXPLAIN` in a derived table is a syntax error on
+            // every product, and the rows are in the order the plan reads.
+            return;
+        }
         let base = tab.sql.clone();
         let name = tab
             .grid

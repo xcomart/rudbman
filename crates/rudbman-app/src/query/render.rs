@@ -221,6 +221,11 @@ impl Render for QueryPane {
                     pane.finish_transaction(TransactionAction::Rollback, cx);
                 }),
             )
+            .on_action(
+                cx.listener(|pane, _: &super::keys::ExplainStatement, window, cx| {
+                    pane.explain(window, cx);
+                }),
+            )
             .flex()
             .flex_col()
             .size_full()

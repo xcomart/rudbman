@@ -28,12 +28,13 @@
 pub(crate) use bootstrap::{editor_theme_for, theme_dirs};
 
 use crate::{
-    AddToBuilder, BackupSchema, CheckUpdates, ClosePane, CloseTab, DismissDialog, ExtractScript,
-    FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery, NextConnection, NextRegion,
-    NextTab, OpenErd, OpenSettings, OpenSqlFile, PrevConnection, PrevRegion, PrevTab, QueryObject,
-    Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, SelectTab, ShowAbout, SplitBelow,
-    SplitRight, ToggleExplorer, TransferTable, app_identity, app_settings, builder_pane,
-    builder_sql, connection, context_menu, erd_pane, explorer, i18n, icons, table_detail,
+    AddToBuilder, BackupSchema, CheckUpdates, ClosePane, CloseTab, DismissDialog, ExplainQuery,
+    ExtractScript, FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery,
+    NextConnection, NextRegion, NextTab, OpenErd, OpenSettings, OpenSqlFile, PrevConnection,
+    PrevRegion, PrevTab, QueryObject, Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, SelectTab,
+    ShowAbout, SplitBelow, SplitRight, ToggleExplorer, TransferTable, app_identity, app_settings,
+    builder_pane, builder_sql, connection, context_menu, erd_pane, explorer, i18n, icons,
+    table_detail,
 };
 
 mod actions;

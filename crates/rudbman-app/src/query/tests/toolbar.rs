@@ -117,6 +117,7 @@ fn detached_toolbar_disables_execution_but_keeps_text_commands(cx: &mut TestAppC
         "query-run",
         "query-run-selection",
         "query-run-all",
+        "query-explain",
         "query-cancel",
         "query-commit",
         "query-rollback",

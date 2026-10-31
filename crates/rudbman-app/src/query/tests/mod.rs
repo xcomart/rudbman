@@ -350,6 +350,7 @@ fn server_rows(connected: &Connected, sql: &str) -> Vec<String> {
 mod draft;
 mod editing;
 mod execution;
+mod explain;
 mod file;
 mod lob;
 mod menus;

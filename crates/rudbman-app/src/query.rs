@@ -76,6 +76,7 @@
 mod completion;
 mod editing;
 mod execution;
+mod explain;
 mod file;
 pub(crate) use file::{
     FileStamp, Overwrite, SaveJob, Saved, decode_sql_file, read_sql_file, write_sql_file,
@@ -89,6 +90,7 @@ pub use render::{error_lines, note, render_error};
 mod results;
 mod statements;
 mod toolbar;
+pub(crate) use keys::EXPLAIN_KEY;
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
 use std::cell::RefCell;
@@ -492,6 +494,11 @@ struct RowsTab {
     more: Option<More>,
     /// Whether a page is out with a background fetch.
     fetching: bool,
+    /// Whether these rows are a statement's plan rather than its result.
+    ///
+    /// A plan has no table to be written back to and no statement a sort
+    /// could wrap, so it is never offered either.
+    plan: bool,
     /// Keeps the grid's subscriptions — its events and its key requests —
     /// alive for as long as the tab.
     _events: [Subscription; 2],
@@ -643,6 +650,9 @@ pub struct QueryPane {
     generation: u64,
     /// Whether anything has been run in this pane at all.
     ran: bool,
+    /// Whether the run in flight, or the last one, read a plan rather than
+    /// running a statement; see [`QueryPane::explain`].
+    explaining: bool,
     finished: Option<Finished>,
     /// Rows the writes of the run in flight have reported changing so far.
     affected: u64,
@@ -918,6 +928,7 @@ impl QueryPane {
             run: RunState::Idle,
             generation: 0,
             ran: false,
+            explaining: false,
             finished: None,
             affected: 0,
             pending: None,

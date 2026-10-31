@@ -441,6 +441,11 @@ query:
   running: выполнение…
   rows_affected: "Изменено строк: %{count}"
   executed: Инструкция выполнена.
+  plan: "План %{index}"
+  explained: План получен; инструкция не выполнялась.
+  explain_one: Выделите одну инструкцию, чтобы увидеть её план.
+  explain_unsupported: "Получение плана для %{product} не поддерживается."
+  explain_restore_failed: "Не удалось вернуть соединение в исходное состояние после получения плана (%{message}). Переподключитесь, прежде чем выполнять в нём что-либо ещё."
   statement_failed: "Инструкция %{index} из %{total} не выполнена: %{error}"
   row_count: "Строк: %{count}"
   row_count_more: "Строк: %{count}+"
@@ -708,6 +713,7 @@ context:
   run_statement: Выполнить инструкцию
   run_selection: Выполнить выделенное
   run_all: Выполнить всё
+  explain: Показать план выполнения
   find: Найти…
   replace: Заменить…
   close_tab: Закрыть вкладку

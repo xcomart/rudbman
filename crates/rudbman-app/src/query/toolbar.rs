@@ -133,6 +133,24 @@ impl QueryPane {
                 });
             })
         });
+        // Not `button`: its tooltip writes the chord as the modifier plus a
+        // key, and this chord carries its own modifier.
+        let explain = {
+            let handle = handle.clone();
+            tool_button(
+                "query-explain",
+                icons::icon(icons::EXPLAIN, px(16.), chrome.icon),
+                format!("{} ({})", ts!("context.explain"), keys::EXPLAIN_KEY).into(),
+                can_run,
+                chrome,
+            )
+            .when(can_run, |button| {
+                button.on_click(move |_, window, cx| {
+                    handle.focus(window, cx);
+                    handle.dispatch_action(&keys::ExplainStatement, window, cx);
+                })
+            })
+        };
         let this = cx.entity();
         let cancel = tool_button(
             "query-cancel",
@@ -188,6 +206,7 @@ impl QueryPane {
                     can_run,
                     Box::new(RunAll),
                 ),
+                explain.into_any_element(),
                 cancel.into_any_element(),
             ]))
             .child(group(vec![

@@ -441,6 +441,11 @@ query:
   running: 실행 중…
   rows_affected: "%{count}행 처리됨"
   executed: SQL 문을 실행했습니다.
+  plan: "실행 계획 %{index}"
+  explained: 실행 계획을 읽었습니다. SQL 문은 실행하지 않았습니다.
+  explain_one: 실행 계획을 볼 SQL 문을 하나만 선택하세요.
+  explain_unsupported: "%{product}에서는 실행 계획 보기를 지원하지 않습니다."
+  explain_restore_failed: "실행 계획을 읽은 뒤 연결 상태를 되돌리지 못했습니다(%{message}). 이 연결에서 다른 작업을 하기 전에 다시 연결하세요."
   statement_failed: "%{total}개 중 %{index}번째 문장이 실패했습니다: %{error}"
   row_count: "%{count}행"
   row_count_more: "%{count}+행"
@@ -708,6 +713,7 @@ context:
   run_statement: 현재 SQL 문 실행
   run_selection: 선택 영역 실행
   run_all: 전체 실행
+  explain: 실행 계획 보기
   find: 찾기…
   replace: 바꾸기…
   close_tab: 탭 닫기

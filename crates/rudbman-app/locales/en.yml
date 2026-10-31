@@ -662,6 +662,16 @@ query:
   # say. These messages accumulate in one log tab.
   rows_affected: "%{count} rows affected"
   executed: Statement executed.
+  # The tab title of a plan's grid, and the log line for it: the statement was
+  # only planned, never executed.
+  plan: "Plan %{index}"
+  explained: Plan read; the statement was not run.
+  explain_one: Select one statement to see its plan.
+  # `product` is the dialect id, such as db2, and is not translated.
+  explain_unsupported: "Reading a plan is not supported on %{product}."
+  # SQL Server reads a plan with SET SHOWPLAN_TEXT ON; if switching it off
+  # fails, the connection answers every later statement with a plan instead.
+  explain_restore_failed: "The connection could not be put back after reading the plan (%{message}). Reconnect before running anything else on it."
   # The execution log's row for the statement a run of several stopped at.
   statement_failed: "Statement %{index} of %{total} failed: %{error}"
   # The status bar's row and elapsed cells. `seconds` arrives already rounded.
@@ -1180,6 +1190,9 @@ context:
   run_statement: Run statement
   run_selection: Run selection
   run_all: Run all
+  # Reads the statement's plan without running it. Also a toolbar button and
+  # a row of the application menu.
+  explain: Explain plan
   # Both open the find bar, which is a panel rather than a dialog, but it still
   # asks before anything happens.
   find: Find…

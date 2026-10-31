@@ -441,6 +441,11 @@ query:
   running: en cours…
   rows_affected: "%{count} lignes modifiées"
   executed: Instruction exécutée.
+  plan: "Plan %{index}"
+  explained: Plan lu ; l’instruction n’a pas été exécutée.
+  explain_one: Sélectionnez une seule instruction pour voir son plan.
+  explain_unsupported: "La lecture d’un plan n’est pas prise en charge sur %{product}."
+  explain_restore_failed: "La connexion n’a pas pu être rétablie après la lecture du plan (%{message}). Reconnectez-vous avant d’y exécuter quoi que ce soit d’autre."
   statement_failed: "L’instruction %{index} sur %{total} a échoué : %{error}"
   row_count: "%{count} lignes"
   row_count_more: "%{count}+ lignes"
@@ -708,6 +713,7 @@ context:
   run_statement: Exécuter l’instruction
   run_selection: Exécuter la sélection
   run_all: Tout exécuter
+  explain: Afficher le plan d’exécution
   find: Rechercher…
   replace: Remplacer…
   close_tab: Fermer l’onglet

@@ -1,4 +1,5 @@
-//! The pane's own chords: stopping a statement and ending a transaction.
+//! The pane's own chords: stopping a statement, ending a transaction, and
+//! asking for a plan.
 //!
 //! Bound in the `QueryPane` key context, which the whole pane — editor and
 //! results — sits in, so each works wherever the keyboard is inside it.
@@ -30,8 +31,22 @@ actions!(
         CommitTransaction,
         /// Roll the session's transaction back from this pane.
         RollbackTransaction,
+        /// Show the plan of the statement under the caret, or of the
+        /// selection, without running it.
+        ExplainStatement,
     ]
 );
+
+/// The explain chord, as a menu row and a tooltip name it.
+///
+/// DBeaver's, and free everywhere it could be pressed: the editor binds no
+/// `Shift+E`, and the workspace's `Ctrl+E` is the explorer's diagram, scoped
+/// to the explorer.
+pub(crate) const EXPLAIN_KEY: &str = if cfg!(target_os = "macos") {
+    "Cmd+Shift+E"
+} else {
+    "Ctrl+Shift+E"
+};
 
 /// The commit chord as the toolbar's tooltip names it.
 pub(super) const COMMIT_KEY: &str = if cfg!(target_os = "macos") {
@@ -60,10 +75,20 @@ pub(super) fn init(cx: &mut App) {
     if cx.has_global::<Bindings>() {
         return;
     }
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
     cx.bind_keys([
         KeyBinding::new("escape", CancelRun, Some(KEY_CONTEXT)),
         KeyBinding::new("f11", CommitTransaction, Some(KEY_CONTEXT)),
         KeyBinding::new("f12", RollbackTransaction, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &format!("{modifier}-shift-e"),
+            ExplainStatement,
+            Some(KEY_CONTEXT),
+        ),
     ]);
     if cfg!(target_os = "macos") {
         cx.bind_keys([

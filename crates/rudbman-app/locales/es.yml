@@ -441,6 +441,11 @@ query:
   running: ejecutando…
   rows_affected: "%{count} filas afectadas"
   executed: Sentencia ejecutada.
+  plan: "Plan %{index}"
+  explained: Plan leído; la sentencia no se ejecutó.
+  explain_one: Selecciona una sola sentencia para ver su plan.
+  explain_unsupported: "No se puede leer un plan en %{product}."
+  explain_restore_failed: "No se pudo restablecer la conexión después de leer el plan (%{message}). Vuelve a conectar antes de ejecutar otra cosa en ella."
   statement_failed: "La sentencia %{index} de %{total} falló: %{error}"
   row_count: "%{count} filas"
   row_count_more: "%{count}+ filas"
@@ -708,6 +713,7 @@ context:
   run_statement: Ejecutar la sentencia
   run_selection: Ejecutar la selección
   run_all: Ejecutar todo
+  explain: Ver plan de ejecución
   find: Buscar…
   replace: Reemplazar…
   close_tab: Cerrar la pestaña

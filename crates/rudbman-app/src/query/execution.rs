@@ -93,52 +93,9 @@ impl QueryPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.transaction.is_some() {
-            return;
-        }
-        // The one gate every run goes through, whichever way it was asked for:
-        // a sort round trip and an accepted write confirmation arrive here
-        // without passing `request` again.
-        let Some(session) = self.session.clone() else {
-            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
-            cx.notify();
+        let Some((session, generation)) = self.begin_run(sort_base, cx) else {
             return;
         };
-
-        self.generation += 1;
-        let generation = self.generation;
-        // Dropping the old tabs drops their cursors, and `Cursor::drop` closes
-        // them — which is the `CLOSE_CURSOR` a canceled run still owes.
-        self.results.clear();
-        self.active_result = 0;
-        self.error = None;
-        self.notice = None;
-        self.finished = None;
-        self.affected = 0;
-        self.ran = true;
-        // A menu naming a result tab that is about to be dropped would act on
-        // whichever tab took its place, or on none at all.
-        self.context_menu = None;
-        // The rows a plan was made against are on their way out, so the plan
-        // and the failure of the last attempt to send one go with them.
-        self.preview = None;
-        self.apply_error = None;
-        self.confirm_discard = false;
-        if sort_base.is_none() {
-            // Not a sort round trip, so whatever order the last one left is
-            // not the order this one comes back in.
-            self.pending_sort = None;
-        }
-        self.sort_base = sort_base;
-        // Whatever the editor's events left for this run; a sort round trip
-        // and an apply's re-run leave nothing, and the spans then go unused.
-        self.active_spans = (std::mem::take(&mut self.run_spans), self.edits);
-        self.run = RunState::Running(Box::new(Running {
-            generation,
-            started: Instant::now(),
-            canceller: session.session().canceller(),
-            canceling: false,
-        }));
 
         let fetch_rows = self.fetch_rows;
         let writer = self.tab_label().map(|label| label.to_string());
@@ -221,6 +178,70 @@ impl QueryPane {
         })
         .detach();
 
+        cx.notify();
+    }
+
+    /// Clears the last run away and starts the next one: takes the next
+    /// generation, marks the pane running and starts its elapsed clock.
+    ///
+    /// Answers the session to run on and the generation every delivery of
+    /// the run will carry, or `None` — having said why — when there is
+    /// nothing to run on. Shared by [`QueryPane::start`] and the plan
+    /// [`QueryPane::explain`] reads, which differ only in what they send.
+    pub(super) fn begin_run(
+        &mut self,
+        sort_base: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<(SessionHandle, u64)> {
+        if self.transaction.is_some() {
+            return None;
+        }
+        // The one gate every run goes through, whichever way it was asked for:
+        // a sort round trip and an accepted write confirmation arrive here
+        // without passing `request` again.
+        let Some(session) = self.session.clone() else {
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
+            cx.notify();
+            return None;
+        };
+
+        self.generation += 1;
+        let generation = self.generation;
+        // Dropping the old tabs drops their cursors, and `Cursor::drop` closes
+        // them — which is the `CLOSE_CURSOR` a canceled run still owes.
+        self.results.clear();
+        self.active_result = 0;
+        self.error = None;
+        self.notice = None;
+        self.finished = None;
+        self.affected = 0;
+        self.ran = true;
+        // A plan is asked for by setting this after the run has begun.
+        self.explaining = false;
+        // A menu naming a result tab that is about to be dropped would act on
+        // whichever tab took its place, or on none at all.
+        self.context_menu = None;
+        // The rows a plan was made against are on their way out, so the plan
+        // and the failure of the last attempt to send one go with them.
+        self.preview = None;
+        self.apply_error = None;
+        self.confirm_discard = false;
+        if sort_base.is_none() {
+            // Not a sort round trip, so whatever order the last one left is
+            // not the order this one comes back in.
+            self.pending_sort = None;
+        }
+        self.sort_base = sort_base;
+        // Whatever the editor's events left for this run; a sort round trip
+        // and an apply's re-run leave nothing, and the spans then go unused.
+        self.active_spans = (std::mem::take(&mut self.run_spans), self.edits);
+        self.run = RunState::Running(Box::new(Running {
+            generation,
+            started: Instant::now(),
+            canceller: session.session().canceller(),
+            canceling: false,
+        }));
+
         // The elapsed clock. A task of its own rather than something the render
         // works out, because nothing else would make the window redraw while
         // the driver is blocked.
@@ -246,7 +267,7 @@ impl QueryPane {
         })
         .detach();
 
-        cx.notify();
+        Some((session, generation))
     }
 
     /// Records what one statement produced. Answers whether the run goes on.
@@ -364,7 +385,14 @@ impl QueryPane {
                     batch,
                     complete,
                 } => {
-                    self.append_log(sql, ts!("query.executed"), elapsed);
+                    // A plan's statement was not run, and the log must not
+                    // say it was.
+                    let message = if self.explaining {
+                        ts!("query.explained")
+                    } else {
+                        ts!("query.executed")
+                    };
+                    self.append_log(sql, message, elapsed);
                     let carried = (Some(index) == last_rows).then(|| more.take()).flatten();
                     let state = if complete && carried.is_none() {
                         GridSourceState::Complete
@@ -551,11 +579,11 @@ struct Statement<'a> {
 /// Which statement of a run an answer is for, and what it was.
 pub(super) struct Position {
     /// Its place in the run, from zero.
-    index: usize,
+    pub(super) index: usize,
     /// How many statements the run has.
-    total: usize,
+    pub(super) total: usize,
     /// The statement, as it was sent.
-    sql: String,
+    pub(super) sql: String,
 }
 
 /// What one statement of a run does to the transaction its session keeps

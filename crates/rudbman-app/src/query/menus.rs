@@ -198,6 +198,12 @@ impl QueryPane {
                 attached,
                 Box::new(RunAll),
             ),
+            row(
+                ts!("context.explain"),
+                super::keys::EXPLAIN_KEY.to_string(),
+                attached,
+                Box::new(super::keys::ExplainStatement),
+            ),
             MenuRow::separator(),
             row(
                 ts!("context.find"),

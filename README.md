@@ -99,6 +99,25 @@ JVM bridge.
   Built-in function suggestions include `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
   and common scalar functions for the connection's dialect. Completing a
   function replaces its name while preserving any existing arguments.
+- **Execution plans without running anything.** **Explain plan**
+  (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>, the editor's
+  right-click menu, the toolbar, or the ☰ menu) shows the plan of the
+  selection, or of the statement under the caret, as a read-only "Plan" grid
+  in the result area; the log says the statement was not run, and it is not.
+  PostgreSQL, MySQL, MariaDB and H2 are asked with `EXPLAIN`, SQLite with
+  `EXPLAIN QUERY PLAN`, Oracle with `EXPLAIN PLAN FOR` and then
+  `DBMS_XPLAN.DISPLAY()`, and SQL Server with `SET SHOWPLAN_TEXT ON`, the
+  statement, and `SET SHOWPLAN_TEXT OFF` — sent even when the plan fails, and
+  a failure to send it is said in red, since the connection would otherwise
+  answer every later statement with a plan. Db2 needs explain tables of its
+  own and is not asked; any other driver gets `EXPLAIN` and the database's own
+  answer. A plan is not a write, so a read-only profile and "ask before
+  writes" let it through. Two cautions: Oracle's `EXPLAIN PLAN` writes the
+  plan into the session's temporary `PLAN_TABLE`, which under manual commit
+  joins the open transaction (and which a read-only connection may refuse);
+  and while SQL Server's option is on, anything else sent on the same
+  connection in that moment — another tab's statement, the explorer — is
+  planned rather than run.
 - **BLOB/CLOB viewing and editing.** Double-click a LOB cell (including NULL)
   or choose **Open LOB** from its context menu. CLOBs use a text editor and
   UTF-8 files; BLOBs use editable hexadecimal byte pairs and binary files.
@@ -224,6 +243,7 @@ macOS), with its chord beside it.
 | | <kbd>Esc</kbd> | Stop the running statement (also in the results) |
 | | <kbd>F11</kbd> / <kbd>F12</kbd> | Commit / roll back (manual-commit connections; macOS: <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>C</kbd> / <kbd>R</kbd>, since F11 is Show Desktop there) |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Format SQL |
+| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> | Show the plan of the statement under the caret, or of the selection, without running it (also from the explorer, for the query tab on screen) |
 | | <kbd>Ctrl</kbd>+<kbd>Space</kbd> | Completion |
 | | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>H</kbd> | Find / replace |
 | | <kbd>Ctrl</kbd>+<kbd>/</kbd> | Toggle comment |

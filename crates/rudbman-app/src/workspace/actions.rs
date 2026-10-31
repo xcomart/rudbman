@@ -133,6 +133,20 @@ impl Workspace {
         self.open_sql_file(window, cx);
     }
 
+    /// Reads the plan of the statement under the caret of the query tab on
+    /// screen.
+    pub(super) fn explain_query_action(
+        &mut self,
+        _: &ExplainQuery,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        if let Some(pane) = self.active_query().cloned() {
+            pane.update(cx, |pane, cx| pane.explain(window, cx));
+        }
+    }
+
     /// Writes the query tab on screen to its file.
     pub(super) fn save_sql_file_action(
         &mut self,
