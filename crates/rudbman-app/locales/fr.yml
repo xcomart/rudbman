@@ -470,6 +470,12 @@ data:
   loading: chargement…
   load_canceled: Le chargement des lignes a été annulé.
   refresh: Actualiser
+  filter_placeholder: "Condition pour filtrer les lignes, p. ex. NAME = 'a'"
+  filter_apply: Filtrer
+  filter_clear: Effacer
+  filtered: Filtré
+  empty_filtered: Aucune ligne ne correspond au filtre.
+  filter_one_condition: Le filtre doit être une seule condition, sans autre instruction après.
   empty: Cette table ne contient aucune ligne.
   row_count: "%{count} lignes"
   row_count_more: "%{count}+ lignes"

@@ -470,6 +470,12 @@ data:
   loading: cargando…
   load_canceled: Se canceló la carga de las filas.
   refresh: Recargar
+  filter_placeholder: "Condición para filtrar las filas, p. ej. NAME = 'a'"
+  filter_apply: Filtrar
+  filter_clear: Borrar
+  filtered: Filtrado
+  empty_filtered: Ninguna fila cumple el filtro.
+  filter_one_condition: El filtro debe ser una sola condición, sin otra sentencia detrás.
   empty: Esta tabla no tiene filas.
   row_count: "%{count} filas"
   row_count_more: "%{count}+ filas"

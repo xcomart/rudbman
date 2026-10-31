@@ -470,6 +470,12 @@ data:
   loading: wird geladen…
   load_canceled: Das Laden der Zeilen wurde abgebrochen.
   refresh: Aktualisieren
+  filter_placeholder: "Bedingung zum Filtern der Zeilen, z. B. NAME = 'a'"
+  filter_apply: Filtern
+  filter_clear: Leeren
+  filtered: Gefiltert
+  empty_filtered: Keine Zeile entspricht dem Filter.
+  filter_one_condition: Der Filter muss eine einzelne Bedingung sein, ohne Anweisung danach.
   empty: Diese Tabelle hat keine Zeilen.
   row_count: "%{count} Zeilen"
   row_count_more: "%{count}+ Zeilen"

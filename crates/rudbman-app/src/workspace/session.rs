@@ -68,6 +68,10 @@ enum SavedContent {
     Data {
         target: SavedObject,
         order: Option<(usize, String, bool)>,
+        /// The condition the rows were filtered by. Left out for none, so a
+        /// workspace written before the filter existed reads the same.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<String>,
     },
     Structure {
         target: SavedObject,
@@ -177,6 +181,7 @@ impl WorkArea {
                 PaneItem::TableData(pane) => SavedContent::Data {
                     target: SavedObject::of(pane.read(cx).target()),
                     order: pane.read(cx).workspace_order(),
+                    filter: pane.read(cx).workspace_filter(),
                 },
                 PaneItem::TableStruct(pane) => SavedContent::Structure {
                     target: SavedObject::of(pane.read(cx).target()),
@@ -570,9 +575,17 @@ impl Workspace {
                         .update(cx, |panel, cx| panel.select_tab(*tab, cx));
                 }
             }
-            SavedContent::Data { target, order } => {
-                self.open_data_with_order(target.target(connection), order.clone(), window, cx)
-            }
+            SavedContent::Data {
+                target,
+                order,
+                filter,
+            } => self.open_data_with_view(
+                target.target(connection),
+                order.clone(),
+                filter.clone(),
+                window,
+                cx,
+            ),
             SavedContent::Structure { target } if target.name.is_empty() => self.open_new_table(
                 connection,
                 Scope {
@@ -752,9 +765,10 @@ mod tests {
                     .unwrap()
                     .panes
                     .set_ratio(split, 0.32);
-                workspace.open_data_with_order(
+                workspace.open_data_with_view(
                     object(id),
                     Some((0, "ID".into(), false)),
+                    Some("ID > 0".into()),
                     window,
                     cx,
                 );

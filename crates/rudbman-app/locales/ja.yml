@@ -470,6 +470,12 @@ data:
   loading: 読み込み中…
   load_canceled: 行の読み込みをキャンセルしました。
   refresh: 再読み込み
+  filter_placeholder: "行を絞り込む条件 (例: NAME = 'a')"
+  filter_apply: 絞り込み
+  filter_clear: クリア
+  filtered: 絞り込み中
+  empty_filtered: 条件に一致する行はありません。
+  filter_one_condition: フィルターには条件を 1 つだけ書けます。後ろに別の文は続けられません。
   empty: このテーブルに行はありません。
   row_count: "%{count} 行"
   row_count_more: "%{count}+ 行"

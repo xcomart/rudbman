@@ -24,13 +24,17 @@ impl Workspace {
             self.activate_tab(pane, index, window, cx);
             return;
         }
-        self.open_data_with_order(target, None, window, cx);
+        self.open_data_with_view(target, None, None, window, cx);
     }
 
-    pub(super) fn open_data_with_order(
+    /// Opens a data pane over `target` that reads its rows in `order` and
+    /// under `filter` from the first load: a restored or split tab, which
+    /// shows the rows the way the tab it was taken from showed them.
+    pub(super) fn open_data_with_view(
         &mut self,
         target: ObjectTarget,
         order: Option<(usize, String, bool)>,
+        filter: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -69,6 +73,7 @@ impl Workspace {
         // it.
         panel.update(cx, |panel, cx| {
             panel.restore_workspace_order(order);
+            panel.restore_workspace_filter(filter, cx);
             panel.refresh(window, cx);
         });
         self.append_tab(PaneItem::TableData(panel.clone()), window, cx);

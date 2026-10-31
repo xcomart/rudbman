@@ -470,6 +470,12 @@ data:
   loading: 正在加载…
   load_canceled: 已取消加载数据行。
   refresh: 刷新
+  filter_placeholder: "用于筛选行的条件，例如 NAME = 'a'"
+  filter_apply: 筛选
+  filter_clear: 清除
+  filtered: 已筛选
+  empty_filtered: 没有符合筛选条件的行。
+  filter_one_condition: 筛选只能是一个条件，后面不能再跟其他语句。
   empty: 该表没有任何行。
   row_count: "%{count} 行"
   row_count_more: "%{count}+ 行"

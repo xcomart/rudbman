@@ -726,6 +726,17 @@ data:
   # The load or sort was stopped with Cancel; Refresh starts it again.
   load_canceled: Loading the rows was canceled.
   refresh: Refresh
+  # The filter strip under the data tab's toolbar. The field holds a SQL
+  # condition the rows are read under; the pane writes the WHERE keyword itself.
+  filter_placeholder: "Condition to filter the rows by, e.g. NAME = 'a'"
+  filter_apply: Filter
+  filter_clear: Clear
+  # Beside the row count while a filter is applied.
+  filtered: Filtered
+  empty_filtered: No rows match the filter.
+  # Refused before anything is sent: a statement after the condition would run
+  # as part of a read.
+  filter_one_condition: The filter must be a single condition, with no statement after it.
   # A table that has no rows at all, as against one that could not be read.
   empty: This table has no rows.
   # How much of the table has been paged in so far, in the pane's own toolbar.

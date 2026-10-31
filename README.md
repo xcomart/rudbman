@@ -110,6 +110,18 @@ JVM bridge.
   these stay fully exportable and can be replaced from a file without loading
   the whole value into the editor. Result snapshots use temporary disk space
   and are removed when the result and its edits are released.
+- **A table's rows, filtered.** The data tab has a `WHERE` strip under its
+  toolbar: type a condition such as `status = 'open'` and press
+  <kbd>Enter</kbd> (or **Filter**), and the rows are read again under it, in
+  the order the grid is sorted by; <kbd>Esc</kbd> or **Clear** brings every
+  row back, and <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>F</kbd> puts the keyboard
+  in the field. A leading `WHERE` and a trailing `;` are taken off, a second
+  statement after the condition is refused, and a condition the database
+  rejects is reported like any failed load and stays in the field to be
+  corrected. "Filtered" beside the row count says the rows are not all of
+  them; editing and **Apply** work as usual, and the filter is kept with the
+  workspace and copied by a split. Like a sort or a refresh, changing it waits
+  for staged edits to be applied or discarded.
 - **Multiline text cells** show the first line followed by visible `\n`
   separators. Double-click or choose **Open text editor** to edit the actual
   lines in the same viewer, then stage and Apply as usual. Copying and database
@@ -222,6 +234,7 @@ macOS), with its chord beside it.
 | | <kbd>Alt</kbd>+<kbd>Insert</kbd> | Add a row |
 | | <kbd>Ctrl</kbd>+<kbd>S</kbd>, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Apply (shows the statements first) |
 | | <kbd>F5</kbd> | Read the rows again |
+| | <kbd>Ctrl</kbd>+<kbd>F</kbd> | Put the keyboard in the data tab's filter field; there <kbd>Enter</kbd> applies the condition and <kbd>Esc</kbd> clears it |
 | | <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy the selected cells |
 | ERD | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Zoom in / out / actual size |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>L</kbd> | Auto-arrange / switch to comment names |

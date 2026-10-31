@@ -470,6 +470,12 @@ data:
   loading: загрузка…
   load_canceled: Загрузка строк отменена.
   refresh: Обновить
+  filter_placeholder: "Условие для отбора строк, например NAME = 'a'"
+  filter_apply: Отфильтровать
+  filter_clear: Очистить
+  filtered: Отфильтровано
+  empty_filtered: Нет строк, подходящих под фильтр.
+  filter_one_condition: Фильтр должен быть одним условием, без другой инструкции после него.
   empty: В этой таблице нет строк.
   row_count: "Строк: %{count}"
   row_count_more: "Строк: %{count}+"

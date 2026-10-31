@@ -470,6 +470,12 @@ data:
   loading: 불러오는 중…
   load_canceled: 행 불러오기를 취소했습니다.
   refresh: 새로 고침
+  filter_placeholder: "행을 거를 조건 (예: NAME = 'a')"
+  filter_apply: 필터
+  filter_clear: 지우기
+  filtered: 필터 적용됨
+  empty_filtered: 필터에 맞는 행이 없습니다.
+  filter_one_condition: 필터에는 조건 하나만 쓸 수 있으며, 뒤에 다른 SQL 문을 붙일 수 없습니다.
   empty: 이 테이블에는 행이 없습니다.
   row_count: "%{count}행"
   row_count_more: "%{count}+행"
