@@ -38,6 +38,16 @@
 # The image tags are pinned. MySQL 8.4 in particular is a choice rather than
 # "the latest": `ALTER TABLE ... DROP CHECK` needs 8.0.16 or newer, and §7.10
 # claims that spelling is required.
+#
+# The project name is set here rather than taken from this file's directory,
+# `docker`, which rudbgen's compose file shares along with these service names:
+# `up` in one stack would otherwise replace the other's container of the same
+# service. The two still share host ports, so run them one at a time. A
+# container created before the name was set belongs to the project `docker`,
+# and its fixed `container_name` makes `up` fail with "is already in use" until
+# that container is removed (`docker rm rudbman-test-db2`, for example).
+
+name: rudbman
 
 services:
   postgres:
