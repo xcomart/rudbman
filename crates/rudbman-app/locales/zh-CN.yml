@@ -20,6 +20,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 查询所选对象
+  query_history: 查询历史…
   view_data: 查看数据
   view_structure: 编辑结构
   new_table: 新建表
@@ -124,6 +125,8 @@ settings:
   login_timeout: 连接超时
   login_timeout_hint: 秒 — 0 表示使用驱动的默认值
   confirm_writes_default: 新连接默认在执行写入语句前先确认
+  query_history: 保存查询标签页执行过的语句历史
+  query_history_hint: 按连接配置以纯文本保存在配置目录的 history 文件夹中。关闭后不再记录，已记录的内容会保留，可在历史对话框中删除。
 
   jvm_heap: Java 堆
   jvm_heap_hint: MB — 驱动运行时的 -Xmx
@@ -818,3 +821,19 @@ toast:
   open_failed: "无法打开 %{file}：%{error}"
   columns_failed: "无法读取 %{table} 的列：%{error}"
   keychain_unavailable: "系统钥匙串不可用（%{error}）。无法读取已保存的密码，新密码也不会被保存。"
+
+history:
+  title: "查询历史 — %{name}"
+  search: 搜索语句
+  empty: 此连接尚未执行任何语句。
+  no_match: 没有与搜索匹配的语句。
+  open: 在新查询标签页中打开
+  delete: 删除
+  clear: 清除历史…
+  clear_question: "要删除此连接历史中的全部 %{count} 条语句吗？此操作无法撤销。"
+  clear_confirm: 全部删除
+  done: 已执行
+  failed: 失败
+  canceled: 已取消
+  kept_in: "保存位置：%{path}"
+  recording_off: 设置中已关闭记录，不会再添加新语句。

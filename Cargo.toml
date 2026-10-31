@@ -79,6 +79,9 @@ secret-service = { version = "5.1", features = ["crypto-rust"] }
 parking_lot = "0.12"
 unicode-width = "0.2"
 futures = "0.3"
+# Already in the build as gpui's own dependency; named here for the query
+# history's local timestamps.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 async-trait = "0.1"
 tempfile = "3"
 

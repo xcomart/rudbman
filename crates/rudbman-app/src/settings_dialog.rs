@@ -145,6 +145,8 @@ mod tab {
     pub const LOGIN_TIMEOUT: isize = 125;
     /// Default of a new profile's "confirm writes" flag.
     pub const CONFIRM_WRITES: isize = 130;
+    /// "Keep a history of the statements run" toggle.
+    pub const QUERY_HISTORY: isize = 135;
     /// Java heap ceiling.
     pub const JVM_HEAP: isize = 140;
     /// Extra JVM arguments.
@@ -304,6 +306,8 @@ pub struct SettingsDialog {
     titlebar: TitlebarStyle,
     /// What a newly created connection profile's "confirm writes" starts at.
     confirm_writes_default: bool,
+    /// Whether the statements query tabs run are written into the history.
+    query_history: bool,
     /// Editor font family; `None` means the per-OS default.
     font_family: Option<SharedString>,
     /// The chrome palettes, as the management row and the editor see them.
@@ -466,6 +470,7 @@ impl SettingsDialog {
             background_blur: defaults.window.background_blur,
             titlebar: defaults.window.titlebar,
             confirm_writes_default: defaults.confirm_writes_default,
+            query_history: defaults.query_history,
             font_family: defaults.editor_font_family.map(SharedString::from),
             ui_catalog,
             editor_catalog,
@@ -742,6 +747,7 @@ impl SettingsDialog {
         self.background_blur = settings.window.background_blur;
         self.titlebar = settings.window.titlebar;
         self.confirm_writes_default = settings.confirm_writes_default;
+        self.query_history = settings.query_history;
         self.font_family = settings.editor_font_family.clone().map(SharedString::from);
 
         set_text(
@@ -797,6 +803,7 @@ impl SettingsDialog {
         settings.editor_font_family = self.font_family.as_ref().map(ToString::to_string);
         settings.editor_word_wrap = self.editor_word_wrap;
         settings.confirm_writes_default = self.confirm_writes_default;
+        settings.query_history = self.query_history;
         settings.window.titlebar = self.titlebar;
         settings.window.background_blur = self.background_blur;
 
@@ -1410,12 +1417,25 @@ impl SettingsDialog {
         )
         .checked(self.confirm_writes_default)
         .tab_index(tab::CONFIRM_WRITES)
-        .on_toggle(move |checked, _window, cx| {
-            this.update(cx, |dialog, cx| {
-                dialog.confirm_writes_default = checked;
-                cx.notify();
-            });
+        .on_toggle({
+            let this = this.clone();
+            move |checked, _window, cx| {
+                this.update(cx, |dialog, cx| {
+                    dialog.confirm_writes_default = checked;
+                    cx.notify();
+                });
+            }
         });
+
+        let query_history = Checkbox::new("settings-query-history", ts!("settings.query_history"))
+            .checked(self.query_history)
+            .tab_index(tab::QUERY_HISTORY)
+            .on_toggle(move |checked, _window, cx| {
+                this.update(cx, |dialog, cx| {
+                    dialog.query_history = checked;
+                    cx.notify();
+                });
+            });
 
         section(
             ts!("settings.section.database"),
@@ -1457,7 +1477,9 @@ impl SettingsDialog {
                     )
                     .label_width(self.label_width),
                 )
-                .child(form_row("", confirm_writes).label_width(self.label_width)),
+                .child(form_row("", confirm_writes).label_width(self.label_width))
+                .child(form_row("", query_history).label_width(self.label_width))
+                .child(hint(ts!("settings.query_history_hint"), cx)),
         )
     }
 
@@ -1751,6 +1773,7 @@ mod tests {
             query_timeout_s: 30,
             login_timeout_s: 12,
             confirm_writes_default: false,
+            query_history: false,
             window: WindowState {
                 x: Some(120),
                 y: Some(60),
@@ -1986,6 +2009,8 @@ mod tests {
             ts!("settings.login_timeout"),
             ts!("settings.login_timeout_hint"),
             ts!("settings.confirm_writes_default"),
+            ts!("settings.query_history"),
+            ts!("settings.query_history_hint"),
             ts!("settings.jvm_heap"),
             ts!("settings.jvm_heap_hint"),
             ts!("settings.jvm_args"),

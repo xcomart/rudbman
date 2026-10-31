@@ -219,6 +219,13 @@ pub struct RenderedBatch {
     columns: Vec<RenderedColumn>,
 }
 
+impl RenderedBatch {
+    /// How many rows the batch holds.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+}
+
 /// Renders one batch against the result's logical column types.
 ///
 /// Runs on the thread that fetched it — never on the UI thread. `columns` is

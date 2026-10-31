@@ -20,6 +20,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 선택한 객체 조회
+  query_history: 쿼리 실행 이력…
   view_data: 데이터 보기
   view_structure: 구조 편집
   new_table: 새 테이블
@@ -124,6 +125,8 @@ settings:
   login_timeout: 연결 제한 시간
   login_timeout_hint: 초 — 0이면 드라이버 기본값
   confirm_writes_default: 새 연결에서 쓰기 SQL 문을 실행하기 전에 확인
+  query_history: 쿼리 탭에서 실행한 SQL 문의 이력 남기기
+  query_history_hint: 연결 프로필마다 설정 폴더의 history 폴더에 일반 텍스트로 저장됩니다. 끄면 새로 기록하지 않으며, 이미 기록된 내용은 이력 창에서 지울 수 있습니다.
 
   jvm_heap: 자바 힙
   jvm_heap_hint: MB — 드라이버가 사용하는 -Xmx
@@ -818,3 +821,19 @@ toast:
   open_failed: "%{file} 파일을 열 수 없습니다: %{error}"
   columns_failed: "%{table}의 열 목록을 읽을 수 없습니다: %{error}"
   keychain_unavailable: "시스템 키체인을 사용할 수 없습니다(%{error}). 저장된 비밀번호를 읽을 수 없고, 새 비밀번호도 보관되지 않습니다."
+
+history:
+  title: "쿼리 실행 이력 — %{name}"
+  search: SQL 문 검색
+  empty: 이 연결에서 아직 실행한 SQL 문이 없습니다.
+  no_match: 검색어와 맞는 SQL 문이 없습니다.
+  open: 새 쿼리 탭에서 열기
+  delete: 삭제
+  clear: 이력 모두 지우기…
+  clear_question: "이 연결의 이력 %{count}개를 모두 지울까요? 되돌릴 수 없습니다."
+  clear_confirm: 모두 지우기
+  done: 실행됨
+  failed: 실패
+  canceled: 취소됨
+  kept_in: "저장 위치: %{path}"
+  recording_off: 설정에서 기록이 꺼져 있어 새 SQL 문은 추가되지 않습니다.

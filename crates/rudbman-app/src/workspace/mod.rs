@@ -32,9 +32,9 @@ use crate::{
     ExtractScript, FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery,
     NextConnection, NextRegion, NextTab, OpenErd, OpenSettings, OpenSqlFile, PrevConnection,
     PrevRegion, PrevTab, QueryObject, Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, SelectTab,
-    ShowAbout, SplitBelow, SplitRight, ToggleExplorer, TransferTable, app_identity, app_settings,
-    builder_pane, builder_sql, connection, context_menu, erd_pane, explorer, i18n, icons,
-    table_detail,
+    ShowAbout, ShowQueryHistory, SplitBelow, SplitRight, ToggleExplorer, TransferTable,
+    app_identity, app_settings, builder_pane, builder_sql, connection, context_menu, erd_pane,
+    explorer, i18n, icons, table_detail,
 };
 
 mod actions;
@@ -45,6 +45,7 @@ use bootstrap::{app_menus, apply_themes, chrome_titlebar, record_window_geometry
 mod closing;
 mod connections;
 mod dialogs;
+mod history;
 mod menus;
 mod objects;
 mod panes;
@@ -665,6 +666,8 @@ enum ContextTarget {
     },
     /// A row of the welcome screen's saved-connection list.
     Profile(Uuid),
+    /// A row of the query history dialog, by the entry's id.
+    History(u64),
 }
 
 /// A right-click on one of the shell's surfaces, while its menu is open.
@@ -691,6 +694,8 @@ struct Workspace {
     sessions: session::SessionStorage,
     autosave: Option<Task<()>>,
     rename_tab: Option<tab_name::RenameTab>,
+    /// The query history dialog, while it is open; see [`history`].
+    history: Option<history::HistoryView>,
     /// Focus target for the window, so the shortcuts stay live.
     ///
     /// One handle for the whole shell in M0: no pane holds anything focusable
@@ -906,6 +911,7 @@ impl Workspace {
             sessions: session::SessionStorage::default(),
             autosave: None,
             rename_tab: None,
+            history: None,
             focus_handle: cx.focus_handle(),
             explorer,
             explorer_visible: settings_snapshot.explorer_visible,

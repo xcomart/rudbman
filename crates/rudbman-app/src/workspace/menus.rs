@@ -204,6 +204,13 @@ impl Workspace {
                 .on_activate(on_tab(|workspace, window, cx| {
                     workspace.open_builder(window, cx);
                 })),
+            // Not gated on the session: what was run can be read, searched
+            // and copied with the connection down.
+            MenuRow::new(ts!("menu.query_history"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+Shift+H"))
+                .on_activate(on_tab(|workspace, window, cx| {
+                    workspace.open_history(window, cx);
+                })),
             MenuRow::separator(),
             // A new attempt in the same tab, for one that never opened or whose
             // session has ended: what the card in its work area offers too.

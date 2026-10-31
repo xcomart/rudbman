@@ -20,6 +20,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Ausgewähltes Objekt abfragen
+  query_history: Abfrageverlauf…
   view_data: Daten ansehen
   view_structure: Struktur bearbeiten
   new_table: Neue Tabelle
@@ -124,6 +125,8 @@ settings:
   login_timeout: Zeitlimit für den Verbindungsaufbau
   login_timeout_hint: Sekunden — 0 überlässt es dem Treiber
   confirm_writes_default: Bei neuen Verbindungen vor schreibenden Anweisungen nachfragen
+  query_history: Verlauf der in Abfrage-Tabs ausgeführten Anweisungen führen
+  query_history_hint: Wird je Verbindungsprofil als Klartext im Ordner history des Konfigurationsverzeichnisses gespeichert. Ausgeschaltet wird nichts mehr aufgezeichnet; Vorhandenes bleibt und lässt sich im Verlaufsdialog löschen.
 
   jvm_heap: Java-Heap
   jvm_heap_hint: MB — das -Xmx, unter dem ein Treiber läuft
@@ -818,3 +821,19 @@ toast:
   open_failed: "%{file} konnte nicht geöffnet werden: %{error}"
   columns_failed: "Die Spalten von %{table} konnten nicht gelesen werden: %{error}"
   keychain_unavailable: "Der Schlüsselbund des Systems ist nicht verfügbar (%{error}). Gespeicherte Passwörter können nicht gelesen und neue nicht behalten werden."
+
+history:
+  title: "Abfrageverlauf — %{name}"
+  search: Anweisungen durchsuchen
+  empty: Auf dieser Verbindung wurde noch nichts ausgeführt.
+  no_match: Keine Anweisung passt zur Suche.
+  open: In neuem Abfrage-Tab öffnen
+  delete: Löschen
+  clear: Verlauf leeren…
+  clear_question: "Alle %{count} Anweisungen im Verlauf dieser Verbindung löschen? Das kann nicht rückgängig gemacht werden."
+  clear_confirm: Alle löschen
+  done: Ausgeführt
+  failed: Fehlgeschlagen
+  canceled: Abgebrochen
+  kept_in: "Gespeichert in %{path}"
+  recording_off: Die Aufzeichnung ist in den Einstellungen ausgeschaltet; es kommt nichts Neues hinzu.

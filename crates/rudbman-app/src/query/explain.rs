@@ -101,6 +101,7 @@ impl QueryPane {
             return;
         };
         self.explaining = true;
+        self.recording = false;
 
         cx.spawn_in(window, async move |pane, cx| {
             let shown = plan.shown.clone();

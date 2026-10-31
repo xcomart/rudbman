@@ -443,6 +443,10 @@ impl Workspace {
             self.finish_tab_name(false, window, cx);
             return;
         }
+        if self.history.is_some() {
+            self.escape_history(window, cx);
+            return;
+        }
         if self.close_question.is_some() {
             // "Cancel": nothing closes, and the tab the question brought
             // forward keeps the keyboard if it had it.

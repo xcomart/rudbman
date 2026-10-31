@@ -37,6 +37,7 @@ impl Workspace {
         if self.rename_tab.is_some() {
             self.finish_tab_name(false, window, cx);
         }
+        self.history = None;
         self.menu_open = false;
         self.close_context_menus(cx);
         if self.confirm.is_some() {

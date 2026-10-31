@@ -352,6 +352,7 @@ mod editing;
 mod execution;
 mod explain;
 mod file;
+mod history;
 mod lob;
 mod menus;
 mod statements;

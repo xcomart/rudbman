@@ -99,6 +99,24 @@ JVM bridge.
   Built-in function suggestions include `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
   and common scalar functions for the connection's dialect. Completing a
   function replaces its name while preserving any existing arguments.
+- **Query history.** Every statement a query tab runs because you asked it
+  to is written down per connection profile — when it ran, how long it took,
+  and the rows it returned, the rows it changed or the error it stopped at.
+  **Query history…** (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>,
+  the ☰ menu or a connection tab's right-click menu) lists them newest first
+  with the whole statement under the list: type to search, <kbd>↑</kbd>/<kbd>↓</kbd>
+  to move, and <kbd>Enter</kbd> or a double-click opens the statement in a
+  **new query tab**, without running it. **Copy SQL**, **Delete** and
+  **Clear history…** are beside it, and on a row's right-click menu. A sort's
+  re-run, a grid apply, a plan and a write the profile refused are not
+  recorded. The history is kept, as plain JSON, in `history/<profile-id>.json`
+  under the configuration directory (`~/.config/rudbman` on Linux,
+  `~/Library/Application Support/rudbman` on macOS,
+  `%APPDATA%\rudbman\config` on Windows), up to 1,000 statements and 4 MiB of
+  SQL per profile, oldest dropped first; a statement over 256 KiB is not
+  recorded. Statements can carry secrets: **Keep a history of the statements
+  query tabs run** in Settings turns recording off (what was recorded stays
+  until it is deleted).
 - **Execution plans without running anything.** **Explain plan**
   (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>, the editor's
   right-click menu, the toolbar, or the ☰ menu) shows the plan of the
@@ -218,6 +236,7 @@ macOS), with its chord beside it.
 |---|---|---|
 | Window | <kbd>Ctrl</kbd>+<kbd>N</kbd> | Manage connections (in the connection dialog: new profile) |
 | | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
+| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> | Query history of the connection on screen; in it <kbd>↑</kbd>/<kbd>↓</kbd> move, <kbd>Enter</kbd> opens the statement in a new query tab |
 | | <kbd>Ctrl</kbd>+<kbd>B</kbd> | Show or hide the explorer |
 | | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit (asks first when something would be lost, as closing the window does) |
 | | <kbd>F10</kbd> | Open the ☰ menu on its first row (Linux and Windows; on macOS the commands are in the menu bar) |

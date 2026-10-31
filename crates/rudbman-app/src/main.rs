@@ -32,6 +32,7 @@ mod notice;
 #[allow(dead_code)]
 mod pane_tree;
 mod query;
+mod query_history;
 mod query_source;
 mod row_apply;
 mod settings_dialog;
@@ -109,6 +110,8 @@ actions!(
         /// Show the plan of the statement under the caret of the query tab
         /// on screen, without running it.
         ExplainQuery,
+        /// Open the query history of the connection whose tab is showing.
+        ShowQueryHistory,
         /// Bring the next tab of the active pane to the front.
         NextTab,
         /// Bring the previous tab of the active pane to the front.

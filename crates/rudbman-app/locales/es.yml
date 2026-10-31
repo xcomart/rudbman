@@ -20,6 +20,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Consultar el objeto seleccionado
+  query_history: Historial de consultas…
   view_data: Ver los datos
   view_structure: Editar la estructura
   new_table: Nueva tabla
@@ -124,6 +125,8 @@ settings:
   login_timeout: Tiempo de espera de conexión
   login_timeout_hint: segundos — 0 lo deja al controlador
   confirm_writes_default: Preguntar antes de ejecutar una sentencia de escritura en una conexión nueva
+  query_history: Guardar un historial de las sentencias que ejecutan las pestañas de consulta
+  query_history_hint: Se guarda por perfil de conexión en la carpeta history del directorio de configuración, como texto sin cifrar. Al desactivarlo deja de registrarse y lo registrado se conserva; puedes borrarlo desde el diálogo del historial.
 
   jvm_heap: Montículo de Java
   jvm_heap_hint: MB — el -Xmx con el que corre un controlador
@@ -818,3 +821,19 @@ toast:
   open_failed: "No se pudo abrir %{file}: %{error}"
   columns_failed: "No se pudieron leer las columnas de %{table}: %{error}"
   keychain_unavailable: "El llavero del sistema no está disponible (%{error}). No se pueden leer las contraseñas guardadas y las nuevas no se conservarán."
+
+history:
+  title: "Historial de consultas — %{name}"
+  search: Buscar sentencias
+  empty: Todavía no se ha ejecutado nada en esta conexión.
+  no_match: Ninguna sentencia coincide con la búsqueda.
+  open: Abrir en una pestaña de consulta nueva
+  delete: Eliminar
+  clear: Borrar historial…
+  clear_question: "¿Eliminar las %{count} sentencias del historial de esta conexión? No se puede deshacer."
+  clear_confirm: Eliminar todo
+  done: Ejecutada
+  failed: Falló
+  canceled: Cancelada
+  kept_in: "Guardado en %{path}"
+  recording_off: El registro está desactivado en Ajustes, así que no se añade nada nuevo.

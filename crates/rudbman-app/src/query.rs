@@ -653,6 +653,12 @@ pub struct QueryPane {
     /// Whether the run in flight, or the last one, read a plan rather than
     /// running a statement; see [`QueryPane::explain`].
     explaining: bool,
+    /// The profile the pane's connection was opened from, whose query
+    /// history its runs are written into.
+    profile: uuid::Uuid,
+    /// Whether the run in flight is one the user asked for, and so goes into
+    /// the query history: not a sort's re-run, an apply's or a plan.
+    recording: bool,
     finished: Option<Finished>,
     /// Rows the writes of the run in flight have reported changing so far.
     affected: u64,
@@ -929,6 +935,8 @@ impl QueryPane {
             generation: 0,
             ran: false,
             explaining: false,
+            profile: profile.id,
+            recording: false,
             finished: None,
             affected: 0,
             pending: None,

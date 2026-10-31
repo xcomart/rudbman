@@ -45,6 +45,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Query the selected object
+  # Opens the query history of the connection on screen.
+  query_history: Query history…
   # Opens the rows of the table or view selected in the explorer in a data
   # pane. Also the label of the button that does the same from the detail
   # panel's header: one command, one wording.
@@ -221,6 +223,8 @@ settings:
   login_timeout: Connection timeout
   login_timeout_hint: seconds — 0 leaves it to the driver
   confirm_writes_default: Ask before running a write statement on a new connection
+  query_history: Keep a history of the statements query tabs run
+  query_history_hint: Kept per connection profile in the history folder of the configuration directory, as plain text. Turning this off stops recording and keeps what was recorded; the history dialog deletes it.
 
   jvm_heap: Java heap
   jvm_heap_hint: MB — the -Xmx a driver runs under
@@ -1347,3 +1351,24 @@ toast:
   columns_failed: "Could not read the columns of %{table}: %{error}"
   # At start-up, when the platform has no usable credential store.
   keychain_unavailable: "The system keychain is unavailable (%{error}). Saved passwords can't be read, and new ones won't be kept."
+
+# The query history dialog: the statements a connection profile's query tabs
+# ran, newest first. `name` is the connection's name.
+history:
+  title: "Query history — %{name}"
+  search: Search the statements
+  empty: Nothing has been run on this connection yet.
+  no_match: No statement matches the search.
+  # Opens the statement in a new query tab; nothing is run.
+  open: Open in a new query tab
+  delete: Delete
+  clear: Clear history…
+  clear_question: "Delete all %{count} statements in this connection's history? This cannot be undone."
+  clear_confirm: Delete all
+  # How a statement ended, beside its time and duration. Rows and affected
+  # counts reuse the query pane's wording.
+  done: Executed
+  failed: Failed
+  canceled: Canceled
+  kept_in: "Kept in %{path}"
+  recording_off: Recording is turned off in Settings, so nothing new is added.

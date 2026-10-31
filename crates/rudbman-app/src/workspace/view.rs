@@ -460,6 +460,7 @@ impl Render for Workspace {
         let confirm = self.render_confirm(cx);
         let close_question = self.render_close_question(cx);
         let rename_tab = self.render_rename_tab(cx);
+        let history = self.render_history(cx);
         let context_menu = self.render_context_menu(cx);
 
         // With client-side decorations the compositor stops drawing the drop
@@ -528,6 +529,7 @@ impl Render for Workspace {
             .on_action(cx.listener(actions::unless_held(Self::open_sql_file_action)))
             .on_action(cx.listener(actions::unless_held(Self::save_sql_file_action)))
             .on_action(cx.listener(actions::unless_held(Self::explain_query_action)))
+            .on_action(cx.listener(actions::unless_held(Self::show_query_history_action)))
             .on_action(cx.listener(actions::unless_held(Self::save_sql_file_as_action)))
             .on_action(cx.listener(actions::unless_held(Self::extract_script_action)))
             .on_action(cx.listener(actions::unless_held(Self::transfer_table_action)))
@@ -562,6 +564,7 @@ impl Render for Workspace {
             .children(update)
             .children(confirm)
             .children(rename_tab)
+            .children(history)
             .children(close_question)
             // Over every other dialog: a quit, or a close of the window, can
             // be asked for with one up.
@@ -606,6 +609,7 @@ impl Workspace {
             ContextTarget::Connection(index) => self.connection_rows(*index, cx),
             ContextTarget::PaneTab { pane, index } => self.pane_tab_rows(*pane, *index, cx),
             ContextTarget::Profile(id) => self.profile_rows(*id, cx),
+            ContextTarget::History(id) => self.history_rows(*id, cx),
         };
 
         Some(
@@ -852,6 +856,9 @@ impl Workspace {
             row(ts!("context.explain"), Box::new(ExplainQuery))
                 .shortcut(crate::query::EXPLAIN_KEY)
                 .disabled(!(live && query)),
+            row(ts!("menu.query_history"), Box::new(ShowQueryHistory))
+                .shortcut(chord("Shift+H"))
+                .disabled(self.connections.is_empty()),
             MenuEntry::separator(),
             row(ts!("menu.query_object"), Box::new(QueryObject))
                 .shortcut(in_explorer("Enter"))

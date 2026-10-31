@@ -202,6 +202,7 @@ pub(super) fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.save_sql_file"), SaveSqlFile),
                 MenuItem::action(ts!("menu.save_sql_file_as"), SaveSqlFileAs),
                 MenuItem::action(ts!("context.explain"), ExplainQuery),
+                MenuItem::action(ts!("menu.query_history"), ShowQueryHistory),
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.query_object"), QueryObject),
                 MenuItem::action(ts!("menu.extract_script"), ExtractScript),
@@ -348,6 +349,13 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
         ExplainQuery,
         Some(KEY_CONTEXT),
     ));
+    // `H` for history, shifted for the reason the tab chords are: the SQL
+    // editor's `Ctrl+H` is replace.
+    bindings.push(KeyBinding::new(
+        &format!("{modifier}-shift-h"),
+        ShowQueryHistory,
+        Some(KEY_CONTEXT),
+    ));
     cx.bind_keys(bindings);
 }
 
@@ -418,6 +426,10 @@ pub(super) fn run() {
         // Load the settings before the widget layer installs its default
         // palettes, then override those to match what the user configured.
         app_settings::init(cx);
+        // Registers the write of whatever is still owed when the application
+        // quits; the files themselves are read when a profile is first asked
+        // about.
+        crate::query_history::QueryHistory::init(cx);
         let settings = app_settings::current(cx);
         // Ahead of everything that renders a string — the menu bar included —
         // so nothing is ever built in the wrong language and then corrected.

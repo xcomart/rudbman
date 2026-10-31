@@ -1,6 +1,7 @@
 //! Execution.
 
 use super::*;
+use crate::query_history::{Outcome as HistoryOutcome, QueryHistory};
 
 impl QueryPane {
     pub(super) fn can_finish_transaction(&self) -> bool {
@@ -218,6 +219,9 @@ impl QueryPane {
         self.ran = true;
         // A plan is asked for by setting this after the run has begun.
         self.explaining = false;
+        // A sort and an apply's re-run both hand a statement to wrap, and
+        // neither is a statement the user ran; a plan turns this off itself.
+        self.recording = sort_base.is_none();
         // A menu naming a result tab that is about to be dropped would act on
         // whichever tab took its place, or on none at all.
         self.context_menu = None;
@@ -295,6 +299,10 @@ impl QueryPane {
         }
         match outcome {
             Ok(executed) => {
+                if self.recording {
+                    let outcome = history_outcome(&executed);
+                    QueryHistory::record(cx, self.profile, &at.sql, elapsed, outcome);
+                }
                 let Executed {
                     sql,
                     steps,
@@ -308,6 +316,14 @@ impl QueryPane {
             }
             Err(error) => {
                 let error = QueryError::new(error);
+                if self.recording {
+                    let outcome = if error.is_canceled() {
+                        HistoryOutcome::Canceled
+                    } else {
+                        HistoryOutcome::failed(&error.message)
+                    };
+                    QueryHistory::record(cx, self.profile, &at.sql, elapsed, outcome);
+                }
                 if at.total > 1 {
                     let mut message = ts!(
                         "query.statement_failed",
@@ -502,6 +518,32 @@ impl QueryPane {
         })
         .detach();
         cx.notify();
+    }
+}
+
+/// How a statement that ran is written down in the query history: the rows
+/// it answered with, or failing those the rows it changed.
+fn history_outcome(executed: &Executed) -> HistoryOutcome {
+    let mut rows = None;
+    let mut more = executed.more.is_some();
+    let mut affected = 0u64;
+    for step in &executed.steps {
+        match step {
+            Step::Rows {
+                batch, complete, ..
+            } => {
+                *rows.get_or_insert(0u64) += batch.rows() as u64;
+                more |= !complete;
+            }
+            Step::Message { update_count } => {
+                affected += u64::try_from(*update_count).unwrap_or(0);
+            }
+        }
+    }
+    match rows {
+        Some(count) => HistoryOutcome::Rows { count, more },
+        None if affected > 0 => HistoryOutcome::Affected { count: affected },
+        None => HistoryOutcome::Done,
     }
 }
 

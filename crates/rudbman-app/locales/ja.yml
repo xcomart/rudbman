@@ -20,6 +20,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 選択したオブジェクトをクエリ
+  query_history: クエリ履歴…
   view_data: データを表示
   view_structure: 構造を編集
   new_table: 新規テーブル
@@ -124,6 +125,8 @@ settings:
   login_timeout: 接続のタイムアウト
   login_timeout_hint: 秒 — 0 はドライバーの既定値
   confirm_writes_default: 新しい接続では書き込み文の実行前に確認する
+  query_history: クエリタブで実行した文の履歴を残す
+  query_history_hint: 接続プロファイルごとに設定フォルダー内の history フォルダーへプレーンテキストで保存されます。オフにすると記録を止め、記録済みの内容は残ります。履歴ダイアログから削除できます。
 
   jvm_heap: Java ヒープ
   jvm_heap_hint: MB — ドライバーが動作する -Xmx
@@ -818,3 +821,19 @@ toast:
   open_failed: "%{file} を開けませんでした: %{error}"
   columns_failed: "%{table} の列を読み込めませんでした: %{error}"
   keychain_unavailable: "システムのキーチェーンを使用できません (%{error})。保存したパスワードは読み込めず、新しいパスワードも保存されません。"
+
+history:
+  title: "クエリ履歴 — %{name}"
+  search: 文を検索
+  empty: この接続ではまだ何も実行していません。
+  no_match: 検索に一致する文はありません。
+  open: 新しいクエリタブで開く
+  delete: 削除
+  clear: 履歴をすべて消去…
+  clear_question: "この接続の履歴 %{count} 件をすべて削除しますか? 元に戻せません。"
+  clear_confirm: すべて削除
+  done: 実行済み
+  failed: 失敗
+  canceled: キャンセル
+  kept_in: "保存場所: %{path}"
+  recording_off: 設定で記録がオフになっているため、新しい文は追加されません。

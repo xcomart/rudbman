@@ -20,6 +20,7 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Interroger l’objet sélectionné
+  query_history: Historique des requêtes…
   view_data: Voir les données
   view_structure: Modifier la structure
   new_table: Nouvelle table
@@ -124,6 +125,8 @@ settings:
   login_timeout: Délai de connexion
   login_timeout_hint: secondes — 0 laisse le pilote décider
   confirm_writes_default: Demander confirmation avant une instruction d’écriture sur une nouvelle connexion
+  query_history: Conserver l’historique des instructions exécutées dans les onglets de requête
+  query_history_hint: Conservé par profil de connexion dans le dossier history du répertoire de configuration, en texte clair. Désactivé, plus rien n’est enregistré et ce qui l’a été est gardé ; la boîte de dialogue de l’historique permet de le supprimer.
 
   jvm_heap: Tas Java
   jvm_heap_hint: Mo — le -Xmx sous lequel tourne un pilote
@@ -818,3 +821,19 @@ toast:
   open_failed: "Impossible d’ouvrir %{file} : %{error}"
   columns_failed: "Impossible de lire les colonnes de %{table} : %{error}"
   keychain_unavailable: "Le trousseau du système est indisponible (%{error}). Les mots de passe enregistrés ne peuvent pas être lus, et les nouveaux ne seront pas conservés."
+
+history:
+  title: "Historique des requêtes — %{name}"
+  search: Rechercher dans les instructions
+  empty: Rien n’a encore été exécuté sur cette connexion.
+  no_match: Aucune instruction ne correspond à la recherche.
+  open: Ouvrir dans un nouvel onglet de requête
+  delete: Supprimer
+  clear: Effacer l’historique…
+  clear_question: "Supprimer les %{count} instructions de l’historique de cette connexion ? Cette action est irréversible."
+  clear_confirm: Tout supprimer
+  done: Exécutée
+  failed: Échec
+  canceled: Annulée
+  kept_in: "Conservé dans %{path}"
+  recording_off: L’enregistrement est désactivé dans les paramètres ; rien de nouveau n’est ajouté.

@@ -1601,7 +1601,7 @@ logman-core's structure is inherited and only the schema changes.
 ├── snippets/*.sql            user SQL snippets
 ├── erd/<uuid>.json           ERD layout (per connection profile, per scope table positions)
 ├── workspaces/<uuid>.json    saved workspace, per connection profile (§7.1)
-├── history.db                query execution history (SQLite? open, §12)
+├── history/<uuid>.json       query history, per connection profile (§12, question 2)
 └── drivers/                  downloaded driver JARs
 ```
 
@@ -1988,9 +1988,13 @@ for "a usable tool".
 1. **The JSON library in the bridge JAR** — **resolved (M1): Gson.** A proven
    230KB is cheaper than hand-writing escaping and introducing bugs with it.
    It is merged into the JAR and ships with it.
-2. **Query history storage** — SQLite (rusqlite, one more native dependency)
-   vs JSON Lines (simple, slow to search). To be decided once there is an
-   estimate of history volume.
+2. **Query history storage** — **resolved: one JSON file per connection
+   profile, bounded.** `history/<profile-uuid>.json` holds at most 1 000
+   statements and 4 MiB of SQL, oldest dropped first, so the whole history of
+   a profile is read into memory once and searched there in well under a
+   frame; nothing needs an index at that size, and SQLite would have been a
+   native dependency for a list. Written like the workspaces: atomically, off
+   the UI thread, half a second after a change, and once more on quit.
 3. **The script extraction template engine** — **resolved (M4): it stays in
    Java and ships in the bridge.** Extraction is a §6 data plane job, so it has
    to run on the JVM side where the rows flow, and compatibility with jdbgen's

@@ -279,6 +279,16 @@ pub struct AppSettings {
     /// Value [`ConnectionProfile::confirm_writes`](crate::ConnectionProfile)
     /// starts at for a newly created profile.
     pub confirm_writes_default: bool,
+    /// Whether the statements a query tab runs are written down in the
+    /// profile's query history (`history/<profile-uuid>.json`).
+    ///
+    /// On by default: going back to a statement run an hour ago is what a
+    /// history is for, and one that had to be found and switched on first
+    /// would be empty the first time it was wanted. Off is for the user whose
+    /// statements carry secrets that must not land in a plain file; turning
+    /// it off stops recording and leaves what was recorded, which the history
+    /// dialog deletes.
+    pub query_history: bool,
     /// Width of the explorer sidebar in logical pixels; clamped to
     /// 140.0 ..= 720.0 on load.
     ///
@@ -352,6 +362,7 @@ impl Default for AppSettings {
             query_timeout_s: 0,
             login_timeout_s: DEFAULT_LOGIN_TIMEOUT_S,
             confirm_writes_default: true,
+            query_history: true,
             explorer_width: DEFAULT_EXPLORER_WIDTH,
             explorer_visible: true,
             erd_logical_names: false,

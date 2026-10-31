@@ -965,6 +965,7 @@ impl Workspace {
     /// [`Workspace::shortcuts_held`], below.
     pub(super) fn dialog_open(&self, cx: &App) -> bool {
         self.rename_tab.is_some()
+            || self.history.is_some()
             || self.confirm.is_some()
             || self.close_question.is_some()
             || self.about.read(cx).is_open()

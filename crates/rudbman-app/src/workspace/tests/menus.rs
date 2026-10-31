@@ -470,6 +470,7 @@ fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestA
                 [
                     ts!("menu.new_query").to_string(),
                     ts!("menu.new_builder").to_string(),
+                    ts!("menu.query_history").to_string(),
                     String::new(),
                     ts!("connect.reconnect").to_string(),
                     ts!("connect.edit_connection").to_string(),
@@ -487,6 +488,10 @@ fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestA
             assert!(context_menu::row(&dead, &ts!("connect.reconnect")).is_enabled());
             assert!(!context_menu::row(&dead, &ts!("menu.new_query")).is_enabled());
             assert!(!context_menu::row(&dead, &ts!("menu.new_builder")).is_enabled());
+            assert!(
+                context_menu::row(&dead, &ts!("menu.query_history")).is_enabled(),
+                "what was run can be read with the connection down"
+            );
             assert!(
                 context_menu::row(&dead, &ts!("tab.close")).is_enabled(),
                 "a tab that failed to open still has to be closable"
