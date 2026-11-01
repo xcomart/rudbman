@@ -69,10 +69,6 @@ fn a_shortcut_inside_a_dialog_leaves_the_window_behind_it_alone(cx: &mut gpui::T
 /// A transfer that is running stays on screen through anything that would
 /// open another dialog over it, and the job under it goes on. A quit asks
 /// first while it runs, naming the transfer, and stops asking once it ends.
-///
-/// One test rather than two because each needs a job that cannot finish, and
-/// on the Windows runner a second such job in the same run held its test for
-/// as long as the whole view took to read.
 #[gpui::test]
 fn a_running_transfer_outlasts_every_other_dialog(cx: &mut gpui::TestAppContext) {
     // A view that sleeps per row, for the transfer dialog's own reason: a
@@ -88,6 +84,11 @@ fn a_running_transfer_outlasts_every_other_dialog(cx: &mut gpui::TestAppContext)
         cx,
     );
     let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    // The explorer walks down to the connected schema over the session the
+    // job locks for its whole run. Started before that walk is in, the job
+    // holds the walk's next read — and the test with it — until the view has
+    // been read to its end, which a slow runner shows.
+    cx.run_until_parked();
 
     window
         .update(&mut cx, |workspace, window, cx| {
