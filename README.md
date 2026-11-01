@@ -66,7 +66,8 @@ JVM bridge.
   The welcome list's right-click menu offers Connect, Edit…, Duplicate… and
   Delete….
 - **A schema explorer** — catalogs, schemas, tables, views (materialized ones
-  too), procedures, functions, sequences and triggers — and a detail panel with
+  too), procedures, functions, sequences and triggers, opened on connect onto
+  the database and schema the connection landed in — and a detail panel with
   columns, keys, references in both directions, and DDL in a read-only,
   highlighted editor (the server's own text where the dialect offers it,
   rebuilt from the catalog where it does not). Every kind of object shows its

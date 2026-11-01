@@ -513,8 +513,16 @@ impl Workspace {
             return;
         };
 
+        let mut landed = None;
         match outcome {
             Ok(connected) => {
+                // Where the session landed — the database and schema its URL
+                // named, or the driver's default — which is what the tree opens
+                // onto once the root is filled in below.
+                landed = Some(explorer::Scope {
+                    catalog: connected.info.catalog.clone(),
+                    schema: connected.info.schema.clone(),
+                });
                 // A tunnel that dies takes the session above it with it, and the
                 // tab has to say so rather than going quiet: the transaction the
                 // user was in the middle of is gone (§9.3).
@@ -545,7 +553,12 @@ impl Workspace {
                     ConnectionState::Failed(Failure::of(&error, &connection.profile));
             }
         }
+        let id = connection.id;
         self.sync_explorer_root(index, cx);
+        if let Some(scope) = landed {
+            self.explorer
+                .update(cx, |explorer, cx| explorer.reveal(id, scope, cx));
+        }
         cx.notify();
     }
 

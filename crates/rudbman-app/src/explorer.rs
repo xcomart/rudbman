@@ -1013,6 +1013,31 @@ fn names(
         .collect())
 }
 
+/// The catalog or schema among `children` that `target` names.
+///
+/// By the exact name first, and failing that by the name in any case: the
+/// session reports where it landed through `getCatalog`/`getSchema` and the
+/// tree lists through `getCatalogs`/`getSchemas`, and a driver is free to fold
+/// the case differently between the two. Folders match nothing — a level that
+/// is already the folders is the end of the path.
+fn revealed_child(children: &[Child], target: &Scope) -> Option<NodeId> {
+    let find = |same: fn(&str, &str) -> bool| {
+        children
+            .iter()
+            .map(|child| &child.id)
+            .find(|id| {
+                let (name, want) = match id {
+                    NodeId::Catalog { name, .. } => (name, &target.catalog),
+                    NodeId::Schema { name, .. } => (name, &target.schema),
+                    _ => return false,
+                };
+                want.as_deref().is_some_and(|want| same(name, want))
+            })
+            .cloned()
+    };
+    find(|name, want| name == want).or_else(|| find(str::eq_ignore_ascii_case))
+}
+
 /// Turns a JNI-layer failure into the sentence the error row shows.
 ///
 /// The bridge's own message, never a stack trace: a metadata refusal is
@@ -1073,8 +1098,21 @@ pub struct Explorer {
     tree_bounds: Rc<Cell<Bounds<Pixels>>>,
     generation: u64,
     pending: HashMap<NodeId, u64>,
+    /// The connections whose tree is still opening onto the scope their
+    /// session landed in; see [`Explorer::reveal`].
+    reveals: HashMap<ConnectionId, Reveal>,
     /// Keeps the tree's subscription alive.
     _events: Subscription,
+}
+
+/// A walk from a connection's root down to the catalog and schema its session
+/// landed in, one level per delivery.
+struct Reveal {
+    /// The scope the walk ends at.
+    target: Scope,
+    /// The node whose children the walk is waiting for — the last one it
+    /// opened.
+    awaiting: NodeId,
 }
 
 impl Explorer {
@@ -1117,6 +1155,7 @@ impl Explorer {
             tree_bounds: Rc::default(),
             generation: 0,
             pending: HashMap::new(),
+            reveals: HashMap::new(),
             _events: events,
         }
     }
@@ -1161,11 +1200,93 @@ impl Explorer {
             .info
             .contains_key(&node.connection())
         {
+            self.reveals.remove(&node.connection());
             return;
         }
+        let next = self.next_revealed(&node, outcome.as_ref().ok());
         self.update_source(cx, |source| match outcome {
             Ok(children) => source.set_children(node, children),
             Err(message) => source.set_error(node, message),
+        });
+        if let Some((opened, previous)) = next {
+            self.open_revealed(opened, &previous, cx);
+        }
+    }
+
+    /// Opens `connection`'s root, then — as each level arrives — the catalog
+    /// and the schema its session landed in.
+    ///
+    /// What a connection that has just opened asks for: the database its URL
+    /// points at is the one the user is about to work in, so the tree opens
+    /// onto that database's folders rather than sitting on a closed root.
+    ///
+    /// The path cannot be opened in one go, because which levels exist — and
+    /// so which node ids make it up — is only known once each one has been read
+    /// (see the layer-skipping rule in the module documentation). Instead each
+    /// delivery of the level the walk is waiting on opens the child of the
+    /// matching name, and the walk ends at the folders, or at the first level
+    /// with no such child.
+    pub fn reveal(&mut self, connection: ConnectionId, target: Scope, cx: &mut Context<Self>) {
+        let root = NodeId::Connection(connection);
+        self.reveals.insert(
+            connection,
+            Reveal {
+                target,
+                awaiting: root.clone(),
+            },
+        );
+        self.tree.update(cx, |tree, cx| tree.expand(&root, cx));
+    }
+
+    /// The child of `node` the reveal walk opens next, and the node it opened
+    /// before that, when `node` is the one the walk is waiting on.
+    ///
+    /// Moves the walk on, or ends it: on the next node when that is a catalog,
+    /// whose schemas are still to come, and otherwise here — a schema is the
+    /// end of the path, and a level that failed or holds no matching child has
+    /// nowhere further to go.
+    fn next_revealed(
+        &mut self,
+        node: &NodeId,
+        children: Option<&Vec<Child>>,
+    ) -> Option<(NodeId, NodeId)> {
+        let connection = node.connection();
+        if self.reveals.get(&connection)?.awaiting != *node {
+            return None;
+        }
+        let reveal = self.reveals.remove(&connection)?;
+        let next = revealed_child(children?, &reveal.target)?;
+        if matches!(next, NodeId::Catalog { .. }) {
+            self.reveals.insert(
+                connection,
+                Reveal {
+                    target: reveal.target,
+                    awaiting: next.clone(),
+                },
+            );
+        }
+        Some((next, reveal.awaiting))
+    }
+
+    /// Opens one node of the reveal walk, and moves the selection onto it.
+    ///
+    /// The selection follows so that the opened database is in view — a server
+    /// with dozens of them would otherwise open it below the fold — but only on
+    /// the tree on screen, and only while the user has not picked something in
+    /// it themselves: a selection still on `previous`, the node the walk opened
+    /// last, is the walk's own, and one on another connection's node is left
+    /// over from a tab that is no longer on top.
+    fn open_revealed(&mut self, node: NodeId, previous: &NodeId, cx: &mut Context<Self>) {
+        let connection = node.connection();
+        self.tree.update(cx, |tree, cx| {
+            tree.expand(&node, cx);
+            let on_screen = tree.source().visible_roots().contains(&connection);
+            let untouched = tree
+                .selected()
+                .is_none_or(|selected| selected.connection() != connection || selected == previous);
+            if on_screen && untouched {
+                tree.set_selected(Some(node), cx);
+            }
         });
     }
 
@@ -2328,6 +2449,216 @@ pub(crate) mod tests {
                 );
             })
             .unwrap();
+    }
+
+    /// Adds `C` as a live connection and puts its root on screen.
+    fn show_live_root(source: &mut ExplorerSource) {
+        source.upsert_root(
+            C,
+            RootInfo {
+                name: "test".into(),
+                color: None,
+                live: true,
+            },
+        );
+        source.set_visible_root(Some(C));
+    }
+
+    /// Answers the request the explorer has out for `node`.
+    fn answer(
+        explorer: &mut Explorer,
+        node: &NodeId,
+        children: Vec<NodeId>,
+        cx: &mut Context<Explorer>,
+    ) {
+        let generation = *explorer
+            .pending
+            .get(node)
+            .unwrap_or_else(|| panic!("{node:?} was not asked for"));
+        explorer.deliver(
+            node.clone(),
+            generation,
+            Ok(children.into_iter().map(Child::plain).collect()),
+            cx,
+        );
+    }
+
+    /// A connection opens onto where its session landed: the catalog, then
+    /// the schema, each opened as its level arrives — and only from the level
+    /// the walk is waiting on, not from a sibling catalog the user opened.
+    #[gpui::test]
+    fn a_new_connection_opens_onto_the_catalog_and_schema_it_landed_in(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        let catalog = |name: &str| NodeId::Catalog {
+            connection: C,
+            name: name.into(),
+        };
+        let schema = |catalog: &str, name: &str| NodeId::Schema {
+            connection: C,
+            catalog: Some(catalog.into()),
+            name: name.into(),
+        };
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, show_live_root);
+                explorer.reveal(
+                    C,
+                    Scope {
+                        catalog: Some("app".into()),
+                        schema: Some("dbo".into()),
+                    },
+                    cx,
+                );
+                assert!(explorer.tree.read(cx).is_expanded(&root));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                answer(explorer, &root, vec![catalog("other"), catalog("app")], cx);
+                let tree = explorer.tree.read(cx);
+                assert!(tree.is_expanded(&catalog("app")));
+                assert!(!tree.is_expanded(&catalog("other")));
+                assert_eq!(tree.selected(), Some(&catalog("app")));
+                explorer
+                    .tree
+                    .update(cx, |tree, cx| tree.expand(&catalog("other"), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                answer(
+                    explorer,
+                    &catalog("other"),
+                    vec![schema("other", "dbo")],
+                    cx,
+                );
+                assert!(!explorer.tree.read(cx).is_expanded(&schema("other", "dbo")));
+
+                answer(
+                    explorer,
+                    &catalog("app"),
+                    vec![schema("app", "dbo"), schema("app", "sales")],
+                    cx,
+                );
+                let tree = explorer.tree.read(cx);
+                assert!(tree.is_expanded(&schema("app", "dbo")));
+                assert!(!tree.is_expanded(&schema("app", "sales")));
+                assert_eq!(tree.selected(), Some(&schema("app", "dbo")));
+                assert!(explorer.reveals.is_empty(), "a schema ends the walk");
+            })
+            .unwrap();
+    }
+
+    /// The name is matched in any case when no child has it exactly, and a
+    /// selection the user made while the level was loading stays theirs.
+    #[gpui::test]
+    fn a_revealed_schema_matches_in_any_case_and_leaves_a_users_selection(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        let schema = |name: &str| NodeId::Schema {
+            connection: C,
+            catalog: Some("TEST".into()),
+            name: name.into(),
+        };
+        let picked = node(Folder::Tables, "PERSON").refresh_root();
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, show_live_root);
+                explorer.reveal(
+                    C,
+                    Scope {
+                        catalog: Some("test".into()),
+                        schema: Some("public".into()),
+                    },
+                    cx,
+                );
+                explorer
+                    .tree
+                    .update(cx, |tree, cx| tree.set_selected(Some(picked.clone()), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                answer(
+                    explorer,
+                    &root,
+                    vec![schema("INFORMATION_SCHEMA"), schema("PUBLIC")],
+                    cx,
+                );
+                let tree = explorer.tree.read(cx);
+                assert!(tree.is_expanded(&schema("PUBLIC")));
+                assert!(!tree.is_expanded(&schema("INFORMATION_SCHEMA")));
+                assert_eq!(tree.selected(), Some(&picked));
+            })
+            .unwrap();
+    }
+
+    /// A database whose catalog and schema were both skipped is already open
+    /// once the root is: the walk ends on the folders and selects nothing.
+    #[gpui::test]
+    fn a_reveal_that_lands_on_folders_ends_with_the_root_open(cx: &mut gpui::TestAppContext) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, show_live_root);
+                explorer.reveal(
+                    C,
+                    Scope {
+                        catalog: Some("main".into()),
+                        schema: None,
+                    },
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                let folders = folders_of(
+                    C,
+                    Scope {
+                        catalog: Some("main".into()),
+                        schema: None,
+                    },
+                );
+                answer(explorer, &root, folders.clone(), cx);
+                let tree = explorer.tree.read(cx);
+                assert!(tree.is_expanded(&root));
+                assert!(folders.iter().all(|folder| !tree.is_expanded(folder)));
+                assert_eq!(tree.selected(), None);
+                assert!(explorer.reveals.is_empty());
+            })
+            .unwrap();
+    }
+
+    /// Where a real session says it landed is a schema the root lists, so the
+    /// walk has a node to open rather than ending on the first level.
+    #[test]
+    fn a_sessions_own_schema_is_one_the_root_lists() {
+        let connected = h2_fixture("explorer-landed");
+        let target = Scope {
+            catalog: connected.info.catalog.clone(),
+            schema: connected.info.schema.clone(),
+        };
+        let children =
+            load_children(connected.session(), &NodeId::Connection(C)).expect("the root loads");
+        let found = revealed_child(&children, &target);
+        assert!(
+            matches!(&found, Some(NodeId::Schema { name, .. }) if name == "PUBLIC"),
+            "{target:?} in {children:?}"
+        );
     }
 
     #[test]

@@ -874,7 +874,10 @@ content but **a list of mini-tabs** (`PaneItem::TableDetail | Query | Erd |
 TableData | TableStruct | QueryBuilder`), and activating the same object again moves to the open tab
 instead of adding a new one. The explorer keeps tree data for every connection
 but draws only the active connection's roots — switching is a pure filter, so
-there is no round trip. **Closing** a connection tab saves its workspace and tears the live document
+there is no round trip. A connection that opens has its root expanded and the
+tree walks down to the catalog and schema the session landed in
+(`SESSION_INFO`'s `catalog`/`schema`), opening each level as it arrives and
+selecting it unless the user has picked something meanwhile. **Closing** a connection tab saves its workspace and tears the live document
 down (panes releasing their session handles and cursors is the cleanup path of
 §9.3), and when a connection **drops**, the tab stays but query panes detach:
 the SQL and the rows already received remain readable, only execution is
