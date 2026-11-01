@@ -128,7 +128,15 @@ its database and takes several minutes before the container reports healthy.
 [CI](.github/workflows/ci.yml) shows the full matrix and driver overrides such
 as `RUDBMAN_TEST_PG_JAR`. These tests create and drop objects; use test databases,
 not a connection holding real data. The rudbman and rudbgen Compose stacks use
-the same host ports and should run one at a time.
+the same host ports and should run one at a time. Both compose files sit in a
+`docker/` directory and share service names, so each sets its own project name
+(`name: rudbman` here, `name: rudbgen` there); without it Compose took both as
+the project `docker`, and `up` in one replaced the other's container of the
+same service. A container created before the name was set still belongs to the
+project `docker`, and its fixed `container_name` makes `up` fail with
+`The container name "/rudbman-test-db2" is already in use` until you remove it
+with `docker rm rudbman-test-db2` (or whichever name the error gives). Its test
+data goes with it; Db2 creates its database again on the next start.
 
 For SQLite, download the drivers, set `RUDBMAN_TEST_SQLITE_URL` to
 `jdbc:sqlite:/absolute/path/to/a/test.db` in a disposable directory, and run

@@ -18,15 +18,35 @@ impl Workspace {
     /// announcement floating over the window — except while it is installing,
     /// when its own `close` refuses and the swap is allowed to finish; see
     /// [`UpdateDialog::close`].
-    pub(super) fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    ///
+    /// The three job dialogs are left standing while their job runs, for the
+    /// update dialog's reason and a stronger one: closing one cancels its job,
+    /// and minutes of transfer are not something a command reached for
+    /// elsewhere may throw away. So this answers whether the screen is clear,
+    /// and every `open_*` that would put a dialog up opens nothing when it is
+    /// not — two modals at once would be two sheets fighting over one press.
+    #[must_use]
+    pub(super) fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // Every dialog opens through here, so this is where the keyboard is
+        // remembered — once, by the first of a run of dialogs, so that one
+        // opened over another still gives the keyboard back to where it was
+        // before either.
+        if !self.dialog_open(cx) {
+            self.focus_origin = self.focus_origin_now(window, cx);
+        }
         if self.rename_tab.is_some() {
             self.finish_tab_name(false, window, cx);
         }
+        self.history = None;
         self.menu_open = false;
         self.close_context_menus(cx);
         if self.confirm.is_some() {
             // Declining is the only safe reading of "the dialog went away".
             self.answer_confirm(false, window, cx);
+        }
+        // And for a close, the only safe reading is that nothing closes.
+        if self.close_question.is_some() {
+            self.answer_close(closing::CloseAnswer::Cancel, window, cx);
         }
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
@@ -38,25 +58,29 @@ impl Workspace {
             self.settings.update(cx, |dialog, cx| dialog.close(cx));
             self.apply_preview(window, cx);
         }
-        if self.extract.read(cx).is_open() {
-            // A job still running is canceled by the close, through the drop
-            // chain `extract_dialog` documents. That is the honest reading of
-            // "the card is gone": a job whose progress nobody can see is one
-            // nobody can stop either.
+        // A job dialog that is merely a form or a finished card goes like any
+        // other. One with a job under it stays: the close would cancel the job
+        // through the drop chain `extract_dialog` documents.
+        if self.extract.read(cx).is_open() && !self.extract.read(cx).is_running() {
             self.extract.update(cx, |dialog, cx| dialog.close(cx));
         }
-        if self.transfer.read(cx).is_open() {
-            // Same reading, and the same drop chain — a transfer's cancel rolls
-            // back the uncommitted tail and leaves what was committed, which is
-            // §6's contract and not something closing a window can change.
+        if self.transfer.read(cx).is_open() && !self.transfer.read(cx).is_running() {
             self.transfer.update(cx, |dialog, cx| dialog.close(cx));
         }
-        if self.backup.read(cx).is_open() {
+        if self.backup.read(cx).is_open() && !self.backup.read(cx).is_running() {
             self.backup.update(cx, |dialog, cx| dialog.close(cx));
         }
         if self.update.read(cx).is_open() {
             self.update.update(cx, |dialog, cx| dialog.close(cx));
         }
+        !self.job_running(cx) && !self.update.read(cx).is_open()
+    }
+
+    /// Whether one of the three job dialogs has a job running under it.
+    pub(super) fn job_running(&self, cx: &App) -> bool {
+        self.extract.read(cx).is_running()
+            || self.transfer.read(cx).is_running()
+            || self.backup.read(cx).is_running()
     }
 
     /// Shows or hides the application dropdown menu.
@@ -68,6 +92,9 @@ impl Workspace {
         if open {
             self.close_context_menus(cx);
         }
+        // `F10` sets it again after this; every other way in is the pointer's
+        // or the trigger's own, which highlights by itself.
+        self.menu_by_keyboard = false;
         if self.menu_open != open {
             self.menu_open = open;
             cx.notify();
@@ -87,8 +114,20 @@ impl Workspace {
     ) {
         self.menu_open = false;
         self.close_pane_context_menus(cx);
-        self.context_menu = Some(OpenContextMenu { target, position });
+        self.context_menu = Some(OpenContextMenu {
+            target,
+            position,
+            by_keyboard: false,
+        });
         cx.notify();
+    }
+
+    /// Marks the shell's open context menu as raised from the keyboard, so it
+    /// opens on its first row; see [`Workspace::open_context_menu`].
+    pub(super) fn context_by_keyboard(&mut self, by_keyboard: bool) {
+        if let Some(menu) = &mut self.context_menu {
+            menu.by_keyboard = by_keyboard;
+        }
     }
 
     /// Puts away every context menu anywhere in the window.
@@ -155,7 +194,9 @@ impl Workspace {
 
     /// Opens the about dialog, closing whatever else was showing.
     pub(super) fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.about.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
     }
@@ -173,14 +214,18 @@ impl Workspace {
         if self.update.read(cx).is_busy() {
             return;
         }
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.update.update(cx, |dialog, cx| dialog.start_check(cx));
         cx.notify();
     }
 
     /// Opens the settings dialog, closing whatever else was showing.
     pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.settings.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
     }
@@ -203,7 +248,9 @@ impl Workspace {
         let Some(session) = self.session_of(target.connection) else {
             return;
         };
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.extract
             .update(cx, |dialog, cx| dialog.open(target, session, cx));
         cx.notify();
@@ -229,7 +276,9 @@ impl Workspace {
             return;
         };
         let candidates = self.transfer_targets();
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.transfer.update(cx, |dialog, cx| {
             dialog.open(target, session, candidates, cx)
         });
@@ -273,7 +322,9 @@ impl Workspace {
         let Some(session) = self.session_of(connection) else {
             return;
         };
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.backup
             .update(cx, |dialog, cx| dialog.open(scope, session, cx));
         cx.notify();
@@ -290,6 +341,11 @@ impl Workspace {
     /// encoding is still mostly readable as UTF-8 — the ASCII half of it always
     /// is — and a user who can see their script can fix the part that came out
     /// wrong, which is more than an error message offers.
+    ///
+    /// A file that read as UTF-8 binds the pane to it, which names the tab
+    /// after the file and makes "Save" write back to it. One that did not stays
+    /// unbound, so that a save asks where to write instead of putting the
+    /// replacement characters over bytes the editor could not show.
     pub(super) fn load_sql_file(
         &mut self,
         path: PathBuf,
@@ -299,25 +355,191 @@ impl Workspace {
         if !self.has_live_connection() {
             return;
         }
-        let reading =
-            cx.background_spawn(async move { std::fs::read(&path).map(|bytes| (path, bytes)) });
+        let file = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let reading = cx.background_spawn(async move {
+            read_sql_file(&path).map(|(bytes, stamp)| (path, bytes, stamp))
+        });
 
         cx.spawn_in(window, async move |workspace, cx| {
             match reading.await {
-                Ok((path, bytes)) => {
-                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                Ok((path, bytes, stamp)) => {
+                    let (text, exact) = decode_sql_file(bytes);
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_query(&text, window, cx);
                             log::debug!("opened {}", path.display());
+                            let Some(pane) = workspace.open_query(&text, window, cx) else {
+                                return;
+                            };
+                            if exact {
+                                pane.update(cx, |pane, cx| pane.bind_file(path, stamp, cx));
+                            }
                         })
                         .ok();
                 }
-                // Nowhere to put this on screen: the shell has no transient
-                // message strip, and inventing one for the case where a file
-                // the user just picked has gone away is out of proportion.
-                Err(error) => log::error!("could not read the SQL file: {error}"),
+                // A toast: the file the user just picked has gone away or
+                // will not be read, and no tab opened to say so in.
+                Err(error) => {
+                    log::error!("could not read the SQL file: {error}");
+                    cx.update(|_window, cx| {
+                        rugpui_shell::show_toast(
+                            rugpui_shell::Toast::error(ts!(
+                                "toast.open_failed",
+                                file = file.clone(),
+                                error = format!("{error:#}")
+                            )),
+                            cx,
+                        );
+                    })
+                    .ok();
+                }
             }
+        })
+        .detach();
+    }
+
+    /// Writes the SQL of the query tab on screen to its file.
+    ///
+    /// Straight to the bound file, unless there is none or `choose` asks for a
+    /// new one; then the platform's save dialog asks first. Writing in place
+    /// holds only while the file still looks the way the pane last saw it (see
+    /// [`crate::query`]'s `file` module); otherwise the pane says so and the
+    /// dialog asks after all.
+    ///
+    /// Not gated on the session: what is written is the editor's text, which a
+    /// pane whose connection has gone still holds.
+    pub(super) fn save_sql_file(
+        &mut self,
+        choose: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(area) = self.work_area() else {
+            return;
+        };
+        let Some(item) = area.panes.get(area.active()).and_then(|pane| pane.active()) else {
+            return;
+        };
+        let PaneItem::Query { pane, .. } = item else {
+            return;
+        };
+        let pane = pane.clone();
+        let title = area
+            .tab_names
+            .get(&item.entity_id())
+            .cloned()
+            .unwrap_or_else(|| item.title(cx).to_string());
+        let (bound, stamp) = {
+            let pane = pane.read(cx);
+            (pane.file().map(Path::to_path_buf), pane.file_stamp())
+        };
+        match bound {
+            Some(path) if !choose => {
+                self.save_pane_to(pane, path, Overwrite::IfUnchanged(stamp), window, cx)
+            }
+            _ => self.ask_where_to_save(pane, &title, window, cx),
+        }
+    }
+
+    /// Opens the platform's save dialog for `pane`, and writes where it says.
+    ///
+    /// It opens where the bound file is, suggesting its name; a pane bound to
+    /// none starts from the home directory, with the tab's `title` made into a
+    /// file name. Nothing waits on the prompt, for the reason
+    /// [`Workspace::open_sql_file`] gives.
+    pub(super) fn ask_where_to_save(
+        &mut self,
+        pane: Entity<QueryPane>,
+        title: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bound = pane.read(cx).file().map(Path::to_path_buf);
+        let directory = bound
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(crate::extract_dialog::default_directory);
+        let suggested = match bound.as_deref().and_then(Path::file_name) {
+            Some(name) => name.to_string_lossy().into_owned(),
+            None => suggested_file_name(title),
+        };
+        let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
+
+        cx.spawn_in(window, async move |workspace, cx| {
+            let path = match prompt.await {
+                Ok(Ok(Some(path))) => path,
+                outcome => {
+                    if let Ok(Err(error)) = outcome {
+                        log::warn!("the save dialog could not be opened: {error:#}");
+                    }
+                    // A close that asked for this save closes nothing now.
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.close_save_abandoned(&pane, cx)
+                        })
+                        .ok();
+                    return;
+                }
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.save_pane_to(pane, path, Overwrite::Chosen, window, cx)
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Writes `pane`'s text to `path` on a background task, as `overwrite`
+    /// allows, and tells the pane how it went.
+    ///
+    /// A pane that ends up bound to a file it was not bound to before gives up
+    /// any name the user had given its tab, so that the tab reads as the file
+    /// it now is; saving again to the same file leaves a name alone. A bound
+    /// file that has changed is left as it is, and the save dialog asks.
+    pub(super) fn save_pane_to(
+        &mut self,
+        pane: Entity<QueryPane>,
+        path: PathBuf,
+        overwrite: Overwrite,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(SaveJob { text, edits }) = pane.update(cx, |pane, cx| pane.begin_save(cx)) else {
+            return;
+        };
+        let writing = cx.background_spawn(async move {
+            let outcome = write_sql_file(&path, &text, overwrite);
+            (path, outcome)
+        });
+
+        cx.spawn_in(window, async move |workspace, cx| {
+            let (path, outcome) = writing.await;
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let saved =
+                        pane.update(cx, |pane, cx| pane.finish_save(path, edits, outcome, cx));
+                    match saved {
+                        Saved::Rebound => {
+                            let tab = pane.entity_id();
+                            for open in &mut workspace.connections {
+                                open.work.tab_names.remove(&tab);
+                            }
+                            pane.update(cx, |pane, _| pane.set_tab_name(None));
+                        }
+                        // The pane is bound, so the dialog suggests its own file
+                        // and the title goes unused.
+                        Saved::Changed => workspace.ask_where_to_save(pane.clone(), "", window, cx),
+                        Saved::InPlace | Saved::Failed => {}
+                    }
+                    // A close that asked for this save carries on, or stops.
+                    workspace.after_close_save(&pane, saved, window, cx);
+                    cx.notify();
+                })
+                .ok();
         })
         .detach();
     }
@@ -326,6 +548,29 @@ impl Workspace {
     pub(super) fn has_live_connection(&self) -> bool {
         self.active_connection()
             .is_some_and(|open| matches!(open.state, ConnectionState::Open(_)))
+    }
+
+    /// [`Workspace::has_live_connection`] for a command the user just gave —
+    /// `Ctrl+T`, `Ctrl+O`, `Ctrl+Shift+T`, a new builder — saying in a toast
+    /// why nothing opens when there is no session: no connection at all, one
+    /// still connecting, or one that failed or ended. Those chords used to end
+    /// without a word, which reads as a key that does nothing.
+    pub(super) fn say_not_live(&self, cx: &mut App) -> bool {
+        let message = match self.active_connection() {
+            None => ts!("toast.no_connection"),
+            Some(open) => {
+                let name = closing::connection_title(&open.profile).to_string();
+                match open.state {
+                    ConnectionState::Open(_) => return true,
+                    ConnectionState::Connecting { .. } => ts!("toast.connecting", name = name),
+                    ConnectionState::Failed(_) | ConnectionState::Dead(_) => {
+                        ts!("toast.not_connected", name = name)
+                    }
+                }
+            }
+        };
+        rugpui_shell::show_toast(rugpui_shell::Toast::info(message), cx);
+        false
     }
 
     /// Asks the platform for a `.sql` file and opens what it hands back.
@@ -337,7 +582,7 @@ impl Workspace {
         // Asked before the prompt as well as after: opening a file picker over
         // a window that has nowhere to put the file is a dead end the user only
         // finds out about once they have chosen one.
-        if !self.has_live_connection() {
+        if !self.say_not_live(cx) {
             return;
         }
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -455,7 +700,8 @@ impl Workspace {
     /// Re-applies the palettes the settings dialog is currently showing.
     ///
     /// The unsaved half of [`Workspace::apply_settings`], and deliberately much
-    /// smaller: only the two palettes and the fonts are previewed, so this
+    /// smaller: only the two palettes and the fonts — the interface size's
+    /// scale among them — are previewed, so this
     /// touches no platform state beyond the native caption's colors, which have
     /// to follow the chrome theme or the window would be half repainted.
     ///
@@ -470,7 +716,9 @@ impl Workspace {
 
     /// Opens the connection dialog, closing whatever else was showing.
     pub(super) fn open_connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.connect.update(cx, |dialog, cx| dialog.open(cx));
         cx.notify();
     }
@@ -481,7 +729,9 @@ impl Workspace {
     /// the same dialog the button beside the list opens, showing the profile
     /// that was right-clicked rather than the first one saved.
     pub(super) fn edit_profile(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         self.connect.update(cx, |dialog, cx| dialog.open_at(id, cx));
         cx.notify();
     }
@@ -503,11 +753,53 @@ impl Workspace {
                 pane.declined(cx);
             }
         });
-        if run {
-            pending
-                .pane
-                .update(cx, |pane, cx| pane.focus_editor(window, cx));
-        }
+        // Back to the editor either way: the question interrupted someone
+        // running SQL, and that is where they go on.
+        pending
+            .pane
+            .update(cx, |pane, cx| pane.focus_editor(window, cx));
         cx.notify();
+    }
+}
+
+/// The file name a save dialog suggests for a tab titled `title`.
+///
+/// The title as it reads, with `.sql` after it unless it already ends that
+/// way, and with every character a file name cannot hold on one of the three
+/// platforms swapped for `_` — a tab the user named "매출/분석" is still a
+/// name worth starting from, but the slash would turn it into a directory.
+/// Trailing dots and spaces go too, which Windows would strip on its own.
+fn suggested_file_name(title: &str) -> String {
+    let cleaned: String = title
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let stem = cleaned.trim().trim_end_matches(['.', ' ']);
+    let stem = if stem.is_empty() { "query" } else { stem };
+    if stem.to_lowercase().ends_with(".sql") {
+        stem.to_string()
+    } else {
+        format!("{stem}.sql")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::suggested_file_name;
+
+    #[test]
+    fn a_tab_title_becomes_a_file_name_a_save_dialog_can_take() {
+        assert_eq!(suggested_file_name("쿼리 3"), "쿼리 3.sql");
+        assert_eq!(suggested_file_name("매출/분석"), "매출_분석.sql");
+        assert_eq!(suggested_file_name("a:b*c?"), "a_b_c_.sql");
+        assert_eq!(suggested_file_name("report.sql"), "report.sql");
+        assert_eq!(suggested_file_name("REPORT.SQL"), "REPORT.SQL");
+        assert_eq!(suggested_file_name("draft. "), "draft.sql");
+        assert_eq!(suggested_file_name("  "), "query.sql");
+        assert_eq!(suggested_file_name("tab\tname"), "tab_name.sql");
     }
 }

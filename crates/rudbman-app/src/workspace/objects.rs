@@ -24,13 +24,17 @@ impl Workspace {
             self.activate_tab(pane, index, window, cx);
             return;
         }
-        self.open_data_with_order(target, None, window, cx);
+        self.open_data_with_view(target, None, None, window, cx);
     }
 
-    pub(super) fn open_data_with_order(
+    /// Opens a data pane over `target` that reads its rows in `order` and
+    /// under `filter` from the first load: a restored or split tab, which
+    /// shows the rows the way the tab it was taken from showed them.
+    pub(super) fn open_data_with_view(
         &mut self,
         target: ObjectTarget,
         order: Option<(usize, String, bool)>,
+        filter: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -69,6 +73,7 @@ impl Workspace {
         // it.
         panel.update(cx, |panel, cx| {
             panel.restore_workspace_order(order);
+            panel.restore_workspace_filter(filter, cx);
             panel.refresh(window, cx);
         });
         self.append_tab(PaneItem::TableData(panel.clone()), window, cx);
@@ -290,9 +295,11 @@ impl Workspace {
             return;
         };
         let profile = self.profile_of(target.connection);
+        let progress = panel.read(cx).progress();
+        let counted = progress.clone();
 
         let fetch = cx.background_spawn(async move {
-            let model = erd_pane::load_model(session.session(), &target)?;
+            let model = erd_pane::load_model(session.session(), &target, &counted)?;
             let saved = profile
                 .map(|profile| match ErdLayouts::load(profile) {
                     Ok(layouts) => layouts.positions(&target.scope),
@@ -306,7 +313,7 @@ impl Workspace {
         });
         cx.spawn(async move |_workspace, cx| {
             let outcome = fetch.await.map_err(SharedString::from);
-            panel.update(cx, |panel, cx| panel.deliver(outcome, cx));
+            panel.update(cx, |panel, cx| panel.deliver_for(&progress, outcome, cx));
         })
         .detach();
     }
@@ -360,12 +367,15 @@ impl Workspace {
     /// Nothing happens without a live session: a SQL editor with no connection
     /// behind it can be typed into and never run, which is worse than a pane
     /// that says there is nothing to connect to.
-    pub(super) fn open_query(&mut self, sql: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_connection() else {
-            return;
-        };
+    pub(super) fn open_query(
+        &mut self,
+        sql: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<QueryPane>> {
+        let open = self.active_connection()?;
         let ConnectionState::Open(connected) = &open.state else {
-            return;
+            return None;
         };
         let session = connected.handle();
         let id = open.id;
@@ -400,11 +410,10 @@ impl Workspace {
 
         // Numbered within this connection's own area, which the checks above
         // have already established exists.
-        let Some(area) = self.work_area_mut() else {
-            return;
-        };
+        let area = self.work_area_mut()?;
         let number = area.next_query;
         area.next_query += 1;
+        pane.update(cx, |pane, _| pane.set_tab_number(number));
         self.append_tab(
             PaneItem::Query {
                 pane: pane.clone(),
@@ -414,6 +423,7 @@ impl Workspace {
             cx,
         );
         pane.update(cx, |pane, cx| pane.focus_editor(window, cx));
+        Some(pane)
     }
 
     /// The dialect one profile's statements are written for.
@@ -506,7 +516,9 @@ impl Workspace {
             &panel,
             window,
             |workspace, panel, event, window, cx| match event {
-                BuilderPaneEvent::OpenSql(sql) => workspace.open_query(sql, window, cx),
+                BuilderPaneEvent::OpenSql(sql) => {
+                    workspace.open_query(sql, window, cx);
+                }
                 // On the panel the pointer was released over, which is the one
                 // that emitted this — not whichever builder the action would have
                 // picked. Dropping on a builder is aiming at it.
@@ -607,10 +619,21 @@ impl Workspace {
                 Ok(columns) => {
                     panel.update(cx, |panel, cx| panel.add_table(&target, columns, cx));
                 }
-                // Nowhere to put this on screen: the builder has no message
-                // strip, and a column list that could not be read is the same
-                // failure the explorer already reports on the node itself.
-                Err(error) => log::error!("the column list could not be read: {error}"),
+                // A toast: the table simply does not appear on the canvas, and
+                // the builder has no message strip of its own to say why.
+                Err(error) => {
+                    log::error!("the column list could not be read: {error}");
+                    cx.update(|cx| {
+                        rugpui_shell::show_toast(
+                            rugpui_shell::Toast::error(ts!(
+                                "toast.columns_failed",
+                                table = target.name.clone(),
+                                error = error.to_string()
+                            )),
+                            cx,
+                        );
+                    });
+                }
             }
         })
         .detach();

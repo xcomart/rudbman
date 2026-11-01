@@ -32,7 +32,8 @@ pub(super) fn reload_themes(cx: &mut App) {
     }
 }
 
-/// Installs both palettes the settings name.
+/// Installs both palettes the settings name, and the scale the interface
+/// size asks for.
 ///
 /// The chrome theme comes straight from the configured id; the editor theme
 /// goes through [`editor_theme_for`], which is where "follow the UI theme" is
@@ -54,6 +55,14 @@ pub(super) fn apply_themes(settings: &AppSettings, cx: &mut App) {
     let editor = EditorThemeRegistry::resolve(&editor_id, cx);
     set_theme(ui, cx);
     set_editor_theme(editor, cx);
+    // The interface size, as the scale every widget and every size of the
+    // shell's own is drawn at: the default 14 pt is 1.0, where nothing moves.
+    // Here, with the palettes, because it is applied — and previewed — from
+    // the same three places they are.
+    rugpui::set_ui_scale(
+        settings.ui_font_size / rudbman_core::settings::DEFAULT_UI_FONT_SIZE,
+        cx,
+    );
 }
 
 /// The editor theme to install, given the configured one and the chrome theme.
@@ -189,8 +198,13 @@ pub(super) fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.mac.new_connection"), NewConnection),
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.new_query"), NewQuery),
-                MenuItem::action(ts!("menu.query_object"), QueryObject),
                 MenuItem::action(ts!("menu.open_sql_file"), OpenSqlFile),
+                MenuItem::action(ts!("menu.save_sql_file"), SaveSqlFile),
+                MenuItem::action(ts!("menu.save_sql_file_as"), SaveSqlFileAs),
+                MenuItem::action(ts!("context.explain"), ExplainQuery),
+                MenuItem::action(ts!("menu.query_history"), ShowQueryHistory),
+                MenuItem::separator(),
+                MenuItem::action(ts!("menu.query_object"), QueryObject),
                 MenuItem::action(ts!("menu.extract_script"), ExtractScript),
                 MenuItem::action(ts!("menu.transfer_table"), TransferTable),
                 MenuItem::action(ts!("menu.backup_schema"), BackupSchema),
@@ -202,10 +216,17 @@ pub(super) fn app_menus() -> Vec<Menu> {
         },
         Menu {
             name: ts!("menu.view"),
-            items: vec![MenuItem::action(
-                ts!("menu.toggle_explorer"),
-                ToggleExplorer,
-            )],
+            items: vec![
+                MenuItem::action(ts!("menu.toggle_explorer"), ToggleExplorer),
+                MenuItem::separator(),
+                MenuItem::action(ts!("context.split_right"), SplitRight),
+                MenuItem::action(ts!("context.split_below"), SplitBelow),
+                MenuItem::action(ts!("context.close_pane"), ClosePane),
+                MenuItem::action(ts!("menu.next_pane"), FocusNextPane),
+                MenuItem::action(ts!("menu.prev_pane"), FocusPrevPane),
+                MenuItem::separator(),
+                MenuItem::action(ts!("context.reopen_tab"), ReopenClosedTab),
+            ],
             disabled: false,
         },
     ]
@@ -225,7 +246,7 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
     };
     let pane = PANE_SHORTCUT_MODIFIER;
 
-    cx.bind_keys(vec![
+    let mut bindings = vec![
         KeyBinding::new(&format!("{modifier}-q"), Quit, None),
         KeyBinding::new(&format!("{modifier}-n"), NewConnection, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{modifier}-,"), OpenSettings, Some(KEY_CONTEXT)),
@@ -238,6 +259,9 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
         // `Ctrl+O` is "open a file" everywhere, and the SQL editor binds no `O`
         // chord of its own for it to be taken away from.
         KeyBinding::new(&format!("{modifier}-o"), OpenSqlFile, Some(KEY_CONTEXT)),
+        // Free in the SQL editor, the grid and every panel; "Save as" has its
+        // own entry below, because it has no chord on macOS.
+        KeyBinding::new(&format!("{modifier}-s"), SaveSqlFile, Some(KEY_CONTEXT)),
         // Scoped to the sidebar rather than the window, because the same chord
         // is the editor's "run the statement" — see `explorer::KEY_CONTEXT`.
         KeyBinding::new(
@@ -263,7 +287,76 @@ pub(super) fn bind_shortcuts(cx: &mut App) {
         // binding would never match.
         KeyBinding::new(&format!("{pane}-shift-d"), SplitRight, Some(KEY_CONTEXT)),
         KeyBinding::new(&format!("{pane}-shift-s"), SplitBelow, Some(KEY_CONTEXT)),
-    ]);
+    ];
+    if let Some((chord, _)) = SAVE_AS_SHORTCUT {
+        bindings.push(KeyBinding::new(chord, SaveSqlFileAs, Some(KEY_CONTEXT)));
+    }
+    if let Some((chord, _)) = CLOSE_TAB_SHORTCUT {
+        bindings.push(KeyBinding::new(chord, CloseTab, Some(KEY_CONTEXT)));
+    }
+    // Tab and region keys, as editors and browsers have them. Off macOS the
+    // tab chords are `Ctrl+PgDn`/`PgUp` and `Ctrl+1`–`9`, and the connection
+    // strip one modifier further out, `Ctrl+Alt+PgDn`/`PgUp`; `Ctrl+Tab` works
+    // everywhere, macOS included, where `Cmd+Alt+→`/`←` and `Cmd+1`–`9` are the
+    // tab chords instead (the connection strip has none there yet). None of
+    // them is a chord the SQL editor or the grid binds.
+    bindings.push(KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)));
+    bindings.push(KeyBinding::new(
+        "ctrl-shift-tab",
+        PrevTab,
+        Some(KEY_CONTEXT),
+    ));
+    if cfg!(target_os = "macos") {
+        bindings.push(KeyBinding::new("cmd-alt-right", NextTab, Some(KEY_CONTEXT)));
+        bindings.push(KeyBinding::new("cmd-alt-left", PrevTab, Some(KEY_CONTEXT)));
+    } else {
+        bindings.push(KeyBinding::new("ctrl-pagedown", NextTab, Some(KEY_CONTEXT)));
+        bindings.push(KeyBinding::new("ctrl-pageup", PrevTab, Some(KEY_CONTEXT)));
+        bindings.push(KeyBinding::new(
+            "ctrl-alt-pagedown",
+            NextConnection,
+            Some(KEY_CONTEXT),
+        ));
+        bindings.push(KeyBinding::new(
+            "ctrl-alt-pageup",
+            PrevConnection,
+            Some(KEY_CONTEXT),
+        ));
+    }
+    for digit in 1..=9 {
+        bindings.push(KeyBinding::new(
+            &format!("{modifier}-{digit}"),
+            SelectTab(digit - 1),
+            Some(KEY_CONTEXT),
+        ));
+    }
+    bindings.push(KeyBinding::new("f6", NextRegion, Some(KEY_CONTEXT)));
+    bindings.push(KeyBinding::new("shift-f6", PrevRegion, Some(KEY_CONTEXT)));
+    // "Reopen closed tab" where every browser and editor puts it, on every
+    // platform: the unshifted chord is "New query", so the shifted one brings
+    // back the last tab rather than opening an empty one.
+    bindings.push(KeyBinding::new(
+        &format!("{modifier}-shift-t"),
+        ReopenClosedTab,
+        Some(KEY_CONTEXT),
+    ));
+    // The query pane binds the same chord in its own context, where it
+    // explains in the pane that has the keyboard; this one is for the rest
+    // of the window, the explorer included, and the menu rows, and acts on
+    // the query tab on screen.
+    bindings.push(KeyBinding::new(
+        &format!("{modifier}-shift-e"),
+        ExplainQuery,
+        Some(KEY_CONTEXT),
+    ));
+    // `H` for history, shifted for the reason the tab chords are: the SQL
+    // editor's `Ctrl+H` is replace.
+    bindings.push(KeyBinding::new(
+        &format!("{modifier}-shift-h"),
+        ShowQueryHistory,
+        Some(KEY_CONTEXT),
+    ));
+    cx.bind_keys(bindings);
 }
 
 pub(super) fn run() {
@@ -323,17 +416,33 @@ pub(super) fn run() {
         // identity twice leaves nothing different behind.
         app_identity::install(cx);
 
-        if let Err(error) = rudbman_core::init_secrets() {
+        // Said once the words are loaded, below: a missing keychain is not
+        // fatal, but every saved password silently reading as empty is.
+        let keychain = rudbman_core::init_secrets().err();
+        if let Some(error) = &keychain {
             log::warn!("the OS keychain is unavailable: {error}");
         }
 
         // Load the settings before the widget layer installs its default
         // palettes, then override those to match what the user configured.
         app_settings::init(cx);
+        // Registers the write of whatever is still owed when the application
+        // quits; the files themselves are read when a profile is first asked
+        // about.
+        crate::query_history::QueryHistory::init(cx);
         let settings = app_settings::current(cx);
         // Ahead of everything that renders a string — the menu bar included —
         // so nothing is ever built in the wrong language and then corrected.
         i18n::apply(settings.language.as_deref());
+        if let Some(error) = keychain {
+            rugpui_shell::show_toast(
+                rugpui_shell::Toast::warning(ts!(
+                    "toast.keychain_unavailable",
+                    error = format!("{error:#}")
+                )),
+                cx,
+            );
+        }
 
         rugpui::init(cx);
         // After the widget layer, because both scope their bindings to key
@@ -353,7 +462,10 @@ pub(super) fn run() {
         // background of their own; see [`app_settings::window_tint`].
         set_window_tint(settings.window.background_opacity, cx);
 
-        cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+        // Through the window's close guard, which asks first when something
+        // would be lost (see the workspace's `closing` module) and quits on its
+        // own when nothing would.
+        cx.on_action(|_: &Quit, cx: &mut App| rugpui_shell::request_quit(cx));
         // The window's geometry is only in memory until here; this is the one
         // write of `settings.json` the shell performs. Nothing in the closure
         // re-enters gpui — the file write is the whole of it — which is what

@@ -684,9 +684,18 @@ Transfer semantics (settled in M6):
   the target session is marked unusable and must be reconnected. The UI also
   refuses to start a transfer into a session holding a query editor's
   uncommitted manual-commit writes.
+- **The dialog never starts pointed at its own source.** The target connection
+  defaults to the first open connection that is not the source's, and to none
+  when the source's is the only one open; a target on the source's session
+  naming the source's schema and table (compared case-insensitively, a blank
+  schema counting as the same) disables "Transfer" with the reason under the
+  form. The bridge has no such check: the guard is the UI's, because only the
+  UI knows that two handles are one tab.
 - **`truncate_insert` empties the table with `DELETE FROM`.** TRUNCATE is a
   minefield of dialect, privilege and transactionality. DELETE means the same
-  thing everywhere and rolls back in the same transaction.
+  thing everywhere and rolls back in the same transaction. The dialog asks
+  before it starts one, naming the target connection and table and — once a
+  `COUNT(*)` on the target session answers — how many rows will go.
 - **upsert**: the conflict key is read from the target table's PK metadata. If
   there is no PK, `JOB_START` rejects synchronously. It branches by dialect —
   `ON CONFLICT … DO UPDATE` for PostgreSQL/SQLite, `ON DUPLICATE KEY UPDATE`
@@ -865,7 +874,10 @@ content but **a list of mini-tabs** (`PaneItem::TableDetail | Query | Erd |
 TableData | TableStruct | QueryBuilder`), and activating the same object again moves to the open tab
 instead of adding a new one. The explorer keeps tree data for every connection
 but draws only the active connection's roots — switching is a pure filter, so
-there is no round trip. **Closing** a connection tab saves its workspace and tears the live document
+there is no round trip. A connection that opens has its root expanded and the
+tree walks down to the catalog and schema the session landed in
+(`SESSION_INFO`'s `catalog`/`schema`), opening each level as it arrives and
+selecting it unless the user has picked something meanwhile. **Closing** a connection tab saves its workspace and tears the live document
 down (panes releasing their session handles and cursors is the cleanup path of
 §9.3), and when a connection **drops**, the tab stays but query panes detach:
 the SQL and the rows already received remain readable, only execution is
@@ -878,10 +890,103 @@ path that hides or removes a subtree (sidebar toggle, closing a tab or pane,
 switching connections) has to take focus back within the same update, or every
 menu and shortcut afterwards is silently dropped.
 
+A second discipline guards work against gestures that do not mean to destroy
+it. Every dialog is a child of the workspace root, so a chord pressed inside one
+still matches the `Workspace` key context; the workspace's own commands are
+registered through `unless_held`, which ignores them while a dialog — or a sheet
+the active pane has put up over itself, such as an apply preview — is on
+screen. A dialog that wants one of those chords binds it in a key context of its
+own, which gpui prefers for being deeper. The extraction, transfer and backup
+dialogs are never closed under a running job: a press on the backdrop does
+nothing (`Modal::backdrop_dismisses(!running)`), `Escape` asks whether to stop
+the job, and `close_overlays` leaves the card standing and reports that the
+screen is not clear, so no other dialog opens over it.
+
+Dialogs say what `Enter` and `Escape` mean through `rugpui::Modal`'s options
+rather than through key handlers of their own. A question about a write — the
+write confirmation, the data and structure apply previews, the discard
+question — puts the keyboard on Cancel when it opens (`initial_focus`), so an
+`Enter` meant for the editor or grid behind it answers no rather than yes, and
+lets `Escape` decline (`escape_dismisses`); the close question does the same
+with Save over a file and Cancel over a connection. The connection dialog's
+`Escape` and backdrop both go through one `dismiss_guard` that peels whatever
+is layered on the form (driver manager, driver list, delete confirmation) and
+then asks over unsaved edits, and `Enter` in one of its fields is Connect
+(`on_confirm`) while nothing is asking. The job dialogs' `Enter` starts from a
+complete form and closes a finished job. The workspace's own `Escape` binding
+(`DismissDialog`) stays as the way in for a focus outside a card.
+
+Every close — a tab, several tabs, a pane, a connection tab, the application —
+goes through `Workspace::request_close` (`workspace/closing.rs`). A tab with
+staged edits refuses, bringing itself forward to say why, whichever door the
+close came through; a query tab bound to a file with changes the file lacks
+asks Save / Don't save / Cancel, one tab at a time; a connection with an
+uncommitted transaction (which the bridge rolls back as the session closes) or a
+running statement asks once. Quitting, closing the window — the caption's
+button, Alt+F4, the platform's own title bar, macOS's red button — and the
+restart an update ends in all go through the window's close guard
+(`rugpui_shell::CloseGuard`, the last child of the root), which lists
+everything at stake (`Workspace::unsaved_work`) and offers Save all for the
+file-bound tabs (`Workspace::save_all_files`); the guard reads state only,
+since the platform asks it synchronously. After each answer the close is run again
+from the top rather than resumed, so a tab saved meanwhile is not asked about
+and a tab gone meanwhile is not closed twice. On Linux and Windows `Ctrl+W`
+closes the tab on top; on macOS `Cmd+W` remains "close pane" for now.
+
+Menus open from the keyboard as well as the pointer. `F10` (off macOS, where
+the ☰ button is) opens the application menu, and the button itself is a tab
+stop. `Shift+F10` and the Menu key (`rugpui::OpenContextMenu`) open the menu of
+the surface that has the keyboard — the explorer's selected node, the SQL
+editor at its caret (`EditorView::caret_bounds`), a data or result grid over
+its cursor cell, a focused saved connection on the welcome screen — and every
+menu opened that way starts on its first row (`highlight_first`). Neither the
+tree nor the grid says where its rows are, so those menus hang just inside the
+surface's top edge, read from a `canvas` drawn over it. The tab strips and the
+ERD and builder canvases are pointer-only: a strip never holds the keyboard,
+and a canvas menu is about whatever is under the pointer. A middle click on a
+tab closes it through the same `request_close` as its × button.
+
+The **Interface size** setting is the scale every widget is drawn at
+(`rugpui::set_ui_scale(ui_font_size / 14)`, applied with the palettes at
+start-up, on apply and in the live preview). The shell's own sizes follow it:
+text through `rugpui::TextSize` (11/12/13/14 → `Xs`/`Sm`/`Body`/`Title`) or
+`rugpui::scaled` for the odd one, and the heights that hold text — the toolbar
+(which must match the tab strip's own scaled height), the status bar, pane
+toolbars, log and completion rows — through `rugpui::scaled`. So do the
+icons the app draws itself (`icons::icon`, the query toolbar's buttons and
+their glyphs, the explorer's object marks and status dot, the panel headers,
+the notice's close button, the caption's app icon), the swatches and tags that
+stand beside text, the widths that hold text (list columns, the welcome list,
+the completion popup, short fields such as a port or a batch size, the
+structure editor's columns, the query builder's pickers and form) and the
+panel widths handed to `modal` — which rugpui caps at the window. Borders,
+gaps, paddings, corner radii, scroll bar and divider thickness, resize grips
+and the user-dragged explorer width stay fixed; so do the SQL and DDL editors'
+heights, which hold text in the editor's own font size, and the ERD and query
+builder canvases, which have a zoom of their own. At the default 14 pt the
+scale is 1.0 and nothing moves. The macOS traffic-light offset is still the
+1.0 one.
+
+The connection, driver, settings, extraction, transfer and backup forms size
+their label column to the widest label in the language on screen
+(`rugpui::fit_label_width`, measured each frame from the dialog's
+`form_labels`, between 96 and 200 px at scale 1.0), so a German or Russian
+label is not broken mid-word and every row of a form lines up. A new row needs
+its label added to that list.
+
+Feedback that belongs to no pane goes to a toast (`rugpui_shell::show_toast`,
+drawn by `toast_stack()` as the root's last child, above the status bar): a
+chord that opens a tab over no session (`Workspace::say_not_live` — no
+connection, still connecting, failed or ended), a `.sql` file that could not be
+read, a builder table whose columns could not be read, and a keychain that is
+unavailable at start-up. A pane's own messages stay in its notice band
+(`crate::notice`), where they sit beside what they are about.
+
 Workspaces are saved as `workspaces/<profile-uuid>.json` in the configuration
 directory. The versioned snapshot holds all six tab kinds, tab order and custom
 names, the selected tab in each pane, the active pane, nested splits and ratios,
 query/builder counters, SQL drafts with their selections and editor split,
+the file a query tab is bound to and whether its draft held unsaved changes,
 table-data sorting, detail sub-tabs, and the builder's query and box positions.
 Splitting a pane copies its selected tab into a distinct view in the new pane,
 including its draft and custom name. Object clones bypass the normal navigation
@@ -899,7 +1004,9 @@ Changes are coalesced into an autosave, with atomic replacement on a background
 thread. Closing a connection, closing the window, and quitting flush the latest
 snapshot before its views disappear. Restore happens only after a successful
 connection, binds targets to the new session identity, and preserves foreground
-focus when another connection finishes opening. A failed connection cannot
+focus when another connection finishes opening. A bound query tab whose draft
+was saved clean, or empty because it was past the draft size limit, is refilled
+from its file, and saves wait until that read is in. A failed connection cannot
 replace an existing workspace. An unreadable or newer-version snapshot is left
 intact. With multiple sessions on one profile, changed workspaces replace that
 profile's saved state; when several change together, the foreground one wins.
@@ -907,7 +1014,9 @@ profile's saved state; when several change together, the foreground one wins.
 Restoring SQL never executes it. Database results, cursors, transactions and
 unapplied row/schema edits are not serialized; object tabs reload their current
 data or metadata. Closing an individual tab deliberately removes it from the
-next snapshot. ERD positions continue to use the existing per-profile layout
+next snapshot; the last ten query and builder tabs closed on each connection are
+kept in memory only, as the snapshot of them a restart would restore, for
+"Reopen closed tab" (`Ctrl`/`Cmd+Shift+T`). ERD positions continue to use the existing per-profile layout
 file (§7.6).
 
 ### 7.2 The UI theme
@@ -987,6 +1096,18 @@ for.
   and replace, auto-indent, comment toggling, and SQL formatting
   (Ctrl/Cmd+Shift+F, the toolbar or the context menu; the selection or the
   whole script, as one undo step)
+- Files: a query pane is bound to the `.sql` file it was opened from, when the
+  file read as UTF-8, or to the file it was last saved to. Ctrl/Cmd+S writes
+  the editor's text back to that file, and asks where only for an unbound pane;
+  "Save as" (Ctrl+Shift+S, no chord on macOS, where `Cmd+Shift+S` splits the
+  pane) always asks. A bound tab is titled with the file name, a save that
+  binds a new file replaces a name the user gave the tab, and a dot behind the
+  title marks text the file does not hold. A file that did not read as UTF-8
+  opens unbound, so a save never writes replacement characters over it. The
+  binding also records the file's length and modification time; a save in
+  place first checks them, and a file written since — by another program, a
+  split copy, or the same script open on another connection — is left alone
+  while the save dialog asks where to write instead
 - Completion: dialect keywords and types, built-in aggregate/scalar functions,
   schemas, tables/views, and columns
   resolved through names and table aliases in the current query block. Typing
@@ -1494,7 +1615,7 @@ logman-core's structure is inherited and only the schema changes.
 ├── snippets/*.sql            user SQL snippets
 ├── erd/<uuid>.json           ERD layout (per connection profile, per scope table positions)
 ├── workspaces/<uuid>.json    saved workspace, per connection profile (§7.1)
-├── history.db                query execution history (SQLite? open, §12)
+├── history/<uuid>.json       query history, per connection profile (§12, question 2)
 └── drivers/                  downloaded driver JARs
 ```
 
@@ -1511,12 +1632,21 @@ A connection profile:
   "keep_alive": { "enabled": true, "interval_s": 300, "query": "select 1 from dual" },
   "read_only": false,
   "auto_commit": true,
-  "confirm_writes": true
+  "confirm_writes": true,
+  "remember_password": true
 }
 ```
 
 Passwords are **never stored in a file.** They go into the `keyring`
-(rudbman-core's `secrets.rs`) under service `rudbman`, account `<profile-id>`.
+(rudbman-core's `secrets.rs`) under service `rudbman`, account `<profile-id>` —
+unless the profile's `remember_password` is off (it defaults on, and is on for
+every profile written before it existed). Off, saving writes nothing to the
+keychain and deletes what was there, and connecting asks: the dialog opens over
+the profile with the password field focused, its Connect hands the typed
+secrets straight to the attempt, and the tab holds them for nothing longer.
+A keychain write that fails while connecting no longer stops the connection:
+the profile is saved, the attempt uses the typed secrets, and the dialog stays
+up to say the password was not kept.
 
 `read_only` and `confirm_writes` guard against accidents on production
 databases. With `read_only`, the session is opened with
@@ -1625,11 +1755,27 @@ disconnect → CLOSE_SESSION → tear the tunnel down
   `ConnectionState::Dead`, which closes its session. It never silently
   reconnects — there may have been a transaction in flight, and the user needs
   to know
+- A tab that is not open says so in its work area rather than only in the
+  status bar's cell: a card while connecting (with Cancel, which drops the
+  attempt's task and leaves the tab failed), and for a failed or ended
+  connection the whole message, the same hint the connection dialog's Test
+  gives (`connection_dialog::error_hint`), and Reconnect, Edit connection… and
+  Copy message. A dead tab that still shows its detached tabs draws the same as
+  a band above them. Reconnect is the user's explicit act and reuses the tab:
+  the profile is read afresh (an edit made through "Edit connection…" reaches
+  the new attempt), and a dead tab's work area is snapshotted first and
+  restored once the new session is in
+- The settings' connection timeout (default 30 s, `0` for the driver's own)
+  goes to every attempt as `login_timeout_s`, which the bridge sends as
+  `loginTimeout`; Connector/J and MariaDB Connector/J get `connectTimeout` and
+  Oracle's thin driver `oracle.net.CONNECT_TIMEOUT`, in milliseconds, unless the
+  profile sets those properties itself
 - A host key `known_hosts` does not hold is refused during the key exchange,
   because the verifier cannot block on a dialog. The connection error names the
   algorithm and fingerprint, and the connection dialog's Test result offers
   "Trust this key", which writes `known_hosts` and nothing else; the user then
-  tests again. A key that contradicts a stored one, including a new algorithm
+  tests again. A tab that failed this way offers "Trust the key and reconnect"
+  on its card, which does both. A key that contradicts a stored one, including a new algorithm
   for a known host, is reported as a mismatch and gets no button
 
 ---
@@ -1856,9 +2002,13 @@ for "a usable tool".
 1. **The JSON library in the bridge JAR** — **resolved (M1): Gson.** A proven
    230KB is cheaper than hand-writing escaping and introducing bugs with it.
    It is merged into the JAR and ships with it.
-2. **Query history storage** — SQLite (rusqlite, one more native dependency)
-   vs JSON Lines (simple, slow to search). To be decided once there is an
-   estimate of history volume.
+2. **Query history storage** — **resolved: one JSON file per connection
+   profile, bounded.** `history/<profile-uuid>.json` holds at most 1 000
+   statements and 4 MiB of SQL, oldest dropped first, so the whole history of
+   a profile is read into memory once and searched there in well under a
+   frame; nothing needs an index at that size, and SQLite would have been a
+   native dependency for a list. Written like the workspaces: atomically, off
+   the UI thread, half a second after a change, and once more on quit.
 3. **The script extraction template engine** — **resolved (M4): it stays in
    Java and ships in the bridge.** Extraction is a §6 data plane job, so it has
    to run on the JVM side where the rows flow, and compatibility with jdbgen's

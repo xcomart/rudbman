@@ -24,6 +24,7 @@ mod i18n;
 mod icons;
 mod lob_dialog;
 mod maven;
+mod notice;
 // The pane tree is written as a self-contained data structure with its own
 // tests rather than for the call sites the shell currently has, so it offers
 // operations nothing reaches yet — merging a subtree, editing a payload — which
@@ -31,6 +32,7 @@ mod maven;
 #[allow(dead_code)]
 mod pane_tree;
 mod query;
+mod query_history;
 mod query_source;
 mod row_apply;
 mod settings_dialog;
@@ -80,6 +82,11 @@ actions!(
         /// Read a `.sql` file into a query pane on the connection whose tab is
         /// showing.
         OpenSqlFile,
+        /// Write the SQL of the query tab on screen to its file, asking where
+        /// first when it has none.
+        SaveSqlFile,
+        /// Write the SQL of the query tab on screen to a file chosen anew.
+        SaveSqlFileAs,
         /// Open the extraction dialog over the object selected in the explorer.
         ExtractScript,
         /// Open the transfer dialog over the object selected in the explorer.
@@ -95,7 +102,38 @@ actions!(
         NewBuilder,
         /// Close the open dialog or dropdown menu, if there is one.
         DismissDialog,
+        /// Close the tab on top of the active pane.
+        CloseTab,
+        /// Bring back the query or builder tab closed most recently on the
+        /// connection whose tab is showing.
+        ReopenClosedTab,
+        /// Show the plan of the statement under the caret of the query tab
+        /// on screen, without running it.
+        ExplainQuery,
+        /// Open the query history of the connection whose tab is showing.
+        ShowQueryHistory,
+        /// Bring the next tab of the active pane to the front.
+        NextTab,
+        /// Bring the previous tab of the active pane to the front.
+        PrevTab,
+        /// Bring the next connection tab to the front.
+        NextConnection,
+        /// Bring the previous connection tab to the front.
+        PrevConnection,
+        /// Move the keyboard to the next region: explorer, editor, results.
+        NextRegion,
+        /// Move the keyboard to the previous region.
+        PrevRegion,
     ]
+);
+
+/// Bring tab `n` of the active pane to the front — the last one for `8`, as
+/// `Ctrl+9` does in every browser.
+#[derive(Clone, PartialEq, Default, Debug, gpui::Action)]
+#[action(namespace = rudbman, no_json)]
+struct SelectTab(
+    /// Zero-based index of the tab, `8` meaning the last.
+    usize,
 );
 
 mod workspace;

@@ -36,12 +36,18 @@
 //! # Closing cancels
 //!
 //! Dropping the polling task drops the last `Arc`, and `Job`'s own `Drop`
-//! cancels an unfinished job. That is what makes closing the window, closing the
-//! dialog and pressing `Escape` all safe: none of them can leak a job that goes
-//! on writing to a file nobody is watching. `Escape` while a job runs is
-//! deliberately *not* a close — it is the cancel button, and the card stays up
-//! until the job reports a terminal state, because a job the user does not
-//! know the outcome of is worse than one more click.
+//! cancels an unfinished job. That is what makes closing the window and closing
+//! the dialog safe: neither can leak a job that goes on writing to a file
+//! nobody is watching.
+//!
+//! Safe is not the same as harmless, though, and a running job is the one
+//! state the card guards. `Escape` while a job runs is deliberately *not* a
+//! close: it asks whether to stop ([`render_stop_question`]), a second
+//! `Escape` answers "keep running", and only "Stop" — or the card's own cancel
+//! button — reaches the job. A press on the backdrop does nothing at all, and
+//! the shell will not close the card to open another dialog over it. Once the
+//! job is stopped the card stays up until it reports a terminal state, because
+//! a job the user does not know the outcome of is worse than one more click.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -367,6 +373,9 @@ pub struct ExtractDialog {
     where_input: Entity<TextInput>,
     /// Which half of the dialog is on screen.
     stage: Stage,
+    /// Whether `Escape` over a running job has asked "stop it?" and is
+    /// waiting for the answer; see [`crate::extract_dialog::render_stop_question`].
+    asking_stop: bool,
     /// A refusal to show under the form — a specification the bridge would not
     /// accept, or a file that could not be opened.
     notice: Option<SharedString>,
@@ -374,6 +383,10 @@ pub struct ExtractDialog {
     ///
     /// Dropping it cancels the job; see the module documentation.
     _poll: Option<Task<()>>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl ExtractDialog {
@@ -395,6 +408,7 @@ impl ExtractDialog {
         Self {
             open: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             target: None,
             session: None,
@@ -408,6 +422,7 @@ impl ExtractDialog {
             batch_input,
             where_input,
             stage: Stage::Form,
+            asking_stop: false,
             notice: None,
             _poll: None,
         }
@@ -435,6 +450,7 @@ impl ExtractDialog {
             .update(cx, |input, cx| input.set_content("1", cx));
         self.where_input.update(cx, |input, cx| input.clear(cx));
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self.notice = None;
         self._poll = None;
         self.open = true;
@@ -445,6 +461,29 @@ impl ExtractDialog {
     /// Whether the dialog is visible.
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Whether a job is running under the card.
+    ///
+    /// The one state nothing but the user's own answer may close the dialog
+    /// from: closing cancels (see [`ExtractDialog::close`]), and a job of
+    /// minutes lost to a stray click or chord is not something anyone asked
+    /// for. The shell asks this before it closes the dialog to open another.
+    pub fn is_running(&self) -> bool {
+        self.open && matches!(self.stage, Stage::Running(_))
+    }
+
+    /// What `Enter` means when no control on the card keeps it — a field
+    /// that has no submit of its own, or the card itself: start from a form
+    /// that can, close a job that ended, and nothing while one runs. A
+    /// focused button keeps its own `Enter`, so the answer is never a guess
+    /// about which one was meant.
+    pub fn confirm(&mut self, cx: &mut Context<Self>) {
+        match &self.stage {
+            Stage::Form if self.spec(cx).is_some() => self.start(cx),
+            Stage::Ended(_) => self.dismiss(cx),
+            _ => {}
+        }
     }
 
     /// Hides the dialog without emitting an event.
@@ -459,6 +498,7 @@ impl ExtractDialog {
         self.pending_focus = false;
         self.mode_list_open = false;
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self._poll = None;
         self.session = None;
         self.target = None;
@@ -484,8 +524,18 @@ impl ExtractDialog {
             cx.notify();
             return;
         }
-        if matches!(self.stage, Stage::Running(_)) {
-            self.request_cancel(cx);
+        if let Stage::Running(running) = &self.stage {
+            // Asked rather than done: `Escape` is the key a user reaches for
+            // to get out of *anything*, and over a running job getting out
+            // means throwing the job away. A second `Escape` answers "keep
+            // it running", and a cancel already on its way is not asked
+            // about again.
+            if self.asking_stop {
+                self.asking_stop = false;
+            } else if !running.canceling {
+                self.asking_stop = true;
+            }
+            cx.notify();
             return;
         }
         self.dismiss(cx);
@@ -547,7 +597,7 @@ impl ExtractDialog {
             .output
             .as_ref()
             .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(default_directory);
+            .unwrap_or_else(|| crate::extract_dialog::output_directory(cx));
         let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
 
         cx.spawn(async move |dialog, cx| {
@@ -561,6 +611,7 @@ impl ExtractDialog {
             };
             dialog
                 .update(cx, |dialog, cx| {
+                    crate::extract_dialog::remember_output(&path, cx);
                     dialog.output = Some(path);
                     dialog.notice = None;
                     cx.notify();
@@ -701,6 +752,7 @@ impl ExtractDialog {
                 // this card is concerned: the handle is either gone or the
                 // bridge is unreachable, and either way nothing more will
                 // arrive.
+                self.asking_stop = false;
                 self.stage = Stage::Ended(Ended::Failed(SharedString::from(format!("{error}"))));
                 cx.notify();
                 return false;
@@ -716,6 +768,9 @@ impl ExtractDialog {
             return true;
         }
 
+        // A job that ended while "stop it?" was up has answered the question
+        // itself.
+        self.asking_stop = false;
         self.stage = Stage::Ended(match progress.state {
             JobState::Done => Ended::Done {
                 rows: progress.rows_done,
@@ -743,6 +798,7 @@ impl ExtractDialog {
     /// or phase boundary, and the state that follows is still read by a poll.
     /// The button changes to say so.
     fn request_cancel(&mut self, cx: &mut Context<Self>) {
+        self.asking_stop = false;
         let Stage::Running(running) = &mut self.stage else {
             return;
         };
@@ -783,6 +839,7 @@ impl ExtractDialog {
             ts!("extract.object"),
             div().text_color(chrome.text).child(name),
         )
+        .label_width(self.label_width)
     }
 
     /// A read-only path cell with a "Browse…" button beside it.
@@ -818,7 +875,7 @@ impl ExtractDialog {
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .text_color(color)
                         .child(text),
                 )
@@ -831,6 +888,7 @@ impl ExtractDialog {
                         }),
                 ),
         )
+        .label_width(self.label_width)
     }
 
     /// The form half: everything the job is described by.
@@ -912,8 +970,12 @@ impl ExtractDialog {
             let batch = (self.mode == DataMode::Insert).then(|| {
                 form_row(
                     ts!("extract.batch_rows"),
-                    div().flex_none().w(px(96.)).child(self.batch_input.clone()),
+                    div()
+                        .flex_none()
+                        .w(rugpui::scaled(96., cx))
+                        .child(self.batch_input.clone()),
                 )
+                .label_width(self.label_width)
             });
             let template = (self.mode == DataMode::Template).then(|| {
                 self.render_path_row(
@@ -934,7 +996,7 @@ impl ExtractDialog {
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .child(form_row(ts!("extract.mode"), mode))
+                .child(form_row(ts!("extract.mode"), mode).label_width(self.label_width))
                 .children(batch)
                 .children(template)
         });
@@ -961,7 +1023,10 @@ impl ExtractDialog {
                 |dialog, value| dialog.data = value,
             ))
             .children(data_body)
-            .child(form_row(ts!("extract.where"), self.where_input.clone()))
+            .child(
+                form_row(ts!("extract.where"), self.where_input.clone())
+                    .label_width(self.label_width),
+            )
     }
 
     /// The progress half: what the job is doing, and how far it has got.
@@ -984,7 +1049,7 @@ impl ExtractDialog {
             .child(self.render_object(cx))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(chrome.text_muted)
                     .child(if running.canceling {
                         ts!("extract.canceling")
@@ -1030,7 +1095,12 @@ impl ExtractDialog {
             .flex_col()
             .gap(px(10.))
             .child(self.render_object(cx))
-            .child(div().text_size(px(12.)).text_color(color).child(message))
+            .child(
+                div()
+                    .text_size(rugpui::TextSize::Sm.size(cx))
+                    .text_color(color)
+                    .child(message),
+            )
     }
 
     /// The button row, which is a different pair in each stage.
@@ -1042,7 +1112,7 @@ impl ExtractDialog {
             div()
                 .flex_1()
                 .min_w_0()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(message)
         });
@@ -1077,6 +1147,24 @@ impl ExtractDialog {
                                 }
                             }),
                     )
+            }
+            Stage::Running(_) if self.asking_stop => {
+                let keep = this.clone();
+                let stop = this.clone();
+                return crate::extract_dialog::render_stop_question(
+                    "extract",
+                    ts!("extract.stop_question"),
+                    move |cx| {
+                        keep.update(cx, |dialog, cx| {
+                            dialog.asking_stop = false;
+                            cx.notify();
+                        });
+                    },
+                    move |cx| {
+                        stop.update(cx, |dialog, cx| dialog.request_cancel(cx));
+                    },
+                    cx,
+                );
             }
             Stage::Running(running) => div().flex().flex_row().gap(px(8.)).child(
                 Button::new("extract-stop", ts!("common.cancel"))
@@ -1114,12 +1202,85 @@ impl ExtractDialog {
     }
 }
 
+/// The footer a running job's card shows while `Escape` is asking whether to
+/// stop it.
+///
+/// Shared by the three job dialogs, which ask the same question in their own
+/// words: `question` says what stopping leaves behind, "Keep running" — the
+/// answer a second `Escape` gives too — takes the question away, and "Stop"
+/// is the cancel button the question stood in for. `prefix` keeps the button
+/// ids apart between the dialogs.
+pub fn render_stop_question(
+    prefix: &'static str,
+    question: SharedString,
+    keep: impl Fn(&mut App) + 'static,
+    stop: impl Fn(&mut App) + 'static,
+    cx: &App,
+) -> gpui::Div {
+    let chrome = theme(cx);
+    div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(rugpui::TextSize::Sm.size(cx))
+                .text_color(chrome.text)
+                .child(question),
+        )
+        .child(
+            Button::new((prefix, 0usize), ts!("common.keep_running"))
+                .variant(ButtonVariant::Secondary)
+                .on_click(move |_, _window, cx| keep(cx)),
+        )
+        .child(
+            Button::new((prefix, 1usize), ts!("common.stop_job"))
+                .variant(ButtonVariant::Danger)
+                .on_click(move |_, _window, cx| stop(cx)),
+        )
+}
+
 /// The label the dropdown lists one row format under.
 fn mode_label(mode: DataMode) -> SharedString {
     match mode {
         DataMode::Insert => ts!("extract.mode_insert"),
         DataMode::Csv => ts!("extract.mode_csv"),
         DataMode::Template => ts!("extract.mode_template"),
+    }
+}
+
+/// Where a save dialog for an extraction, a backup or an export opens: the
+/// folder the last of them was written to, while it is still there, and the
+/// home directory otherwise.
+///
+/// Only the folder is remembered, never the file — writing over the previous
+/// object's script because its name was still offered is not a mistake a user
+/// can undo — and only for these outputs, not for a query tab's SQL, which
+/// saves beside the file it came from.
+pub fn output_directory(cx: &App) -> PathBuf {
+    crate::app_settings::current(cx)
+        .output_directory
+        .filter(|directory| directory.is_dir())
+        .unwrap_or_else(default_directory)
+}
+
+/// Remembers the folder `path` is in as where the next output goes; see
+/// [`output_directory`].
+pub fn remember_output(path: &Path, cx: &mut App) {
+    let Some(directory) = path
+        .parent()
+        .filter(|directory| !directory.as_os_str().is_empty())
+    else {
+        return;
+    };
+    let mut settings = crate::app_settings::current(cx);
+    if settings.output_directory.as_deref() != Some(directory) {
+        settings.output_directory = Some(directory.to_path_buf());
+        crate::app_settings::replace(settings, cx);
     }
 }
 
@@ -1145,8 +1306,23 @@ impl Focusable for ExtractDialog {
     }
 }
 
+impl ExtractDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("extract.object"),
+            ts!("extract.output"),
+            ts!("extract.template"),
+            ts!("extract.batch_rows"),
+            ts!("extract.mode"),
+            ts!("extract.where"),
+        ]
+    }
+}
+
 impl Render for ExtractDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("extract-dialog");
         }
@@ -1166,6 +1342,12 @@ impl Render for ExtractDialog {
                 this.update(cx, |dialog, cx| dialog.escape(cx));
             }
         };
+        let confirm = {
+            let this = cx.entity();
+            move |_window: &mut Window, cx: &mut App| {
+                this.update(cx, |dialog, cx| dialog.confirm(cx));
+            }
+        };
 
         // Absolute and full-size for the same reason as the other dialogs: an
         // absolutely positioned child is laid out against its direct parent.
@@ -1175,18 +1357,26 @@ impl Render for ExtractDialog {
             .inset_0()
             .size_full()
             .track_focus(&self.focus_handle)
-            .child(modal(
-                "extract-modal",
-                ts!("extract.title"),
-                px(DIALOG_WIDTH),
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .child(body)
-                    .child(footer),
-                on_dismiss,
-            ))
+            .child(
+                modal(
+                    "extract-modal",
+                    ts!("extract.title"),
+                    rugpui::scaled(DIALOG_WIDTH, cx),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .child(body)
+                        .child(footer),
+                    on_dismiss,
+                )
+                // A press beside the card is the least deliberate gesture
+                // there is, so while a job runs it is the one that does
+                // nothing at all — not even ask; `Escape` asks (see
+                // `escape`).
+                .backdrop_dismisses(!self.is_running())
+                .on_confirm(confirm),
+            )
     }
 }
 
@@ -1195,6 +1385,22 @@ mod tests {
     use gpui::{TestAppContext, WindowHandle};
     use rudbman_core::AppSettings;
     use rudbman_jdbc::StatementSpec;
+
+    /// The next save dialog opens where the last output went, while that
+    /// folder is still there; with nothing remembered, or the folder gone, it
+    /// opens at home.
+    #[gpui::test]
+    fn the_next_output_starts_in_the_folder_of_the_last(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        cx.update(|cx| {
+            crate::app_settings::install(Ok(AppSettings::default()), cx);
+            assert_eq!(output_directory(cx), default_directory());
+            remember_output(&dir.path().join("orders.sql"), cx);
+            assert_eq!(output_directory(cx), dir.path());
+        });
+        drop(dir);
+        cx.update(|cx| assert_eq!(output_directory(cx), default_directory()));
+    }
 
     use super::*;
     use crate::connection::{self, Connected};

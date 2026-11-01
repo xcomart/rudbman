@@ -12,7 +12,7 @@ impl Workspace {
         match event {
             AboutDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -34,14 +34,31 @@ impl Workspace {
             // list may have been saved, renamed or deleted since it was
             // last read, and the list is what the user comes back to when
             // this tab is closed again.
-            ConnectionDialogEvent::Connect(profile) => {
+            //
+            // A tab that asked for a password to reconnect gets the session in
+            // place; anything else opens a tab of its own.
+            ConnectionDialogEvent::Connect { profile, typed } => {
                 self.profiles = load_profiles();
-                self.open_connection((**profile).clone(), window, cx);
+                let typed = typed.borrow_mut().take();
+                let waiting = self.pending_reconnect.take().and_then(|(tab, id)| {
+                    (id == profile.id)
+                        .then(|| self.connections.iter().position(|open| open.id == tab))
+                        .flatten()
+                });
+                match waiting {
+                    Some(index) => self.reconnect_with(index, typed, window, cx),
+                    None => self.open_connection_with((**profile).clone(), typed, window, cx),
+                }
+                // The dialog has closed itself, and the keyboard was in it.
+                if !dialog.read(cx).is_open() {
+                    self.restore_focus(window, cx);
+                }
             }
             ConnectionDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
+                self.pending_reconnect = None;
                 self.profiles = load_profiles();
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -70,13 +87,18 @@ impl Workspace {
             // nothing — it is the sentence saying why its parent could not
             // be read — so every command would be grayed, and a panel of
             // nothing but grayed rows says less than no panel.
-            ExplorerEvent::ContextMenu { node, position } => {
+            ExplorerEvent::ContextMenu {
+                node,
+                position,
+                by_keyboard,
+            } => {
                 if !matches!(node, NodeId::Error(_)) {
                     self.open_context_menu(
                         ContextTarget::Explorer(Box::new(node.clone())),
                         *position,
                         cx,
                     );
+                    self.context_by_keyboard(*by_keyboard);
                 }
             }
         }
@@ -98,7 +120,7 @@ impl Workspace {
                 // The dialog closes itself after applying; without a refocus
                 // the window focus dangles on its unrendered controls and
                 // macOS disables every menu item validated through it.
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
             // The user is still in the dialog and nothing has been saved, so
             // only the palettes and the fonts follow — and the focus stays
@@ -110,7 +132,7 @@ impl Workspace {
             SettingsDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
                 self.apply_preview(window, cx);
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -125,7 +147,7 @@ impl Workspace {
         match event {
             ExtractDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -140,7 +162,7 @@ impl Workspace {
         match event {
             TransferDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -155,7 +177,7 @@ impl Workspace {
         match event {
             BackupDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }
@@ -173,7 +195,7 @@ impl Workspace {
                 // this workspace's job, through the policy `app_identity`
                 // installed, because the settings are rudbman's.
                 update::remember_ignored(tag, cx);
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
             UpdateDialogEvent::Installed(_) => {
                 // The new build is on disk and the dialog is still on
@@ -184,21 +206,16 @@ impl Workspace {
                 // update merely spends its restart applying itself and
                 // re-executing once more.
                 //
-                // The path comes from the shell because only it knows that
-                // the install just renamed the running image aside:
-                // `restart_path` is the `current_exe()` of the moment
-                // `init_process_identity` ran, before any of that happened.
-                // `None` — the platform never said, or no identity was
-                // installed — is left unset, which is gpui's own default
-                // and therefore exactly the same thing.
-                if let Some(path) = rugpui_shell::restart_path() {
-                    cx.set_restart_path(path);
-                }
-                cx.restart();
+                // Through the close guard, which asks first when the restart
+                // would lose something — a file not saved, a transaction not
+                // committed — and otherwise restarts at once, on the
+                // `restart_path` the shell recorded before the install renamed
+                // the running image aside.
+                rugpui_shell::request_restart(window, cx);
             }
             UpdateDialogEvent::Dismissed => {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
         }
     }

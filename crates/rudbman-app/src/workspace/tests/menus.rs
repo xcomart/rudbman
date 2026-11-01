@@ -252,7 +252,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             workspace.connections.push(Connection {
                 id,
                 profile: unopenable_profile("dead"),
-                state: ConnectionState::Failed(SharedString::new_static("refused")),
+                state: ConnectionState::Failed("refused".into()),
                 work: WorkArea::new(),
             });
             let node = NodeId::Object {
@@ -283,6 +283,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
                 cx.emit(ExplorerEvent::ContextMenu {
                     node: table.clone(),
                     position: at,
+                    by_keyboard: false,
                 });
             });
         })
@@ -306,6 +307,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
                 cx.emit(ExplorerEvent::ContextMenu {
                     node: NodeId::Error(Box::new(table.clone())),
                     position: at,
+                    by_keyboard: false,
                 });
             });
         })
@@ -362,6 +364,7 @@ fn closing_the_other_tabs_leaves_the_keyboard_in_the_one_that_stays(cx: &mut gpu
             ts!("context.close_tab").to_string(),
             ts!("context.close_others").to_string(),
             ts!("context.close_right").to_string(),
+            ts!("context.reopen_tab").to_string(),
             String::new(),
             ts!("context.split_right").to_string(),
             ts!("context.split_below").to_string(),
@@ -457,7 +460,7 @@ fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestA
             workspace.connections.push(Connection {
                 id: next_connection_id(),
                 profile: unopenable_profile("refused"),
-                state: ConnectionState::Failed(SharedString::new_static("no driver")),
+                state: ConnectionState::Failed("no driver".into()),
                 work: WorkArea::new(),
             });
 
@@ -467,15 +470,28 @@ fn a_connection_tab_menu_acts_on_the_tab_it_was_raised_over(cx: &mut gpui::TestA
                 [
                     ts!("menu.new_query").to_string(),
                     ts!("menu.new_builder").to_string(),
+                    ts!("menu.query_history").to_string(),
+                    String::new(),
+                    ts!("connect.reconnect").to_string(),
+                    ts!("connect.edit_connection").to_string(),
                     String::new(),
                     ts!("tab.close").to_string(),
                 ]
             );
-            assert!(context_menu::grayed(&live).is_empty());
+            // A live tab has nothing to reconnect; everything else is there.
+            assert_eq!(
+                context_menu::grayed(&live),
+                [ts!("connect.reconnect").to_string()]
+            );
 
             let dead = workspace.connection_rows(1, cx);
+            assert!(context_menu::row(&dead, &ts!("connect.reconnect")).is_enabled());
             assert!(!context_menu::row(&dead, &ts!("menu.new_query")).is_enabled());
             assert!(!context_menu::row(&dead, &ts!("menu.new_builder")).is_enabled());
+            assert!(
+                context_menu::row(&dead, &ts!("menu.query_history")).is_enabled(),
+                "what was run can be read with the connection down"
+            );
             assert!(
                 context_menu::row(&dead, &ts!("tab.close")).is_enabled(),
                 "a tab that failed to open still has to be closable"
@@ -529,6 +545,9 @@ fn the_welcome_menu_opens_the_dialog_over_the_row(cx: &mut gpui::TestAppContext)
             ts!("context.connect").to_string(),
             String::new(),
             ts!("context.edit").to_string(),
+            ts!("context.duplicate").to_string(),
+            String::new(),
+            ts!("context.delete").to_string(),
         ]
     );
 
@@ -626,4 +645,77 @@ fn escape_closes_the_context_menu_before_the_dialog_under_it(cx: &mut gpui::Test
             assert!(workspace.menu_open);
         })
         .expect("the window is open");
+}
+
+/// The menus open from the keyboard, on their first row: `F10` the
+/// application menu (off macOS, where the ☰ button is), `Shift+F10` the
+/// explorer's selected node and the SQL editor at its caret. The grid's half
+/// is the data pane's own test.
+#[gpui::test]
+fn the_menus_open_from_the_keyboard(cx: &mut gpui::TestAppContext) {
+    let (window, id) = workspace_over_h2_with(
+        "menus-keyboard",
+        &[
+            "create table KEYS_T (ID int primary key)",
+            "insert into KEYS_T values (1)",
+        ],
+        cx,
+    );
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.focus_shell(window, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+
+    if !cfg!(target_os = "macos") {
+        cx.dispatch_action(rugpui::OpenAppMenu);
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |workspace, _window, cx| {
+                assert!(workspace.menu_open && workspace.menu_by_keyboard);
+                workspace.set_menu_open(false, cx);
+            })
+            .expect("the window is open");
+    }
+
+    select_table(&window, &mut cx, id, "PUBLIC", "KEYS_T");
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace
+                .explorer
+                .update(cx, |explorer, cx| explorer.take_focus(window, cx));
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    cx.dispatch_action(rugpui::OpenContextMenu);
+    cx.run_until_parked();
+    window
+        .update(&mut cx, |workspace, _window, _cx| {
+            let menu = workspace.context_menu.as_ref().expect("a menu is open");
+            assert!(menu.by_keyboard);
+            assert!(matches!(&menu.target, ContextTarget::Explorer(_)));
+            workspace.context_menu = None;
+        })
+        .expect("the window is open");
+
+    let query = window
+        .update(&mut cx, |workspace, window, cx| {
+            let query = workspace
+                .open_query("select 1", window, cx)
+                .expect("a live connection");
+            query.update(cx, |pane, cx| pane.focus_editor(window, cx));
+            query
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    cx.dispatch_action(rugpui::OpenContextMenu);
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        assert!(
+            query.read(cx).has_context_menu(),
+            "the editor's menu opened"
+        );
+    });
 }

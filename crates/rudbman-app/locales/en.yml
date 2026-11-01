@@ -24,6 +24,10 @@ common:
   cancel: Cancel
   save: Save
   close: Close
+  # The two answers to "stop the running job?", which Escape asks over a
+  # running extraction, transfer or backup.
+  keep_running: Keep running
+  stop_job: Stop
 
 # The in-app dropdown menu, and the macOS menu bar below it. The two differ
 # only in capitalization in English, but a translation may need to distinguish
@@ -41,6 +45,8 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Query the selected object
+  # Opens the query history of the connection on screen.
+  query_history: Query history…
   # Opens the rows of the table or view selected in the explorer in a data
   # pane. Also the label of the button that does the same from the detail
   # panel's header: one command, one wording.
@@ -55,6 +61,12 @@ menu:
   new_table: New table
   # Reads a .sql file into a new query pane on the connection showing.
   open_sql_file: Open SQL file…
+  # Writes the SQL of the query tab on screen to the file it was opened from
+  # or last saved to, asking where only when it has none. No ellipsis: the
+  # ordinary case asks nothing.
+  save_sql_file: Save SQL file
+  # Always asks where, and the tab is named after the file chosen.
+  save_sql_file_as: Save SQL file as…
   # Opens the extraction dialog over the object selected in the explorer.
   extract_script: Extract script…
   # Opens the transfer dialog over the same object: its rows, into a table on
@@ -69,6 +81,12 @@ menu:
   add_to_builder: Add to query builder
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: New query builder
+  # A chord that only works with the keyboard in the explorer: in the SQL
+  # editor the same keys run a statement.
+  in_explorer: "%{shortcut} in the explorer"
+  # Move the pane frame, and the keyboard with it, along the layout.
+  next_pane: Next pane
+  prev_pane: Previous pane
   about: About rudbman
   # Both the in-app row and the macOS menu-bar item, and also the title of the
   # dialog it opens — so no trailing ellipsis, which would read oddly as a
@@ -93,7 +111,9 @@ tab:
   # Hover labels for the two buttons at the end of the strip. The close button
   # on each tab reuses `close` above: same command, same wording.
   tip_list: All connections
-  tip_new: "New connection (%{shortcut})"
+  # The "+": what it and Ctrl+N actually do, which is the connection manager
+  # over the first saved profile.
+  tip_manage: "Manage connections (%{shortcut})"
   # The same dropdown on a pane's strip, listing that pane's tabs.
   tip_pane_list: All tabs
 
@@ -140,6 +160,11 @@ statusbar:
   # transport and is not translated.
   failed: "failed: %{error}"
   tunnel_lost: "the SSH tunnel closed: %{reason}"
+  # Shown only while the session holds writes nobody has committed or rolled
+  # back; the hover names the query tab they came from.
+  uncommitted: uncommitted transaction
+  uncommitted_in: "Writes from “%{tab}” are not committed yet. Commit or roll them back there."
+  uncommitted_tip: Writes on this connection are not committed yet.
 
 # The about box. The version, the license name and the names of the libraries
 # are values, not words, and are never translated.
@@ -194,7 +219,12 @@ settings:
   fetch_batch_rows_hint: rows fetched at a time as the grid is scrolled
   query_timeout: Statement timeout
   query_timeout_hint: seconds — 0 means no limit
+  # How long a connection attempt may take before it gives up.
+  login_timeout: Connection timeout
+  login_timeout_hint: seconds — 0 leaves it to the driver
   confirm_writes_default: Ask before running a write statement on a new connection
+  query_history: Keep a history of the statements query tabs run
+  query_history_hint: Kept per connection profile in the history folder of the configuration directory, as plain text. Turning this off stops recording and keeps what was recorded; the history dialog deletes it.
 
   jvm_heap: Java heap
   jvm_heap_hint: MB — the -Xmx a driver runs under
@@ -375,6 +405,19 @@ connect:
   load_failed: "The saved connections could not be read, so nothing can be saved or deleted until that file is fixed or moved: %{error}"
   save_failed: "The connections could not be saved: %{error}"
   keychain_failed: "The password could not be saved to the keychain: %{error}"
+  # Off, the password and the tunnel secret are kept nowhere and asked for on
+  # every connect. The same words rulogman uses.
+  remember_password: Remember password in the system keychain
+  # The dialog was opened to connect a profile that keeps no password.
+  password_prompt: This connection does not remember its password. Enter it and press Connect.
+  # Connected with the typed password although the keychain refused it.
+  keychain_failed_connected: "The password could not be saved to the keychain (%{error}). The connection uses the one typed here."
+  # A driver with no JAR whose Maven artifact is known.
+  driver_has_no_jar_download: This driver has no JAR yet. Download it here, or add one under Drivers.
+  # Closing a form with unsaved changes asks first.
+  discard_question: This form has changes that are not saved.
+  keep_editing: Keep editing
+  discard: Discard
 
   # One-line suggestions attached to a failure whose SQLSTATE class says what
   # kind it is.
@@ -390,6 +433,17 @@ connect:
   host_key_question: "%{host} presented an unknown %{algorithm} key: %{fingerprint}"
   trust_host_key: Trust this key
   host_key_trusted: The host key was added to the trusted list. Try connecting again.
+  # The card the work area of a connection tab shows while the tab is not
+  # open, and the tab menu's rows that do the same.
+  card_connecting: "Connecting to “%{name}”…"
+  card_connecting_hint: "The attempt gives up after %{seconds} seconds."
+  card_failed: "Could not connect to “%{name}”"
+  card_dead: "The connection to “%{name}” has ended"
+  reconnect: Reconnect
+  edit_connection: Edit connection…
+  trust_and_reconnect: Trust the key and reconnect
+  # The attempt was abandoned with Cancel on the card.
+  canceled: The connection attempt was canceled.
 
 # The driver manager, opened from the connection dialog.
 #
@@ -579,6 +633,8 @@ query:
   rollback_failed: "Rollback failed: %{message}"
   rollback_auto: "Rollback (automatic commit is enabled)"
   uncommitted_pending: "This connection has uncommitted changes from a query editor. Commit or roll them back there first."
+  # The same refusal, naming the query tab the open transaction came from.
+  uncommitted_pending_in: "This connection has uncommitted changes from “%{tab}”. Commit or roll them back there first."
   commit: "Commit"
   committing: "Committing…"
   committed: "Transaction committed."
@@ -599,6 +655,9 @@ query:
   # The result area before anything has been run, and after a run that produced
   # nothing at all.
   empty: Write a statement and run it.
+  # The same, with the chords that run the statement under the caret and
+  # the whole script.
+  empty_keys: "Write a statement and run it: %{statement} runs the one under the caret, %{all} runs them all."
   no_results: The statement produced no result.
   # While a statement is in flight. Also the status bar's row cell then, which
   # is why it is a state rather than a sentence.
@@ -607,8 +666,22 @@ query:
   # say. These messages accumulate in one log tab.
   rows_affected: "%{count} rows affected"
   executed: Statement executed.
+  # The tab title of a plan's grid, and the log line for it: the statement was
+  # only planned, never executed.
+  plan: "Plan %{index}"
+  explained: Plan read; the statement was not run.
+  explain_one: Select one statement to see its plan.
+  # `product` is the dialect id, such as db2, and is not translated.
+  explain_unsupported: "Reading a plan is not supported on %{product}."
+  # SQL Server reads a plan with SET SHOWPLAN_TEXT ON; if switching it off
+  # fails, the connection answers every later statement with a plan instead.
+  explain_restore_failed: "The connection could not be put back after reading the plan (%{message}). Reconnect before running anything else on it."
+  # The execution log's row for the statement a run of several stopped at.
+  statement_failed: "Statement %{index} of %{total} failed: %{error}"
   # The status bar's row and elapsed cells. `seconds` arrives already rounded.
   row_count: "%{count} rows"
+  # More rows remain than the grids have read so far.
+  row_count_more: "%{count}+ rows"
   elapsed: "%{seconds} s"
   # Refused rather than queued: a second statement would wait behind the first
   # on the session's own worker thread and look like a hang.
@@ -644,6 +717,19 @@ query:
   hint_canceled: The statement was canceled.
   # Title of the file picker the "Open SQL file…" row opens.
   open_file_select: Choose a SQL file
+  # Said in the query pane when "Save SQL file" could not write. `error` is
+  # the operating system's own message.
+  save_failed: "The file could not be saved: %{error}"
+  # Tooltip of the dot behind a query tab's title, which says the editor holds
+  # changes the file it is named after does not.
+  unsaved: Changes not saved to the file
+  # Said when "Save SQL file" is asked for while the tab is still writing an
+  # earlier save, or still rereading its file after a restart.
+  save_busy: "The file is still being read or written. Try again in a moment."
+  # Said when "Save SQL file" found the tab's file changed on disk — by another
+  # program, or by another tab open on the same file. The save dialog opens
+  # right after it.
+  file_changed: "The file has changed on disk since this tab last read or saved it, so it was not overwritten. Choose where to save."
 
 # The data pane: one table's rows, in a grid. Opened with the explorer's "view
 # data" row or the detail panel's button of the same name.
@@ -651,11 +737,26 @@ query:
 # Never translated: the table's own name, which titles the tab.
 data:
   loading: loading…
+  # The load or sort was stopped with Cancel; Refresh starts it again.
+  load_canceled: Loading the rows was canceled.
   refresh: Refresh
+  # The filter strip under the data tab's toolbar. The field holds a SQL
+  # condition the rows are read under; the pane writes the WHERE keyword itself.
+  filter_placeholder: "Condition to filter the rows by, e.g. NAME = 'a'"
+  filter_apply: Filter
+  filter_clear: Clear
+  # Beside the row count while a filter is applied.
+  filtered: Filtered
+  empty_filtered: No rows match the filter.
+  # Refused before anything is sent: a statement after the condition would run
+  # as part of a read.
+  filter_one_condition: The filter must be a single condition, with no statement after it.
   # A table that has no rows at all, as against one that could not be read.
   empty: This table has no rows.
   # How much of the table has been paged in so far, in the pane's own toolbar.
   row_count: "%{count} rows"
+  # More rows remain than have been paged in so far.
+  row_count_more: "%{count}+ rows"
   # The one line above the grid that says why nothing here can be changed.
   # Neither is a failure: both are standing facts about what is being shown, so
   # they are stated once rather than raised when a key is pressed.
@@ -860,6 +961,8 @@ extract:
   # — an earlier extract — is left as it was. The message says so.
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
   canceled: "Canceled. Nothing was written to %{path}."
+  # Asked when Escape is pressed while the job runs.
+  stop_question: Stop the extraction? Nothing will be written to the file.
   failed: "The extraction failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The extraction failed for a reason the bridge did not give.
@@ -905,9 +1008,22 @@ transfer:
   done: "Transferred %{rows} rows into %{table}."
   done_skipped: "%{skipped} rows would not go in and were skipped."
   canceled: "Canceled. %{rows} rows had already been committed to %{table} and are still there."
+  # Asked when Escape is pressed while the job runs.
+  stop_question: Stop the transfer? Rows already committed stay in the target table.
   failed: "The transfer failed: %{error}"
   # A failure the bridge reported without saying why, which is a bug in it.
   failed_unknown: The transfer failed for a reason the bridge did not give.
+  # Why "Transfer" cannot be pressed yet. The first two: no target chosen,
+  # with and without another connection open to choose. The third: the target
+  # is the very table being read, on the same connection.
+  choose_target: Choose the connection to copy the rows into.
+  no_other_connection: No other connection is open. Open the one to copy into, or choose this one and name another table.
+  same_table: The target is the source table itself. Choose another connection, schema or table.
+  # Asked before "Empty the target table first" deletes anything. %{table} is
+  # the target connection's name, a slash, and the table as the form names it.
+  truncate_confirm: "Every row of %{table} will be deleted before the copy starts."
+  truncate_confirm_rows: "All %{rows} rows of %{table} will be deleted before the copy starts."
+  truncate_start: Empty and transfer
 
 # The backup dialog: every table of one schema, out to a replayable script.
 backup:
@@ -940,6 +1056,8 @@ backup:
   canceling: Canceling…
   done: "Wrote %{rows} rows (%{bytes}) to %{path}."
   canceled: "Canceled. Nothing was written to %{path}."
+  # Asked when Escape is pressed while the job runs.
+  stop_question: Stop the backup? Nothing will be written to the file.
   failed: "The backup failed: %{error}"
   failed_unknown: The backup failed for a reason the bridge did not give.
 
@@ -955,6 +1073,10 @@ erd:
   # skipped, so there is no scope to name.
   tab_all: ERD
   loading: loading…
+  # While a diagram's tables are being read, one at a time.
+  loading_tables: "Reading the keys of %{done} of %{total} tables…"
+  # The load was stopped with Cancel; Reload starts it again.
+  load_canceled: Loading the diagram was canceled.
   load_failed: "The diagram could not be drawn: %{error}"
   # A scope with no tables in it, as against one that could not be read.
   empty: This schema has no tables.
@@ -984,9 +1106,16 @@ builder:
   # connection and is never reused, so two open tabs never share a title.
   tab: "Builder %{index}"
   # Shown where the canvas would be, before any table has been added.
-  canvas_hint: Select a table in the explorer and add it to the builder.
+  canvas_hint: Drag a table or view from the explorer onto this canvas, or right-click it there and choose “Add to query builder”.
   # Heading of the list of joins drawn on the canvas.
   joins: Joins
+  # Under the joins while there are none: the gesture, and the form below.
+  join_hint: Drag a column onto a column of another table to join them, or pick the two columns here.
+  # The placeholder of the form's two column dropdowns, and its button.
+  join_pick: Column…
+  add_join: Add join
+  # Above the form while nothing is in the select list yet.
+  pick_hint: Click a column on the canvas to add it to the select list.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -1050,6 +1179,9 @@ context:
   # right-click.
   show_columns: Show all columns
   copy_column_name: Copy column name
+  # Copies an error message as it reads, for a search or a colleague.
+  copy_message: Copy message
+  copy_sql: Copy SQL
   # The SQL editor. Every one of these is also a keyboard chord; the menu and
   # the chord run the same command.
   cut: Cut
@@ -1062,6 +1194,9 @@ context:
   run_statement: Run statement
   run_selection: Run selection
   run_all: Run all
+  # Reads the statement's plan without running it. Also a toolbar button and
+  # a row of the application menu.
+  explain: Explain plan
   # Both open the find bar, which is a panel rather than a dialog, but it still
   # asks before anything happens.
   find: Find…
@@ -1071,6 +1206,8 @@ context:
   close_tab: Close tab
   close_others: Close other tabs
   close_right: Close tabs to the right
+  # Brings back the query or builder tab closed most recently.
+  reopen_tab: Reopen closed tab
   split_right: Split right
   split_below: Split below
   close_pane: Close pane
@@ -1090,6 +1227,10 @@ context:
   # does; the ellipsis on "edit" is the connection dialog it opens.
   connect: Connect
   edit: Edit…
+  # Both open the connection dialog over the row: with the copy made, or with
+  # the delete question up.
+  duplicate: Duplicate…
+  delete: Delete…
 
 # The update dialog, in all of its states: the announcement the start-up check
 # puts up when GitHub has a newer release than the running build, the manual
@@ -1103,7 +1244,7 @@ update:
   installed: "You are currently running %{version}."
   # Downloads the release built for this platform and restarts into it. Falls
   # back to opening the release page where the project publishes no such build.
-  update: Update
+  update: "Update and restart"
   # Never mention *this* release again. A later one still announces itself, so
   # the wording has to name the version rather than promise silence in general.
   ignore: Ignore this version
@@ -1158,3 +1299,76 @@ lob:
   discard_question: "Discard the changes in this LOB editor?"
   keep_editing: "Keep editing"
   invalid_hex: "Enter pairs of hexadecimal digits (00–FF), separated by spaces or newlines."
+
+closing:
+  # A query tab bound to a .sql file is being closed with changes the file
+  # does not have. The same three answers rulogman's editor and rudbgen's
+  # template tabs give.
+  unsaved_title: Unsaved changes
+  unsaved_body: "“%{name}” has changes that have not been saved to its file yet."
+  dont_save: Don't save
+  # "Save" while the write is out.
+  saving: Saving…
+  # A connection tab is being closed that would lose what only the session
+  # holds. One sentence per loss is listed under the title.
+  connection_title: "Close “%{name}”?"
+  close_connection: Close connection
+  risk_uncommitted: Its uncommitted transaction will be rolled back.
+  risk_running: "The statement running in “%{tab}” will be stopped."
+  work_staged: "“%{tab}” on %{connection}: changes not applied"
+  work_unsaved: "“%{tab}”: changes not saved to its file"
+  work_running: "“%{tab}” on %{connection}: a statement still running"
+  work_uncommitted: "%{connection}: an uncommitted transaction, which will be rolled back"
+  work_extract: An extraction still running
+  work_transfer: A transfer still running
+  work_backup: A backup still running
+
+# The window's close guard: asked before a quit, a close of the window or the
+# restart an update ends in would lose what is listed under the message.
+close_guard:
+  title_window: "Close the window with unsaved work?"
+  title_quit: "Quit with unsaved work?"
+  title_restart: "Restart with unsaved work?"
+  message: "If you go on, this is lost:"
+  more: "…and %{count} more"
+  close_anyway: "Close anyway"
+  quit_anyway: "Quit anyway"
+  restart_anyway: "Restart anyway"
+  save_all: "Save all"
+
+# Short messages in the window's corner, for feedback that belongs to no pane:
+# a command that had nowhere to go, or a failure behind one.
+toast:
+  # A shortcut that opens a tab (Ctrl+T, Ctrl+O, Ctrl+Shift+T, a new builder)
+  # was pressed with no connection open, or over a connection tab that is
+  # still connecting or is no longer live.
+  no_connection: "Open a connection first."
+  connecting: "“%{name}” is still connecting."
+  not_connected: "“%{name}” is not connected. Reconnect it first."
+  # Ctrl+O: the file the user picked could not be read.
+  open_failed: "Could not open %{file}: %{error}"
+  # A table added to the query builder whose columns could not be read.
+  columns_failed: "Could not read the columns of %{table}: %{error}"
+  # At start-up, when the platform has no usable credential store.
+  keychain_unavailable: "The system keychain is unavailable (%{error}). Saved passwords can't be read, and new ones won't be kept."
+
+# The query history dialog: the statements a connection profile's query tabs
+# ran, newest first. `name` is the connection's name.
+history:
+  title: "Query history — %{name}"
+  search: Search the statements
+  empty: Nothing has been run on this connection yet.
+  no_match: No statement matches the search.
+  # Opens the statement in a new query tab; nothing is run.
+  open: Open in a new query tab
+  delete: Delete
+  clear: Clear history…
+  clear_question: "Delete all %{count} statements in this connection's history? This cannot be undone."
+  clear_confirm: Delete all
+  # How a statement ended, beside its time and duration. Rows and affected
+  # counts reuse the query pane's wording.
+  done: Executed
+  failed: Failed
+  canceled: Canceled
+  kept_in: "Kept in %{path}"
+  recording_off: Recording is turned off in Settings, so nothing new is added.

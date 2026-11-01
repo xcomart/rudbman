@@ -60,7 +60,10 @@ fn a_select_of_one_keyed_table_is_edited_and_applied(cx: &mut TestAppContext) {
             assert!(!pane.has_pending_edits(cx), "the buffer outlived the apply");
             assert!(pane.apply_error.is_none());
             assert!(pane.preview.is_none());
-            assert_eq!(pane.notice, Some(ts!("data.applied", count = 1)));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.applied", count = 1))
+            );
             assert_eq!(pane.results.len(), 2, "the statement was re-run");
         })
         .expect("the window is open");
@@ -102,7 +105,10 @@ fn an_open_transaction_holds_a_grid_apply_back_until_it_is_settled(cx: &mut Test
         .update(cx, |pane, window, cx| {
             pane.apply(window, cx);
             assert!(pane.preview.is_none(), "the confirmation was raised");
-            assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("query.uncommitted_pending"))
+            );
             pane.finish_transaction(TransactionAction::Rollback, cx);
         })
         .expect("the window is open");
@@ -288,18 +294,27 @@ fn a_sort_or_a_run_waits_for_the_staged_edits_to_be_dealt_with(cx: &mut TestAppC
     window
         .update(cx, |pane, window, cx| {
             pane.reorder(id, 0, Some(SortDirection::Descending), window, cx);
-            assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.discard_first"))
+            );
 
             pane.notice = None;
             pane.request(vec!["select 7".to_string()], window, cx);
-            assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.discard_first"))
+            );
 
             // What the tab strip asks before it closes the tab, and what
             // the pane says about a yes.
             assert!(pane.has_pending_edits(cx));
             pane.notice = None;
             pane.warn_pending(cx);
-            assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+            assert_eq!(
+                pane.notice.as_ref().map(|notice| notice.text.clone()),
+                Some(ts!("data.discard_first"))
+            );
         })
         .expect("the window is open");
     cx.run_until_parked();
@@ -472,6 +487,12 @@ fn every_label_the_pane_menus_draw_has_a_translation() {
         ts!("context.run_statement"),
         ts!("context.run_selection"),
         ts!("context.run_all"),
+        ts!("context.explain"),
+        ts!("query.plan", index = 1),
+        ts!("query.explained"),
+        ts!("query.explain_one"),
+        ts!("query.explain_unsupported", product = "db2"),
+        ts!("query.explain_restore_failed", message = "why"),
         ts!("context.find"),
         ts!("context.replace"),
         // The editing rows §7.9 gives a query result, which reuse the data
@@ -518,4 +539,50 @@ fn the_reason_a_result_is_not_editable_is_translated_everywhere() {
             "query.not_editable is untranslated in {tag}"
         );
     }
+}
+
+/// An editable result answers the grid's key requests as the data pane
+/// does — `Delete` marks the selected row, `Ctrl+V` stages the block from
+/// the cursor — and a read-only one answers none of them.
+#[gpui::test]
+fn an_editable_result_answers_the_grid_keys(cx: &mut TestAppContext) {
+    let (connected, profile) = people("query-edit-keys");
+    let window = pane(&connected, &profile, 500, cx);
+    run(&window, "select ID, NAME from PERSON order by ID", cx);
+    assert!(writable(&window, 0, cx));
+    let grid = window
+        .update(cx, |pane, _window, _cx| pane.grid_at(0).clone())
+        .expect("the window is open");
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    visual.update(|window, cx| {
+        let handle = grid.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+        grid.update(cx, |grid, cx| grid.select_cell(0, 1, cx));
+    });
+    visual.run_until_parked();
+    visual.simulate_keystrokes("delete");
+    visual.run_until_parked();
+    assert_eq!(
+        grid.read_with(&visual, |grid, _| grid.source().row_status(0)),
+        RowStatus::Deleted
+    );
+
+    visual.write_to_clipboard(gpui::ClipboardItem::new_string("z".into()));
+    visual.update(|_, cx| grid.update(cx, |grid, cx| grid.select_cell(1, 1, cx)));
+    visual.simulate_keystrokes(&format!("{modifier}-v"));
+    visual.run_until_parked();
+    assert_eq!(
+        grid.read_with(&visual, |grid, _| grid
+            .source()
+            .edits()
+            .staged(1, 1)
+            .cloned()),
+        Some(StagedCell::Text("z".into()))
+    );
+    connected.close().expect("close");
 }

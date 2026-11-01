@@ -25,7 +25,7 @@ pub(super) fn preview(sql: &str) -> SharedString {
 /// Shared with the data pane, which has the same four states to say something
 /// in — loading, empty, failed, nothing run yet — and no reason to draw them
 /// differently.
-pub fn note(text: SharedString, color: Hsla) -> AnyElement {
+pub fn note(text: SharedString, color: Hsla, cx: &App) -> AnyElement {
     div()
         .flex()
         .flex_1()
@@ -34,7 +34,7 @@ pub fn note(text: SharedString, color: Hsla) -> AnyElement {
         .items_center()
         .justify_center()
         .p(px(16.))
-        .text_size(px(12.))
+        .text_size(rugpui::TextSize::Sm.size(cx))
         .text_color(color)
         .child(text)
         .into_any_element()
@@ -46,12 +46,28 @@ pub fn note(text: SharedString, color: Hsla) -> AnyElement {
 /// Shared with the data pane for the reason [`note`] is: a driver's refusal
 /// reads the same wherever the statement came from, and the hint is chosen from
 /// the `SQLSTATE` class rather than from anything about the pane.
-pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
-    error_lines(error, chrome)
+pub fn render_error(error: &QueryError, chrome: &Theme, cx: &App) -> AnyElement {
+    // The words a user pastes into a search or a message to whoever runs the
+    // database, so they can be had without retyping them.
+    let mut copied = error.message.to_string();
+    if let Some(state) = &error.sql_state {
+        copied.push_str(&format!(" (SQLSTATE {state})"));
+    }
+    error_lines(error, chrome, cx)
         .flex_1()
         .min_w_0()
         .min_h_0()
         .p(px(16.))
+        .child(
+            div().pt(px(4.)).child(
+                Button::new("query-error-copy", ts!("context.copy_message"))
+                    .variant(ButtonVariant::Secondary)
+                    .compact()
+                    .on_click(move |_, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone()));
+                    }),
+            ),
+        )
         .into_any_element()
 }
 
@@ -62,7 +78,7 @@ pub fn render_error(error: &QueryError, chrome: &Theme) -> AnyElement {
 /// they would have been; a failed *apply* leaves the rows — and everything
 /// staged against them — exactly where they are, so its error is a strip above
 /// them. Same three lines, two placements, one composition.
-pub fn error_lines(error: &QueryError, chrome: &Theme) -> Div {
+pub fn error_lines(error: &QueryError, chrome: &Theme, cx: &App) -> Div {
     let state = error
         .sql_state
         .clone()
@@ -73,19 +89,19 @@ pub fn error_lines(error: &QueryError, chrome: &Theme) -> Div {
         .gap(px(6.))
         .child(
             div()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(chrome.danger)
                 .child(error.message.clone()),
         )
         .children(state.map(|state| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(state)
         }))
         .children(error.hint().map(|hint| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(hint)
         }))
@@ -99,12 +115,38 @@ impl Render for QueryPane {
         let id = cx.entity_id();
         let editor_toolbar = self.render_editor_toolbar(&chrome, cx);
         let toolbar = self.render_toolbar(&chrome, cx);
-        let banner = self.render_banner(&chrome);
+        let banner = self.render_banner(&chrome, cx);
         let failure = self
             .apply_error
             .as_ref()
-            .map(|problem| render_apply_error(problem, &chrome));
+            .map(|problem| render_apply_error(problem, &chrome, cx));
         let results = self.render_results(&chrome, cx);
+        // Above the rows rather than over them: a notice that covered the last
+        // row and the scrollbar until something replaced it hid exactly what
+        // a user reads after a commit.
+        self.notice_clock
+            .watch(self.notice.as_ref(), cx, |pane, shown| {
+                let still = pane.notice.as_ref() == Some(shown);
+                if still {
+                    pane.notice = None;
+                }
+                still
+            });
+        let notice = self.notice.as_ref().map(|notice| {
+            let this = cx.entity();
+            render_notice(
+                ("query-notice", cx.entity_id()),
+                notice,
+                &chrome,
+                move |_, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.notice = None;
+                        cx.notify();
+                    });
+                },
+                cx,
+            )
+        });
         let context_menu = self.render_context_menu(cx);
         // Both modals are `row_apply`'s; what each button does is this pane's,
         // and it is said here rather than threaded through as an entity.
@@ -118,6 +160,7 @@ impl Render for QueryPane {
                 let discard = this.clone();
                 render_discard_confirm(
                     counts,
+                    &self.confirm_focus,
                     cx,
                     move |_window, cx| {
                         this.update(cx, |pane, cx| {
@@ -136,6 +179,7 @@ impl Render for QueryPane {
             render_apply_preview(
                 &preview.statements,
                 self.transactional,
+                &self.confirm_focus,
                 cx,
                 move |_window, cx| {
                     this.update(cx, |pane, cx| {
@@ -150,6 +194,38 @@ impl Render for QueryPane {
         });
 
         div()
+            .key_context(super::keys::KEY_CONTEXT)
+            .on_action(
+                cx.listener(|pane, _: &super::keys::CancelRun, _window, cx| {
+                    // Only a run to stop takes the key; otherwise it goes on up,
+                    // where it closes whatever the workspace has open.
+                    if pane.is_running() {
+                        pane.cancel(cx);
+                    } else {
+                        cx.propagate();
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|pane, _: &super::keys::CommitTransaction, _, cx| {
+                    pane.finish_transaction(TransactionAction::Commit, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane, _: &rugpui::OpenContextMenu, window, cx| {
+                    pane.open_menu_from_keyboard(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane, _: &super::keys::RollbackTransaction, _, cx| {
+                    pane.finish_transaction(TransactionAction::Rollback, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane, _: &super::keys::ExplainStatement, window, cx| {
+                    pane.explain(window, cx);
+                }),
+            )
             .flex()
             .flex_col()
             .size_full()
@@ -212,26 +288,11 @@ impl Render for QueryPane {
                     .border_t_1()
                     .border_color(chrome.border)
                     .child(toolbar)
+                    .children(notice)
                     .children(banner)
                     .children(failure)
                     .child(results),
             )
-            .children(self.notice.clone().map(|notice| {
-                div()
-                    .absolute()
-                    .bottom(px(6.))
-                    .left(px(10.))
-                    .right(px(10.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded_md()
-                    .bg(chrome.surface)
-                    .border_1()
-                    .border_color(chrome.border)
-                    .text_size(px(11.))
-                    .text_color(chrome.text_muted)
-                    .child(notice)
-            }))
             // After both halves, so it wins the hit test against the two it
             // straddles. The band is centered on the seam by `at`, which pulls it
             // back half its own thickness for us, and it carries the accent bar
@@ -305,7 +366,7 @@ impl QueryPane {
                     .px(px(10.))
                     .py(px(4.))
                     .cursor_pointer()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .border_b_2()
                     .border_color(if active {
                         chrome.accent
@@ -377,7 +438,7 @@ impl QueryPane {
             .items_center()
             .gap(px(8.))
             .px(px(6.))
-            .h(px(30.))
+            .h(rugpui::scaled(30., cx))
             .border_b_1()
             .border_color(chrome.border)
             .child(div().flex().flex_row().flex_1().min_w_0().children(tabs))
@@ -385,7 +446,7 @@ impl QueryPane {
                 div()
                     .flex_none()
                     .whitespace_nowrap()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     // In the accent the grid marks a changed row with, so that
                     // the line and the markers under it read as one thing.
                     .text_color(chrome.accent)
@@ -396,7 +457,7 @@ impl QueryPane {
                     div()
                         .flex_none()
                         .whitespace_nowrap()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(elapsed_label(self.elapsed())),
                 )
@@ -411,7 +472,11 @@ impl QueryPane {
     /// Understated on purpose, and above the grid rather than in a dialog: it
     /// is the answer to a question the user has not asked yet, and §7.9 will
     /// not have it delivered by refusing a keystroke.
-    pub(super) fn render_banner(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+    pub(super) fn render_banner(
+        &self,
+        chrome: &Theme,
+        cx: &App,
+    ) -> Option<impl IntoElement + use<>> {
         let reason = self.active_rows()?.read_only.clone()?;
         Some(
             div()
@@ -421,7 +486,7 @@ impl QueryPane {
                 .border_b_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(reason),
         )
@@ -445,6 +510,7 @@ impl QueryPane {
     ) -> Option<impl IntoElement + use<>> {
         let (position, rows) = match self.context_menu.as_ref()? {
             PaneMenu::Editor { position } => (*position, self.editor_rows(cx)),
+            PaneMenu::Log { index, position } => (*position, self.log_rows(*index)),
             PaneMenu::Grid {
                 id,
                 target,
@@ -456,6 +522,7 @@ impl QueryPane {
         Some(
             ContextMenu::new("query-context")
                 .position(position)
+                .highlight_first(self.menu_by_keyboard)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
                     this.update(cx, |pane, cx| {
@@ -467,8 +534,13 @@ impl QueryPane {
 
     /// The result area's body: a grid, the execution log, a failure, or an empty state.
     pub(super) fn render_results(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(error) = &self.error {
-            return render_error(error, chrome);
+        // A run of several statements that failed part way has its failure
+        // in the log, beside the results the statements before it left; only
+        // a failure with nothing else to show takes the whole area.
+        if let Some(error) = &self.error
+            && self.results.is_empty()
+        {
+            return render_error(error, chrome, cx);
         }
         if self.results.is_empty() {
             let text = if self.is_running() {
@@ -476,27 +548,43 @@ impl QueryPane {
             } else if self.ran {
                 ts!("query.no_results")
             } else {
-                ts!("query.empty")
+                // The chords, because the run buttons are three icons among a
+                // dozen and the first thing a new pane is for is running SQL.
+                ts!(
+                    "query.empty_keys",
+                    statement = format!("{SHORTCUT_MODIFIER}+Enter"),
+                    all = format!("{SHORTCUT_MODIFIER}+Shift+Enter")
+                )
             };
-            return note(text, chrome.text_muted);
+            return note(text, chrome.text_muted, cx);
         }
         match self.results.get(self.active_result) {
             Some(ResultTab {
                 body: ResultBody::Rows(rows),
                 ..
-            }) => div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .child(rows.grid.clone())
-                .into_any_element(),
+            }) => {
+                let bounds = self.grid_bounds.clone();
+                div()
+                    .relative()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(rows.grid.clone())
+                    .child(
+                        gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    )
+                    .into_any_element()
+            }
             Some(ResultTab {
                 id,
                 body: ResultBody::Log(log),
                 ..
             }) => {
                 let pane = cx.entity();
+                let menu = pane.clone();
                 let id = *id;
                 let chrome = chrome.clone();
                 gpui::uniform_list(
@@ -514,14 +602,15 @@ impl QueryPane {
                         range
                             .filter_map(|index| {
                                 let row = div()
+                                    .id(("query-log-row", index))
                                     .flex()
                                     .items_center()
-                                    .h(px(52.))
+                                    .h(rugpui::scaled(52., cx))
                                     .px(px(10.))
                                     .gap(px(8.))
                                     .border_b_1()
                                     .border_color(chrome.border)
-                                    .text_size(px(12.));
+                                    .text_size(rugpui::TextSize::Sm.size(cx));
                                 if index == log.entries.len() {
                                     return pane.finished.as_ref().map(|finished| {
                                         row.bg(chrome.surface)
@@ -537,38 +626,65 @@ impl QueryPane {
                                     });
                                 }
                                 log.entries.get(index).map(|entry| {
-                                    row.child(
-                                        div()
-                                            .flex_none()
-                                            .w(px(36.))
-                                            .text_color(chrome.text_muted)
-                                            .child((index + 1).to_string()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child(
-                                                div()
-                                                    .truncate()
-                                                    .text_color(chrome.text)
-                                                    .child(entry.message.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .truncate()
-                                                    .text_color(chrome.text_muted)
-                                                    .child(entry.sql.clone()),
+                                    // The two lines are cut at the row's width;
+                                    // the whole of both is a hover away, and a
+                                    // right-click copies either.
+                                    let full = format!("{}\n{}", entry.message, entry.sql);
+                                    let menu = menu.clone();
+                                    row.tooltip(rugpui::tooltip_label(full))
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Right,
+                                            move |event, _window, cx| {
+                                                let position = event.position;
+                                                menu.update(cx, |pane, cx| {
+                                                    pane.close_completion(cx);
+                                                    pane.context_menu =
+                                                        Some(PaneMenu::Log { index, position });
+                                                    cx.notify();
+                                                });
+                                            },
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .w(rugpui::scaled(36., cx))
+                                                .text_color(chrome.text_muted)
+                                                .child((index + 1).to_string()),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_color(if entry.failed {
+                                                            chrome.danger
+                                                        } else {
+                                                            chrome.text
+                                                        })
+                                                        .child(entry.message.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_color(chrome.text_muted)
+                                                        .child(entry.sql.clone()),
+                                                ),
+                                        )
+                                        .child(
+                                            div().flex_none().text_color(chrome.text_muted).child(
+                                                ts!(
+                                                    "query.execution_time",
+                                                    seconds = format!(
+                                                        "{:.3}",
+                                                        entry.elapsed.as_secs_f64()
+                                                    )
+                                                ),
                                             ),
-                                    )
-                                    .child(
-                                        div().flex_none().text_color(chrome.text_muted).child(ts!(
-                                            "query.execution_time",
-                                            seconds = format!("{:.3}", entry.elapsed.as_secs_f64())
-                                        )),
-                                    )
+                                        )
                                 })
                             })
                             .collect()
@@ -581,7 +697,7 @@ impl QueryPane {
                 .min_h_0()
                 .into_any_element()
             }
-            None => note(ts!("query.empty"), chrome.text_muted),
+            None => note(ts!("query.empty"), chrome.text_muted, cx),
         }
     }
 }

@@ -41,7 +41,14 @@ impl QueryPane {
         // takes no edit (see [`TableSource`]).
         let source = EditableSource::new(source, &columns, false, TableSource::Inferred);
 
-        let grid = cx.new(|cx| GridView::new(source, cx).expand_tooltip(ts!("lob.open_text")));
+        // Key requests on from the start: the grid only raises one over a
+        // selection or an editable cell, and a result is read-only until
+        // `resolve_edits` finds its table, so nothing is asked before then.
+        let grid = cx.new(|cx| {
+            GridView::new(source, cx)
+                .expand_tooltip(ts!("lob.open_text"))
+                .key_requests(true)
+        });
         // The marker the sort that asked for this run was for, if it was one:
         // the grid it was set on has just been replaced by this one.
         if let Some(sort) = self.pending_sort.take() {
@@ -88,13 +95,26 @@ impl QueryPane {
             }
         });
 
+        let requests = cx.subscribe_in(
+            &grid,
+            window,
+            move |pane, _grid, request: &GridRequest, window, cx| {
+                pane.answer_grid(id, request, window, cx);
+            },
+        );
+
         let index = self
             .results
             .iter()
             .filter(|tab| matches!(tab.body, ResultBody::Rows(_)))
             .count()
             + 1;
-        let label = ts!("query.result", index = index);
+        let plan = self.explaining;
+        let label = if plan {
+            ts!("query.plan", index = index)
+        } else {
+            ts!("query.result", index = index)
+        };
         // Keep the first grid visible by default while the log stays available
         // as the leading tab. Later results must not change the user's tab.
         if index == 1 {
@@ -113,10 +133,15 @@ impl QueryPane {
                 read_only: None,
                 more,
                 fetching: false,
-                _events: events,
+                plan,
+                _events: [events, requests],
             })),
         });
-        self.resolve_edits(id, cx);
+        // A plan is read-only by what it is, which needs no round trip and
+        // no line above the grid to say so.
+        if !plan {
+            self.resolve_edits(id, cx);
+        }
     }
 
     /// Works out whether result tab `id` may be written back to, and opens it
@@ -253,7 +278,7 @@ impl QueryPane {
             // `detach` has already dropped every way on, so this is only
             // reached by a scroll that was already in flight; saying why the
             // rows stop is better than a grid that quietly ends early.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
@@ -339,7 +364,7 @@ impl QueryPane {
                         grid.source_mut(cx).base_mut().push_page(batch, complete)
                     });
                     if limited {
-                        self.notice = Some(ts!("query.row_limit", limit = ROW_LIMIT));
+                        self.notice = Some(Notice::warn(ts!("query.row_limit", limit = ROW_LIMIT)));
                     }
                 }
 
@@ -383,18 +408,18 @@ impl QueryPane {
             // Sorting is a re-run, and there is nothing left to run it on. Said
             // here rather than left to `start`, so the grid's own header click
             // gets an answer even when the statement turns out unsortable.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         }
         if self.is_running() {
-            self.notice = Some(ts!("query.busy"));
+            self.notice = Some(Notice::warn(ts!("query.busy")));
             cx.notify();
             return;
         }
         if self.has_pending_edits(cx) {
             // A re-run replaces the source the edits are keyed to; §7.9.
-            self.notice = Some(ts!("data.discard_first"));
+            self.notice = Some(Notice::warn(ts!("data.discard_first")));
             cx.notify();
             return;
         }
@@ -402,6 +427,11 @@ impl QueryPane {
         let Some(tab) = self.rows_tab(id) else {
             return;
         };
+        if tab.plan {
+            // Wrapping an `EXPLAIN` in a derived table is a syntax error on
+            // every product, and the rows are in the order the plan reads.
+            return;
+        }
         let base = tab.sql.clone();
         let name = tab
             .grid
@@ -513,7 +543,12 @@ impl QueryPane {
             RunState::Idle => return,
         };
         self.run = RunState::Idle;
-        self.finished = Some(Finished { rows: 0, elapsed });
+        self.finished = Some(Finished {
+            rows: 0,
+            more: false,
+            affected: self.affected,
+            elapsed,
+        });
         // Keep the final total in view when the user was following the log.
         for tab in &self.results {
             if let ResultBody::Log(log) = &tab.body

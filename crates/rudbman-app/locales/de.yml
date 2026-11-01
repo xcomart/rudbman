@@ -8,6 +8,8 @@ common:
   cancel: Abbrechen
   save: Speichern
   close: Schließen
+  keep_running: Weiterlaufen lassen
+  stop_job: Stoppen
 
 menu:
   new_connection: Verbindungen verwalten…
@@ -18,10 +20,13 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Ausgewähltes Objekt abfragen
+  query_history: Abfrageverlauf…
   view_data: Daten ansehen
   view_structure: Struktur bearbeiten
   new_table: Neue Tabelle
   open_sql_file: SQL-Datei öffnen…
+  save_sql_file: SQL-Datei speichern
+  save_sql_file_as: SQL-Datei speichern unter…
   extract_script: Skript extrahieren…
   transfer_table: Zeilen übertragen…
   backup_schema: Schema sichern…
@@ -32,6 +37,9 @@ menu:
   add_to_builder: Zum Abfrage-Builder hinzufügen
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Neuer Abfrage-Builder
+  in_explorer: "%{shortcut} im Explorer"
+  next_pane: Nächster Bereich
+  prev_pane: Vorheriger Bereich
   about: Über rudbman
   check_updates: Nach Updates suchen
   quit: Beenden
@@ -45,7 +53,7 @@ menu:
 tab:
   close: Verbindung schließen
   tip_list: Alle Verbindungen
-  tip_new: "Neue Verbindung (%{shortcut})"
+  tip_manage: "Verbindungen verwalten (%{shortcut})"
   tip_pane_list: Alle Tabs
 
 welcome:
@@ -66,6 +74,9 @@ statusbar:
   disconnected: getrennt
   failed: "fehlgeschlagen: %{error}"
   tunnel_lost: "Der SSH-Tunnel wurde geschlossen: %{reason}"
+  uncommitted: nicht festgeschriebene Transaktion
+  uncommitted_in: "Schreibzugriffe aus „%{tab}“ sind noch nicht festgeschrieben. Führen Sie dort Commit oder Rollback aus."
+  uncommitted_tip: Schreibzugriffe auf dieser Verbindung sind noch nicht festgeschrieben.
 
 about:
   title: Über rudbman
@@ -111,7 +122,11 @@ settings:
   fetch_batch_rows_hint: Zeilen, die beim Blättern jeweils geholt werden
   query_timeout: Zeitlimit je Anweisung
   query_timeout_hint: Sekunden — 0 bedeutet kein Limit
+  login_timeout: Zeitlimit für den Verbindungsaufbau
+  login_timeout_hint: Sekunden — 0 überlässt es dem Treiber
   confirm_writes_default: Bei neuen Verbindungen vor schreibenden Anweisungen nachfragen
+  query_history: Verlauf der in Abfrage-Tabs ausgeführten Anweisungen führen
+  query_history_hint: Wird je Verbindungsprofil als Klartext im Ordner history des Konfigurationsverzeichnisses gespeichert. Ausgeschaltet wird nichts mehr aufgezeichnet; Vorhandenes bleibt und lässt sich im Verlaufsdialog löschen.
 
   jvm_heap: Java-Heap
   jvm_heap_hint: MB — das -Xmx, unter dem ein Treiber läuft
@@ -257,6 +272,13 @@ connect:
   load_failed: "Die gespeicherten Verbindungen konnten nicht gelesen werden; bis die Datei repariert oder verschoben ist, kann nichts gespeichert oder gelöscht werden: %{error}"
   save_failed: "Die Verbindungen konnten nicht gespeichert werden: %{error}"
   keychain_failed: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden: %{error}"
+  remember_password: Passwort im Schlüsselbund des Systems speichern
+  password_prompt: Diese Verbindung speichert ihr Passwort nicht. Geben Sie es ein und klicken Sie auf „Verbinden“.
+  keychain_failed_connected: "Das Passwort konnte nicht im Schlüsselbund gespeichert werden (%{error}). Die Verbindung verwendet das hier eingegebene."
+  driver_has_no_jar_download: Dieser Treiber hat noch kein JAR. Laden Sie es hier herunter oder fügen Sie unter „Treiber“ eines hinzu.
+  discard_question: Dieses Formular hat nicht gespeicherte Änderungen.
+  keep_editing: Weiter bearbeiten
+  discard: Verwerfen
 
   hint_auth: Benutzername und Passwort prüfen
   hint_driver: Treiber-JAR und Treiberklasse prüfen
@@ -267,6 +289,14 @@ connect:
   host_key_question: "%{host} hat einen unbekannten %{algorithm}-Schlüssel vorgelegt: %{fingerprint}"
   trust_host_key: Diesem Schlüssel vertrauen
   host_key_trusted: Der Hostschlüssel wurde als vertrauenswürdig eingetragen. Versuchen Sie erneut, sich zu verbinden.
+  card_connecting: "Verbindung mit „%{name}“ wird hergestellt…"
+  card_connecting_hint: "Der Versuch wird nach %{seconds} Sekunden aufgegeben."
+  card_failed: "Keine Verbindung mit „%{name}“ möglich"
+  card_dead: "Die Verbindung mit „%{name}“ wurde beendet"
+  reconnect: Neu verbinden
+  edit_connection: Verbindung bearbeiten…
+  trust_and_reconnect: Schlüssel vertrauen und neu verbinden
+  canceled: Der Verbindungsversuch wurde abgebrochen.
 
 # Die Treiberverwaltung.
 driver:
@@ -397,6 +427,7 @@ query:
   rollback_failed: "Rollback fehlgeschlagen: %{message}"
   rollback_auto: "Rollback (automatisches Commit ist aktiviert)"
   uncommitted_pending: "Diese Verbindung hat nicht festgeschriebene Änderungen aus einem Abfrageeditor. Führen Sie dort zuerst Commit oder Rollback aus."
+  uncommitted_pending_in: "Diese Verbindung hat nicht festgeschriebene Änderungen aus „%{tab}“. Führen Sie dort zuerst Commit oder Rollback aus."
   commit: "Commit"
   committing: "Commit läuft…"
   committed: "Transaktion festgeschrieben."
@@ -408,11 +439,19 @@ query:
   result: "Ergebnis %{index}"
   tab: "Abfrage %{index}"
   empty: Schreiben Sie eine Anweisung und führen Sie sie aus.
+  empty_keys: "Schreiben Sie eine Anweisung und führen Sie sie aus: %{statement} führt die unter dem Cursor aus, %{all} alle."
   no_results: Die Anweisung lieferte kein Ergebnis.
   running: läuft…
   rows_affected: "%{count} Zeilen betroffen"
   executed: Anweisung ausgeführt.
+  plan: "Plan %{index}"
+  explained: Plan gelesen; die Anweisung wurde nicht ausgeführt.
+  explain_one: Wählen Sie eine einzelne Anweisung, um ihren Plan zu sehen.
+  explain_unsupported: "Auf %{product} kann kein Plan gelesen werden."
+  explain_restore_failed: "Die Verbindung konnte nach dem Lesen des Plans nicht zurückgesetzt werden (%{message}). Verbinden Sie sich neu, bevor Sie darauf etwas anderes ausführen."
+  statement_failed: "Anweisung %{index} von %{total} ist fehlgeschlagen: %{error}"
   row_count: "%{count} Zeilen"
+  row_count_more: "%{count}+ Zeilen"
   elapsed: "%{seconds} s"
   busy: In diesem Bereich läuft bereits eine Anweisung.
   no_statement: Es gibt keine Anweisung zum Ausführen.
@@ -430,12 +469,24 @@ query:
   hint_network: Die Verbindung zur Datenbank ging verloren.
   hint_canceled: Die Anweisung wurde abgebrochen.
   open_file_select: SQL-Datei auswählen
+  save_failed: "Die Datei konnte nicht gespeichert werden: %{error}"
+  unsaved: Nicht in der Datei gespeicherte Änderungen
+  save_busy: "Die Datei wird noch gelesen oder geschrieben. Versuchen Sie es gleich noch einmal."
+  file_changed: "Die Datei wurde auf dem Datenträger geändert, seit dieser Tab sie zuletzt gelesen oder gespeichert hat, und deshalb nicht überschrieben. Wählen Sie einen Speicherort."
 
 data:
   loading: wird geladen…
+  load_canceled: Das Laden der Zeilen wurde abgebrochen.
   refresh: Aktualisieren
+  filter_placeholder: "Bedingung zum Filtern der Zeilen, z. B. NAME = 'a'"
+  filter_apply: Filtern
+  filter_clear: Leeren
+  filtered: Gefiltert
+  empty_filtered: Keine Zeile entspricht dem Filter.
+  filter_one_condition: Der Filter muss eine einzelne Bedingung sein, ohne Anweisung danach.
   empty: Diese Tabelle hat keine Zeilen.
   row_count: "%{count} Zeilen"
+  row_count_more: "%{count}+ Zeilen"
   no_primary_key: "Diese Tabelle hat keinen Primärschlüssel; ihre Zeilen lassen sich lesen, aber nicht ändern."
   read_only: "Diese Verbindung ist schreibgeschützt; ihre Zeilen lassen sich lesen, aber nicht ändern."
   discard_first: Wenden Sie die ausstehenden Änderungen zuerst an oder verwerfen Sie sie.
@@ -532,6 +583,7 @@ extract:
   canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
   canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  stop_question: Extraktion stoppen? In die Datei wird nichts geschrieben.
   failed: "Die Extraktion schlug fehl: %{error}"
   failed_unknown: Die Extraktion schlug fehl; die Bridge nannte keinen Grund.
 
@@ -558,8 +610,15 @@ transfer:
   done: "%{rows} Zeilen nach %{table} übertragen."
   done_skipped: "%{skipped} Zeilen konnten nicht eingefügt werden und wurden übersprungen."
   canceled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
+  stop_question: Übertragung stoppen? Bereits festgeschriebene Zeilen bleiben in der Zieltabelle.
   failed: "Die Übertragung schlug fehl: %{error}"
   failed_unknown: Die Übertragung schlug fehl; die Bridge nannte keinen Grund.
+  choose_target: Wählen Sie die Verbindung, in die die Zeilen kopiert werden sollen.
+  no_other_connection: Es ist keine andere Verbindung geöffnet. Öffnen Sie die Zielverbindung, oder wählen Sie diese und geben Sie eine andere Tabelle an.
+  same_table: Das Ziel ist die Quelltabelle selbst. Wählen Sie eine andere Verbindung, ein anderes Schema oder eine andere Tabelle.
+  truncate_confirm: "Vor dem Kopieren werden alle Zeilen von %{table} gelöscht."
+  truncate_confirm_rows: "Vor dem Kopieren werden alle %{rows} Zeilen von %{table} gelöscht."
+  truncate_start: Leeren und übertragen
 
 backup:
   title: Schema sichern
@@ -579,6 +638,7 @@ backup:
   canceling: Wird abgebrochen…
   done: "%{rows} Zeilen (%{bytes}) nach %{path} geschrieben."
   canceled: "Abgebrochen. In %{path} wurde nichts geschrieben."
+  stop_question: Sicherung stoppen? In die Datei wird nichts geschrieben.
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
 
@@ -587,6 +647,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: wird geladen…
+  loading_tables: "Schlüssel von %{done} von %{total} Tabellen gelesen…"
+  load_canceled: Das Laden des Diagramms wurde abgebrochen.
   load_failed: "Das Diagramm konnte nicht gezeichnet werden: %{error}"
   empty: Dieses Schema enthält keine Tabellen.
   auto_arrange: Anordnen
@@ -602,8 +664,12 @@ erd:
 # two of them describe.
 builder:
   tab: "Builder %{index}"
-  canvas_hint: Wählen Sie im Explorer eine Tabelle und fügen Sie sie dem Builder hinzu.
+  canvas_hint: Ziehen Sie eine Tabelle oder Ansicht aus dem Explorer auf diese Fläche, oder klicken Sie sie dort mit der rechten Maustaste an und wählen Sie „Zum Abfrage-Builder hinzufügen“.
   joins: Verknüpfungen
+  join_hint: Ziehen Sie eine Spalte auf eine Spalte einer anderen Tabelle, um sie zu verknüpfen, oder wählen Sie die beiden Spalten hier.
+  join_pick: Spalte…
+  add_join: Verknüpfung hinzufügen
+  pick_hint: Klicken Sie auf der Fläche auf eine Spalte, um sie der SELECT-Liste hinzuzufügen.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -638,6 +704,8 @@ context:
   hide_column: Diese Spalte ausblenden
   show_columns: Alle Spalten einblenden
   copy_column_name: Spaltenname kopieren
+  copy_message: Meldung kopieren
+  copy_sql: SQL kopieren
   cut: Ausschneiden
   copy: Kopieren
   paste: Einfügen
@@ -648,11 +716,13 @@ context:
   run_statement: Anweisung ausführen
   run_selection: Auswahl ausführen
   run_all: Alles ausführen
+  explain: Ausführungsplan anzeigen
   find: Suchen…
   replace: Ersetzen…
   close_tab: Tab schließen
   close_others: Andere Tabs schließen
   close_right: Tabs rechts davon schließen
+  reopen_tab: Geschlossenen Tab wieder öffnen
   split_right: Rechts teilen
   split_below: Unten teilen
   close_pane: Bereich schließen
@@ -665,12 +735,14 @@ context:
   clear_column: Aus der Auswahlliste entfernen
   connect: Verbinden
   edit: Bearbeiten…
+  duplicate: Duplizieren…
+  delete: Löschen…
 
 update:
   title: Update verfügbar
   available: "%{app} %{version} ist verfügbar."
   installed: "Sie verwenden derzeit %{version}."
-  update: Update installieren
+  update: "Aktualisieren und neu starten"
   ignore: Diese Version ignorieren
   checking: Suche nach Updates…
   up_to_date: Sie verwenden die neueste Version.
@@ -713,3 +785,55 @@ lob:
   discard_question: "Änderungen in diesem LOB-Editor verwerfen?"
   keep_editing: "Weiter bearbeiten"
   invalid_hex: "Geben Sie hexadezimale Ziffernpaare (00–FF) ein, getrennt durch Leerzeichen oder Zeilenumbrüche."
+
+closing:
+  unsaved_title: Nicht gespeicherte Änderungen
+  unsaved_body: "„%{name}“ hat Änderungen, die noch nicht in der Datei gespeichert sind."
+  dont_save: Nicht speichern
+  saving: Wird gespeichert…
+  connection_title: "„%{name}“ schließen?"
+  close_connection: Verbindung schließen
+  risk_uncommitted: Die nicht festgeschriebene Transaktion wird zurückgerollt.
+  risk_running: "Die in „%{tab}“ laufende Anweisung wird gestoppt."
+  work_staged: "„%{tab}“ auf %{connection}: nicht angewendete Änderungen"
+  work_unsaved: "„%{tab}“: nicht in der Datei gespeicherte Änderungen"
+  work_running: "„%{tab}“ auf %{connection}: eine noch laufende Anweisung"
+  work_uncommitted: "%{connection}: eine nicht festgeschriebene Transaktion, die zurückgerollt wird"
+  work_extract: Eine noch laufende Extraktion
+  work_transfer: Eine noch laufende Übertragung
+  work_backup: Eine noch laufende Sicherung
+
+close_guard:
+  title_window: "Fenster mit nicht gespeicherter Arbeit schließen?"
+  title_quit: "Mit nicht gespeicherter Arbeit beenden?"
+  title_restart: "Mit nicht gespeicherter Arbeit neu starten?"
+  message: "Wenn Sie fortfahren, geht Folgendes verloren:"
+  more: "…und %{count} weitere"
+  close_anyway: "Trotzdem schließen"
+  quit_anyway: "Trotzdem beenden"
+  restart_anyway: "Trotzdem neu starten"
+  save_all: "Alle speichern"
+
+toast:
+  no_connection: "Öffnen Sie zuerst eine Verbindung."
+  connecting: "„%{name}“ wird noch verbunden."
+  not_connected: "„%{name}“ ist nicht verbunden. Verbinden Sie sie zuerst neu."
+  open_failed: "%{file} konnte nicht geöffnet werden: %{error}"
+  columns_failed: "Die Spalten von %{table} konnten nicht gelesen werden: %{error}"
+  keychain_unavailable: "Der Schlüsselbund des Systems ist nicht verfügbar (%{error}). Gespeicherte Passwörter können nicht gelesen und neue nicht behalten werden."
+
+history:
+  title: "Abfrageverlauf — %{name}"
+  search: Anweisungen durchsuchen
+  empty: Auf dieser Verbindung wurde noch nichts ausgeführt.
+  no_match: Keine Anweisung passt zur Suche.
+  open: In neuem Abfrage-Tab öffnen
+  delete: Löschen
+  clear: Verlauf leeren…
+  clear_question: "Alle %{count} Anweisungen im Verlauf dieser Verbindung löschen? Das kann nicht rückgängig gemacht werden."
+  clear_confirm: Alle löschen
+  done: Ausgeführt
+  failed: Fehlgeschlagen
+  canceled: Abgebrochen
+  kept_in: "Gespeichert in %{path}"
+  recording_off: Die Aufzeichnung ist in den Einstellungen ausgeschaltet; es kommt nichts Neues hinzu.

@@ -28,11 +28,13 @@
 pub(crate) use bootstrap::{editor_theme_for, theme_dirs};
 
 use crate::{
-    AddToBuilder, BackupSchema, CheckUpdates, ClosePane, DismissDialog, ExtractScript,
-    FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery, OpenErd, OpenSettings,
-    OpenSqlFile, QueryObject, Quit, ShowAbout, SplitBelow, SplitRight, ToggleExplorer,
-    TransferTable, app_identity, app_settings, builder_pane, builder_sql, connection, context_menu,
-    erd_pane, explorer, i18n, icons, table_detail,
+    AddToBuilder, BackupSchema, CheckUpdates, ClosePane, CloseTab, DismissDialog, ExplainQuery,
+    ExtractScript, FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery,
+    NextConnection, NextRegion, NextTab, OpenErd, OpenSettings, OpenSqlFile, PrevConnection,
+    PrevRegion, PrevTab, QueryObject, Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, SelectTab,
+    ShowAbout, ShowQueryHistory, SplitBelow, SplitRight, ToggleExplorer, TransferTable,
+    app_identity, app_settings, builder_pane, builder_sql, connection, context_menu, erd_pane,
+    explorer, i18n, icons, table_detail,
 };
 
 mod actions;
@@ -40,8 +42,10 @@ mod bootstrap;
 mod events;
 mod startup;
 use bootstrap::{app_menus, apply_themes, chrome_titlebar, record_window_geometry};
+mod closing;
 mod connections;
 mod dialogs;
+mod history;
 mod menus;
 mod objects;
 mod panes;
@@ -52,7 +56,7 @@ mod view;
 use view::centered_scroll;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, App, Context, Div, DragMoveEvent, Entity, FocusHandle, Focusable, Hsla, KeyBinding,
@@ -94,7 +98,10 @@ use crate::explorer::{
 use crate::extract_dialog::{ExtractDialog, ExtractDialogEvent};
 use crate::i18n::ts;
 use crate::pane_tree::{Axis, Pane, PaneId, PaneItem, PaneLookup, PaneNode, PaneTree, SplitId};
-use crate::query::{ConfirmRequest, QueryPane, QueryPaneEvent};
+use crate::query::{
+    ConfirmRequest, FileStamp, Overwrite, QueryPane, QueryPaneEvent, SaveJob, Saved,
+    decode_sql_file, read_sql_file, write_sql_file,
+};
 use crate::settings_dialog::{SettingsDialog, SettingsDialogEvent};
 use crate::struct_pane::StructPane;
 use crate::table_detail::{TableDetail, TableDetailEvent};
@@ -106,10 +113,12 @@ const KEY_CONTEXT: &str = "Workspace";
 /// Height of the toolbar row holding the application menu and the tab strip.
 ///
 /// Must match the height [`TabBar`] gives itself, otherwise the menu button cell
-/// and the tab strip would not line up.
+/// and the tab strip would not line up — at the interface size's scale, as the
+/// strip's is (`rugpui::scaled`).
 const TOOLBAR_HEIGHT: f32 = 36.;
 
-/// Height of the status bar along the bottom of the window.
+/// Height of the status bar along the bottom of the window, before the
+/// interface size scales it.
 const STATUS_BAR_HEIGHT: f32 = 24.;
 
 /// Distance from the top left of the window to the top left of the macOS
@@ -152,6 +161,29 @@ const PANE_SHORTCUT_MODIFIER: &str = if cfg!(target_os = "macos") {
     "cmd"
 } else {
     "alt"
+};
+
+/// The chord "Save SQL file as" is bound to, and the same chord as a menu
+/// hint writes it.
+///
+/// `Ctrl+Shift+S` where every editor puts it, and none on macOS: `Cmd` is the
+/// pane modifier there, so `Cmd+Shift+S` is already [`SplitBelow`].
+const SAVE_AS_SHORTCUT: Option<(&str, &str)> = if cfg!(target_os = "macos") {
+    None
+} else {
+    Some(("ctrl-shift-s", "Ctrl+Shift+S"))
+};
+
+/// The chord "Close tab" is bound to, and the same chord as a menu hint
+/// writes it.
+///
+/// `Ctrl+W` where every editor and browser puts it, and none on macOS for now:
+/// there `Cmd+W` is [`ClosePane`] — `Cmd` is the pane modifier — and moving it
+/// is a decision that has been put on hold.
+const CLOSE_TAB_SHORTCUT: Option<(&str, &str)> = if cfg!(target_os = "macos") {
+    None
+} else {
+    Some(("ctrl-w", "Ctrl+W"))
 };
 
 /// [`PANE_SHORTCUT_MODIFIER`] as a menu hint writes it.
@@ -310,7 +342,8 @@ struct WorkArea {
     /// third query I opened on staging" rather than counting every editor in
     /// the window. Counts up for the life of the tab and is never reused: two
     /// tabs called "Query 3" — one of them a query that was closed and reopened
-    /// — would be worse than a gap in the numbering.
+    /// — would be worse than a gap in the numbering. A tab brought back by
+    /// "Reopen closed tab" is not a new one, and takes its old number back.
     next_query: u64,
     /// Number the next query builder tab of this connection is titled with.
     ///
@@ -319,6 +352,15 @@ struct WorkArea {
     /// "Query 1" and "Builder 2" would read as though a builder had been
     /// numbered by something it has nothing to do with.
     next_builder: u64,
+    /// The query and builder tabs closed here most recently, oldest first, as
+    /// "Reopen closed tab" brings them back; at most
+    /// [`closing::CLOSED_TABS_KEPT`] of them.
+    ///
+    /// Only those two kinds: they hold what the user wrote, where every other
+    /// tab is a view of something the database still has and is one click in
+    /// the explorer away. Not saved with the workspace — a restart is not a
+    /// mistake a moment ago.
+    closed: Vec<session::SavedTab>,
 }
 
 impl WorkArea {
@@ -333,6 +375,7 @@ impl WorkArea {
             checkpoint: None,
             next_query: 1,
             next_builder: 1,
+            closed: Vec::new(),
         }
     }
 
@@ -422,7 +465,9 @@ struct Connection {
 /// [`ConnectionState::Failed`]: the first is a session that *was* open and is
 /// not any more — a tunnel that closed underneath it, usually — and the second
 /// is one that never opened. Both are terminal, and neither is repaired
-/// silently (architecture document, §9.3).
+/// silently (architecture document, §9.3): what repairs one is the user's
+/// "Reconnect", from the card the work area shows or the tab's menu, which
+/// starts a new attempt in the same tab.
 enum ConnectionState {
     /// The connect task is in flight.
     ///
@@ -433,8 +478,8 @@ enum ConnectionState {
     Connecting { _task: Task<()> },
     /// The session is live.
     Open(Box<Connected>),
-    /// The connection never opened.
-    Failed(SharedString),
+    /// The connection never opened, or the attempt was canceled.
+    Failed(Failure),
     /// The session was open and has ended.
     Dead(SharedString),
 }
@@ -448,6 +493,85 @@ impl ConnectionState {
             ConnectionState::Failed(_) | ConnectionState::Dead(_) => TabStatus::Error,
         }
     }
+}
+
+/// Why a connection tab never opened, as the card in its work area says it.
+///
+/// Everything the connection dialog's own "Test" would have said about the
+/// same failure: the whole message rather than the one line of the status bar,
+/// the hint [`crate::connection_dialog::error_hint`] reads off the error's
+/// kind, and — for a bastion whose host key nothing has trusted yet — the key,
+/// so that it can be trusted from here instead of only from a test.
+#[derive(Clone, Debug)]
+struct Failure {
+    /// The driver's, the bridge's or the tunnel's own words.
+    message: SharedString,
+    /// What to look at first, when the failure's kind says.
+    hint: Option<SharedString>,
+    /// The unknown host key the bastion presented, when that is the failure.
+    host_key: Option<Box<HostKeyOffer>>,
+}
+
+impl Failure {
+    /// What an attempt that ended in `error` says, for a profile tunneling
+    /// through `tunnel` when it does.
+    fn of(error: &ConnectError, profile: &ConnectionProfile) -> Self {
+        let host_key = match error {
+            ConnectError::HostKeyUnknown {
+                host,
+                fingerprint,
+                algorithm,
+            } => Some(Box::new(HostKeyOffer {
+                host: host.clone(),
+                port: profile.tunnel.as_ref().map_or(22, |tunnel| tunnel.port),
+                algorithm: algorithm.clone(),
+                fingerprint: fingerprint.clone(),
+            })),
+            _ => None,
+        };
+        Self {
+            message: error.message().into(),
+            hint: crate::connection_dialog::error_hint(error),
+            host_key,
+        }
+    }
+}
+
+impl From<SharedString> for Failure {
+    /// A failure that is only its message: no driver of that name, or an
+    /// attempt the user canceled.
+    fn from(message: SharedString) -> Self {
+        Self {
+            message,
+            hint: None,
+            host_key: None,
+        }
+    }
+}
+
+impl From<&'static str> for Failure {
+    fn from(message: &'static str) -> Self {
+        SharedString::new_static(message).into()
+    }
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        SharedString::from(message).into()
+    }
+}
+
+/// A bastion's host key that nothing has trusted yet, offered for trusting.
+#[derive(Clone, Debug)]
+struct HostKeyOffer {
+    /// The bastion, as the profile names it.
+    host: String,
+    /// Its SSH port.
+    port: u16,
+    /// The key algorithm, e.g. `ssh-ed25519`.
+    algorithm: String,
+    /// The OpenSSH-style SHA-256 fingerprint.
+    fingerprint: String,
 }
 
 /// What the keyboard is being handed to when a tab comes to the front.
@@ -468,6 +592,35 @@ enum FocusTarget {
     Struct(Entity<StructPane>),
     /// Anything with nothing to type into, and the empty pane.
     Shell,
+}
+
+/// One of the regions `F6` moves the keyboard between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Region {
+    /// The explorer's tree.
+    Explorer,
+    /// The active pane's tab on top: a query tab's editor, a grid, a canvas.
+    Tab,
+    /// A query tab's result grid.
+    Results,
+}
+
+/// Where the keyboard was before a dialog took it.
+///
+/// A region rather than a focus handle: by the time the dialog closes, the
+/// element that had the keyboard may have stopped being rendered — its tab
+/// closed, its connection switched away — and handing the focus back to it
+/// would strand it exactly as [`Workspace::reclaim_focus`] describes. A
+/// region is asked again for what it is showing *now*.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum FocusOrigin {
+    /// Nowhere in particular: the shell.
+    #[default]
+    Shell,
+    /// The explorer's tree.
+    Explorer,
+    /// The work area on screen.
+    Area,
 }
 
 /// The pane a close was refused over, so that it can be told to say why.
@@ -513,6 +666,8 @@ enum ContextTarget {
     },
     /// A row of the welcome screen's saved-connection list.
     Profile(Uuid),
+    /// A row of the query history dialog, by the entry's id.
+    History(u64),
 }
 
 /// A right-click on one of the shell's surfaces, while its menu is open.
@@ -521,6 +676,9 @@ struct OpenContextMenu {
     target: ContextTarget,
     /// Where the pointer was, in window coordinates.
     position: Point<Pixels>,
+    /// Whether `Shift+F10` or the Menu key opened it, so it opens on its
+    /// first row.
+    by_keyboard: bool,
 }
 
 /// A query pane's write confirmation, waiting for an answer.
@@ -536,6 +694,8 @@ struct Workspace {
     sessions: session::SessionStorage,
     autosave: Option<Task<()>>,
     rename_tab: Option<tab_name::RenameTab>,
+    /// The query history dialog, while it is open; see [`history`].
+    history: Option<history::HistoryView>,
     /// Focus target for the window, so the shortcuts stay live.
     ///
     /// One handle for the whole shell in M0: no pane holds anything focusable
@@ -591,6 +751,8 @@ struct Workspace {
     update: Entity<UpdateDialog>,
     /// Whether the application dropdown menu is showing.
     menu_open: bool,
+    /// Whether `F10` opened it, so it opens on its first row.
+    menu_by_keyboard: bool,
     /// The shell's own right-click menu, while one is open.
     ///
     /// Mutually exclusive with [`Workspace::menu_open`]: the dropdown and a
@@ -602,6 +764,20 @@ struct Workspace {
     /// Held here rather than in the pane because a modal centers itself in its
     /// nearest positioned ancestor, and inside a pane that is the wrong box.
     confirm: Option<PendingConfirm>,
+    /// A close waiting on the user's answer; see [`closing`].
+    close_question: Option<closing::CloseQuestion>,
+    /// The write confirmation's Cancel button, which takes the keyboard when
+    /// the confirmation opens.
+    confirm_focus: FocusHandle,
+    /// The close question's default answer — Save over a file, Cancel over a
+    /// connection — which takes the keyboard when the question opens.
+    close_focus: FocusHandle,
+    /// The connection tab that asked the dialog for a password to reconnect
+    /// with, and the profile it asked about; see [`Workspace::reconnect_with`].
+    pending_reconnect: Option<(ConnectionId, Uuid)>,
+    /// Where the keyboard was when the dialog on screen opened, for it to go
+    /// back to when the dialog closes; see [`Workspace::restore_focus`].
+    focus_origin: FocusOrigin,
     /// Where a dragged tab would land, while a drag is over a strip.
     ///
     /// Strips are tagged with a pane id for a pane's strip, and
@@ -615,6 +791,10 @@ struct Workspace {
     /// carries, and once the settings dialog can switch a live window this field
     /// is what follows the platform call rather than the stored preference.
     titlebar: TitlebarStyle,
+    /// The window's close guard: asks before a quit, a close of the window
+    /// or an update's restart would lose what [`Workspace::unsaved_work`]
+    /// lists. Drawn last of everything, so its question is on top.
+    close_guard: Entity<rugpui_shell::CloseGuard>,
     /// Keeps the about dialog subscription alive.
     _about_events: Subscription,
     /// Keeps the connection dialog subscription alive.
@@ -699,6 +879,24 @@ impl Workspace {
 
         let settings_snapshot = app_settings::current(cx);
 
+        // Read synchronously when the platform asks whether the window may
+        // close, so the list has to be a plain read of state — which
+        // `unsaved_work` is.
+        let workspace = cx.weak_entity();
+        let saver = workspace.clone();
+        let close_guard = cx.new(|cx| {
+            rugpui_shell::CloseGuard::new(window, cx, move |_intent, _window, cx| {
+                workspace
+                    .read_with(cx, |workspace, cx| workspace.unsaved_work(cx))
+                    .unwrap_or_default()
+            })
+            .with_save_all(move |window, cx| {
+                saver
+                    .update(cx, |workspace, cx| workspace.save_all_files(window, cx))
+                    .unwrap_or_else(|_| Task::ready(false))
+            })
+        });
+
         cx.observe_self(|workspace, cx| workspace.schedule_workspace_save(cx))
             .detach();
         cx.on_release(|workspace, cx| workspace.flush_workspaces(cx))
@@ -713,6 +911,7 @@ impl Workspace {
             sessions: session::SessionStorage::default(),
             autosave: None,
             rename_tab: None,
+            history: None,
             focus_handle: cx.focus_handle(),
             explorer,
             explorer_visible: settings_snapshot.explorer_visible,
@@ -730,10 +929,17 @@ impl Workspace {
             backup,
             update,
             menu_open: false,
+            menu_by_keyboard: false,
             context_menu: None,
             confirm: None,
+            close_question: None,
+            confirm_focus: cx.focus_handle(),
+            close_focus: cx.focus_handle(),
+            pending_reconnect: None,
+            focus_origin: FocusOrigin::Shell,
             tab_drop: TabDropState::new(),
             titlebar,
+            close_guard,
             _about_events: about_events,
             _connect_events: connect_events,
             _explorer_events: explorer_events,

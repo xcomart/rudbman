@@ -315,7 +315,7 @@ impl QueryPane {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .h(px(26.))
+                    .h(rugpui::scaled(26., cx))
                     .px(px(8.))
                     .cursor_pointer()
                     .when(i == open.selected, |row| row.bg(chrome.surface_hover))
@@ -337,7 +337,7 @@ impl QueryPane {
                     )
                     .child(
                         div()
-                            .max_w(px(130.))
+                            .max_w(rugpui::scaled(130., cx))
                             .truncate()
                             .text_color(chrome.text_muted)
                             .child(item.detail.clone()),
@@ -351,14 +351,14 @@ impl QueryPane {
             .occlude()
             .flex()
             .flex_col()
-            .w(px(380.))
+            .w(rugpui::scaled(380., cx))
             .py(px(3.))
             .rounded_md()
             .bg(chrome.surface)
             .border_1()
             .border_color(chrome.border)
             .shadow_md()
-            .text_size(px(11.))
+            .text_size(rugpui::TextSize::Xs.size(cx))
             .on_mouse_down_out(cx.listener(|pane, _, _window, cx| pane.close_completion(cx)))
             .children(rows)
             .child(
@@ -368,7 +368,7 @@ impl QueryPane {
                     .border_t_1()
                     .border_color(chrome.border)
                     .text_color(chrome.text_muted)
-                    .text_size(px(10.))
+                    .text_size(rugpui::scaled(10., cx))
                     .child(ts!("completion.hint")),
             );
         Some(

@@ -8,6 +8,8 @@ common:
   cancel: キャンセル
   save: 保存
   close: 閉じる
+  keep_running: 実行を続ける
+  stop_job: 停止
 
 menu:
   new_connection: 接続の管理…
@@ -18,10 +20,13 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 選択したオブジェクトをクエリ
+  query_history: クエリ履歴…
   view_data: データを表示
   view_structure: 構造を編集
   new_table: 新規テーブル
   open_sql_file: SQL ファイルを開く…
+  save_sql_file: SQL ファイルを保存
+  save_sql_file_as: 名前を付けて SQL ファイルを保存…
   extract_script: スクリプトを抽出…
   transfer_table: 行を転送…
   backup_schema: スキーマをバックアップ…
@@ -32,6 +37,9 @@ menu:
   add_to_builder: クエリビルダーに追加
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 新規クエリビルダー
+  in_explorer: "エクスプローラーで %{shortcut}"
+  next_pane: 次のペイン
+  prev_pane: 前のペイン
   about: rudbman について
   check_updates: 更新を確認
   quit: 終了
@@ -45,7 +53,7 @@ menu:
 tab:
   close: 接続を閉じる
   tip_list: すべての接続
-  tip_new: "新規接続 (%{shortcut})"
+  tip_manage: "接続の管理 (%{shortcut})"
   tip_pane_list: すべてのタブ
 
 welcome:
@@ -66,6 +74,9 @@ statusbar:
   disconnected: 切断済み
   failed: "失敗: %{error}"
   tunnel_lost: "SSH トンネルが閉じました: %{reason}"
+  uncommitted: 未コミットのトランザクション
+  uncommitted_in: "「%{tab}」で実行した書き込みはまだコミットされていません。そのタブでコミットまたはロールバックしてください。"
+  uncommitted_tip: この接続の書き込みはまだコミットされていません。
 
 about:
   title: rudbman について
@@ -111,7 +122,11 @@ settings:
   fetch_batch_rows_hint: グリッドをスクロールしたときに一度に取得する行数
   query_timeout: 文のタイムアウト
   query_timeout_hint: 秒 — 0 は無制限
+  login_timeout: 接続のタイムアウト
+  login_timeout_hint: 秒 — 0 はドライバーの既定値
   confirm_writes_default: 新しい接続では書き込み文の実行前に確認する
+  query_history: クエリタブで実行した文の履歴を残す
+  query_history_hint: 接続プロファイルごとに設定フォルダー内の history フォルダーへプレーンテキストで保存されます。オフにすると記録を止め、記録済みの内容は残ります。履歴ダイアログから削除できます。
 
   jvm_heap: Java ヒープ
   jvm_heap_hint: MB — ドライバーが動作する -Xmx
@@ -257,6 +272,13 @@ connect:
   load_failed: "保存された接続を読み込めなかったため、そのファイルを修正するか移動するまで保存も削除もできません: %{error}"
   save_failed: "接続を保存できませんでした: %{error}"
   keychain_failed: "パスワードをキーチェーンに保存できませんでした: %{error}"
+  remember_password: システムのキーチェーンにパスワードを保存
+  password_prompt: この接続はパスワードを保存しません。パスワードを入力して「接続」を押してください。
+  keychain_failed_connected: "パスワードをキーチェーンに保存できませんでした（%{error}）。接続にはここで入力したパスワードを使います。"
+  driver_has_no_jar_download: このドライバーにはまだ JAR がありません。ここでダウンロードするか、「ドライバー」で追加してください。
+  discard_question: このフォームには保存していない変更があります。
+  keep_editing: 編集を続ける
+  discard: 変更を破棄
 
   hint_auth: ユーザー名とパスワードを確認してください
   hint_driver: ドライバー JAR とドライバークラスを確認してください
@@ -267,6 +289,14 @@ connect:
   host_key_question: "%{host} が未知の %{algorithm} 鍵を提示しました: %{fingerprint}"
   trust_host_key: この鍵を信頼する
   host_key_trusted: ホスト鍵を信頼済みに追加しました。もう一度接続してみてください。
+  card_connecting: "「%{name}」に接続しています…"
+  card_connecting_hint: "%{seconds} 秒たつと試行をやめます。"
+  card_failed: "「%{name}」に接続できませんでした"
+  card_dead: "「%{name}」への接続が終了しました"
+  reconnect: 再接続
+  edit_connection: 接続を編集…
+  trust_and_reconnect: キーを信頼して再接続
+  canceled: 接続の試行をキャンセルしました。
 
 # ドライバーマネージャー。
 driver:
@@ -397,6 +427,7 @@ query:
   rollback_failed: "ロールバックに失敗しました: %{message}"
   rollback_auto: "ロールバック（自動コミットが有効です）"
   uncommitted_pending: "この接続にはクエリエディターで実行した未コミットの変更があります。先にクエリタブでコミットまたはロールバックしてください。"
+  uncommitted_pending_in: "この接続には「%{tab}」で実行した未コミットの変更があります。先にそのタブでコミットまたはロールバックしてください。"
   commit: "コミット"
   committing: "コミット中…"
   committed: "トランザクションをコミットしました。"
@@ -408,11 +439,19 @@ query:
   result: "結果 %{index}"
   tab: "クエリ %{index}"
   empty: 文を書いて実行してください。
+  empty_keys: "文を書いて実行してください。%{statement} でカーソル位置の文を、%{all} ですべてを実行します。"
   no_results: 文は結果を返しませんでした。
   running: 実行中…
   rows_affected: "%{count} 行処理されました"
   executed: 文を実行しました。
+  plan: "実行計画 %{index}"
+  explained: 実行計画を取得しました。文は実行していません。
+  explain_one: 実行計画を表示する文を 1 つだけ選択してください。
+  explain_unsupported: "%{product} では実行計画の表示に対応していません。"
+  explain_restore_failed: "実行計画の取得後に接続の状態を元に戻せませんでした (%{message})。この接続で他の操作をする前に再接続してください。"
+  statement_failed: "%{total} 文中 %{index} 番目の文が失敗しました: %{error}"
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   elapsed: "%{seconds} 秒"
   busy: このペインでは既に文が実行中です。
   no_statement: 実行する文がありません。
@@ -430,12 +469,24 @@ query:
   hint_network: データベースとの接続が失われました。
   hint_canceled: 文の実行はキャンセルされました。
   open_file_select: SQL ファイルを選択
+  save_failed: "ファイルを保存できませんでした: %{error}"
+  unsaved: ファイルに保存されていない変更
+  save_busy: "ファイルの読み込みまたは書き込みがまだ終わっていません。しばらくしてからもう一度お試しください。"
+  file_changed: "このタブが最後に読み込みまたは保存した後でディスク上のファイルが変更されたため、上書きしませんでした。保存先を選んでください。"
 
 data:
   loading: 読み込み中…
+  load_canceled: 行の読み込みをキャンセルしました。
   refresh: 再読み込み
+  filter_placeholder: "行を絞り込む条件 (例: NAME = 'a')"
+  filter_apply: 絞り込み
+  filter_clear: クリア
+  filtered: 絞り込み中
+  empty_filtered: 条件に一致する行はありません。
+  filter_one_condition: フィルターには条件を 1 つだけ書けます。後ろに別の文は続けられません。
   empty: このテーブルに行はありません。
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   no_primary_key: このテーブルには主キーがないため、行の閲覧のみできます。
   read_only: 読み取り専用の接続のため、行の閲覧のみできます。
   discard_first: 保留中の変更を先に適用するか破棄してください。
@@ -532,6 +583,7 @@ extract:
   canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
   canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  stop_question: 抽出を停止しますか？ファイルには何も書き込まれません。
   failed: "抽出に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま抽出に失敗しました。
 
@@ -558,8 +610,15 @@ transfer:
   done: "%{rows} 行を %{table} に転送しました。"
   done_skipped: "%{skipped} 行は挿入できなかったためスキップしました。"
   canceled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
+  stop_question: 転送を停止しますか？すでにコミットされた行は転送先テーブルに残ります。
   failed: "転送に失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないまま転送に失敗しました。
+  choose_target: 行のコピー先の接続を選んでください。
+  no_other_connection: ほかの接続が開かれていません。コピー先の接続を開くか、この接続を選んで別のテーブル名を入力してください。
+  same_table: 転送先が転送元のテーブルそのものです。別の接続、スキーマ、テーブルを選んでください。
+  truncate_confirm: "コピーを始める前に %{table} のすべての行を削除します。"
+  truncate_confirm_rows: "コピーを始める前に %{table} の %{rows} 行をすべて削除します。"
+  truncate_start: 空にして転送
 
 backup:
   title: スキーマのバックアップ
@@ -579,6 +638,7 @@ backup:
   canceling: キャンセルしています…
   done: "%{rows} 行 (%{bytes}) を %{path} に書き出しました。"
   canceled: "キャンセルしました。%{path} には何も書き込んでいません。"
+  stop_question: バックアップを停止しますか？ファイルには何も書き込まれません。
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
 
@@ -587,6 +647,8 @@ erd:
   tab: "ER図 — %{scope}"
   tab_all: ER図
   loading: 読み込み中…
+  loading_tables: "%{total} 個のテーブルのうち %{done} 個のキーを読み込みました…"
+  load_canceled: ダイアグラムの読み込みをキャンセルしました。
   load_failed: "図を描画できませんでした: %{error}"
   empty: このスキーマにはテーブルがありません。
   auto_arrange: 自動整列
@@ -602,8 +664,12 @@ erd:
 # two of them describe.
 builder:
   tab: "ビルダー %{index}"
-  canvas_hint: エクスプローラーでテーブルを選び、ビルダーに追加してください。
+  canvas_hint: エクスプローラーからテーブルやビューをこのキャンバスにドラッグするか、エクスプローラーで右クリックして「クエリビルダーに追加」を選んでください。
   joins: 結合
+  join_hint: 列を別のテーブルの列へドラッグすると結合されます。ここで 2 つの列を選ぶこともできます。
+  join_pick: 列…
+  add_join: 結合を追加
+  pick_hint: キャンバスの列をクリックすると SELECT リストに追加されます。
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -638,6 +704,8 @@ context:
   hide_column: この列を隠す
   show_columns: すべての列を表示
   copy_column_name: 列名をコピー
+  copy_message: メッセージをコピー
+  copy_sql: SQL をコピー
   cut: 切り取り
   copy: コピー
   paste: 貼り付け
@@ -648,11 +716,13 @@ context:
   run_statement: 文を実行
   run_selection: 選択範囲を実行
   run_all: すべて実行
+  explain: 実行計画を表示
   find: 検索…
   replace: 置換…
   close_tab: タブを閉じる
   close_others: 他のタブを閉じる
   close_right: 右側のタブを閉じる
+  reopen_tab: 閉じたタブを開き直す
   split_right: 右に分割
   split_below: 下に分割
   close_pane: ペインを閉じる
@@ -665,12 +735,14 @@ context:
   clear_column: SELECT リストから外す
   connect: 接続
   edit: 編集…
+  duplicate: 複製…
+  delete: 削除…
 
 update:
   title: 更新があります
   available: "%{app} %{version} が利用できます。"
   installed: "現在実行中のバージョンは %{version} です。"
-  update: 更新
+  update: "更新して再起動"
   ignore: このバージョンを無視
   checking: 更新を確認しています…
   up_to_date: 最新バージョンです。
@@ -713,3 +785,55 @@ lob:
   discard_question: "この LOB エディターの変更を破棄しますか？"
   keep_editing: "編集を続ける"
   invalid_hex: "2 桁の 16 進数 (00–FF) を空白または改行で区切って入力してください。"
+
+closing:
+  unsaved_title: 未保存の変更
+  unsaved_body: "「%{name}」には、まだファイルに保存していない変更があります。"
+  dont_save: 保存しない
+  saving: 保存しています…
+  connection_title: "「%{name}」を閉じますか？"
+  close_connection: 接続を閉じる
+  risk_uncommitted: コミットしていないトランザクションはロールバックされます。
+  risk_running: "「%{tab}」で実行中の文は停止されます。"
+  work_staged: "%{connection} の「%{tab}」: 適用していない変更"
+  work_unsaved: "「%{tab}」: ファイルに保存していない変更"
+  work_running: "%{connection} の「%{tab}」: 実行中の文"
+  work_uncommitted: "%{connection}: コミットしていないトランザクション（ロールバックされます）"
+  work_extract: 実行中の抽出
+  work_transfer: 実行中の転送
+  work_backup: 実行中のバックアップ
+
+close_guard:
+  title_window: "未保存の作業があります。ウィンドウを閉じますか？"
+  title_quit: "未保存の作業があります。終了しますか？"
+  title_restart: "未保存の作業があります。再起動しますか？"
+  message: "続けると、次の内容が失われます:"
+  more: "…ほか %{count} 件"
+  close_anyway: "それでも閉じる"
+  quit_anyway: "それでも終了"
+  restart_anyway: "それでも再起動"
+  save_all: "すべて保存"
+
+toast:
+  no_connection: "先に接続を開いてください。"
+  connecting: "「%{name}」はまだ接続中です。"
+  not_connected: "「%{name}」は接続されていません。先に再接続してください。"
+  open_failed: "%{file} を開けませんでした: %{error}"
+  columns_failed: "%{table} の列を読み込めませんでした: %{error}"
+  keychain_unavailable: "システムのキーチェーンを使用できません (%{error})。保存したパスワードは読み込めず、新しいパスワードも保存されません。"
+
+history:
+  title: "クエリ履歴 — %{name}"
+  search: 文を検索
+  empty: この接続ではまだ何も実行していません。
+  no_match: 検索に一致する文はありません。
+  open: 新しいクエリタブで開く
+  delete: 削除
+  clear: 履歴をすべて消去…
+  clear_question: "この接続の履歴 %{count} 件をすべて削除しますか? 元に戻せません。"
+  clear_confirm: すべて削除
+  done: 実行済み
+  failed: 失敗
+  canceled: キャンセル
+  kept_in: "保存場所: %{path}"
+  recording_off: 設定で記録がオフになっているため、新しい文は追加されません。

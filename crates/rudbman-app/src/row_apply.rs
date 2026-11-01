@@ -37,7 +37,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, prelude::*, px,
+    AnyElement, App, FocusHandle, IntoElement, ParentElement, SharedString, Styled, Window, div,
+    prelude::*, px,
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::DmlError;
@@ -178,9 +179,13 @@ pub(crate) fn plan_message(error: &PlanError) -> SharedString {
 /// and the two are irreversible in opposite directions.
 ///
 /// `on_cancel` is what both ways out — the button and the modal's own dismiss —
-/// call, so the caller writes the retraction once.
+/// call, so the caller writes the retraction once. `cancel_focus` is the
+/// caller's handle for the Cancel button, which takes the keyboard when the
+/// question opens: the question is about throwing work away, so a stray
+/// `Enter` must not be what answers it yes. `Escape` answers it no.
 pub(crate) fn render_discard_confirm(
     counts: EditCounts,
+    cancel_focus: &FocusHandle,
     cx: &mut App,
     on_cancel: impl Fn(&mut Window, &mut App) + 'static,
     on_discard: impl Fn(&mut Window, &mut App) + 'static,
@@ -193,12 +198,17 @@ pub(crate) fn render_discard_confirm(
         .flex()
         .flex_col()
         .gap(px(12.))
-        .child(div().text_size(px(12.)).text_color(chrome.text).child(ts!(
-            "data.discard_body",
-            changed = counts.changed,
-            inserted = counts.inserted,
-            deleted = counts.deleted
-        )))
+        .child(
+            div()
+                .text_size(rugpui::TextSize::Sm.size(cx))
+                .text_color(chrome.text)
+                .child(ts!(
+                    "data.discard_body",
+                    changed = counts.changed,
+                    inserted = counts.inserted,
+                    deleted = counts.deleted
+                )),
+        )
         .child(
             div()
                 .flex()
@@ -208,6 +218,7 @@ pub(crate) fn render_discard_confirm(
                 .child(
                     Button::new("data-discard-cancel", ts!("common.cancel"))
                         .variant(ButtonVariant::Secondary)
+                        .focus_handle(cancel_focus)
                         .on_click({
                             let on_cancel = on_cancel.clone();
                             move |_, window, cx| on_cancel(window, cx)
@@ -223,10 +234,12 @@ pub(crate) fn render_discard_confirm(
     modal(
         "data-discard",
         ts!("data.discard_title"),
-        px(420.),
+        rugpui::scaled(420., cx),
         body,
         move |window, cx| dismiss(window, cx),
     )
+    .initial_focus(cancel_focus)
+    .escape_dismisses(true)
     .into_any_element()
 }
 
@@ -242,10 +255,13 @@ pub(crate) fn render_discard_confirm(
 /// batch that fails half way stays half applied.
 ///
 /// `on_cancel` is shared by the button and the modal's dismiss, as above;
-/// `on_run` is what sends the batch.
+/// `on_run` is what sends the batch. The Cancel button takes the keyboard
+/// when it opens, through `cancel_focus`, for the discard question's reason:
+/// this is a write, and reading it is the point.
 pub(crate) fn render_apply_preview(
     statements: &[PlannedStatement],
     transactional: bool,
+    cancel_focus: &FocusHandle,
     cx: &mut App,
     on_cancel: impl Fn(&mut Window, &mut App) + 'static,
     on_run: impl Fn(&mut Window, &mut App) + 'static,
@@ -265,13 +281,13 @@ pub(crate) fn render_apply_preview(
             .child(
                 div()
                     .font_family(mono.clone())
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text)
                     .child(SharedString::from(statement.sql.clone())),
             )
             .children(values.map(|values| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(values)
             }))
@@ -283,14 +299,14 @@ pub(crate) fn render_apply_preview(
         .gap(px(12.))
         .children((!transactional).then(|| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(ts!("data.apply_no_rollback"))
         }))
         .child(
             div()
                 .id("data-apply-preview")
-                .max_h(px(260.))
+                .max_h(rugpui::scaled(260., cx))
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
                 .p(px(8.))
@@ -309,6 +325,7 @@ pub(crate) fn render_apply_preview(
                 .child(
                     Button::new("data-apply-cancel", ts!("common.cancel"))
                         .variant(ButtonVariant::Secondary)
+                        .focus_handle(cancel_focus)
                         .on_click({
                             let on_cancel = on_cancel.clone();
                             move |_, window, cx| on_cancel(window, cx)
@@ -324,10 +341,12 @@ pub(crate) fn render_apply_preview(
     modal(
         "data-apply",
         ts!("data.apply_title", count = statements.len()),
-        px(560.),
+        rugpui::scaled(560., cx),
         body,
         move |window, cx| dismiss(window, cx),
     )
+    .initial_focus(cancel_focus)
+    .escape_dismisses(true)
     .into_any_element()
 }
 
@@ -340,6 +359,7 @@ pub(crate) fn render_apply_preview(
 pub(crate) fn render_apply_error(
     problem: &ApplyProblem,
     chrome: &Theme,
+    cx: &App,
 ) -> impl IntoElement + use<> {
     div()
         .flex()
@@ -353,7 +373,7 @@ pub(crate) fn render_apply_error(
         .bg(chrome.surface)
         .children(problem.message.clone().map(|message| {
             div()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(chrome.danger)
                 .child(message)
         }))
@@ -361,18 +381,18 @@ pub(crate) fn render_apply_error(
             problem
                 .error
                 .as_ref()
-                .map(|error| error_lines(error, chrome)),
+                .map(|error| error_lines(error, chrome, cx)),
         )
         .children(problem.reconnect_required.then(|| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(ts!("data.apply_reconnect_required"))
         }))
         .children(
             (problem.half_applied && !problem.reconnect_required).then(|| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.danger)
                     .child(ts!("data.apply_half_applied"))
             }),

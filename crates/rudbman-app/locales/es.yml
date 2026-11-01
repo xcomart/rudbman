@@ -8,6 +8,8 @@ common:
   cancel: Cancelar
   save: Guardar
   close: Cerrar
+  keep_running: Seguir ejecutando
+  stop_job: Detener
 
 menu:
   new_connection: Gestionar conexiones…
@@ -18,10 +20,13 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Consultar el objeto seleccionado
+  query_history: Historial de consultas…
   view_data: Ver los datos
   view_structure: Editar la estructura
   new_table: Nueva tabla
   open_sql_file: Abrir archivo SQL…
+  save_sql_file: Guardar archivo SQL
+  save_sql_file_as: Guardar archivo SQL como…
   extract_script: Extraer script…
   transfer_table: Transferir filas…
   backup_schema: Copia de seguridad del esquema…
@@ -32,6 +37,9 @@ menu:
   add_to_builder: Añadir al generador de consultas
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Nuevo generador de consultas
+  in_explorer: "%{shortcut} en el explorador"
+  next_pane: Panel siguiente
+  prev_pane: Panel anterior
   about: Acerca de rudbman
   check_updates: Buscar actualizaciones
   quit: Salir
@@ -45,7 +53,7 @@ menu:
 tab:
   close: Cerrar la conexión
   tip_list: Todas las conexiones
-  tip_new: "Nueva conexión (%{shortcut})"
+  tip_manage: "Gestionar conexiones (%{shortcut})"
   tip_pane_list: Todas las pestañas
 
 welcome:
@@ -66,6 +74,9 @@ statusbar:
   disconnected: desconectado
   failed: "error: %{error}"
   tunnel_lost: "el túnel SSH se cerró: %{reason}"
+  uncommitted: transacción sin confirmar
+  uncommitted_in: "Las escrituras de «%{tab}» aún no están confirmadas. Confírmalas o reviértelas en esa pestaña."
+  uncommitted_tip: Las escrituras en esta conexión aún no están confirmadas.
 
 about:
   title: Acerca de rudbman
@@ -111,7 +122,11 @@ settings:
   fetch_batch_rows_hint: filas que se traen cada vez al desplazar la cuadrícula
   query_timeout: Tiempo de espera por sentencia
   query_timeout_hint: segundos — 0 significa sin límite
+  login_timeout: Tiempo de espera de conexión
+  login_timeout_hint: segundos — 0 lo deja al controlador
   confirm_writes_default: Preguntar antes de ejecutar una sentencia de escritura en una conexión nueva
+  query_history: Guardar un historial de las sentencias que ejecutan las pestañas de consulta
+  query_history_hint: Se guarda por perfil de conexión en la carpeta history del directorio de configuración, como texto sin cifrar. Al desactivarlo deja de registrarse y lo registrado se conserva; puedes borrarlo desde el diálogo del historial.
 
   jvm_heap: Montículo de Java
   jvm_heap_hint: MB — el -Xmx con el que corre un controlador
@@ -257,6 +272,13 @@ connect:
   load_failed: "No se pudieron leer las conexiones guardadas; no se puede guardar ni eliminar nada hasta que se repare o se mueva ese archivo: %{error}"
   save_failed: "No se pudieron guardar las conexiones: %{error}"
   keychain_failed: "No se pudo guardar la contraseña en el llavero: %{error}"
+  remember_password: Recordar la contraseña en el llavero del sistema
+  password_prompt: Esta conexión no recuerda su contraseña. Escríbela y pulsa «Conectar».
+  keychain_failed_connected: "No se pudo guardar la contraseña en el llavero (%{error}). La conexión usa la que escribiste aquí."
+  driver_has_no_jar_download: Este controlador todavía no tiene JAR. Descárgalo aquí o añade uno en «Controladores».
+  discard_question: Este formulario tiene cambios sin guardar.
+  keep_editing: Seguir editando
+  discard: Descartar
 
   hint_auth: revisa el usuario y la contraseña
   hint_driver: revisa el JAR y la clase del controlador
@@ -267,6 +289,14 @@ connect:
   host_key_question: "%{host} presentó una clave %{algorithm} desconocida: %{fingerprint}"
   trust_host_key: Confiar en esta clave
   host_key_trusted: La clave de host se añadió a la lista de confianza. Vuelve a conectar.
+  card_connecting: "Conectando con «%{name}»…"
+  card_connecting_hint: "El intento se abandona pasados %{seconds} segundos."
+  card_failed: "No se pudo conectar con «%{name}»"
+  card_dead: "La conexión con «%{name}» ha terminado"
+  reconnect: Volver a conectar
+  edit_connection: Editar la conexión…
+  trust_and_reconnect: Confiar en la clave y volver a conectar
+  canceled: Se canceló el intento de conexión.
 
 # El gestor de controladores.
 driver:
@@ -397,6 +427,7 @@ query:
   rollback_failed: "Error al revertir: %{message}"
   rollback_auto: "Revertir (la confirmación automática está activada)"
   uncommitted_pending: "Esta conexión tiene cambios sin confirmar de un editor de consultas. Confírmalos o reviértelos allí primero."
+  uncommitted_pending_in: "Esta conexión tiene cambios sin confirmar de «%{tab}». Confírmalos o reviértelos allí primero."
   commit: "Confirmar transacción"
   committing: "Confirmando…"
   committed: "Transacción confirmada."
@@ -408,11 +439,19 @@ query:
   result: "Resultado %{index}"
   tab: "Consulta %{index}"
   empty: Escribe una sentencia y ejecútala.
+  empty_keys: "Escribe una sentencia y ejecútala: %{statement} ejecuta la que está bajo el cursor, %{all} las ejecuta todas."
   no_results: La sentencia no devolvió ningún resultado.
   running: ejecutando…
   rows_affected: "%{count} filas afectadas"
   executed: Sentencia ejecutada.
+  plan: "Plan %{index}"
+  explained: Plan leído; la sentencia no se ejecutó.
+  explain_one: Selecciona una sola sentencia para ver su plan.
+  explain_unsupported: "No se puede leer un plan en %{product}."
+  explain_restore_failed: "No se pudo restablecer la conexión después de leer el plan (%{message}). Vuelve a conectar antes de ejecutar otra cosa en ella."
+  statement_failed: "La sentencia %{index} de %{total} falló: %{error}"
   row_count: "%{count} filas"
+  row_count_more: "%{count}+ filas"
   elapsed: "%{seconds} s"
   busy: Ya hay una sentencia ejecutándose en este panel.
   no_statement: No hay ninguna sentencia que ejecutar.
@@ -430,12 +469,24 @@ query:
   hint_network: Se perdió la conexión con la base de datos.
   hint_canceled: La sentencia se canceló.
   open_file_select: Elige un archivo SQL
+  save_failed: "No se pudo guardar el archivo: %{error}"
+  unsaved: Cambios no guardados en el archivo
+  save_busy: "El archivo todavía se está leyendo o escribiendo. Inténtalo de nuevo en un momento."
+  file_changed: "El archivo ha cambiado en el disco desde que esta pestaña lo leyó o guardó por última vez, así que no se ha sobrescrito. Elige dónde guardarlo."
 
 data:
   loading: cargando…
+  load_canceled: Se canceló la carga de las filas.
   refresh: Recargar
+  filter_placeholder: "Condición para filtrar las filas, p. ej. NAME = 'a'"
+  filter_apply: Filtrar
+  filter_clear: Borrar
+  filtered: Filtrado
+  empty_filtered: Ninguna fila cumple el filtro.
+  filter_one_condition: El filtro debe ser una sola condición, sin otra sentencia detrás.
   empty: Esta tabla no tiene filas.
   row_count: "%{count} filas"
+  row_count_more: "%{count}+ filas"
   no_primary_key: "Esta tabla no tiene clave primaria; sus filas se pueden leer pero no modificar."
   read_only: "Esta conexión es de solo lectura; sus filas se pueden leer pero no modificar."
   discard_first: Aplica o descarta primero los cambios pendientes.
@@ -532,6 +583,7 @@ extract:
   canceling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
   canceled: "Cancelado. No se escribió nada en %{path}."
+  stop_question: ¿Detener la extracción? No se escribirá nada en el archivo.
   failed: "La extracción falló: %{error}"
   failed_unknown: La extracción falló y el puente no dijo por qué.
 
@@ -558,8 +610,15 @@ transfer:
   done: "Se transfirieron %{rows} filas a %{table}."
   done_skipped: "%{skipped} filas no se pudieron insertar y se omitieron."
   canceled: "Cancelado. %{rows} filas ya se habían confirmado en %{table} y siguen ahí."
+  stop_question: ¿Detener la transferencia? Las filas ya confirmadas se quedan en la tabla de destino.
   failed: "La transferencia falló: %{error}"
   failed_unknown: La transferencia falló y el puente no dijo por qué.
+  choose_target: Elige la conexión a la que copiar las filas.
+  no_other_connection: No hay otra conexión abierta. Abre la conexión de destino, o elige esta e indica otra tabla.
+  same_table: El destino es la propia tabla de origen. Elige otra conexión, esquema o tabla.
+  truncate_confirm: "Antes de empezar la copia se eliminarán todas las filas de %{table}."
+  truncate_confirm_rows: "Antes de empezar la copia se eliminarán las %{rows} filas de %{table}."
+  truncate_start: Vaciar y transferir
 
 backup:
   title: Copia de seguridad del esquema
@@ -579,6 +638,7 @@ backup:
   canceling: Cancelando…
   done: "Se escribieron %{rows} filas (%{bytes}) en %{path}."
   canceled: "Cancelado. No se escribió nada en %{path}."
+  stop_question: ¿Detener la copia de seguridad? No se escribirá nada en el archivo.
   failed: "La copia de seguridad falló: %{error}"
   failed_unknown: La copia de seguridad falló y el puente no dijo por qué.
 
@@ -587,6 +647,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: cargando…
+  loading_tables: "Leyendo las claves: %{done} de %{total} tablas…"
+  load_canceled: Se canceló la carga del diagrama.
   load_failed: "No se pudo dibujar el diagrama: %{error}"
   empty: Este esquema no tiene tablas.
   auto_arrange: Organizar
@@ -602,8 +664,12 @@ erd:
 # two of them describe.
 builder:
   tab: "Generador %{index}"
-  canvas_hint: Selecciona una tabla en el explorador y añádela al generador.
+  canvas_hint: Arrastra una tabla o vista del explorador a este lienzo, o haz clic derecho sobre ella y elige «Añadir al generador de consultas».
   joins: Combinaciones (JOIN)
+  join_hint: Arrastra una columna sobre una columna de otra tabla para combinarlas, o elige aquí las dos columnas.
+  join_pick: Columna…
+  add_join: Añadir combinación
+  pick_hint: Haz clic en una columna del lienzo para añadirla a la lista SELECT.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -638,6 +704,8 @@ context:
   hide_column: Ocultar esta columna
   show_columns: Mostrar todas las columnas
   copy_column_name: Copiar el nombre de la columna
+  copy_message: Copiar el mensaje
+  copy_sql: Copiar el SQL
   cut: Cortar
   copy: Copiar
   paste: Pegar
@@ -648,11 +716,13 @@ context:
   run_statement: Ejecutar la sentencia
   run_selection: Ejecutar la selección
   run_all: Ejecutar todo
+  explain: Ver plan de ejecución
   find: Buscar…
   replace: Reemplazar…
   close_tab: Cerrar la pestaña
   close_others: Cerrar las demás pestañas
   close_right: Cerrar las pestañas de la derecha
+  reopen_tab: Reabrir la pestaña cerrada
   split_right: Dividir a la derecha
   split_below: Dividir debajo
   close_pane: Cerrar el panel
@@ -665,12 +735,14 @@ context:
   clear_column: Quitar de la lista de selección
   connect: Conectar
   edit: Editar…
+  duplicate: Duplicar…
+  delete: Eliminar…
 
 update:
   title: Actualización disponible
   available: "%{app} %{version} ya está disponible."
   installed: "Ahora mismo estás usando la %{version}."
-  update: Actualizar
+  update: "Actualizar y reiniciar"
   ignore: Ignorar esta versión
   checking: Buscando actualizaciones…
   up_to_date: Ya tienes la última versión.
@@ -713,3 +785,55 @@ lob:
   discard_question: "¿Descartar los cambios de este editor LOB?"
   keep_editing: "Seguir editando"
   invalid_hex: "Introduce pares de dígitos hexadecimales (00–FF) separados por espacios o saltos de línea."
+
+closing:
+  unsaved_title: Cambios sin guardar
+  unsaved_body: "«%{name}» tiene cambios que todavía no se han guardado en su archivo."
+  dont_save: No guardar
+  saving: Guardando…
+  connection_title: "¿Cerrar «%{name}»?"
+  close_connection: Cerrar la conexión
+  risk_uncommitted: Su transacción sin confirmar se revertirá.
+  risk_running: "La sentencia que se está ejecutando en «%{tab}» se detendrá."
+  work_staged: "«%{tab}» en %{connection}: cambios sin aplicar"
+  work_unsaved: "«%{tab}»: cambios sin guardar en su archivo"
+  work_running: "«%{tab}» en %{connection}: una sentencia aún en ejecución"
+  work_uncommitted: "%{connection}: una transacción sin confirmar, que se revertirá"
+  work_extract: Una extracción aún en curso
+  work_transfer: Una transferencia aún en curso
+  work_backup: Una copia de seguridad aún en curso
+
+close_guard:
+  title_window: "¿Cerrar la ventana con trabajo sin guardar?"
+  title_quit: "¿Salir con trabajo sin guardar?"
+  title_restart: "¿Reiniciar con trabajo sin guardar?"
+  message: "Si continúas, se perderá lo siguiente:"
+  more: "…y %{count} más"
+  close_anyway: "Cerrar de todos modos"
+  quit_anyway: "Salir de todos modos"
+  restart_anyway: "Reiniciar de todos modos"
+  save_all: "Guardar todo"
+
+toast:
+  no_connection: "Abre primero una conexión."
+  connecting: "«%{name}» todavía se está conectando."
+  not_connected: "«%{name}» no está conectada. Vuelve a conectarla primero."
+  open_failed: "No se pudo abrir %{file}: %{error}"
+  columns_failed: "No se pudieron leer las columnas de %{table}: %{error}"
+  keychain_unavailable: "El llavero del sistema no está disponible (%{error}). No se pueden leer las contraseñas guardadas y las nuevas no se conservarán."
+
+history:
+  title: "Historial de consultas — %{name}"
+  search: Buscar sentencias
+  empty: Todavía no se ha ejecutado nada en esta conexión.
+  no_match: Ninguna sentencia coincide con la búsqueda.
+  open: Abrir en una pestaña de consulta nueva
+  delete: Eliminar
+  clear: Borrar historial…
+  clear_question: "¿Eliminar las %{count} sentencias del historial de esta conexión? No se puede deshacer."
+  clear_confirm: Eliminar todo
+  done: Ejecutada
+  failed: Falló
+  canceled: Cancelada
+  kept_in: "Guardado en %{path}"
+  recording_off: El registro está desactivado en Ajustes, así que no se añade nada nuevo.

@@ -8,6 +8,8 @@ common:
   cancel: 取消
   save: 保存
   close: 关闭
+  keep_running: 继续运行
+  stop_job: 停止
 
 menu:
   new_connection: 管理连接…
@@ -18,10 +20,13 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: 查询所选对象
+  query_history: 查询历史…
   view_data: 查看数据
   view_structure: 编辑结构
   new_table: 新建表
   open_sql_file: 打开 SQL 文件…
+  save_sql_file: 保存 SQL 文件
+  save_sql_file_as: SQL 文件另存为…
   extract_script: 提取脚本…
   transfer_table: 传输数据行…
   backup_schema: 备份模式（Schema）…
@@ -32,6 +37,9 @@ menu:
   add_to_builder: 添加到查询构建器
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: 新建查询构建器
+  in_explorer: "在资源管理器中按 %{shortcut}"
+  next_pane: 下一个窗格
+  prev_pane: 上一个窗格
   about: 关于 rudbman
   check_updates: 检查更新
   quit: 退出
@@ -45,7 +53,7 @@ menu:
 tab:
   close: 关闭连接
   tip_list: 所有连接
-  tip_new: "新建连接（%{shortcut}）"
+  tip_manage: "管理连接 (%{shortcut})"
   tip_pane_list: 所有标签页
 
 welcome:
@@ -66,6 +74,9 @@ statusbar:
   disconnected: 已断开
   failed: "失败：%{error}"
   tunnel_lost: "SSH 隧道已关闭：%{reason}"
+  uncommitted: 未提交的事务
+  uncommitted_in: "来自“%{tab}”的写入尚未提交。请在该标签页中提交或回滚。"
+  uncommitted_tip: 此连接上的写入尚未提交。
 
 about:
   title: 关于 rudbman
@@ -111,7 +122,11 @@ settings:
   fetch_batch_rows_hint: 滚动结果网格时每次取回的行数
   query_timeout: 语句超时
   query_timeout_hint: 秒 — 0 表示不限制
+  login_timeout: 连接超时
+  login_timeout_hint: 秒 — 0 表示使用驱动的默认值
   confirm_writes_default: 新连接默认在执行写入语句前先确认
+  query_history: 保存查询标签页执行过的语句历史
+  query_history_hint: 按连接配置以纯文本保存在配置目录的 history 文件夹中。关闭后不再记录，已记录的内容会保留，可在历史对话框中删除。
 
   jvm_heap: Java 堆
   jvm_heap_hint: MB — 驱动运行时的 -Xmx
@@ -257,6 +272,13 @@ connect:
   load_failed: "无法读取已保存的连接，在修复或移走该文件之前无法保存或删除：%{error}"
   save_failed: "无法保存连接：%{error}"
   keychain_failed: "无法把密码保存到钥匙串：%{error}"
+  remember_password: 将密码保存到系统钥匙串
+  password_prompt: 此连接不保存密码。请输入密码后点击“连接”。
+  keychain_failed_connected: "无法将密码保存到钥匙串（%{error}）。连接使用此处输入的密码。"
+  driver_has_no_jar_download: 此驱动还没有 JAR。可以在这里下载，或在“驱动”中添加。
+  discard_question: 此表单有尚未保存的更改。
+  keep_editing: 继续编辑
+  discard: 放弃
 
   hint_auth: 请检查用户名和密码
   hint_driver: 请检查驱动 JAR 和驱动类
@@ -267,6 +289,14 @@ connect:
   host_key_question: "%{host} 出示了未知的 %{algorithm} 密钥：%{fingerprint}"
   trust_host_key: 信任该密钥
   host_key_trusted: 主机密钥已加入信任列表。请再试一次。
+  card_connecting: "正在连接“%{name}”…"
+  card_connecting_hint: "%{seconds} 秒后放弃尝试。"
+  card_failed: "无法连接到“%{name}”"
+  card_dead: "与“%{name}”的连接已结束"
+  reconnect: 重新连接
+  edit_connection: 编辑连接…
+  trust_and_reconnect: 信任此密钥并重新连接
+  canceled: 已取消连接尝试。
 
 # 驱动管理器。
 driver:
@@ -397,6 +427,7 @@ query:
   rollback_failed: "回滚失败：%{message}"
   rollback_auto: "回滚（自动提交已启用）"
   uncommitted_pending: "此连接有来自查询编辑器的未提交更改。请先在该查询标签页中提交或回滚。"
+  uncommitted_pending_in: "此连接有来自“%{tab}”的未提交更改。请先在该标签页中提交或回滚。"
   commit: "提交"
   committing: "正在提交…"
   committed: "事务已提交。"
@@ -408,11 +439,19 @@ query:
   result: "结果 %{index}"
   tab: "查询 %{index}"
   empty: 请编写语句并执行。
+  empty_keys: "请编写语句并执行：%{statement} 执行光标所在的语句，%{all} 执行全部。"
   no_results: 该语句没有产生任何结果。
   running: 正在执行…
   rows_affected: "影响 %{count} 行"
   executed: 语句已执行。
+  plan: "执行计划 %{index}"
+  explained: 已读取执行计划，语句未执行。
+  explain_one: 请只选择一条语句来查看其执行计划。
+  explain_unsupported: "%{product} 不支持查看执行计划。"
+  explain_restore_failed: "读取执行计划后未能恢复连接状态（%{message}）。在此连接上执行其他操作前请重新连接。"
+  statement_failed: "第 %{index} 条语句（共 %{total} 条）失败：%{error}"
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   elapsed: "%{seconds} 秒"
   busy: 此窗格中已有语句在执行。
   no_statement: 没有可执行的语句。
@@ -430,12 +469,24 @@ query:
   hint_network: 与数据库的连接已断开。
   hint_canceled: 语句已被取消。
   open_file_select: 选择 SQL 文件
+  save_failed: "无法保存文件：%{error}"
+  unsaved: 有未保存到文件的更改
+  save_busy: "仍在读取或写入文件，请稍后重试。"
+  file_changed: "自此标签页上次读取或保存以来，磁盘上的文件已被更改，因此未覆盖。请选择保存位置。"
 
 data:
   loading: 正在加载…
+  load_canceled: 已取消加载数据行。
   refresh: 刷新
+  filter_placeholder: "用于筛选行的条件，例如 NAME = 'a'"
+  filter_apply: 筛选
+  filter_clear: 清除
+  filtered: 已筛选
+  empty_filtered: 没有符合筛选条件的行。
+  filter_one_condition: 筛选只能是一个条件，后面不能再跟其他语句。
   empty: 该表没有任何行。
   row_count: "%{count} 行"
+  row_count_more: "%{count}+ 行"
   no_primary_key: 该表没有主键，只能查看行而不能修改。
   read_only: 此连接为只读，只能查看行而不能修改。
   discard_first: 请先应用或放弃待处理的更改。
@@ -532,6 +583,7 @@ extract:
   canceling: 正在取消…
   done: "已将 %{rows} 行（%{bytes}）写入 %{path}。"
   canceled: "已取消。没有向 %{path} 写入任何内容。"
+  stop_question: 要停止提取吗？不会向文件写入任何内容。
   failed: "提取失败：%{error}"
   failed_unknown: 提取失败，桥接层没有给出原因。
 
@@ -558,8 +610,15 @@ transfer:
   done: "已将 %{rows} 行传输到 %{table}。"
   done_skipped: "有 %{skipped} 行无法写入，已跳过。"
   canceled: "已取消。已经提交的 %{rows} 行仍留在 %{table} 中。"
+  stop_question: 要停止传输吗？已经提交的行会留在目标表中。
   failed: "传输失败：%{error}"
   failed_unknown: 传输失败，桥接层没有给出原因。
+  choose_target: 请选择要把数据行复制到的连接。
+  no_other_connection: 没有打开其他连接。请打开要复制到的连接，或选择此连接并填写另一个表名。
+  same_table: 目标就是源表本身。请选择其他连接、模式（Schema）或表。
+  truncate_confirm: "开始复制前将删除 %{table} 中的所有行。"
+  truncate_confirm_rows: "开始复制前将删除 %{table} 中的全部 %{rows} 行。"
+  truncate_start: 清空并传输
 
 backup:
   title: 备份模式（Schema）
@@ -579,6 +638,7 @@ backup:
   canceling: 正在取消…
   done: "已将 %{rows} 行（%{bytes}）写入 %{path}。"
   canceled: "已取消。没有向 %{path} 写入任何内容。"
+  stop_question: 要停止备份吗？不会向文件写入任何内容。
   failed: "备份失败：%{error}"
   failed_unknown: 备份失败，桥接层没有给出原因。
 
@@ -587,6 +647,8 @@ erd:
   tab: "ER 图 — %{scope}"
   tab_all: ER 图
   loading: 正在加载…
+  loading_tables: "正在读取表的键：%{done} / %{total}…"
+  load_canceled: 已取消加载图表。
   load_failed: "无法绘制图表：%{error}"
   empty: 该模式中没有表。
   auto_arrange: 自动布局
@@ -602,8 +664,12 @@ erd:
 # two of them describe.
 builder:
   tab: "构建器 %{index}"
-  canvas_hint: 在资源管理器中选择一张表并添加到构建器。
+  canvas_hint: 将表或视图从资源管理器拖到此画布上，或在资源管理器中右键单击并选择“添加到查询构建器”。
   joins: 联接
+  join_hint: 将一列拖到另一张表的列上即可联接它们，也可以在这里选择两列。
+  join_pick: 列…
+  add_join: 添加联接
+  pick_hint: 单击画布上的列即可将其加入 SELECT 列表。
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -638,6 +704,8 @@ context:
   hide_column: 隐藏此列
   show_columns: 显示所有列
   copy_column_name: 复制列名
+  copy_message: 复制消息
+  copy_sql: 复制 SQL
   cut: 剪切
   copy: 复制
   paste: 粘贴
@@ -648,11 +716,13 @@ context:
   run_statement: 执行语句
   run_selection: 执行所选内容
   run_all: 全部执行
+  explain: 查看执行计划
   find: 查找…
   replace: 替换…
   close_tab: 关闭标签页
   close_others: 关闭其他标签页
   close_right: 关闭右侧标签页
+  reopen_tab: 重新打开关闭的标签页
   split_right: 向右拆分
   split_below: 向下拆分
   close_pane: 关闭窗格
@@ -665,12 +735,14 @@ context:
   clear_column: 从 SELECT 列表移除
   connect: 连接
   edit: 编辑…
+  duplicate: 创建副本…
+  delete: 删除…
 
 update:
   title: 有可用更新
   available: "%{app} %{version} 已发布。"
   installed: "当前运行的是 %{version}。"
-  update: 更新
+  update: "更新并重新启动"
   ignore: 忽略此版本
   checking: 正在检查更新…
   up_to_date: 已是最新版本。
@@ -713,3 +785,55 @@ lob:
   discard_question: "要放弃此 LOB 编辑器中的更改吗？"
   keep_editing: "继续编辑"
   invalid_hex: "请输入两位十六进制数字（00–FF），以空格或换行分隔。"
+
+closing:
+  unsaved_title: 未保存的更改
+  unsaved_body: "“%{name}”有尚未保存到文件的更改。"
+  dont_save: 不保存
+  saving: 正在保存…
+  connection_title: "关闭“%{name}”？"
+  close_connection: 关闭连接
+  risk_uncommitted: 未提交的事务将被回滚。
+  risk_running: "“%{tab}”中正在运行的语句将被停止。"
+  work_staged: "%{connection} 上的“%{tab}”：未应用的更改"
+  work_unsaved: "“%{tab}”：未保存到文件的更改"
+  work_running: "%{connection} 上的“%{tab}”：仍在运行的语句"
+  work_uncommitted: "%{connection}：未提交的事务（将被回滚）"
+  work_extract: 仍在运行的提取
+  work_transfer: 仍在运行的传输
+  work_backup: 仍在运行的备份
+
+close_guard:
+  title_window: "有未保存的工作，要关闭窗口吗？"
+  title_quit: "有未保存的工作，要退出吗？"
+  title_restart: "有未保存的工作，要重新启动吗？"
+  message: "如果继续，以下内容将会丢失："
+  more: "…另外 %{count} 项"
+  close_anyway: "仍然关闭"
+  quit_anyway: "仍然退出"
+  restart_anyway: "仍然重新启动"
+  save_all: "全部保存"
+
+toast:
+  no_connection: "请先打开一个连接。"
+  connecting: "“%{name}”仍在连接中。"
+  not_connected: "“%{name}”未连接。请先重新连接。"
+  open_failed: "无法打开 %{file}：%{error}"
+  columns_failed: "无法读取 %{table} 的列：%{error}"
+  keychain_unavailable: "系统钥匙串不可用（%{error}）。无法读取已保存的密码，新密码也不会被保存。"
+
+history:
+  title: "查询历史 — %{name}"
+  search: 搜索语句
+  empty: 此连接尚未执行任何语句。
+  no_match: 没有与搜索匹配的语句。
+  open: 在新查询标签页中打开
+  delete: 删除
+  clear: 清除历史…
+  clear_question: "要删除此连接历史中的全部 %{count} 条语句吗？此操作无法撤销。"
+  clear_confirm: 全部删除
+  done: 已执行
+  failed: 失败
+  canceled: 已取消
+  kept_in: "保存位置：%{path}"
+  recording_off: 设置中已关闭记录，不会再添加新语句。

@@ -141,8 +141,12 @@ mod tab {
     pub const FETCH_BATCH: isize = 110;
     /// Statement timeout.
     pub const QUERY_TIMEOUT: isize = 120;
+    /// Connection attempt timeout.
+    pub const LOGIN_TIMEOUT: isize = 125;
     /// Default of a new profile's "confirm writes" flag.
     pub const CONFIRM_WRITES: isize = 130;
+    /// "Keep a history of the statements run" toggle.
+    pub const QUERY_HISTORY: isize = 135;
     /// Java heap ceiling.
     pub const JVM_HEAP: isize = 140;
     /// Extra JVM arguments.
@@ -302,6 +306,8 @@ pub struct SettingsDialog {
     titlebar: TitlebarStyle,
     /// What a newly created connection profile's "confirm writes" starts at.
     confirm_writes_default: bool,
+    /// Whether the statements query tabs run are written into the history.
+    query_history: bool,
     /// Editor font family; `None` means the per-OS default.
     font_family: Option<SharedString>,
     /// The chrome palettes, as the management row and the editor see them.
@@ -357,10 +363,16 @@ pub struct SettingsDialog {
     fetch_batch_input: Entity<TextInput>,
     /// Statement timeout in seconds; `0` disables it.
     query_timeout_input: Entity<TextInput>,
+    /// Seconds a connection attempt may take.
+    login_timeout_input: Entity<TextInput>,
     /// Java heap ceiling in megabytes.
     jvm_heap_input: Entity<TextInput>,
     /// Extra JVM arguments, separated by spaces.
     jvm_args_input: Entity<TextInput>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl SettingsDialog {
@@ -404,6 +416,7 @@ impl SettingsDialog {
         let opacity_input = field(cx, "100".into(), tab::OPACITY);
         let fetch_batch_input = field(cx, "500".into(), tab::FETCH_BATCH);
         let query_timeout_input = field(cx, "0".into(), tab::QUERY_TIMEOUT);
+        let login_timeout_input = field(cx, "30".into(), tab::LOGIN_TIMEOUT);
         let jvm_heap_input = field(cx, "1024".into(), tab::JVM_HEAP);
         let jvm_args_input = field(cx, "-Dfoo=bar".into(), tab::JVM_ARGS);
 
@@ -414,6 +427,7 @@ impl SettingsDialog {
         restrict_to_number(cx, &opacity_input, false, 3);
         restrict_to_number(cx, &fetch_batch_input, false, 6);
         restrict_to_number(cx, &query_timeout_input, false, 6);
+        restrict_to_number(cx, &login_timeout_input, false, 3);
         restrict_to_number(cx, &jvm_heap_input, false, 6);
 
         // The two sizes are previewed as they are typed. Registered after the
@@ -456,6 +470,7 @@ impl SettingsDialog {
             background_blur: defaults.window.background_blur,
             titlebar: defaults.window.titlebar,
             confirm_writes_default: defaults.confirm_writes_default,
+            query_history: defaults.query_history,
             font_family: defaults.editor_font_family.map(SharedString::from),
             ui_catalog,
             editor_catalog,
@@ -466,6 +481,7 @@ impl SettingsDialog {
             editor_events: None,
             status: None,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
@@ -483,6 +499,7 @@ impl SettingsDialog {
             opacity_input,
             fetch_batch_input,
             query_timeout_input,
+            login_timeout_input,
             jvm_heap_input,
             jvm_args_input,
         }
@@ -730,6 +747,7 @@ impl SettingsDialog {
         self.background_blur = settings.window.background_blur;
         self.titlebar = settings.window.titlebar;
         self.confirm_writes_default = settings.confirm_writes_default;
+        self.query_history = settings.query_history;
         self.font_family = settings.editor_font_family.clone().map(SharedString::from);
 
         set_text(
@@ -752,6 +770,11 @@ impl SettingsDialog {
         set_text(
             &self.query_timeout_input,
             settings.query_timeout_s.to_string(),
+            cx,
+        );
+        set_text(
+            &self.login_timeout_input,
+            settings.login_timeout_s.to_string(),
             cx,
         );
         set_text(&self.jvm_heap_input, settings.jvm_heap_mb.to_string(), cx);
@@ -780,6 +803,7 @@ impl SettingsDialog {
         settings.editor_font_family = self.font_family.as_ref().map(ToString::to_string);
         settings.editor_word_wrap = self.editor_word_wrap;
         settings.confirm_writes_default = self.confirm_writes_default;
+        settings.query_history = self.query_history;
         settings.window.titlebar = self.titlebar;
         settings.window.background_blur = self.background_blur;
 
@@ -797,6 +821,9 @@ impl SettingsDialog {
         }
         if let Some(seconds) = parse_number::<u32>(&self.query_timeout_input, cx) {
             settings.query_timeout_s = seconds;
+        }
+        if let Some(seconds) = parse_number::<u32>(&self.login_timeout_input, cx) {
+            settings.login_timeout_s = seconds;
         }
         if let Some(heap) = parse_number::<u32>(&self.jvm_heap_input, cx) {
             settings.jvm_heap_mb = heap;
@@ -1222,43 +1249,55 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.ui_theme"),
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .child(theme_picker)
-                        .child(theme_actions),
-                ))
-                .child(form_row("", follows_ui))
-                .child(form_row(
-                    ts!("settings.editor_theme"),
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .child(editor_theme)
-                        .child(editor_theme_actions),
-                ))
-                .child(form_row(
-                    ts!("settings.ui_font_size"),
-                    suffixed(
-                        self.ui_font_size_input.clone(),
-                        ts!("settings.font_size_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row(ts!("settings.editor_font"), font))
-                .child(form_row(
-                    ts!("settings.editor_font_size"),
-                    suffixed(
-                        self.editor_font_size_input.clone(),
-                        ts!("settings.font_size_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row("", word_wrap)),
+                .child(
+                    form_row(
+                        ts!("settings.ui_theme"),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(theme_picker)
+                            .child(theme_actions),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", follows_ui).label_width(self.label_width))
+                .child(
+                    form_row(
+                        ts!("settings.editor_theme"),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(editor_theme)
+                            .child(editor_theme_actions),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(
+                        ts!("settings.ui_font_size"),
+                        suffixed(
+                            self.ui_font_size_input.clone(),
+                            ts!("settings.font_size_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row(ts!("settings.editor_font"), font).label_width(self.label_width))
+                .child(
+                    form_row(
+                        ts!("settings.editor_font_size"),
+                        suffixed(
+                            self.editor_font_size_input.clone(),
+                            ts!("settings.font_size_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", word_wrap).label_width(self.label_width)),
         )
     }
 
@@ -1307,12 +1346,15 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.opacity"),
-                    suffixed(self.opacity_input.clone(), ts!("settings.opacity_hint"), cx),
-                ))
-                .child(form_row("", blur))
-                .child(form_row(ts!("settings.titlebar"), titlebar)),
+                .child(
+                    form_row(
+                        ts!("settings.opacity"),
+                        suffixed(self.opacity_input.clone(), ts!("settings.opacity_hint"), cx),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", blur).label_width(self.label_width))
+                .child(form_row(ts!("settings.titlebar"), titlebar).label_width(self.label_width)),
         )
     }
 
@@ -1360,7 +1402,7 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(ts!("settings.language"), language))
+                .child(form_row(ts!("settings.language"), language).label_width(self.label_width))
                 .child(hint(ts!("settings.language_hint"), cx)),
         )
     }
@@ -1375,12 +1417,25 @@ impl SettingsDialog {
         )
         .checked(self.confirm_writes_default)
         .tab_index(tab::CONFIRM_WRITES)
-        .on_toggle(move |checked, _window, cx| {
-            this.update(cx, |dialog, cx| {
-                dialog.confirm_writes_default = checked;
-                cx.notify();
-            });
+        .on_toggle({
+            let this = this.clone();
+            move |checked, _window, cx| {
+                this.update(cx, |dialog, cx| {
+                    dialog.confirm_writes_default = checked;
+                    cx.notify();
+                });
+            }
         });
+
+        let query_history = Checkbox::new("settings-query-history", ts!("settings.query_history"))
+            .checked(self.query_history)
+            .tab_index(tab::QUERY_HISTORY)
+            .on_toggle(move |checked, _window, cx| {
+                this.update(cx, |dialog, cx| {
+                    dialog.query_history = checked;
+                    cx.notify();
+                });
+            });
 
         section(
             ts!("settings.section.database"),
@@ -1389,23 +1444,42 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.fetch_batch_rows"),
-                    suffixed(
-                        self.fetch_batch_input.clone(),
-                        ts!("settings.fetch_batch_rows_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row(
-                    ts!("settings.query_timeout"),
-                    suffixed(
-                        self.query_timeout_input.clone(),
-                        ts!("settings.query_timeout_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row("", confirm_writes)),
+                .child(
+                    form_row(
+                        ts!("settings.fetch_batch_rows"),
+                        suffixed(
+                            self.fetch_batch_input.clone(),
+                            ts!("settings.fetch_batch_rows_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(
+                        ts!("settings.query_timeout"),
+                        suffixed(
+                            self.query_timeout_input.clone(),
+                            ts!("settings.query_timeout_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(
+                        ts!("settings.login_timeout"),
+                        suffixed(
+                            self.login_timeout_input.clone(),
+                            ts!("settings.login_timeout_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(form_row("", confirm_writes).label_width(self.label_width))
+                .child(form_row("", query_history).label_width(self.label_width))
+                .child(hint(ts!("settings.query_history_hint"), cx)),
         )
     }
 
@@ -1418,18 +1492,21 @@ impl SettingsDialog {
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(form_row(
-                    ts!("settings.jvm_heap"),
-                    suffixed(
-                        self.jvm_heap_input.clone(),
-                        ts!("settings.jvm_heap_hint"),
-                        cx,
-                    ),
-                ))
-                .child(form_row(
-                    ts!("settings.jvm_args"),
-                    self.jvm_args_input.clone(),
-                ))
+                .child(
+                    form_row(
+                        ts!("settings.jvm_heap"),
+                        suffixed(
+                            self.jvm_heap_input.clone(),
+                            ts!("settings.jvm_heap_hint"),
+                            cx,
+                        ),
+                    )
+                    .label_width(self.label_width),
+                )
+                .child(
+                    form_row(ts!("settings.jvm_args"), self.jvm_args_input.clone())
+                        .label_width(self.label_width),
+                )
                 .child(hint(ts!("settings.jvm_hint"), cx)),
         )
     }
@@ -1469,7 +1546,7 @@ impl SettingsDialog {
                             .flex_col()
                             .min_h_0()
                             .gap(px(14.))
-                            .max_h(px(BODY_MAX_HEIGHT))
+                            .max_h(rugpui::scaled(BODY_MAX_HEIGHT, cx))
                             .overflow_y_scroll()
                             .smooth_scroll(&self.body_scroll)
                             .restrict_scroll_to_axis()
@@ -1491,7 +1568,7 @@ impl SettingsDialog {
 
         let status = self.status.clone().map(|message| {
             div()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(StatusLevel::Error.color(&chrome))
                 .child(message)
         });
@@ -1543,8 +1620,30 @@ impl Focusable for SettingsDialog {
     }
 }
 
+impl SettingsDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("settings.ui_theme"),
+            ts!("settings.editor_theme"),
+            ts!("settings.ui_font_size"),
+            ts!("settings.editor_font"),
+            ts!("settings.editor_font_size"),
+            ts!("settings.opacity"),
+            ts!("settings.titlebar"),
+            ts!("settings.language"),
+            ts!("settings.fetch_batch_rows"),
+            ts!("settings.query_timeout"),
+            ts!("settings.login_timeout"),
+            ts!("settings.jvm_heap"),
+            ts!("settings.jvm_args"),
+        ]
+    }
+}
+
 impl Render for SettingsDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("settings-dialog");
         }
@@ -1616,7 +1715,7 @@ impl Render for SettingsDialog {
             .child(modal(
                 "settings-modal",
                 title,
-                px(DIALOG_WIDTH),
+                rugpui::scaled(DIALOG_WIDTH, cx),
                 body,
                 on_dismiss,
             ))
@@ -1672,7 +1771,9 @@ mod tests {
             jvm_extra_args: vec!["-Xss4m".to_string(), "-Dfoo=bar".to_string()],
             fetch_batch_rows: 1_000,
             query_timeout_s: 30,
+            login_timeout_s: 12,
             confirm_writes_default: false,
+            query_history: false,
             window: WindowState {
                 x: Some(120),
                 y: Some(60),
@@ -1905,7 +2006,11 @@ mod tests {
             ts!("settings.fetch_batch_rows_hint"),
             ts!("settings.query_timeout"),
             ts!("settings.query_timeout_hint"),
+            ts!("settings.login_timeout"),
+            ts!("settings.login_timeout_hint"),
             ts!("settings.confirm_writes_default"),
+            ts!("settings.query_history"),
+            ts!("settings.query_history_hint"),
             ts!("settings.jvm_heap"),
             ts!("settings.jvm_heap_hint"),
             ts!("settings.jvm_args"),
@@ -1973,7 +2078,12 @@ mod tests {
             assert_eq!(section_of(index), 1, "{index}");
         }
         assert_eq!(section_of(tab::LANGUAGE), 2);
-        for index in [tab::FETCH_BATCH, tab::QUERY_TIMEOUT, tab::CONFIRM_WRITES] {
+        for index in [
+            tab::FETCH_BATCH,
+            tab::QUERY_TIMEOUT,
+            tab::LOGIN_TIMEOUT,
+            tab::CONFIRM_WRITES,
+        ] {
             assert_eq!(section_of(index), 3, "{index}");
         }
         for index in [tab::JVM_HEAP, tab::JVM_ARGS, tab::CANCEL, tab::SAVE] {

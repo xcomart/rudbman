@@ -416,7 +416,10 @@ impl LobDialog {
         } else {
             "value.txt"
         };
-        let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        // Where the last export went, not the process's working directory —
+        // which for an application started from a desktop is wherever the
+        // launcher happened to be.
+        let directory = crate::extract_dialog::output_directory(cx);
         let prompt = cx.prompt_for_new_path(&directory, Some(name));
         cx.spawn(async move |dialog, cx| {
             let path = match prompt.await {
@@ -432,6 +435,11 @@ impl LobDialog {
                 }
                 _ => return,
             };
+            dialog
+                .update(cx, |_, cx| {
+                    crate::extract_dialog::remember_output(&path, cx)
+                })
+                .ok();
             let result = cx
                 .background_spawn(async move {
                     contents
@@ -601,7 +609,12 @@ impl Render for LobDialog {
             .flex_col()
             .min_h_0()
             .gap(px(10.))
-            .capture_action(cx.listener(|dialog, _: &CloseFind, _, cx| {
+            // In the bubble phase, after the editor has had it: with its find
+            // bar open the editor closes the bar and the key goes no further,
+            // and only with the bar shut does it pass the action on to here,
+            // where `Escape` means the viewer. Capturing it first closed the
+            // whole viewer under a user who only meant to put the bar away.
+            .on_action(cx.listener(|dialog, _: &CloseFind, _, cx| {
                 dialog.request_close(cx);
                 cx.stop_propagation();
             }))
@@ -642,13 +655,13 @@ impl Render for LobDialog {
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(status),
             )
             .children(self.truncated.then(|| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("lob.truncated"))
             }))
@@ -663,12 +676,12 @@ impl Render for LobDialog {
                     .border_1()
                     .border_color(chrome.border)
                     .font_family(crate::app_settings::monospace_family(cx))
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .child(self.editor.clone()),
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(if !self.writable {
                         ts!("lob.read_only")
@@ -680,13 +693,13 @@ impl Render for LobDialog {
             )
             .children(self.error.clone().map(|error| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.danger)
                     .child(error)
             }))
             .children(self.message.clone().map(|message| {
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(message)
             }))
@@ -695,7 +708,11 @@ impl Render for LobDialog {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(div().text_size(px(12.)).child(ts!("lob.discard_question")))
+                    .child(
+                        div()
+                            .text_size(rugpui::TextSize::Sm.size(cx))
+                            .child(ts!("lob.discard_question")),
+                    )
                     .child(
                         div()
                             .flex()
@@ -739,7 +756,7 @@ impl Render for LobDialog {
             .child(modal(
                 "lob-dialog",
                 self.title.clone(),
-                px(760.),
+                rugpui::scaled(760., cx),
                 body,
                 move |_, cx| this.update(cx, |dialog, cx| dialog.request_close(cx)),
             ))

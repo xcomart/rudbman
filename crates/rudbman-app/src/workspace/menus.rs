@@ -184,6 +184,14 @@ impl Workspace {
             }
         };
 
+        let settled = self.connections.get(index).is_some_and(|open| {
+            matches!(
+                open.state,
+                ConnectionState::Failed(_) | ConnectionState::Dead(_)
+            )
+        });
+        let profile = self.connections.get(index).map(|open| open.profile.id);
+
         vec![
             MenuRow::new(ts!("menu.new_query"))
                 .shortcut(format!("{SHORTCUT_MODIFIER}+T"))
@@ -196,6 +204,38 @@ impl Workspace {
                 .on_activate(on_tab(|workspace, window, cx| {
                     workspace.open_builder(window, cx);
                 })),
+            // Not gated on the session: what was run can be read, searched
+            // and copied with the connection down.
+            MenuRow::new(ts!("menu.query_history"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+Shift+H"))
+                .on_activate(on_tab(|workspace, window, cx| {
+                    workspace.open_history(window, cx);
+                })),
+            MenuRow::separator(),
+            // A new attempt in the same tab, for one that never opened or whose
+            // session has ended: what the card in its work area offers too.
+            MenuRow::new(ts!("connect.reconnect"))
+                .enabled(settled)
+                .on_activate({
+                    let this = this.clone();
+                    move |window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            workspace.select_connection(index, window, cx);
+                            workspace.reconnect(index, window, cx);
+                        });
+                    }
+                }),
+            MenuRow::new(ts!("connect.edit_connection")).on_activate({
+                let this = this.clone();
+                move |window, cx| {
+                    let Some(profile) = profile else {
+                        return;
+                    };
+                    this.update(cx, |workspace, cx| {
+                        workspace.edit_profile(profile, window, cx)
+                    });
+                }
+            }),
             MenuRow::separator(),
             MenuRow::new(ts!("tab.close")).on_activate({
                 let this = this.clone();
@@ -241,6 +281,11 @@ impl Workspace {
         };
         let others: Vec<usize> = (0..count).filter(|other| *other != index).collect();
         let to_the_right: Vec<usize> = (index + 1..count).collect();
+        let reopenable = can_split && !area.closed.is_empty();
+        let close_tab = match CLOSE_TAB_SHORTCUT {
+            Some((_, label)) => MenuRow::new(ts!("context.close_tab")).shortcut(label),
+            None => MenuRow::new(ts!("context.close_tab")),
+        };
 
         vec![
             MenuRow::new(ts!("context.rename_tab")).on_activate({
@@ -252,13 +297,28 @@ impl Workspace {
                 }
             }),
             MenuRow::separator(),
-            MenuRow::new(ts!("context.close_tab")).on_activate(close(vec![index])),
+            close_tab.on_activate(close(vec![index])),
             MenuRow::new(ts!("context.close_others"))
                 .enabled(!others.is_empty())
                 .on_activate(close(others)),
             MenuRow::new(ts!("context.close_right"))
                 .enabled(!to_the_right.is_empty())
                 .on_activate(close(to_the_right)),
+            // Beside the closes it undoes. It reopens into the pane the
+            // marker is on, which a right-click does not move — so the marker
+            // goes to the pane that was right-clicked first.
+            MenuRow::new(ts!("context.reopen_tab"))
+                .shortcut(format!("{SHORTCUT_MODIFIER}+Shift+T"))
+                .enabled(reopenable)
+                .on_activate({
+                    let this = this.clone();
+                    move |window, cx| {
+                        this.update(cx, |workspace, cx| {
+                            workspace.mark_pane(pane);
+                            workspace.reopen_closed_tab(window, cx);
+                        });
+                    }
+                }),
             MenuRow::separator(),
             MenuRow::new(ts!("context.split_right"))
                 .enabled(can_split)
@@ -296,12 +356,29 @@ impl Workspace {
 
     /// The menu of one row of the welcome screen's saved list.
     ///
-    /// The two things there are to do with a saved connection: open it, which
-    /// is what clicking the row already does, and change it — which otherwise
-    /// means opening the dialog from the button above and finding the profile
-    /// again in a second copy of the same list.
+    /// What there is to do with a saved connection: open it, which is what
+    /// clicking the row already does, change it, copy it and delete it — the
+    /// same four rulogman's welcome list offers, so the sibling applications'
+    /// lists answer a right-click alike. The last three open the connection
+    /// dialog over the row — with the copy made, or the delete question up —
+    /// rather than doing anything from the menu itself: both end in a form or
+    /// a question the dialog already has, and a delete from here is asked
+    /// exactly as it is asked there.
     pub(super) fn profile_rows(&self, id: Uuid, cx: &mut Context<Self>) -> Vec<MenuRow> {
         let this = cx.entity();
+        let dialog = |open: fn(&mut ConnectionDialog, Uuid, &mut Context<ConnectionDialog>)| {
+            let this = this.clone();
+            move |window: &mut Window, cx: &mut App| {
+                this.update(cx, |workspace, cx| {
+                    if workspace.close_overlays(window, cx) {
+                        workspace
+                            .connect
+                            .update(cx, |dialog, cx| open(dialog, id, cx));
+                        cx.notify();
+                    }
+                });
+            }
+        };
         vec![
             MenuRow::new(ts!("context.connect")).on_activate({
                 let this = this.clone();
@@ -310,9 +387,12 @@ impl Workspace {
                 }
             }),
             MenuRow::separator(),
-            MenuRow::new(ts!("context.edit")).on_activate(move |window, cx| {
-                this.update(cx, |workspace, cx| workspace.edit_profile(id, window, cx));
-            }),
+            MenuRow::new(ts!("context.edit")).on_activate(dialog(ConnectionDialog::open_at)),
+            MenuRow::new(ts!("context.duplicate"))
+                .on_activate(dialog(ConnectionDialog::open_duplicating)),
+            MenuRow::separator(),
+            MenuRow::new(ts!("context.delete"))
+                .on_activate(dialog(ConnectionDialog::open_deleting)),
         ]
     }
 }

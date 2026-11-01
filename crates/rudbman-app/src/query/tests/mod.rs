@@ -181,6 +181,7 @@ fn menu_rows(
     window
         .update(cx, |pane, _window, cx| match menu {
             PaneMenu::Editor { .. } => pane.editor_rows(cx),
+            PaneMenu::Log { index, .. } => pane.log_rows(index),
             PaneMenu::Grid { id, target, .. } => pane.grid_rows(id, target, cx),
         })
         .expect("the window is open")
@@ -349,6 +350,9 @@ fn server_rows(connected: &Connected, sql: &str) -> Vec<String> {
 mod draft;
 mod editing;
 mod execution;
+mod explain;
+mod file;
+mod history;
 mod lob;
 mod menus;
 mod statements;

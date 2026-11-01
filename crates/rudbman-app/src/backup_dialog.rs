@@ -36,7 +36,7 @@ use rugpui::{Button, ButtonVariant, Checkbox, TextInput, form_row, modal, theme}
 
 use crate::connection::SessionHandle;
 use crate::explorer::Scope;
-use crate::extract_dialog::{POLL_INTERVAL, default_directory, format_bytes, non_empty};
+use crate::extract_dialog::{POLL_INTERVAL, format_bytes, non_empty};
 use crate::i18n::ts;
 
 /// Width of the dialog panel, matching the extraction's.
@@ -253,12 +253,19 @@ pub struct BackupDialog {
     batch_input: Entity<TextInput>,
     /// Which half of the dialog is on screen.
     stage: Stage,
+    /// Whether `Escape` over a running job has asked "stop it?" and is
+    /// waiting for the answer; see [`crate::extract_dialog::render_stop_question`].
+    asking_stop: bool,
     /// A refusal to show under the form.
     notice: Option<SharedString>,
     /// The task that starts the job and then polls it.
     ///
     /// Dropping it cancels the job.
     _poll: Option<Task<()>>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl BackupDialog {
@@ -274,6 +281,7 @@ impl BackupDialog {
         Self {
             open: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             pending_focus: false,
             scope: None,
             session: None,
@@ -284,6 +292,7 @@ impl BackupDialog {
             data: true,
             batch_input,
             stage: Stage::Form,
+            asking_stop: false,
             notice: None,
             _poll: None,
         }
@@ -307,6 +316,7 @@ impl BackupDialog {
         self.batch_input
             .update(cx, |input, cx| input.set_content("1", cx));
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self.notice = None;
         self._poll = None;
         self.open = true;
@@ -319,6 +329,29 @@ impl BackupDialog {
         self.open
     }
 
+    /// Whether a job is running under the card.
+    ///
+    /// The one state nothing but the user's own answer may close the dialog
+    /// from: closing cancels (see [`BackupDialog::close`]), and a job of
+    /// minutes lost to a stray click or chord is not something anyone asked
+    /// for. The shell asks this before it closes the dialog to open another.
+    pub fn is_running(&self) -> bool {
+        self.open && matches!(self.stage, Stage::Running(_))
+    }
+
+    /// What `Enter` means when no control on the card keeps it — a field
+    /// that has no submit of its own, or the card itself: start from a form
+    /// that can, close a job that ended, and nothing while one runs. A
+    /// focused button keeps its own `Enter`, so the answer is never a guess
+    /// about which one was meant.
+    pub fn confirm(&mut self, cx: &mut Context<Self>) {
+        match &self.stage {
+            Stage::Form if self.spec(cx).is_some() => self.start(cx),
+            Stage::Ended(_) => self.dismiss(cx),
+            _ => {}
+        }
+    }
+
     /// Hides the dialog without emitting an event.
     ///
     /// **A job still running is canceled**, by the drop chain
@@ -328,6 +361,7 @@ impl BackupDialog {
         self.open = false;
         self.pending_focus = false;
         self.stage = Stage::Form;
+        self.asking_stop = false;
         self._poll = None;
         self.session = None;
         self.scope = None;
@@ -347,8 +381,18 @@ impl BackupDialog {
     /// `Escape` is the cancel button and *not* a close, so that the card cannot
     /// be dismissed into a poll loop nobody is watching.
     pub fn escape(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.stage, Stage::Running(_)) {
-            self.request_cancel(cx);
+        if let Stage::Running(running) = &self.stage {
+            // Asked rather than done: `Escape` is the key a user reaches for
+            // to get out of *anything*, and over a running job getting out
+            // means throwing the job away. A second `Escape` answers "keep
+            // it running", and a cancel already on its way is not asked
+            // about again.
+            if self.asking_stop {
+                self.asking_stop = false;
+            } else if !running.canceling {
+                self.asking_stop = true;
+            }
+            cx.notify();
             return;
         }
         self.dismiss(cx);
@@ -405,7 +449,7 @@ impl BackupDialog {
             .output
             .as_ref()
             .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(default_directory);
+            .unwrap_or_else(|| crate::extract_dialog::output_directory(cx));
         let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
 
         cx.spawn(async move |dialog, cx| {
@@ -419,6 +463,7 @@ impl BackupDialog {
             };
             dialog
                 .update(cx, |dialog, cx| {
+                    crate::extract_dialog::remember_output(&path, cx);
                     dialog.output = Some(path);
                     dialog.notice = None;
                     cx.notify();
@@ -521,6 +566,7 @@ impl BackupDialog {
         let progress = match reading {
             Ok(progress) => progress,
             Err(error) => {
+                self.asking_stop = false;
                 self.stage = Stage::Ended(Ended::Failed(SharedString::from(format!("{error}"))));
                 cx.notify();
                 return false;
@@ -536,6 +582,9 @@ impl BackupDialog {
             return true;
         }
 
+        // A job that ended while "stop it?" was up has answered the question
+        // itself.
+        self.asking_stop = false;
         self.stage = Stage::Ended(match progress.state {
             JobState::Done => Ended::Done {
                 rows: progress.rows_done,
@@ -559,6 +608,7 @@ impl BackupDialog {
 
     /// Asks the job to stop. The card stays up until a poll says it did.
     fn request_cancel(&mut self, cx: &mut Context<Self>) {
+        self.asking_stop = false;
         let Stage::Running(running) = &mut self.stage else {
             return;
         };
@@ -601,6 +651,7 @@ impl BackupDialog {
             ts!("backup.scope"),
             div().text_color(chrome.text).child(name),
         )
+        .label_width(self.label_width)
     }
 
     /// The output path cell and the button that picks it.
@@ -628,7 +679,7 @@ impl BackupDialog {
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .text_color(color)
                         .child(text),
                 )
@@ -641,6 +692,7 @@ impl BackupDialog {
                         }),
                 ),
         )
+        .label_width(self.label_width)
     }
 
     /// The form half: everything the job is described by.
@@ -679,10 +731,16 @@ impl BackupDialog {
         // writes `INSERT`s and nothing else, so there is no format to choose
         // and the batch size is the whole of the row half's settings.
         let batch_row = self.data.then(|| {
-            div().pl(px(22.)).child(form_row(
-                ts!("backup.batch_rows"),
-                div().flex_none().w(px(96.)).child(self.batch_input.clone()),
-            ))
+            div().pl(px(22.)).child(
+                form_row(
+                    ts!("backup.batch_rows"),
+                    div()
+                        .flex_none()
+                        .w(rugpui::scaled(96., cx))
+                        .child(self.batch_input.clone()),
+                )
+                .label_width(self.label_width),
+            )
         });
 
         div()
@@ -736,7 +794,7 @@ impl BackupDialog {
             .child(self.render_scope(cx))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(chrome.text_muted)
                     .child(if running.canceling {
                         ts!("backup.canceling")
@@ -782,7 +840,12 @@ impl BackupDialog {
             .flex_col()
             .gap(px(10.))
             .child(self.render_scope(cx))
-            .child(div().text_size(px(12.)).text_color(color).child(message))
+            .child(
+                div()
+                    .text_size(rugpui::TextSize::Sm.size(cx))
+                    .text_color(color)
+                    .child(message),
+            )
     }
 
     /// The button row, which is a different pair in each stage.
@@ -794,7 +857,7 @@ impl BackupDialog {
             div()
                 .flex_1()
                 .min_w_0()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(message)
         });
@@ -829,6 +892,24 @@ impl BackupDialog {
                                 }
                             }),
                     )
+            }
+            Stage::Running(_) if self.asking_stop => {
+                let keep = this.clone();
+                let stop = this.clone();
+                return crate::extract_dialog::render_stop_question(
+                    "backup",
+                    ts!("backup.stop_question"),
+                    move |cx| {
+                        keep.update(cx, |dialog, cx| {
+                            dialog.asking_stop = false;
+                            cx.notify();
+                        });
+                    },
+                    move |cx| {
+                        stop.update(cx, |dialog, cx| dialog.request_cancel(cx));
+                    },
+                    cx,
+                );
             }
             Stage::Running(running) => div().flex().flex_row().gap(px(8.)).child(
                 Button::new("backup-stop", ts!("common.cancel"))
@@ -874,8 +955,20 @@ impl Focusable for BackupDialog {
     }
 }
 
+impl BackupDialog {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("backup.scope"),
+            ts!("backup.output"),
+            ts!("backup.batch_rows"),
+        ]
+    }
+}
+
 impl Render for BackupDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         if !self.open {
             return div().id("backup-dialog");
         }
@@ -895,6 +988,12 @@ impl Render for BackupDialog {
                 this.update(cx, |dialog, cx| dialog.escape(cx));
             }
         };
+        let confirm = {
+            let this = cx.entity();
+            move |_window: &mut Window, cx: &mut App| {
+                this.update(cx, |dialog, cx| dialog.confirm(cx));
+            }
+        };
 
         // Absolute and full-size for the same reason as the other dialogs: an
         // absolutely positioned child is laid out against its direct parent.
@@ -904,18 +1003,26 @@ impl Render for BackupDialog {
             .inset_0()
             .size_full()
             .track_focus(&self.focus_handle)
-            .child(modal(
-                "backup-modal",
-                ts!("backup.title"),
-                px(DIALOG_WIDTH),
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .child(body)
-                    .child(footer),
-                on_dismiss,
-            ))
+            .child(
+                modal(
+                    "backup-modal",
+                    ts!("backup.title"),
+                    rugpui::scaled(DIALOG_WIDTH, cx),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .child(body)
+                        .child(footer),
+                    on_dismiss,
+                )
+                // A press beside the card is the least deliberate gesture
+                // there is, so while a job runs it is the one that does
+                // nothing at all — not even ask; `Escape` asks (see
+                // `escape`).
+                .backdrop_dismisses(!self.is_running())
+                .on_confirm(confirm),
+            )
     }
 }
 

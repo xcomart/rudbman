@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// `handler`, held back while [`Workspace::shortcuts_held`] says so.
+///
+/// Wrapped around the workspace's own commands where the root registers them
+/// rather than written into each, so that a command added later is held back
+/// by being registered the same way — and the one handler that must *not* be,
+/// [`Workspace::dismiss_dialog_action`], is the one registered without it.
+pub(super) fn unless_held<A: gpui::Action>(
+    handler: fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>),
+) -> impl Fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>) + 'static {
+    move |workspace, action, window, cx| {
+        if workspace.shortcuts_held(cx) {
+            return;
+        }
+        handler(workspace, action, window, cx);
+    }
+}
+
 impl Workspace {
     /// Opens the connection dialog.
     pub(super) fn new_connection_action(
@@ -12,6 +29,26 @@ impl Workspace {
     ) {
         self.set_menu_open(false, cx);
         self.open_connect(window, cx);
+    }
+
+    /// `F10`: the application menu, on its first row.
+    ///
+    /// Off macOS only, which is where the ☰ menu is: on macOS the commands are
+    /// the menu bar's, and the key is left to whatever it means there. Held
+    /// like the other shell commands while a dialog or a sheet is up.
+    pub(super) fn open_app_menu_action(
+        &mut self,
+        _: &rugpui::OpenAppMenu,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if cfg!(target_os = "macos") || self.shortcuts_held(cx) {
+            cx.propagate();
+            return;
+        }
+        self.set_menu_open(true, cx);
+        self.menu_by_keyboard = true;
+        cx.notify();
     }
 
     /// Opens the settings dialog.
@@ -63,7 +100,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        self.open_query("", window, cx);
+        if self.say_not_live(cx) {
+            self.open_query("", window, cx);
+        }
     }
 
     /// Opens a query pane over the object selected in the explorer.
@@ -92,6 +131,42 @@ impl Workspace {
     ) {
         self.set_menu_open(false, cx);
         self.open_sql_file(window, cx);
+    }
+
+    /// Reads the plan of the statement under the caret of the query tab on
+    /// screen.
+    pub(super) fn explain_query_action(
+        &mut self,
+        _: &ExplainQuery,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        if let Some(pane) = self.active_query().cloned() {
+            pane.update(cx, |pane, cx| pane.explain(window, cx));
+        }
+    }
+
+    /// Writes the query tab on screen to its file.
+    pub(super) fn save_sql_file_action(
+        &mut self,
+        _: &SaveSqlFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        self.save_sql_file(false, window, cx);
+    }
+
+    /// Writes the query tab on screen to a file chosen anew.
+    pub(super) fn save_sql_file_as_action(
+        &mut self,
+        _: &SaveSqlFileAs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        self.save_sql_file(true, window, cx);
     }
 
     /// Opens the extraction dialog over the object selected in the explorer.
@@ -196,7 +271,41 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.set_menu_open(false, cx);
-        self.open_builder(window, cx);
+        if self.say_not_live(cx) {
+            self.open_builder(window, cx);
+        }
+    }
+
+    /// Closes the tab on top of the active pane, through every guard a close
+    /// passes.
+    pub(super) fn close_tab_action(
+        &mut self,
+        _: &CloseTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.active_pane() else {
+            return;
+        };
+        let Some(index) = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .filter(|pane| !pane.is_empty())
+            .map(Pane::active_index)
+        else {
+            return;
+        };
+        self.close_tab(pane, index, window, cx);
+    }
+
+    /// Brings back the query or builder tab closed most recently.
+    pub(super) fn reopen_closed_tab_action(
+        &mut self,
+        _: &ReopenClosedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.reopen_closed_tab(window, cx);
     }
 
     /// Closes the active pane.
@@ -213,20 +322,90 @@ impl Workspace {
     pub(super) fn focus_next_pane_action(
         &mut self,
         _: &FocusNextPane,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_pane(true, cx);
+        self.cycle_pane(true, window, cx);
     }
 
     /// Moves the pane marker backwards.
     pub(super) fn focus_prev_pane_action(
         &mut self,
         _: &FocusPrevPane,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_pane(false, cx);
+        self.cycle_pane(false, window, cx);
+    }
+
+    /// The next tab of the active pane.
+    pub(super) fn next_tab_action(
+        &mut self,
+        _: &NextTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_tab(true, window, cx);
+    }
+
+    /// The previous tab of the active pane.
+    pub(super) fn prev_tab_action(
+        &mut self,
+        _: &PrevTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_tab(false, window, cx);
+    }
+
+    /// Tab `n` of the active pane.
+    pub(super) fn select_tab_action(
+        &mut self,
+        action: &SelectTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_tab(action.0, window, cx);
+    }
+
+    /// The next connection tab.
+    pub(super) fn next_connection_action(
+        &mut self,
+        _: &NextConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_connection(true, window, cx);
+    }
+
+    /// The previous connection tab.
+    pub(super) fn prev_connection_action(
+        &mut self,
+        _: &PrevConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_connection(false, window, cx);
+    }
+
+    /// The next region, `F6`.
+    pub(super) fn next_region_action(
+        &mut self,
+        _: &NextRegion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_region(true, window, cx);
+    }
+
+    /// The previous region, `Shift+F6`.
+    pub(super) fn prev_region_action(
+        &mut self,
+        _: &PrevRegion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_region(false, window, cx);
     }
 
     /// Splits the active pane to the right.
@@ -264,9 +443,18 @@ impl Workspace {
             self.finish_tab_name(false, window, cx);
             return;
         }
+        if self.history.is_some() {
+            self.escape_history(window, cx);
+            return;
+        }
+        if self.close_question.is_some() {
+            // "Cancel": nothing closes, and the tab the question brought
+            // forward keeps the keyboard if it had it.
+            self.answer_close(closing::CloseAnswer::Cancel, window, cx);
+            return;
+        }
         if self.confirm.is_some() {
             self.answer_confirm(false, window, cx);
-            self.focus_shell(window, cx);
             return;
         }
         if self.update.read(cx).is_open() {
@@ -275,20 +463,23 @@ impl Workspace {
             // swap either, so `Escape` simply does nothing until it is over.
             if !self.update.read(cx).is_busy() {
                 self.update.update(cx, |dialog, cx| dialog.close(cx));
-                self.focus_shell(window, cx);
+                self.restore_focus(window, cx);
             }
             return;
         }
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
-            self.focus_shell(window, cx);
+            self.restore_focus(window, cx);
             return;
         }
         if self.connect.read(cx).is_open() {
-            // Routed through the dialog for the same reason the settings one is:
-            // it stacks a driver manager, a dropdown and a delete confirmation,
-            // and each of those has to be able to take `Escape` for itself
-            // before the whole form is thrown away.
+            // The card answers `Escape` itself while the focus is inside it
+            // (its modal's guard peels the same layers); this is the way in
+            // for a focus on the dialog's own handle, outside the card. Routed
+            // through the dialog for the settings one's reason: it stacks a
+            // driver manager, a dropdown and a delete confirmation, and each
+            // of those has to be able to take `Escape` for itself before the
+            // whole form is thrown away.
             self.connect.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }
@@ -304,9 +495,9 @@ impl Workspace {
         }
         if self.extract.read(cx).is_open() {
             // Routed through the dialog: it stacks a dropdown, and while a job
-            // is running `Escape` is the cancel button rather than a close —
-            // dismissing the card would leave a job writing to a file with
-            // nobody left to stop it.
+            // is running `Escape` asks whether to stop it rather than closing
+            // anything — dismissing the card would cancel a job the user may
+            // have waited minutes on.
             self.extract.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }
@@ -318,7 +509,7 @@ impl Workspace {
         }
         if self.backup.read(cx).is_open() {
             // No dropdown of its own, but a running job still has to take
-            // `Escape` as its cancel button rather than as a close.
+            // `Escape` as its question rather than as a close.
             self.backup.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }

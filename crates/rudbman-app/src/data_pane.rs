@@ -64,9 +64,10 @@ use gpui::{
 use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_jdbc::{ColumnInfo, Cursor, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::Dialect;
-use rugpui::{Button, ButtonVariant, ContextMenu, Theme, theme};
+use rugpui::{Button, ButtonVariant, ContextMenu, TextInput, Theme, theme};
 use rugpui_grid::{
-    GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
+    GridEvent, GridRequest, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
+    SortDirection,
 };
 
 use crate::builder_sql;
@@ -75,6 +76,7 @@ use crate::context_menu::{self, MenuRow};
 use crate::data_edit::{EditableSource, PlannedStatement, RowRef, StagedCell, plan_apply};
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
+use crate::notice::{Notice, NoticeClock, render_notice};
 use crate::query::{QueryError, note, render_error};
 use crate::query_source::{
     ROW_LIMIT, ReadPage, RenderedBatch, ResultSource, Step, advance, page, read_page,
@@ -165,6 +167,9 @@ struct Select {
     /// The column the user ordered by, spelled as [`Order::name`] has it, and
     /// which way.
     order: Option<(String, SortDirection)>,
+    /// The condition the user filtered the rows by, as typed; see
+    /// [`filter_condition`].
+    filter: Option<String>,
     /// Rows per page, and per `FETCH`.
     fetch_rows: u32,
 }
@@ -221,6 +226,15 @@ impl Select {
         }
 
         let mut sql = format!("SELECT * FROM {}", self.table);
+        if let Some(filter) = &self.filter {
+            // Parenthesized, so that an `OR` typed into the field stays inside
+            // it, and on lines of its own, so that a `--` comment at the end of
+            // what was typed ends where its line does instead of taking the
+            // ordering and the page clause with it.
+            sql.push_str(" WHERE (\n");
+            sql.push_str(filter);
+            sql.push_str("\n)");
+        }
         if !terms.is_empty() {
             sql.push_str(" ORDER BY ");
             sql.push_str(&terms.join(", "));
@@ -268,8 +282,9 @@ struct Rows {
     more: Option<More>,
     /// Whether a page is out with a background fetch.
     fetching: bool,
-    /// Keeps the grid's subscription alive for as long as the rows.
-    _events: Subscription,
+    /// Keeps the grid's subscriptions — its events and its key requests —
+    /// alive for as long as the rows.
+    _events: [Subscription; 2],
 }
 
 /// Where the pane's rows have got to.
@@ -280,6 +295,122 @@ enum Load {
     Ready(Box<Rows>),
     /// The driver refused; its own words, through the query pane's envelope.
     Failed(Box<QueryError>),
+}
+
+gpui::actions!(
+    data_pane,
+    [
+        /// Put NULL into the cell under the cursor.
+        SetNullCell,
+        /// Add a row to type into.
+        InsertRow,
+        /// Show the staged changes as the statements that would apply them.
+        ApplyChanges,
+        /// Read the rows again.
+        RefreshRows,
+        /// Put the keyboard in the filter field.
+        FocusFilter,
+        /// Empty the filter field, and read the rows again without the filter
+        /// when one was applied.
+        ClearFilter,
+    ]
+);
+
+/// The key context the pane renders in.
+const KEY_CONTEXT: &str = "DataPane";
+
+/// The key context around the filter field, where `Escape` clears it.
+///
+/// Deeper than [`KEY_CONTEXT`] and the workspace's, so the key reaches this
+/// first while the field has the keyboard, and the grid's `Escape` — which
+/// cancels a cell being edited — is never in the way of it.
+const FILTER_KEY_CONTEXT: &str = "DataFilter";
+
+/// Marks the pane's chords as registered.
+struct Bindings;
+
+impl gpui::Global for Bindings {}
+
+/// The chord each command is bound to, as a menu row or a tooltip writes it.
+///
+/// One table for the bindings and the labels, so that a hint can never name
+/// a key the pane does not answer. Never translated, for
+/// [`SHORTCUT_MODIFIER`]'s reason.
+pub(crate) mod keys {
+    /// Strikes the row out.
+    pub const DELETE_ROW: &str = "Delete";
+    /// NULL into the cell.
+    pub const SET_NULL: &str = if cfg!(target_os = "macos") {
+        "Cmd+0"
+    } else {
+        "Ctrl+0"
+    };
+    /// A new row.
+    pub const INSERT_ROW: &str = "Alt+Insert";
+    /// The apply preview.
+    pub const APPLY: &str = if cfg!(target_os = "macos") {
+        "Cmd+S"
+    } else {
+        "Ctrl+S"
+    };
+    /// Reading the rows again.
+    pub const REFRESH: &str = "F5";
+    /// The filter field.
+    pub const FILTER: &str = if cfg!(target_os = "macos") {
+        "Cmd+F"
+    } else {
+        "Ctrl+F"
+    };
+    /// Applying what the filter field says.
+    pub const APPLY_FILTER: &str = "Enter";
+    /// Clearing it.
+    pub const CLEAR_FILTER: &str = "Esc";
+}
+
+/// A toolbar button with its chord as the hover text.
+///
+/// The button is the widget's and carries no tooltip of its own, so the chord
+/// rides on a box around it.
+fn hinted(id: &'static str, chord: &'static str, button: Button) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex_none()
+        .tooltip(rugpui::tooltip_label(chord))
+        .child(button)
+}
+
+/// Registers the pane's chords, once per application.
+///
+/// In the pane's own key context, so each answers wherever the keyboard is
+/// inside the pane — on the grid, which is where it is while rows are being
+/// edited — and wins over the window's `Ctrl+S`, which has nothing to save
+/// over a data tab. The grid's cell editor is deeper still, so `Delete` typed
+/// into a cell being edited deletes a character, not the row.
+fn bind_keys(cx: &mut App) {
+    if cx.has_global::<Bindings>() {
+        return;
+    }
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        gpui::KeyBinding::new("shift-delete", SetNullCell, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new(&format!("{modifier}-0"), SetNullCell, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new("alt-insert", InsertRow, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new(&format!("{modifier}-s"), ApplyChanges, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new(
+            &format!("{modifier}-enter"),
+            ApplyChanges,
+            Some(KEY_CONTEXT),
+        ),
+        gpui::KeyBinding::new("f5", RefreshRows, Some(KEY_CONTEXT)),
+        // Free in the grid, which has no find of its own, and in the window.
+        gpui::KeyBinding::new(&format!("{modifier}-f"), FocusFilter, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new("escape", ClearFilter, Some(FILTER_KEY_CONTEXT)),
+    ]);
+    cx.set_global(Bindings);
 }
 
 /// One table's rows.
@@ -335,8 +466,33 @@ pub struct DataPane {
     load: Load,
     /// The order the rows were asked in, when one was asked for.
     order: Option<Order>,
-    /// A line the pane wants to say without it being a failure.
-    notice: Option<SharedString>,
+    /// The condition the rows are filtered by, once the filter field's `Enter`
+    /// has applied one.
+    ///
+    /// What was *applied*, which is not necessarily what the field holds: the
+    /// field is the user's to edit, and the rows keep the filter they were
+    /// read under until the next `Enter` says otherwise.
+    filter: Option<String>,
+    /// The filter strip's field.
+    filter_input: Entity<TextInput>,
+    /// A line the pane wants to say, at the level it matters; see
+    /// [`crate::notice`].
+    notice: Option<Notice>,
+    /// Takes an informational notice away after a while.
+    notice_clock: NoticeClock,
+    /// The Cancel button of the apply preview and the discard question, which
+    /// takes the keyboard when either opens.
+    confirm_focus: FocusHandle,
+    /// Whether `Shift+F10` or the Menu key opened the menu showing, so it
+    /// opens on its first row.
+    menu_by_keyboard: bool,
+    /// Where the grid was drawn last, for the menu `Shift+F10` opens over it:
+    /// the grid does not say where its cells are, so the menu hangs just
+    /// inside its top edge.
+    grid_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
+    /// Reaches the driver under the load in flight, for its "Cancel"; `None`
+    /// while nothing is loading.
+    canceller: Option<rudbman_jdbc::Canceller>,
     /// The generation of the newest load. Every delivery carries one, and one
     /// that is not this is an answer a later load has already replaced.
     generation: u64,
@@ -393,6 +549,17 @@ impl DataPane {
         settings: &AppSettings,
         cx: &mut Context<Self>,
     ) -> Self {
+        bind_keys(cx);
+        let this = cx.weak_entity();
+        let filter_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder(ts!("data.filter_placeholder"))
+                .on_submit(move |text, window, cx| {
+                    let text = text.to_string();
+                    this.update(cx, |pane, cx| pane.apply_filter(&text, window, cx))
+                        .ok();
+                })
+        });
         Self {
             target,
             connection,
@@ -406,7 +573,11 @@ impl DataPane {
             keys_read: false,
             load: Load::Running,
             order: None,
+            filter: None,
+            filter_input,
             notice: None,
+            notice_clock: NoticeClock::default(),
+            canceller: None,
             generation: 0,
             context_menu: None,
             confirm_discard: false,
@@ -414,6 +585,9 @@ impl DataPane {
             applying: false,
             apply_error: None,
             focus_handle: cx.focus_handle(),
+            confirm_focus: cx.focus_handle(),
+            menu_by_keyboard: false,
+            grid_bounds: std::rc::Rc::default(),
             lob_dialog: None,
             lob_events: None,
         }
@@ -459,6 +633,23 @@ impl DataPane {
         });
     }
 
+    pub(crate) fn workspace_filter(&self) -> Option<String> {
+        self.filter.clone()
+    }
+
+    /// Puts back the filter a saved workspace or a split copied, in the field
+    /// and as the one the next load applies.
+    pub(crate) fn restore_workspace_filter(
+        &mut self,
+        filter: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter = filter.as_deref().and_then(filter_condition);
+        let text = self.filter.clone().unwrap_or_default();
+        self.filter_input
+            .update(cx, |input, cx| input.set_content(text, cx));
+    }
+
     /// Which connection tab this pane runs against.
     pub fn connection(&self) -> ConnectionId {
         self.connection
@@ -490,6 +681,16 @@ impl DataPane {
         self.session.is_some()
     }
 
+    /// Where the load stands, in words, for a test's failure message.
+    #[cfg(test)]
+    pub(crate) fn load_state(&self) -> String {
+        match &self.load {
+            Load::Running => "running".into(),
+            Load::Failed(error) => format!("failed: {}", error.message),
+            Load::Ready(_) => "ready".into(),
+        }
+    }
+
     /// Whether the keyboard is anywhere inside this pane, as the last drawn
     /// frame had it.
     ///
@@ -505,7 +706,13 @@ impl DataPane {
         }) {
             return true;
         }
-        if self.focus_handle.contains_focused(window, cx) {
+        if self.focus_handle.contains_focused(window, cx)
+            || self
+                .filter_input
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        {
             return true;
         }
         match &self.load {
@@ -554,13 +761,20 @@ impl DataPane {
         }
     }
 
+    /// Whether the pane has a sheet of its own up — the batch preview, the
+    /// discard question or a value viewer — which the window's shortcuts must
+    /// not act behind.
+    pub fn modal_open(&self) -> bool {
+        self.preview.is_some() || self.confirm_discard || self.lob_dialog.is_some()
+    }
+
     /// Says, in the pane itself, why the gesture that was just tried is being
     /// refused while changes are staged.
     ///
     /// The counterpart of [`DataPane::has_pending_edits`] for the shell: a tab
     /// that simply would not close, with nothing said, would read as a bug.
     pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
-        self.notice = Some(ts!("data.discard_first"));
+        self.notice = Some(Notice::warn(ts!("data.discard_first")));
         cx.notify();
     }
 
@@ -602,8 +816,79 @@ impl DataPane {
                 .order
                 .as_ref()
                 .map(|order| (order.name.clone(), order.direction)),
+            filter: self.filter.clone(),
             fetch_rows: self.fetch_rows,
         }
+    }
+
+    /// Whether the rows may be read again now, saying why not when they may
+    /// not.
+    ///
+    /// What every path that replaces the rows asks first — a refresh, a sort
+    /// and a change of filter — so that none of them changes what it was asked
+    /// to change and then finds it cannot read the rows that go with it.
+    fn may_reload(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.lob_dialog.is_some() {
+            return false;
+        }
+        if self.has_pending_edits(cx) {
+            // A re-run replaces the source the edits are keyed to; §7.9.
+            self.notice = Some(Notice::warn(ts!("data.discard_first")));
+            cx.notify();
+            return false;
+        }
+        if self.session.is_none() {
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
+            cx.notify();
+            return false;
+        }
+        true
+    }
+
+    /// `Enter` in the filter field: reads the rows again under the condition
+    /// it holds, or with no filter at all once it is empty.
+    ///
+    /// The field keeps what was typed whatever happens, so a condition the
+    /// database refuses is there to be corrected rather than typed again; the
+    /// refusal itself is the load's, drawn where any failed load is.
+    fn apply_filter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let filter = filter_condition(text);
+        if let Some(filter) = &filter
+            && rudbman_sql::split_statements(filter, &self.dialect).len() > 1
+        {
+            // A second statement after the condition would run as part of a
+            // read, on a pane that is only ever meant to read.
+            self.notice = Some(Notice::warn(ts!("data.filter_one_condition")));
+            cx.notify();
+            return;
+        }
+        if !self.may_reload(cx) {
+            return;
+        }
+        self.filter = filter;
+        self.refresh(window, cx);
+    }
+
+    /// `Escape` in the filter field, and its Clear button: empties the field,
+    /// and reads the rows again without the filter when one was applied.
+    ///
+    /// Asked before the field is touched, so that a clear refused over staged
+    /// edits leaves the field and the rows saying the same thing.
+    fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter.is_some() && !self.may_reload(cx) {
+            return;
+        }
+        self.filter_input.update(cx, |input, cx| input.clear(cx));
+        if self.filter.take().is_some() {
+            self.refresh(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Puts the keyboard in the filter field.
+    fn focus_filter(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.filter_input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
     }
 
     /// Reads the key and the first batch again, from scratch.
@@ -612,22 +897,19 @@ impl DataPane {
     /// moment, and the key has to be known before the grid is built or the key
     /// columns would draw unmarked for a frame and then jump.
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.lob_dialog.is_some() {
-            return;
-        }
-        if self.has_pending_edits(cx) {
-            self.notice = Some(ts!("data.discard_first"));
-            cx.notify();
+        if !self.may_reload(cx) {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
-            cx.notify();
             return;
         };
 
         self.generation += 1;
         let generation = self.generation;
+        // A read of a big table sorted by a column with no index can take as
+        // long as the server needs to sort it; the canceller reaches the
+        // statement without queueing behind it, as the query pane's does.
+        self.canceller = Some(session.session().canceller());
         // Dropping what was there drops its cursor, which closes it.
         self.load = Load::Running;
         self.keys_read = false;
@@ -673,6 +955,7 @@ impl DataPane {
             // kept one open.
             return;
         }
+        self.canceller = None;
         match outcome {
             Ok(opened) => {
                 let Opened {
@@ -709,10 +992,14 @@ impl DataPane {
                 );
 
                 let table = self.qualified();
+                // `Delete`, `F2`, typing and `Ctrl+V` over the grid come back
+                // as requests (see `answer_grid`), because what each one means
+                // — a delete mark, a field, a staged paste — is this pane's.
                 let grid = cx.new(|cx| {
                     GridView::new(source, cx)
                         .insert_table(table)
                         .expand_tooltip(ts!("lob.open_text"))
+                        .key_requests(true)
                 });
                 // The marker the sort that asked for this run was for: the grid
                 // that was wearing it has just been replaced by this one.
@@ -766,10 +1053,19 @@ impl DataPane {
                                     target: *target,
                                     position: *position,
                                 });
+                                pane.menu_by_keyboard = false;
                                 cx.notify();
                             }
                         },
                     );
+
+                let requests = cx.subscribe_in(
+                    &grid,
+                    window,
+                    |pane, _grid, request: &GridRequest, window, cx| {
+                        pane.answer_grid(request, window, cx);
+                    },
+                );
 
                 self.load = Load::Ready(Box::new(Rows {
                     grid,
@@ -777,7 +1073,7 @@ impl DataPane {
                     select,
                     more,
                     fetching: false,
-                    _events: events,
+                    _events: [events, requests],
                 }));
             }
             Err(error) => self.load = Load::Failed(Box::new(QueryError::new(error))),
@@ -791,7 +1087,7 @@ impl DataPane {
             // `detach` has already dropped the way on, so this is only reached
             // by a scroll that was already in flight; saying why the rows stop
             // is better than a grid that quietly ends early.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
@@ -890,7 +1186,7 @@ impl DataPane {
                 failure = Some(QueryError::new(error).message);
             }
         }
-        self.notice = failure;
+        self.notice = failure.map(Notice::error);
         cx.notify();
     }
 
@@ -902,15 +1198,7 @@ impl DataPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.session.is_none() {
-            self.notice = Some(ts!("explorer.disconnected"));
-            cx.notify();
-            return;
-        }
-        if self.has_pending_edits(cx) {
-            // A re-run replaces the source the edits are keyed to; §7.9.
-            self.notice = Some(ts!("data.discard_first"));
-            cx.notify();
+        if !self.may_reload(cx) {
             return;
         }
         let Load::Ready(rows) = &self.load else {
@@ -998,6 +1286,83 @@ impl DataPane {
     /// rule that un-stages an edit that walked back to where it started.
     fn set_null(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
         self.stage(row, column, StagedCell::Null, cx);
+    }
+
+    /// What the grid asked for from the keyboard.
+    ///
+    /// * `Delete` (and `Backspace` on macOS) strikes the selected rows out, or
+    ///   takes the marks off once every one of them carries one —
+    ///   [`EditableSource::toggle_rows_deleted`]. A row added here is passed
+    ///   over; its menu offers Discard.
+    /// * `F2` or a typed character opens the cell the way a double click does,
+    ///   with the character already in the field — or, for a LOB or a
+    ///   multiline value, the viewer, which is where those are typed.
+    /// * `Ctrl+V` stages tab-separated clipboard text into the cells from the
+    ///   cursor on, or one value into every selected cell
+    ///   ([`crate::data_edit::paste_targets`]), passing over cells that take no
+    ///   typing.
+    ///
+    /// The grid only asks over an editable cell or a selection, so a request
+    /// that finds the pane read-only — a profile, a table with no key, a load
+    /// or apply running — is simply not acted on.
+    fn answer_grid(&mut self, request: &GridRequest, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid().cloned() else {
+            return;
+        };
+        if self.read_only_reason().is_some() || self.applying {
+            return;
+        }
+        match request {
+            GridRequest::Delete => {
+                grid.update(cx, |grid, cx| {
+                    let rows = crate::data_edit::selected_rows(grid.selection());
+                    grid.source_mut(cx).toggle_rows_deleted(rows);
+                });
+                cx.notify();
+            }
+            GridRequest::Edit { row, column, text } => {
+                if grid.read(cx).source().uses_value_viewer(*row, *column) {
+                    self.open_value_editor(*row, *column, text.clone(), window, cx);
+                    return;
+                }
+                grid.update(cx, |grid, cx| match text {
+                    Some(text) => grid.begin_edit_with(*row, *column, text, window, cx),
+                    None => grid.begin_edit(*row, *column, window, cx),
+                });
+            }
+            GridRequest::Paste { text } => {
+                grid.update(cx, |grid, cx| {
+                    let cells = crate::data_edit::paste_targets(
+                        grid.selection(),
+                        &grid.visible_column_indices(),
+                        crate::data_edit::parse_tsv(text),
+                    );
+                    grid.source_mut(cx).paste(cells);
+                });
+                cx.notify();
+            }
+        }
+    }
+
+    /// `Ctrl+0`: NULL into the cell under the cursor, when it may hold one.
+    fn key_set_null(&mut self, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid() else {
+            return;
+        };
+        let Some((row, column)) = self.menu_cell(cx) else {
+            return;
+        };
+        let source = grid.read(cx).source();
+        if source.writable() && source.cell_editable(row, column) && source.nullable(column) {
+            self.set_null(row, column, cx);
+        }
+    }
+
+    /// Puts NULL into a cell, for the shell's tests, which stage an edit to
+    /// see what a close does about it without laying out a grid to click.
+    #[cfg(test)]
+    pub(crate) fn null_for_test(&mut self, row: usize, column: usize, cx: &mut Context<Self>) {
+        self.set_null(row, column, cx);
     }
 
     fn open_cell(
@@ -1205,7 +1570,12 @@ impl DataPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -1258,7 +1628,12 @@ impl DataPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -1269,14 +1644,14 @@ impl DataPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
 
         self.applying = true;
         self.apply_error = None;
-        self.notice = Some(ts!("data.applying"));
+        self.notice = Some(Notice::warn(ts!("data.applying")));
         let generation = self.generation;
         let transactional = self.transactional;
         let restore = self.restore_auto_commit;
@@ -1327,7 +1702,7 @@ impl DataPane {
                 // the server has all of it.
                 self.discard_all(cx);
                 self.refresh(window, cx);
-                self.notice = Some(ts!("data.applied", count = applied));
+                self.notice = Some(Notice::info(ts!("data.applied", count = applied)));
             }
             Err(failure) => {
                 self.notice = None;
@@ -1432,6 +1807,7 @@ impl DataPane {
         rows.push({
             let this = this.clone();
             MenuRow::new(ts!("data.set_null"))
+                .shortcut(keys::SET_NULL)
                 .enabled(writable && nullable)
                 .on_activate(move |_window, cx| {
                     let Some((row, column)) = cell else {
@@ -1444,6 +1820,7 @@ impl DataPane {
         rows.push({
             let this = this.clone();
             MenuRow::new(ts!("data.insert_row"))
+                .shortcut(keys::INSERT_ROW)
                 .enabled(writable)
                 .on_activate(move |window, cx| {
                     this.update(cx, |pane, cx| pane.insert_row(window, cx));
@@ -1459,6 +1836,7 @@ impl DataPane {
                 ts!("data.delete_row")
             };
             MenuRow::new(label)
+                .shortcut(keys::DELETE_ROW)
                 .enabled(writable && cell.is_some() && !inserted)
                 .on_activate(move |_window, cx| {
                     let Some((row, _)) = cell else {
@@ -1491,6 +1869,7 @@ impl DataPane {
         Some(
             ContextMenu::new("data-context")
                 .position(position)
+                .highlight_first(self.menu_by_keyboard)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
                     this.update(cx, |pane, cx| {
@@ -1516,9 +1895,20 @@ impl DataPane {
     fn render_toolbar(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let this = cx.entity();
         let loading = matches!(self.load, Load::Running);
-        let count = self
-            .row_count(cx)
-            .map(|count| ts!("data.row_count", count = count));
+        // "500+ rows" while the table has more than have been paged in: the
+        // number is how far the grid has read, and with nothing after it read
+        // as the size of the table.
+        let more = matches!(
+            &self.load,
+            Load::Ready(rows) if rows.grid.read(cx).source().state() == GridSourceState::HasMore
+        );
+        let count = self.row_count(cx).map(|count| {
+            if more {
+                ts!("data.row_count_more", count = count)
+            } else {
+                ts!("data.row_count", count = count)
+            }
+        });
         let writable = self.read_only_reason().is_none();
         let counts = self.counts(cx);
         let pending = counts.map(|counts| {
@@ -1537,28 +1927,37 @@ impl DataPane {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .h(px(30.))
+            .h(rugpui::scaled(30., cx))
             .px(px(10.))
             .border_b_1()
             .border_color(chrome.border)
             .child(crate::icons::icon(
                 self.target.folder.icon(),
-                px(14.),
+                rugpui::scaled(14., cx),
                 chrome.text_muted,
             ))
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(chrome.text)
                     .child(SharedString::from(self.target.qualified())),
             )
             .child(div().flex_1().min_w_0())
+            // Beside the count, because it is what the count is a count of.
+            .children(self.filter.is_some().then(|| {
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(rugpui::TextSize::Xs.size(cx))
+                    .text_color(chrome.accent)
+                    .child(ts!("data.filtered"))
+            }))
             .children(pending.map(|pending| {
                 div()
                     .flex_none()
                     .whitespace_nowrap()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     // In the accent the grid marks a changed row with, so that
                     // the line and the markers under it read as one thing.
                     .text_color(chrome.accent)
@@ -1568,7 +1967,7 @@ impl DataPane {
                 div()
                     .flex_none()
                     .whitespace_nowrap()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(count)
             }))
@@ -1578,23 +1977,31 @@ impl DataPane {
                 // case that menu cannot reach: a table with no rows in it has
                 // no cell to right-click, and a table nobody can put the first
                 // row into would be a strange thing to ship.
-                Button::new("data-insert", ts!("data.insert_row"))
-                    .compact()
-                    .variant(ButtonVariant::Secondary)
-                    .disabled(loading)
-                    .on_click(move |_, window, cx| {
-                        this.update(cx, |pane, cx| pane.insert_row(window, cx));
-                    })
+                hinted(
+                    "data-insert-hint",
+                    keys::INSERT_ROW,
+                    Button::new("data-insert", ts!("data.insert_row"))
+                        .compact()
+                        .variant(ButtonVariant::Secondary)
+                        .disabled(loading)
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |pane, cx| pane.insert_row(window, cx));
+                        }),
+                )
             }))
             .children(writable.then(|| {
                 let this = this.clone();
-                Button::new("data-apply", ts!("data.apply"))
-                    .compact()
-                    .variant(ButtonVariant::Primary)
-                    .disabled(!staged || loading || self.applying)
-                    .on_click(move |_, window, cx| {
-                        this.update(cx, |pane, cx| pane.apply(window, cx));
-                    })
+                hinted(
+                    "data-apply-hint",
+                    keys::APPLY,
+                    Button::new("data-apply", ts!("data.apply"))
+                        .compact()
+                        .variant(ButtonVariant::Primary)
+                        .disabled(!staged || loading || self.applying)
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |pane, cx| pane.apply(window, cx));
+                        }),
+                )
             }))
             .children(writable.then(|| {
                 let this = this.clone();
@@ -1610,7 +2017,9 @@ impl DataPane {
                         });
                     })
             }))
-            .child(
+            .child(hinted(
+                "data-refresh-hint",
+                keys::REFRESH,
                 Button::new("data-refresh", ts!("data.refresh"))
                     .compact()
                     .variant(ButtonVariant::Secondary)
@@ -1618,7 +2027,87 @@ impl DataPane {
                     .on_click(move |_, window, cx| {
                         this.update(cx, |pane, cx| pane.refresh(window, cx));
                     }),
+            ))
+    }
+
+    /// The strip under the toolbar: a `WHERE` condition the rows are read
+    /// under, and the two buttons that apply and clear it.
+    ///
+    /// Always drawn, read-only pane or not: filtering is reading. The keyword
+    /// turns to the accent while a filter is applied, so that the strip says
+    /// whether the rows below it are all of them even with the field scrolled
+    /// out of sight.
+    fn render_filter(
+        &mut self,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let this = cx.entity();
+        let applied = self.filter.is_some();
+        let typed = !self.filter_input.read(cx).content().trim().is_empty();
+        // The hint follows a language switch, which the field outlives.
+        let placeholder = ts!("data.filter_placeholder");
+        if self.filter_input.read(cx).current_placeholder() != &placeholder {
+            self.filter_input
+                .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
+        let apply = this.clone();
+        div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .items_center()
+            .gap(px(6.))
+            .px(px(10.))
+            .py(px(4.))
+            .border_b_1()
+            .border_color(chrome.border)
+            .child(
+                // The keyword is SQL, and the same in every language.
+                div()
+                    .flex_none()
+                    .text_size(rugpui::TextSize::Xs.size(cx))
+                    .text_color(if applied {
+                        chrome.accent
+                    } else {
+                        chrome.text_muted
+                    })
+                    .child("WHERE"),
             )
+            .child(
+                div()
+                    .id("data-filter-field")
+                    .key_context(FILTER_KEY_CONTEXT)
+                    .flex_1()
+                    .min_w_0()
+                    .tooltip(rugpui::tooltip_label(keys::FILTER))
+                    .child(self.filter_input.clone()),
+            )
+            .child(hinted(
+                "data-filter-apply-hint",
+                keys::APPLY_FILTER,
+                Button::new("data-filter-apply", ts!("data.filter_apply"))
+                    .compact()
+                    .variant(ButtonVariant::Secondary)
+                    .disabled(self.session.is_none() || self.applying)
+                    .on_click(move |_, window, cx| {
+                        apply.update(cx, |pane, cx| {
+                            let text = pane.filter_input.read(cx).content().to_string();
+                            pane.apply_filter(&text, window, cx);
+                        });
+                    }),
+            ))
+            .child(hinted(
+                "data-filter-clear-hint",
+                keys::CLEAR_FILTER,
+                Button::new("data-filter-clear", ts!("data.filter_clear"))
+                    .compact()
+                    .variant(ButtonVariant::Secondary)
+                    .disabled(!(applied || typed) || self.applying)
+                    .on_click(move |_, window, cx| {
+                        this.update(cx, |pane, cx| pane.clear_filter(window, cx));
+                    }),
+            ))
     }
 
     /// The one line that says why nothing here can be edited, when something
@@ -1627,7 +2116,7 @@ impl DataPane {
     /// Understated on purpose: it is a standing fact about the object, not a
     /// failure, and it has to live above the grid rather than in a dialog
     /// because it is the answer to a question the user has not asked yet.
-    fn render_banner(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+    fn render_banner(&self, chrome: &Theme, cx: &App) -> Option<impl IntoElement + use<>> {
         let reason = self.read_only_reason()?;
         Some(
             div()
@@ -1637,27 +2126,88 @@ impl DataPane {
                 .border_b_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(reason),
         )
     }
 
-    /// The rows, or the one line that stands in for them.
-    fn render_body(&self, chrome: &Theme, cx: &App) -> AnyElement {
-        match &self.load {
-            Load::Running => note(ts!("data.loading"), chrome.text_muted),
-            Load::Failed(error) => render_error(error, chrome),
-            Load::Ready(rows) if rows.grid.read(cx).source().row_count() == 0 => {
-                note(ts!("data.empty"), chrome.text_muted)
+    /// "Cancel" under a load: stops the statement and stops waiting for it.
+    ///
+    /// The answer is dropped by the generation, whichever way it ends — the
+    /// rows the driver read before the cancel took are not worth showing half
+    /// of — and the pane says the load was canceled, with "Refresh" beside it.
+    fn cancel_load(&mut self, cx: &mut Context<Self>) {
+        let Some(canceller) = self.canceller.take() else {
+            return;
+        };
+        if !matches!(self.load, Load::Running) {
+            return;
+        }
+        self.generation += 1;
+        cx.background_spawn(async move {
+            if let Err(error) = canceller.cancel() {
+                log::warn!("canceling the data load failed: {error}");
             }
-            Load::Ready(rows) => div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .child(rows.grid.clone())
-                .into_any_element(),
+        })
+        .detach();
+        self.load = Load::Failed(Box::new(QueryError {
+            message: ts!("data.load_canceled"),
+            sql_state: None,
+            kind: rudbman_jdbc::BridgeErrorKind::Interrupted,
+        }));
+        cx.notify();
+    }
+
+    /// The rows, or the one line that stands in for them.
+    fn render_body(&self, chrome: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        match &self.load {
+            Load::Running => {
+                let this = cx.entity();
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(10.))
+                    .child(note(ts!("data.loading"), chrome.text_muted, cx))
+                    .child(
+                        Button::new("data-cancel-load", ts!("common.cancel"))
+                            .compact()
+                            .variant(ButtonVariant::Secondary)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |pane, cx| pane.cancel_load(cx));
+                            }),
+                    )
+                    .into_any_element()
+            }
+            Load::Failed(error) => render_error(error, chrome, cx),
+            // A filter that matched nothing has not shown an empty table.
+            Load::Ready(rows) if rows.grid.read(cx).source().row_count() == 0 => {
+                let empty = if self.filter.is_some() {
+                    ts!("data.empty_filtered")
+                } else {
+                    ts!("data.empty")
+                };
+                note(empty, chrome.text_muted, cx)
+            }
+            Load::Ready(rows) => {
+                let bounds = self.grid_bounds.clone();
+                div()
+                    .relative()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(rows.grid.clone())
+                    .child(
+                        gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    )
+                    .into_any_element()
+            }
         }
     }
 }
@@ -1674,11 +2224,35 @@ impl Render for DataPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chrome = theme(cx);
         let toolbar = self.render_toolbar(&chrome, cx);
-        let banner = self.render_banner(&chrome);
+        let filter = self.render_filter(&chrome, cx);
+        let banner = self.render_banner(&chrome, cx);
+        self.notice_clock
+            .watch(self.notice.as_ref(), cx, |pane, shown| {
+                let still = pane.notice.as_ref() == Some(shown);
+                if still {
+                    pane.notice = None;
+                }
+                still
+            });
+        let notice = self.notice.as_ref().map(|notice| {
+            let this = cx.entity();
+            render_notice(
+                ("data-notice", cx.entity_id()),
+                notice,
+                &chrome,
+                move |_, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.notice = None;
+                        cx.notify();
+                    });
+                },
+                cx,
+            )
+        });
         let failure = self
             .apply_error
             .as_ref()
-            .map(|problem| render_apply_error(problem, &chrome));
+            .map(|problem| render_apply_error(problem, &chrome, cx));
         let body = self.render_body(&chrome, cx);
         let menu = self.render_context_menu(cx);
         // Both modals are `row_apply`'s; what each button does is this pane's,
@@ -1692,6 +2266,7 @@ impl Render for DataPane {
                 let discard = this.clone();
                 render_discard_confirm(
                     counts,
+                    &self.confirm_focus,
                     cx,
                     move |_window, cx| {
                         this.update(cx, |pane, cx| {
@@ -1710,6 +2285,7 @@ impl Render for DataPane {
             render_apply_preview(
                 statements,
                 self.transactional,
+                &self.confirm_focus,
                 cx,
                 move |_window, cx| {
                     this.update(cx, |pane, cx| {
@@ -1725,6 +2301,59 @@ impl Render for DataPane {
 
         div()
             .id("data-pane")
+            .key_context(KEY_CONTEXT)
+            // `Shift+F10` and the Menu key over the grid: its cell menu, hung
+            // just inside the grid's top edge.
+            .on_action(
+                cx.listener(|pane, _: &rugpui::OpenContextMenu, window, cx| {
+                    let focused = pane.grid().is_some_and(|grid| {
+                        grid.read(cx).focus_handle(cx).contains_focused(window, cx)
+                    });
+                    if !focused {
+                        cx.propagate();
+                        return;
+                    }
+                    pane.context_menu = Some(GridMenu {
+                        target: MenuTarget::Cell,
+                        position: pane.grid_bounds.get().origin + gpui::point(px(16.), px(16.)),
+                    });
+                    pane.menu_by_keyboard = true;
+                    cx.notify();
+                }),
+            )
+            .on_action(cx.listener(|pane, _: &SetNullCell, _window, cx| {
+                pane.key_set_null(cx);
+            }))
+            .on_action(cx.listener(|pane, _: &InsertRow, window, cx| {
+                if pane.read_only_reason().is_none() && !matches!(pane.load, Load::Running) {
+                    pane.insert_row(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|pane, _: &ApplyChanges, window, cx| {
+                if pane.has_pending_edits(cx) && !pane.applying {
+                    pane.apply(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|pane, _: &RefreshRows, window, cx| {
+                if !matches!(pane.load, Load::Running) && !pane.applying {
+                    pane.refresh(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|pane, _: &FocusFilter, window, cx| {
+                pane.focus_filter(window, cx);
+            }))
+            .on_action(cx.listener(|pane, _: &ClearFilter, window, cx| {
+                // Nothing to clear: the key goes on up, to whatever else
+                // `Escape` means around the pane.
+                let typed = !pane.filter_input.read(cx).content().is_empty();
+                if pane.filter.is_none() && !typed {
+                    cx.propagate();
+                    return;
+                }
+                if !pane.applying {
+                    pane.clear_filter(window, cx);
+                }
+            }))
             .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
@@ -1733,25 +2362,11 @@ impl Render for DataPane {
             .min_h_0()
             .relative()
             .child(toolbar)
+            .child(filter)
+            .children(notice)
             .children(banner)
             .children(failure)
             .child(body)
-            .children(self.notice.clone().map(|notice| {
-                div()
-                    .absolute()
-                    .bottom(px(6.))
-                    .left(px(10.))
-                    .right(px(10.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded_md()
-                    .bg(chrome.surface)
-                    .border_1()
-                    .border_color(chrome.border)
-                    .text_size(px(11.))
-                    .text_color(chrome.text_muted)
-                    .child(notice)
-            }))
             // All last, and the menu last of all: a context menu paints above
             // even a modal (architecture document, §7.8). The two modals never
             // stand at once — raising either puts the other away — so their
@@ -1761,6 +2376,23 @@ impl Render for DataPane {
             .children(menu)
             .children(self.lob_dialog.clone())
     }
+}
+
+/// The condition the filter field's text applies, or `None` for no filter.
+///
+/// Trimmed, with a `WHERE` typed out of habit taken off the front and the
+/// semicolon a statement ends with taken off the back: the pane writes both of
+/// those itself, and either one left in would be a syntax error.
+fn filter_condition(text: &str) -> Option<String> {
+    let mut condition = text.trim();
+    if let Some(keyword) = condition.get(..5)
+        && keyword.eq_ignore_ascii_case("where")
+        && condition[5..].starts_with(char::is_whitespace)
+    {
+        condition = condition[5..].trim_start();
+    }
+    let condition = condition.trim_end_matches(|c: char| c == ';' || c.is_whitespace());
+    (!condition.is_empty()).then(|| condition.to_string())
 }
 
 /// Reads one table's key and its first batch of rows.
@@ -2069,6 +2701,7 @@ mod tests {
             dialect: Dialect::H2,
             table: "APP.T".to_string(),
             order: order.map(|(name, direction)| (name.to_string(), direction)),
+            filter: None,
             fetch_rows: 100,
         };
         let keys = ["A".to_string(), "B".to_string()];
@@ -2106,6 +2739,7 @@ mod tests {
                 dialect,
                 table: "T".to_string(),
                 order: Some(("PRICE".to_string(), SortDirection::Descending)),
+                filter: None,
                 fetch_rows: 100,
             };
             assert!(!select.pages_by_offset(), "{}", dialect.name());
@@ -2473,15 +3107,24 @@ mod tests {
                 assert!(!pane.is_attached());
 
                 pane.fetch_more(cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
 
                 pane.notice = None;
                 pane.reorder(0, Some(SortDirection::Ascending), window, cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
 
                 pane.notice = None;
                 pane.refresh(window, cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
             })
             .expect("the window is open");
         cx.run_until_parked();
@@ -2578,6 +3221,157 @@ mod tests {
                 "insert into APP.PERSON values (1, 'a', null), (2, 'b', '')",
             ],
         )
+    }
+
+    /// The grid answers the editing commands from the keyboard: `Delete`
+    /// strikes the row under the caret out and back, `Ctrl+0` puts NULL in its
+    /// cell, `Alt+Insert` adds a row, and `Ctrl+S` raises the apply preview.
+    #[gpui::test]
+    fn the_editing_commands_answer_the_keyboard(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-keys");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |pane, window, cx| pane.take_focus(window, cx))
+            .expect("the window is open");
+        visual.run_until_parked();
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+
+        select(&window, 0, 1, &mut visual);
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Deleted);
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Unchanged);
+
+        select(&window, 1, 1, &mut visual);
+        visual.simulate_keystrokes(&format!("{modifier}-0"));
+        visual.run_until_parked();
+        assert_eq!(status(&window, 1, &mut visual), RowStatus::Modified);
+
+        // A new row goes in at the top, where its first field opens.
+        visual.simulate_keystrokes("alt-insert");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Inserted);
+
+        // Back on the grid, where the new row's field took the keyboard.
+        window
+            .update(&mut visual, |pane, window, cx| pane.take_focus(window, cx))
+            .expect("the window is open");
+        visual.run_until_parked();
+        visual.simulate_keystrokes(&format!("{modifier}-s"));
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |pane, _window, _cx| {
+                assert!(pane.preview.is_some(), "the apply preview was raised");
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// The grid's key requests reach the pane: `Delete` over two rows marks
+    /// both, a typed character opens the cell holding it, and `Ctrl+V` stages
+    /// a tab-separated block from the cursor on. `Shift+F10` opens the cell
+    /// menu.
+    #[gpui::test]
+    fn the_grid_asks_the_pane_to_delete_type_and_paste(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-requests");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |pane, window, cx| pane.take_focus(window, cx))
+            .expect("the window is open");
+        visual.run_until_parked();
+        let grid = window
+            .update(&mut visual, |pane, _window, _cx| {
+                pane.grid().cloned().expect("the pane holds rows")
+            })
+            .expect("the window is open");
+
+        select(&window, 0, 1, &mut visual);
+        grid.update(&mut visual, |grid, cx| {
+            grid.extend_selection(1, 1, cx);
+        });
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Deleted);
+        assert_eq!(status(&window, 1, &mut visual), RowStatus::Deleted);
+        visual.simulate_keystrokes("delete");
+        visual.run_until_parked();
+        assert_eq!(status(&window, 0, &mut visual), RowStatus::Unchanged);
+        assert_eq!(status(&window, 1, &mut visual), RowStatus::Unchanged);
+
+        select(&window, 0, 1, &mut visual);
+        visual.simulate_keystrokes("q");
+        visual.run_until_parked();
+        grid.update(&mut visual, |grid, cx| {
+            assert_eq!(grid.editing(), Some((0, 1)), "typing opened the cell");
+            grid.cancel_edit(cx);
+        });
+
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        visual.write_to_clipboard(gpui::ClipboardItem::new_string("x\ty\n".into()));
+        select(&window, 1, 1, &mut visual);
+        visual.simulate_keystrokes(&format!("{modifier}-v"));
+        visual.run_until_parked();
+        grid.update(&mut visual, |grid, _cx| {
+            let edits = grid.source().edits();
+            assert_eq!(edits.staged(1, 1), Some(&StagedCell::Text("x".into())));
+            assert_eq!(edits.staged(1, 2), Some(&StagedCell::Text("y".into())));
+        });
+
+        // `Shift+F10` over the grid: its cell menu, on its first row.
+        visual.dispatch_action(rugpui::OpenContextMenu);
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |pane, _window, _cx| {
+                assert!(pane.context_menu.is_some() && pane.menu_by_keyboard);
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// "Cancel" under a load stops waiting for it at once: the pane says the
+    /// load was canceled, and a late answer is dropped by the generation.
+    #[gpui::test]
+    fn a_canceled_load_says_so_and_drops_its_answer(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-cancel");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        let canceller = connected.session().canceller();
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |pane, _window, cx| {
+                // Standing in for a load in flight.
+                pane.load = Load::Running;
+                pane.canceller = Some(canceller);
+                cx.notify();
+            })
+            .expect("the window is open");
+        // Drawn with its Cancel.
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |pane, _window, cx| {
+                let generation = pane.generation;
+                pane.cancel_load(cx);
+                assert_ne!(pane.generation, generation, "a late answer would be taken");
+                let Load::Failed(error) = &pane.load else {
+                    panic!("the pane is still loading");
+                };
+                assert!(error.is_canceled());
+                assert_eq!(error.message, ts!("data.load_canceled"));
+            })
+            .expect("the window is open");
+        visual.run_until_parked();
+        connected.close().expect("close");
     }
 
     /// Typing into a cell stages it, marks the row, and says so in the toolbar
@@ -3002,12 +3796,18 @@ mod tests {
         window
             .update(cx, |pane, window, cx| {
                 pane.reorder(0, Some(SortDirection::Descending), window, cx);
-                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.discard_first"))
+                );
                 assert!(pane.order.is_none(), "the ordering was taken anyway");
 
                 pane.notice = None;
                 pane.refresh(window, cx);
-                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.discard_first"))
+                );
                 assert!(
                     matches!(pane.load, Load::Ready(_)),
                     "the rows were thrown away anyway"
@@ -3031,6 +3831,162 @@ mod tests {
             .expect("the window is open");
         cx.run_until_parked();
         assert_eq!(column(&window, 0, cx), ["2", "1"], "the sort ran");
+        connected.close().expect("close");
+    }
+
+    /// What the filter field's text turns into: the pane writes the `WHERE`
+    /// and needs no terminator, so a habitual one of either is taken off, and
+    /// nothing at all is no filter.
+    #[test]
+    fn the_filter_field_is_read_as_one_condition() {
+        assert_eq!(filter_condition("  ID > 1 "), Some("ID > 1".to_string()));
+        assert_eq!(
+            filter_condition("where NAME = 'a';  "),
+            Some("NAME = 'a'".to_string())
+        );
+        assert_eq!(
+            filter_condition("WHERE\n  ID = 2"),
+            Some("ID = 2".to_string())
+        );
+        // A column that merely starts with the word is left alone.
+        assert_eq!(
+            filter_condition("WHEREABOUTS IS NULL"),
+            Some("WHEREABOUTS IS NULL".to_string())
+        );
+        assert_eq!(filter_condition("  ; "), None);
+        assert_eq!(filter_condition(""), None);
+    }
+
+    /// The filter is a clause of the pane's own statement: parenthesized and on
+    /// lines of its own, ahead of the ordering and the page clause, so that
+    /// neither an `OR` nor a trailing comment in it can reach either.
+    #[test]
+    fn the_filter_goes_between_the_table_and_the_ordering() {
+        let select = Select {
+            dialect: Dialect::H2,
+            table: "APP.PERSON".to_string(),
+            order: None,
+            filter: Some("ID = 1 OR NAME = 'b' -- note".to_string()),
+            fetch_rows: 50,
+        };
+        assert_eq!(
+            select.statement(&["ID".to_string()], 0),
+            "SELECT * FROM APP.PERSON WHERE (\nID = 1 OR NAME = 'b' -- note\n) \
+             ORDER BY ID ASC LIMIT 50 OFFSET 0"
+        );
+    }
+
+    /// Enter in the field reads the rows again under the condition, the strip
+    /// says a filter is on, and clearing it brings every row back.
+    #[gpui::test]
+    fn a_filter_narrows_the_rows_and_clearing_it_brings_them_back(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-filter");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert_eq!(column(&window, 0, cx), ["1", "2"]);
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply_filter("where NAME = 'b';", window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(column(&window, 0, cx), ["2"]);
+        window
+            .update(cx, |pane, _window, cx| {
+                assert_eq!(pane.workspace_filter().as_deref(), Some("NAME = 'b'"));
+                assert_eq!(pane.row_count(cx), Some(1));
+            })
+            .expect("the window is open");
+
+        // Nothing matches: the pane says so rather than calling the table empty.
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply_filter("ID > 10", window, cx)
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(column(&window, 0, cx), Vec::<String>::new());
+
+        window
+            .update(cx, |pane, window, cx| pane.clear_filter(window, cx))
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(column(&window, 0, cx), ["1", "2"]);
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(pane.filter.is_none());
+                assert!(pane.filter_input.read(cx).content().is_empty());
+            })
+            .expect("the window is open");
+        connected.close().expect("close");
+    }
+
+    /// A condition the database refuses fails the load the way any failed load
+    /// does, and stays in the field to be corrected; one with a second
+    /// statement after it is refused before anything is sent.
+    #[gpui::test]
+    fn a_bad_filter_is_reported_and_kept(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-filter-bad");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.filter_input
+                    .update(cx, |input, cx| input.set_content("NO_SUCH_COLUMN = 1", cx));
+                pane.apply_filter("NO_SUCH_COLUMN = 1", window, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        window
+            .update(cx, |pane, window, cx| {
+                assert!(pane.failure().is_some(), "the load did not fail");
+                assert_eq!(
+                    pane.filter_input.read(cx).content(),
+                    "NO_SUCH_COLUMN = 1",
+                    "the field lost what was typed"
+                );
+
+                pane.apply_filter("ID = 1; DELETE FROM APP.PERSON", window, cx);
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.filter_one_condition"))
+                );
+                assert_eq!(
+                    pane.filter.as_deref(),
+                    Some("NO_SUCH_COLUMN = 1"),
+                    "the refused condition was applied anyway"
+                );
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(
+            server_rows(&connected, "select count(*) from APP.PERSON"),
+            ["2"],
+            "the statement after the condition ran"
+        );
+        connected.close().expect("close");
+    }
+
+    /// Changing the filter replaces the rows, so it waits for staged edits the
+    /// way a sort and a refresh do — and leaves the filter as it was.
+    #[gpui::test]
+    fn a_filter_waits_for_the_edits_to_be_dealt_with(cx: &mut TestAppContext) {
+        let (connected, profile) = person("data-filter-guard");
+        let window = pane(&connected, &profile, target("PERSON"), 500, cx);
+        assert!(type_into(&window, 0, 1, "A", cx));
+
+        window
+            .update(cx, |pane, window, cx| {
+                pane.apply_filter("ID = 2", window, cx);
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.discard_first"))
+                );
+                assert!(pane.filter.is_none(), "the filter was taken anyway");
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(column(&window, 1, cx), ["A", "b"], "the edit survived");
         connected.close().expect("close");
     }
 
@@ -3118,7 +4074,10 @@ mod tests {
             .update(cx, |pane, _window, cx| {
                 assert!(pane.has_pending_edits(cx));
                 pane.warn_pending(cx);
-                assert_eq!(pane.notice, Some(ts!("data.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.discard_first"))
+                );
 
                 pane.discard_all(cx);
                 assert!(!pane.has_pending_edits(cx));
@@ -3231,7 +4190,10 @@ mod tests {
                 assert!(!pane.has_pending_edits(cx), "the buffer outlived the apply");
                 assert!(pane.apply_error.is_none());
                 assert!(pane.preview.is_none());
-                assert_eq!(pane.notice, Some(ts!("data.applied", count = 3)));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("data.applied", count = 3))
+                );
             })
             .expect("the window is open");
         // The reload is what makes the generated key visible: it is 4, and
@@ -3475,7 +4437,10 @@ mod tests {
             .update(cx, |pane, window, cx| {
                 pane.apply(window, cx);
                 assert!(pane.preview.is_none(), "the confirmation was raised");
-                assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("query.uncommitted_pending"))
+                );
 
                 handle.clear_uncommitted();
                 pane.apply(window, cx);
@@ -3553,6 +4518,12 @@ mod tests {
             ts!("data.apply_null_key", column = "ID"),
             ts!("data.apply_unknown_key", column = "ID"),
             ts!("data.apply_not_planned", detail = "why"),
+            ts!("data.filter_placeholder"),
+            ts!("data.filter_apply"),
+            ts!("data.filter_clear"),
+            ts!("data.filtered"),
+            ts!("data.empty_filtered"),
+            ts!("data.filter_one_condition"),
             ts!("menu.view_data"),
         ] {
             assert!(!label.is_empty(), "empty label");

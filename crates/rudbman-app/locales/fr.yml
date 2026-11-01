@@ -8,6 +8,8 @@ common:
   cancel: Annuler
   save: Enregistrer
   close: Fermer
+  keep_running: Continuer
+  stop_job: Arrêter
 
 menu:
   new_connection: Gérer les connexions…
@@ -18,10 +20,13 @@ menu:
   # Opens one over the object selected in the explorer, pre-filled with a
   # SELECT against it.
   query_object: Interroger l’objet sélectionné
+  query_history: Historique des requêtes…
   view_data: Voir les données
   view_structure: Modifier la structure
   new_table: Nouvelle table
   open_sql_file: Ouvrir un fichier SQL…
+  save_sql_file: Enregistrer le fichier SQL
+  save_sql_file_as: Enregistrer le fichier SQL sous…
   extract_script: Extraire un script…
   transfer_table: Transférer les lignes…
   backup_schema: Sauvegarder le schéma…
@@ -32,6 +37,9 @@ menu:
   add_to_builder: Ajouter au concepteur de requêtes
   # Opens an empty query builder on the connection whose tab is showing.
   new_builder: Nouveau concepteur de requêtes
+  in_explorer: "%{shortcut} dans l’explorateur"
+  next_pane: Volet suivant
+  prev_pane: Volet précédent
   about: À propos de rudbman
   check_updates: Rechercher les mises à jour
   quit: Quitter
@@ -45,7 +53,7 @@ menu:
 tab:
   close: Fermer la connexion
   tip_list: Toutes les connexions
-  tip_new: "Nouvelle connexion (%{shortcut})"
+  tip_manage: "Gérer les connexions (%{shortcut})"
   tip_pane_list: Tous les onglets
 
 welcome:
@@ -66,6 +74,9 @@ statusbar:
   disconnected: déconnecté
   failed: "échec : %{error}"
   tunnel_lost: "le tunnel SSH s’est fermé : %{reason}"
+  uncommitted: transaction non validée
+  uncommitted_in: "Les écritures de « %{tab} » ne sont pas encore validées. Validez-les ou annulez-les dans cet onglet."
+  uncommitted_tip: Les écritures sur cette connexion ne sont pas encore validées.
 
 about:
   title: À propos de rudbman
@@ -111,7 +122,11 @@ settings:
   fetch_batch_rows_hint: lignes récupérées à chaque fois pendant le défilement
   query_timeout: Délai d’expiration des instructions
   query_timeout_hint: secondes — 0 signifie aucune limite
+  login_timeout: Délai de connexion
+  login_timeout_hint: secondes — 0 laisse le pilote décider
   confirm_writes_default: Demander confirmation avant une instruction d’écriture sur une nouvelle connexion
+  query_history: Conserver l’historique des instructions exécutées dans les onglets de requête
+  query_history_hint: Conservé par profil de connexion dans le dossier history du répertoire de configuration, en texte clair. Désactivé, plus rien n’est enregistré et ce qui l’a été est gardé ; la boîte de dialogue de l’historique permet de le supprimer.
 
   jvm_heap: Tas Java
   jvm_heap_hint: Mo — le -Xmx sous lequel tourne un pilote
@@ -257,6 +272,13 @@ connect:
   load_failed: "Les connexions enregistrées n’ont pas pu être lues ; rien ne peut être enregistré ni supprimé tant que ce fichier n’est pas réparé ou déplacé : %{error}"
   save_failed: "Les connexions n’ont pas pu être enregistrées : %{error}"
   keychain_failed: "Le mot de passe n’a pas pu être enregistré dans le trousseau : %{error}"
+  remember_password: Mémoriser le mot de passe dans le trousseau du système
+  password_prompt: Cette connexion ne mémorise pas son mot de passe. Saisissez-le et cliquez sur « Se connecter ».
+  keychain_failed_connected: "Le mot de passe n’a pas pu être enregistré dans le trousseau (%{error}). La connexion utilise celui saisi ici."
+  driver_has_no_jar_download: Ce pilote n’a pas encore de JAR. Téléchargez-le ici, ou ajoutez-en un sous « Pilotes ».
+  discard_question: Ce formulaire contient des modifications non enregistrées.
+  keep_editing: Continuer la modification
+  discard: Abandonner
 
   hint_auth: vérifiez le nom d’utilisateur et le mot de passe
   hint_driver: vérifiez le JAR et la classe du pilote
@@ -267,6 +289,14 @@ connect:
   host_key_question: "%{host} a présenté une clé %{algorithm} inconnue : %{fingerprint}"
   trust_host_key: Approuver cette clé
   host_key_trusted: La clé d’hôte a été ajoutée aux clés approuvées. Réessayez de vous connecter.
+  card_connecting: "Connexion à « %{name} »…"
+  card_connecting_hint: "La tentative est abandonnée après %{seconds} secondes."
+  card_failed: "Impossible de se connecter à « %{name} »"
+  card_dead: "La connexion à « %{name} » s’est terminée"
+  reconnect: Se reconnecter
+  edit_connection: Modifier la connexion…
+  trust_and_reconnect: Approuver la clé et se reconnecter
+  canceled: La tentative de connexion a été annulée.
 
 # Le gestionnaire de pilotes.
 driver:
@@ -397,6 +427,7 @@ query:
   rollback_failed: "Échec de l’annulation de la transaction : %{message}"
   rollback_auto: "Annuler la transaction (validation automatique activée)"
   uncommitted_pending: "Cette connexion contient des modifications non validées d’un éditeur de requêtes. Validez-les ou annulez-les d’abord dans celui-ci."
+  uncommitted_pending_in: "Cette connexion contient des modifications non validées de « %{tab} ». Validez-les ou annulez-les d’abord dans cet onglet."
   commit: "Valider la transaction"
   committing: "Validation en cours…"
   committed: "Transaction validée."
@@ -408,11 +439,19 @@ query:
   result: "Résultat %{index}"
   tab: "Requête %{index}"
   empty: Écrivez une instruction puis exécutez-la.
+  empty_keys: "Écrivez une instruction puis exécutez-la : %{statement} exécute celle sous le curseur, %{all} les exécute toutes."
   no_results: L’instruction n’a produit aucun résultat.
   running: en cours…
   rows_affected: "%{count} lignes modifiées"
   executed: Instruction exécutée.
+  plan: "Plan %{index}"
+  explained: Plan lu ; l’instruction n’a pas été exécutée.
+  explain_one: Sélectionnez une seule instruction pour voir son plan.
+  explain_unsupported: "La lecture d’un plan n’est pas prise en charge sur %{product}."
+  explain_restore_failed: "La connexion n’a pas pu être rétablie après la lecture du plan (%{message}). Reconnectez-vous avant d’y exécuter quoi que ce soit d’autre."
+  statement_failed: "L’instruction %{index} sur %{total} a échoué : %{error}"
   row_count: "%{count} lignes"
+  row_count_more: "%{count}+ lignes"
   elapsed: "%{seconds} s"
   busy: Une instruction est déjà en cours dans ce volet.
   no_statement: Il n’y a aucune instruction à exécuter.
@@ -430,12 +469,24 @@ query:
   hint_network: La connexion à la base de données a été perdue.
   hint_canceled: L’instruction a été interrompue.
   open_file_select: Choisir un fichier SQL
+  save_failed: "Le fichier n’a pas pu être enregistré : %{error}"
+  unsaved: Modifications non enregistrées dans le fichier
+  save_busy: "Le fichier est encore en cours de lecture ou d’écriture. Réessayez dans un instant."
+  file_changed: "Le fichier a été modifié sur le disque depuis que cet onglet l’a lu ou enregistré pour la dernière fois ; il n’a donc pas été écrasé. Choisissez où l’enregistrer."
 
 data:
   loading: chargement…
+  load_canceled: Le chargement des lignes a été annulé.
   refresh: Actualiser
+  filter_placeholder: "Condition pour filtrer les lignes, p. ex. NAME = 'a'"
+  filter_apply: Filtrer
+  filter_clear: Effacer
+  filtered: Filtré
+  empty_filtered: Aucune ligne ne correspond au filtre.
+  filter_one_condition: Le filtre doit être une seule condition, sans autre instruction après.
   empty: Cette table ne contient aucune ligne.
   row_count: "%{count} lignes"
+  row_count_more: "%{count}+ lignes"
   no_primary_key: Cette table n’a pas de clé primaire ; ses lignes peuvent être lues mais pas modifiées.
   read_only: Cette connexion est en lecture seule ; ses lignes peuvent être lues mais pas modifiées.
   discard_first: Appliquez ou abandonnez d’abord les modifications en attente.
@@ -532,6 +583,7 @@ extract:
   canceling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
   canceled: "Annulé. Rien n’a été écrit dans %{path}."
+  stop_question: Arrêter l’extraction ? Rien ne sera écrit dans le fichier.
   failed: "L’extraction a échoué : %{error}"
   failed_unknown: L’extraction a échoué sans que le pont en donne la raison.
 
@@ -558,8 +610,15 @@ transfer:
   done: "%{rows} lignes transférées dans %{table}."
   done_skipped: "%{skipped} lignes ont été rejetées et ignorées."
   canceled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
+  stop_question: Arrêter le transfert ? Les lignes déjà validées restent dans la table cible.
   failed: "Le transfert a échoué : %{error}"
   failed_unknown: Le transfert a échoué sans que le pont en donne la raison.
+  choose_target: Choisissez la connexion dans laquelle copier les lignes.
+  no_other_connection: Aucune autre connexion n’est ouverte. Ouvrez celle vers laquelle copier, ou choisissez celle-ci et indiquez une autre table.
+  same_table: La cible est la table source elle-même. Choisissez une autre connexion, un autre schéma ou une autre table.
+  truncate_confirm: "Toutes les lignes de %{table} seront supprimées avant le début de la copie."
+  truncate_confirm_rows: "Les %{rows} lignes de %{table} seront toutes supprimées avant le début de la copie."
+  truncate_start: Vider et transférer
 
 backup:
   title: Sauvegarder le schéma
@@ -579,6 +638,7 @@ backup:
   canceling: Annulation…
   done: "%{rows} lignes (%{bytes}) écrites dans %{path}."
   canceled: "Annulé. Rien n’a été écrit dans %{path}."
+  stop_question: Arrêter la sauvegarde ? Rien ne sera écrit dans le fichier.
   failed: "La sauvegarde a échoué : %{error}"
   failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
 
@@ -587,6 +647,8 @@ erd:
   tab: "ERD — %{scope}"
   tab_all: ERD
   loading: chargement…
+  loading_tables: "Lecture des clés : %{done} tables sur %{total}…"
+  load_canceled: Le chargement du diagramme a été annulé.
   load_failed: "Le diagramme n’a pas pu être dessiné : %{error}"
   empty: Ce schéma ne contient aucune table.
   auto_arrange: Disposer
@@ -602,8 +664,12 @@ erd:
 # two of them describe.
 builder:
   tab: "Concepteur %{index}"
-  canvas_hint: Sélectionnez une table dans l’explorateur et ajoutez-la au concepteur.
+  canvas_hint: Faites glisser une table ou une vue de l’explorateur sur ce canevas, ou faites un clic droit dessus et choisissez « Ajouter au concepteur de requêtes ».
   joins: Jointures
+  join_hint: Faites glisser une colonne sur une colonne d’une autre table pour les joindre, ou choisissez les deux colonnes ici.
+  join_pick: Colonne…
+  add_join: Ajouter une jointure
+  pick_hint: Cliquez sur une colonne du canevas pour l’ajouter à la liste SELECT.
   join_inner: INNER JOIN
   join_left: LEFT JOIN
   join_right: RIGHT JOIN
@@ -638,6 +704,8 @@ context:
   hide_column: Masquer cette colonne
   show_columns: Afficher toutes les colonnes
   copy_column_name: Copier le nom de la colonne
+  copy_message: Copier le message
+  copy_sql: Copier le SQL
   cut: Couper
   copy: Copier
   paste: Coller
@@ -648,11 +716,13 @@ context:
   run_statement: Exécuter l’instruction
   run_selection: Exécuter la sélection
   run_all: Tout exécuter
+  explain: Afficher le plan d’exécution
   find: Rechercher…
   replace: Remplacer…
   close_tab: Fermer l’onglet
   close_others: Fermer les autres onglets
   close_right: Fermer les onglets à droite
+  reopen_tab: Rouvrir l’onglet fermé
   split_right: Diviser à droite
   split_below: Diviser en dessous
   close_pane: Fermer le volet
@@ -665,12 +735,14 @@ context:
   clear_column: Retirer de la liste de sélection
   connect: Se connecter
   edit: Modifier…
+  duplicate: Dupliquer…
+  delete: Supprimer…
 
 update:
   title: Mise à jour disponible
   available: "%{app} %{version} est disponible."
   installed: "Vous utilisez actuellement la %{version}."
-  update: Mettre à jour
+  update: "Mettre à jour et redémarrer"
   ignore: Ignorer cette version
   checking: Recherche de mises à jour…
   up_to_date: Vous utilisez la dernière version.
@@ -713,3 +785,55 @@ lob:
   discard_question: "Abandonner les modifications de cet éditeur LOB ?"
   keep_editing: "Continuer la modification"
   invalid_hex: "Saisissez des paires hexadécimales (00–FF), séparées par des espaces ou des sauts de ligne."
+
+closing:
+  unsaved_title: Modifications non enregistrées
+  unsaved_body: "« %{name} » contient des modifications qui n’ont pas encore été enregistrées dans son fichier."
+  dont_save: Ne pas enregistrer
+  saving: Enregistrement…
+  connection_title: "Fermer « %{name} » ?"
+  close_connection: Fermer la connexion
+  risk_uncommitted: Sa transaction non validée sera annulée.
+  risk_running: "L’instruction en cours dans « %{tab} » sera arrêtée."
+  work_staged: "« %{tab} » sur %{connection} : modifications non appliquées"
+  work_unsaved: "« %{tab} » : modifications non enregistrées dans son fichier"
+  work_running: "« %{tab} » sur %{connection} : une instruction encore en cours"
+  work_uncommitted: "%{connection} : une transaction non validée, qui sera annulée"
+  work_extract: Une extraction encore en cours
+  work_transfer: Un transfert encore en cours
+  work_backup: Une sauvegarde encore en cours
+
+close_guard:
+  title_window: "Fermer la fenêtre malgré le travail non enregistré ?"
+  title_quit: "Quitter malgré le travail non enregistré ?"
+  title_restart: "Redémarrer malgré le travail non enregistré ?"
+  message: "Si vous continuez, ceci sera perdu :"
+  more: "…et %{count} de plus"
+  close_anyway: "Fermer quand même"
+  quit_anyway: "Quitter quand même"
+  restart_anyway: "Redémarrer quand même"
+  save_all: "Tout enregistrer"
+
+toast:
+  no_connection: "Ouvrez d’abord une connexion."
+  connecting: "« %{name} » est encore en cours de connexion."
+  not_connected: "« %{name} » n’est pas connectée. Reconnectez-la d’abord."
+  open_failed: "Impossible d’ouvrir %{file} : %{error}"
+  columns_failed: "Impossible de lire les colonnes de %{table} : %{error}"
+  keychain_unavailable: "Le trousseau du système est indisponible (%{error}). Les mots de passe enregistrés ne peuvent pas être lus, et les nouveaux ne seront pas conservés."
+
+history:
+  title: "Historique des requêtes — %{name}"
+  search: Rechercher dans les instructions
+  empty: Rien n’a encore été exécuté sur cette connexion.
+  no_match: Aucune instruction ne correspond à la recherche.
+  open: Ouvrir dans un nouvel onglet de requête
+  delete: Supprimer
+  clear: Effacer l’historique…
+  clear_question: "Supprimer les %{count} instructions de l’historique de cette connexion ? Cette action est irréversible."
+  clear_confirm: Tout supprimer
+  done: Exécutée
+  failed: Échec
+  canceled: Annulée
+  kept_in: "Conservé dans %{path}"
+  recording_off: L’enregistrement est désactivé dans les paramètres ; rien de nouveau n’est ajouté.

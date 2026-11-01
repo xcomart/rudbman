@@ -290,9 +290,10 @@ fn clicking_a_saved_connection_opens_it_with_nothing_in_between(cx: &mut gpui::T
                 "a dialog came up between the click and the connection"
             );
             match &open.state {
-                ConnectionState::Failed(message) => assert!(
-                    message.contains(MISSING_DRIVER),
-                    "the attempt stopped before the driver lookup: {message}"
+                ConnectionState::Failed(failure) => assert!(
+                    failure.message.contains(MISSING_DRIVER),
+                    "the attempt stopped before the driver lookup: {}",
+                    failure.message
                 ),
                 _ => panic!("the attempt did not reach the driver lookup"),
             }
@@ -610,4 +611,93 @@ fn moving_a_connection_tab_refuses_what_would_change_nothing(cx: &mut gpui::Test
             assert_eq!(workspace.active_connection, 1);
         })
         .expect("the window is open");
+}
+
+/// A tab that did not open says why in its work area — the whole message and
+/// the hint — and "Reconnect" tries again in the same tab rather than opening
+/// a second one beside it.
+#[gpui::test]
+fn a_failed_tab_shows_its_reason_and_reconnects_in_place(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        app_settings::init(cx);
+        rugpui::init(cx);
+    });
+    let window = cx.add_window(|window, cx| Workspace::new(TitlebarStyle::Custom, window, cx));
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let profile = unopenable_profile("card");
+
+    let id = window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_connection(profile.clone(), window, cx);
+            let open = workspace.active_connection().expect("the tab is on top");
+            assert!(matches!(open.state, ConnectionState::Failed(_)));
+            assert!(
+                workspace.render_connection_card(false, cx).is_some(),
+                "a failed tab has a card to say so"
+            );
+            let rows = workspace.connection_rows(0, cx);
+            assert!(context_menu::row(&rows, &ts!("connect.reconnect")).is_enabled());
+            open.id
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.reconnect(0, window, cx);
+            assert_eq!(workspace.connections.len(), 1, "the same tab, not a second");
+            assert_eq!(workspace.connections[0].id, id);
+            assert!(matches!(
+                workspace.connections[0].state,
+                ConnectionState::Failed(_)
+            ));
+
+            // Waiting on an attempt can be given up, which leaves the tab
+            // failed, with its card and its "Reconnect".
+            workspace.connections[0].state = ConnectionState::Connecting {
+                _task: gpui::Task::ready(()),
+            };
+            assert!(workspace.render_connection_card(false, cx).is_some());
+            workspace.cancel_connect(0, cx);
+            match &workspace.connections[0].state {
+                ConnectionState::Failed(failure) => {
+                    assert_eq!(failure.message, ts!("connect.canceled"))
+                }
+                _ => panic!("canceling left the tab connecting"),
+            }
+            cx.notify();
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+}
+
+/// A bastion's unknown host key is offered for trusting from the card, on
+/// the port the profile tunnels through; any other failure offers none.
+#[test]
+fn an_unknown_host_key_is_offered_for_trusting_from_the_card() {
+    let mut profile = unopenable_profile("bastion");
+    profile.tunnel = Some(rudbman_core::TunnelConfig {
+        host: "bastion.example".to_string(),
+        port: 2222,
+        username: "ops".to_string(),
+        auth: rudbman_core::TunnelAuth::Agent,
+        remote_host: "db.internal".to_string(),
+        remote_port: 5432,
+        local_port: 0,
+    });
+    let failure = Failure::of(
+        &ConnectError::HostKeyUnknown {
+            host: "bastion.example".into(),
+            fingerprint: "SHA256:abc".into(),
+            algorithm: "ssh-ed25519".into(),
+        },
+        &profile,
+    );
+    let offer = failure.host_key.expect("the key is offered");
+    assert_eq!(offer.host, "bastion.example");
+    assert_eq!(offer.port, 2222);
+    assert_eq!(failure.hint, Some(ts!("connect.hint_host_key")));
+
+    let failure = Failure::of(&ConnectError::Tunnel("refused".into()), &profile);
+    assert!(failure.host_key.is_none());
 }

@@ -76,7 +76,13 @@
 mod completion;
 mod editing;
 mod execution;
+mod explain;
+mod file;
+pub(crate) use file::{
+    FileStamp, Overwrite, SaveJob, Saved, decode_sql_file, read_sql_file, write_sql_file,
+};
 mod format;
+mod keys;
 mod menus;
 mod render;
 use render::{elapsed_label, preview};
@@ -84,6 +90,7 @@ pub use render::{error_lines, note, render_error};
 mod results;
 mod statements;
 mod toolbar;
+pub(crate) use keys::EXPLAIN_KEY;
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
 use std::cell::RefCell;
@@ -107,7 +114,8 @@ use rugpui_editor::editor::{
 };
 use rugpui_editor::{EditorEvent, EditorView};
 use rugpui_grid::{
-    GridEvent, GridSource, GridSourceState, GridView, MenuTarget, RowStatus, SortDirection,
+    GridEvent, GridRequest, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
+    SortDirection,
 };
 
 use crate::SHORTCUT_MODIFIER;
@@ -119,6 +127,7 @@ use crate::data_edit::{
 };
 use crate::explorer::ConnectionId;
 use crate::i18n::ts;
+use crate::notice::{Notice, NoticeClock, render_notice};
 use crate::query_source::{
     Paged, ROW_LIMIT, RenderedBatch, ResultSource, Step, advance, column_name, key_index, page,
     read_page,
@@ -417,6 +426,9 @@ struct ResultLogEntry {
     sql: SharedString,
     message: SharedString,
     elapsed: Duration,
+    /// Whether this is the statement a run stopped at, drawn in the danger
+    /// color; see [`QueryPane::deliver`].
+    failed: bool,
 }
 
 #[derive(Default)]
@@ -482,8 +494,14 @@ struct RowsTab {
     more: Option<More>,
     /// Whether a page is out with a background fetch.
     fetching: bool,
-    /// Keeps the grid's subscription alive for as long as the tab.
-    _events: Subscription,
+    /// Whether these rows are a statement's plan rather than its result.
+    ///
+    /// A plan has no table to be written back to and no statement a sort
+    /// could wrap, so it is never offered either.
+    plan: bool,
+    /// Keeps the grid's subscriptions — its events and its key requests —
+    /// alive for as long as the tab.
+    _events: [Subscription; 2],
 }
 
 /// What the pane is doing.
@@ -513,7 +531,12 @@ struct Running {
 
 /// How a finished run is summarized in the status bar.
 struct Finished {
+    /// Rows the grids of the run have read so far.
     rows: usize,
+    /// Whether any of those grids has more to read than it has.
+    more: bool,
+    /// Rows the run's writes reported changing, for a run with no grid.
+    affected: u64,
     elapsed: Duration,
 }
 
@@ -548,6 +571,13 @@ enum PaneMenu {
         /// Where the pointer was, in window coordinates.
         position: Point<Pixels>,
     },
+    /// On one row of the execution log, by its index there.
+    Log {
+        /// The row.
+        index: usize,
+        /// Where the pointer was, in window coordinates.
+        position: Point<Pixels>,
+    },
     /// In the grid of one result tab.
     Grid {
         /// The tab, by [`ResultTab::id`] rather than by position: a menu is
@@ -574,6 +604,11 @@ pub struct QueryPane {
     session: Option<SessionHandle>,
     /// Which connection tab this pane belongs to.
     connection: ConnectionId,
+    /// The number its tab is titled with until it has a file or a name of the
+    /// user's; the workspace's to give, see [`QueryPane::set_tab_number`].
+    number: u64,
+    /// The name the user gave its tab, when they did.
+    custom_name: Option<String>,
     dialect: Dialect,
     /// The profile refuses writes outright rather than confirming them.
     ///
@@ -603,17 +638,39 @@ pub struct QueryPane {
     results: Vec<ResultTab>,
     active_result: usize,
     error: Option<QueryError>,
-    /// A line the pane wants to say without it being a failure — "already running".
-    notice: Option<SharedString>,
+    /// A line the pane wants to say without it being a failure of the
+    /// statement — "already running", "committed" — at the level it matters;
+    /// see [`crate::notice`].
+    notice: Option<Notice>,
+    /// Takes an informational notice away after a while.
+    notice_clock: NoticeClock,
     run: RunState,
     /// The generation of the newest run. Every delivery carries one, and one
     /// that is not this is an answer the user has already moved on from.
     generation: u64,
     /// Whether anything has been run in this pane at all.
     ran: bool,
+    /// Whether the run in flight, or the last one, read a plan rather than
+    /// running a statement; see [`QueryPane::explain`].
+    explaining: bool,
+    /// The profile the pane's connection was opened from, whose query
+    /// history its runs are written into.
+    profile: uuid::Uuid,
+    /// Whether the run in flight is one the user asked for, and so goes into
+    /// the query history: not a sort's re-run, an apply's or a plan.
+    recording: bool,
     finished: Option<Finished>,
+    /// Rows the writes of the run in flight have reported changing so far.
+    affected: u64,
     /// The statements the write confirmation is holding up.
     pending: Option<Vec<String>>,
+    /// Where in the editor each statement of the next run was cut from, when
+    /// the editor is where it came from; see [`QueryPane::start`].
+    run_spans: Vec<Option<std::ops::Range<usize>>>,
+    /// The same, for the run in flight, and the edit count it was taken at:
+    /// a failed statement is selected in the editor only while the text it
+    /// was cut from is still the text there.
+    active_spans: (Vec<Option<std::ops::Range<usize>>>, u64),
     /// The statement a sort round trip should keep offering to wrap.
     ///
     /// Set while a run was started by [`QueryPane::reorder`], whose SQL is a
@@ -632,6 +689,16 @@ pub struct QueryPane {
     next_tab_id: u64,
     /// The right-click menu of one half of the pane, while one is open.
     context_menu: Option<PaneMenu>,
+    /// The Cancel button of the apply preview and the discard question, which
+    /// takes the keyboard when either opens.
+    confirm_focus: FocusHandle,
+    /// Whether `Shift+F10` or the Menu key opened the menu showing, so it
+    /// opens on its first row.
+    menu_by_keyboard: bool,
+    /// Where the result grid on screen was drawn last, for the menu
+    /// `Shift+F10` opens over it: the grid does not say where its cells are,
+    /// so the menu hangs just inside its top edge.
+    grid_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     /// Whether "throw the staged edits away" is waiting to be confirmed.
     ///
     /// A modal of the pane's own, exactly as the data pane's is and for the
@@ -673,6 +740,20 @@ pub struct QueryPane {
     /// A "Format SQL" being worked out off the UI thread; see
     /// [`QueryPane::format_sql`]. Dropping it abandons that format.
     format_task: Option<gpui::Task<()>>,
+    /// The file the SQL was read from or last saved to; see [`file`].
+    file: Option<std::path::PathBuf>,
+    /// What that file looked like on disk then; see [`file::FileStamp`].
+    stamp: Option<FileStamp>,
+    /// Whether a save of this pane is writing; see [`QueryPane::begin_save`].
+    saving: bool,
+    /// Whether a restored pane is rereading its file; see
+    /// [`QueryPane::begin_reload`].
+    reloading: bool,
+    /// Whether the draft the workspace restored held changes the file did not.
+    ///
+    /// The editor's own dirty flag cannot carry that across a restart: setting
+    /// the restored text leaves it clean. Cleared by the next save.
+    draft_unsaved: bool,
     _completion_blur: Subscription,
     _editor_events: Subscription,
 }
@@ -752,6 +833,7 @@ impl QueryPane {
     ) -> Self {
         completion::init(cx);
         format::init(cx);
+        keys::init(cx);
         let dialect = Dialect::from_id(driver_dialect);
         let editor = cx.new(|cx| {
             let mut editor = EditorView::new(cx)
@@ -774,22 +856,27 @@ impl QueryPane {
                     EditorEvent::RunStatement { span } => {
                         let text = editor.read(cx).text();
                         let sql = span.sql(&text).to_string();
-                        pane.request(vec![sql], window, cx);
+                        pane.request_from_editor(vec![(sql, Some(span.sql_range()))], window, cx);
                     }
                     EditorEvent::RunSelection { span } => {
                         let text = editor.read(cx).text();
                         let selected = text.get(span.clone()).unwrap_or_default().to_string();
-                        pane.request(vec![selected], window, cx);
+                        pane.request_from_editor(vec![(selected, Some(span.clone()))], window, cx);
                     }
                     EditorEvent::RunAll => {
                         let text = editor.read(cx).text();
                         // Split rather than sent whole: one cursor per statement is
                         // what makes two `SELECT`s two independently pageable grids.
-                        let statements: Vec<String> = split_statements(&text, &pane.dialect)
-                            .into_iter()
-                            .map(|span| span.sql(&text).to_string())
-                            .collect();
-                        pane.request(statements, window, cx);
+                        // Each keeps where it was cut from, so a failure can point
+                        // at its statement in the editor.
+                        let statements: Vec<(String, Option<std::ops::Range<usize>>)> =
+                            split_statements(&text, &pane.dialect)
+                                .into_iter()
+                                .map(|span| {
+                                    (span.sql(&text).to_string(), Some(span.start..span.sql_end))
+                                })
+                                .collect();
+                        pane.request_from_editor(statements, window, cx);
                     }
                     // The editor holds no strings, so its menu is drawn here
                     // (architecture document, §7.8).
@@ -798,6 +885,7 @@ impl QueryPane {
                         pane.context_menu = Some(PaneMenu::Editor {
                             position: *position,
                         });
+                        pane.menu_by_keyboard = false;
                         cx.notify();
                     }
                     // The toolbar belongs to the pane, so editor changes must
@@ -828,6 +916,8 @@ impl QueryPane {
             editor,
             session: Some(session),
             connection,
+            number: 0,
+            custom_name: None,
             dialect,
             read_only: profile.read_only,
             confirm_writes: profile.confirm_writes,
@@ -840,16 +930,26 @@ impl QueryPane {
             active_result: 0,
             error: None,
             notice: None,
+            notice_clock: NoticeClock::default(),
             run: RunState::Idle,
             generation: 0,
             ran: false,
+            explaining: false,
+            profile: profile.id,
+            recording: false,
             finished: None,
+            affected: 0,
             pending: None,
+            run_spans: Vec::new(),
+            active_spans: (Vec::new(), 0),
             sort_base: None,
             pending_sort: None,
             next_tab_id: 1,
             context_menu: None,
             confirm_discard: false,
+            menu_by_keyboard: false,
+            grid_bounds: std::rc::Rc::default(),
+            confirm_focus: cx.focus_handle(),
             preview: None,
             applying: false,
             apply_error: None,
@@ -859,6 +959,11 @@ impl QueryPane {
             edits: 0,
             saved_draft: RefCell::new(None),
             format_task: None,
+            file: None,
+            stamp: None,
+            saving: false,
+            reloading: false,
+            draft_unsaved: false,
             _completion_blur: completion_blur,
             _editor_events: editor_events,
         }
@@ -879,6 +984,33 @@ impl QueryPane {
     /// Which connection tab this pane runs against.
     pub fn connection(&self) -> ConnectionId {
         self.connection
+    }
+
+    /// Tells the pane how its tab is titled: the number it was opened under,
+    /// and the name the user gave it, if any.
+    ///
+    /// The tab strip is the workspace's, so the title is too; the pane keeps a
+    /// copy for one purpose — a write it sends under manual commit records
+    /// which tab sent it, so that whatever refuses to run behind the open
+    /// transaction can say which tab to commit it from. The name is given by
+    /// [`QueryPane::set_tab_name`].
+    pub fn set_tab_number(&mut self, number: u64) {
+        self.number = number;
+    }
+
+    /// The name the user gave the tab, or `None` once it has none.
+    pub fn set_tab_name(&mut self, name: Option<String>) {
+        self.custom_name = name.filter(|name| !name.trim().is_empty());
+    }
+
+    /// The title the pane's tab carries, as far as the pane knows it; `None`
+    /// for a pane no workspace has numbered.
+    pub fn tab_label(&self) -> Option<SharedString> {
+        if let Some(name) = &self.custom_name {
+            return Some(SharedString::from(name.clone()));
+        }
+        self.file_title()
+            .or_else(|| (self.number > 0).then(|| ts!("query.tab", index = self.number)))
     }
 
     /// Lets the session go, leaving the tab standing.
@@ -982,10 +1114,10 @@ impl QueryPane {
             && !draft.warned
         {
             draft.warned = true;
-            self.notice = Some(ts!(
+            self.notice = Some(Notice::warn(ts!(
                 "query.draft_too_large",
                 limit = DRAFT_LIMIT / (1024 * 1024)
-            ));
+            )));
             cx.notify();
         }
     }
@@ -1057,6 +1189,39 @@ impl QueryPane {
         })
     }
 
+    /// Whether the pane has a sheet of its own up — the batch preview, the
+    /// discard question or a value viewer — which the window's shortcuts must
+    /// not act behind.
+    pub fn modal_open(&self) -> bool {
+        self.preview.is_some() || self.confirm_discard || self.lob_dialog.is_some()
+    }
+
+    /// Whether the result tab showing is a grid the keyboard can be put on.
+    pub fn has_result_grid(&self) -> bool {
+        self.active_rows().is_some()
+    }
+
+    /// Whether the keyboard is on a result grid of this pane.
+    pub fn results_hold_focus(&self, window: &Window, cx: &App) -> bool {
+        self.results.iter().any(|tab| match &tab.body {
+            ResultBody::Rows(rows) => rows
+                .grid
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx),
+            ResultBody::Log(_) => false,
+        })
+    }
+
+    /// Puts the keyboard on the grid of the result tab showing — the way out
+    /// of an editor whose `Tab` indents rather than moving on.
+    pub fn focus_results(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(rows) = self.active_rows() {
+            let handle = rows.grid.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        }
+    }
+
     /// Whether a statement is in flight.
     pub fn is_running(&self) -> bool {
         matches!(self.run, RunState::Running(_))
@@ -1079,39 +1244,64 @@ impl QueryPane {
                 ts!("query.running"),
                 elapsed_label(running.started.elapsed()),
             ),
+            // What the run read, with a "+" while there is more to read — the
+            // number alone would pass for the size of the answer — and for a
+            // run that read nothing, what its writes changed, which is the
+            // number the log reports.
             (RunState::Idle, Some(finished)) => (
-                ts!("query.row_count", count = finished.rows),
+                if finished.more {
+                    ts!("query.row_count_more", count = finished.rows)
+                } else if finished.rows == 0 && finished.affected > 0 {
+                    ts!("query.rows_affected", count = finished.affected)
+                } else {
+                    ts!("query.row_count", count = finished.rows)
+                },
                 elapsed_label(finished.elapsed),
             ),
             (RunState::Idle, None) => (SharedString::default(), SharedString::default()),
         }
     }
 
-    /// Runs `statements`, once the profile's guards allow it.
+    /// Runs `statements`, once the profile's guards allow it — for the tests,
+    /// which send SQL that was never in the editor.
+    #[cfg(test)]
     fn request(&mut self, statements: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let statements = statements.into_iter().map(|sql| (sql, None)).collect();
+        self.request_from_editor(statements, window, cx);
+    }
+
+    /// Runs `statements`, once the profile's guards allow it, each with the
+    /// range of the editor it was cut from when it was: what a failure selects
+    /// in the editor ([`QueryPane::deliver`]).
+    fn request_from_editor(
+        &mut self,
+        statements: Vec<(String, Option<std::ops::Range<usize>>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_completion(cx);
         if self.lob_dialog.is_some() || self.transaction.is_some() {
             return;
         }
-        let statements: Vec<String> = statements
+        let (statements, spans): (Vec<String>, Vec<_>) = statements
             .into_iter()
-            .filter(|sql| {
+            .filter(|(sql, _)| {
                 !split_statements(sql, &self.dialect).is_empty()
                     || sql.contains("/*!")
                     || sql.contains("/*M!")
             })
-            .collect();
+            .unzip();
         self.notice = None;
 
         if statements.is_empty() {
-            self.notice = Some(ts!("query.no_statement"));
+            self.notice = Some(Notice::warn(ts!("query.no_statement")));
             cx.notify();
             return;
         }
         if self.has_pending_edits(cx) {
             // A run replaces every result, and a staged edit is keyed to a row
             // index of the source it was typed on and nothing else (§7.9).
-            self.notice = Some(ts!("data.discard_first"));
+            self.notice = Some(Notice::warn(ts!("data.discard_first")));
             cx.notify();
             return;
         }
@@ -1119,14 +1309,14 @@ impl QueryPane {
             // Said before the write confirmation rather than after it: being
             // asked whether to run something that cannot be run is worse than
             // being told there is nothing to run it on.
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         }
         if self.is_running() {
             // The session would queue it behind the statement already running,
             // which looks like a hang rather than like a queue.
-            self.notice = Some(ts!("query.busy"));
+            self.notice = Some(Notice::warn(ts!("query.busy")));
             cx.notify();
             return;
         }
@@ -1141,7 +1331,7 @@ impl QueryPane {
                 // does not write, and asking would offer something it will not
                 // do anyway.
                 self.error = None;
-                self.notice = Some(ts!("query.read_only"));
+                self.notice = Some(Notice::warn(ts!("query.read_only")));
                 cx.notify();
                 return;
             }
@@ -1156,12 +1346,14 @@ impl QueryPane {
                     preview: preview(first),
                 };
                 self.pending = Some(statements);
+                self.run_spans = spans;
                 cx.emit(QueryPaneEvent::ConfirmWrites(Box::new(request)));
                 cx.notify();
                 return;
             }
         }
 
+        self.run_spans = spans;
         self.start(statements, None, window, cx);
     }
 

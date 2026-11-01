@@ -64,6 +64,8 @@ async-trait.workspace = true
 parking_lot.workspace = true
 # Profile and driver identifiers.
 uuid.workspace = true
+# The query history's timestamps, shown in the computer's own time zone.
+chrono.workspace = true
 # One caller: the driver downloader in `src/maven.rs`. gpui's own
 # `cx.http_client()` is a `NullHttpClient` unless the application installs one,
 # and installing a real one to serve one background request would be a much

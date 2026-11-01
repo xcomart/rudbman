@@ -95,6 +95,7 @@ use crate::connection::SessionHandle;
 use crate::explorer::{ConnectionId, ObjectTarget};
 use crate::i18n::ts;
 use crate::icons;
+use crate::notice::{Notice, NoticeClock, render_notice};
 use crate::query::{QueryError, error_lines, note};
 use crate::struct_edit::{
     ColumnDraft, ColumnField, ConstraintDraft, DraftValue, LoadedColumn, LoadedConstraint,
@@ -176,6 +177,26 @@ struct ApplyProblem {
     stopped: SharedString,
 }
 
+/// Tab order of the pane's own fields, after the column rows (which sit at
+/// the default `0`, in the order they are drawn), spaced so a field can be
+/// added between two without renumbering.
+mod tab {
+    /// The selected column's name.
+    pub const NAME: isize = 20;
+    /// Its type.
+    pub const TYPE: isize = 21;
+    /// Its default.
+    pub const DEFAULT: isize = 22;
+    /// "NOT NULL".
+    pub const NOT_NULL: isize = 23;
+    /// "Has a default".
+    pub const HAS_DEFAULT: isize = 24;
+    /// The table's new name.
+    pub const RENAME: isize = 30;
+    /// The first of the constraint form's three fields.
+    pub const CONSTRAINT: isize = 40;
+}
+
 /// One table's structure, and whatever is staged against it.
 pub struct StructPane {
     /// What is being edited. Also the tab's title, and the identity two "edit
@@ -255,8 +276,11 @@ pub struct StructPane {
     /// successful apply reloads (§7.10), and its reload has to be able to
     /// supersede whatever a refresh had already asked for.
     generation: u64,
-    /// A line the pane wants to say without it being a failure.
-    notice: Option<SharedString>,
+    /// A line the pane wants to say, at the level it matters; see
+    /// [`crate::notice`].
+    notice: Option<Notice>,
+    /// Takes an informational notice away after a while.
+    notice_clock: NoticeClock,
     /// The statements an apply is about to send, while they are being shown.
     ///
     /// This pane's write confirmation, and the one modal it raises: §7.10 and
@@ -289,6 +313,9 @@ pub struct StructPane {
     body_scroll: ScrollHandle,
     /// Whether the body's overlay bar is on screen.
     body_scrollbar: ScrollbarState,
+    /// The apply preview's Cancel button, which takes the keyboard when it
+    /// opens.
+    confirm_focus: FocusHandle,
 }
 
 impl StructPane {
@@ -310,12 +337,20 @@ impl StructPane {
         // halves of "this may not be written" — the profile's flag and the
         // absence of an apply — are settled before the first frame.
         let read_only = profile.read_only;
-        let field = |cx: &mut Context<Self>| cx.new(|cx| TextInput::new(cx).disabled(read_only));
-        let name_input = field(cx);
-        let type_input = field(cx);
-        let default_input = field(cx);
-        let rename_input = field(cx);
-        let constraint_fields = [field(cx), field(cx), field(cx)];
+        // In the tab ring, in the order they are read: a field left out of it
+        // is one Tab skips — from the name straight to the next column row.
+        let field = |cx: &mut Context<Self>, index: isize| {
+            cx.new(|cx| TextInput::new(cx).disabled(read_only).tab_index(index))
+        };
+        let name_input = field(cx, tab::NAME);
+        let type_input = field(cx, tab::TYPE);
+        let default_input = field(cx, tab::DEFAULT);
+        let rename_input = field(cx, tab::RENAME);
+        let constraint_fields = [
+            field(cx, tab::CONSTRAINT),
+            field(cx, tab::CONSTRAINT + 1),
+            field(cx, tab::CONSTRAINT + 2),
+        ];
 
         // Observed rather than left alone: a `TextInput` emits nothing, so the
         // only way a keystroke reaches the staging buffer is for the pane to
@@ -353,11 +388,13 @@ impl StructPane {
             _watch: watch,
             generation: 0,
             notice: None,
+            notice_clock: NoticeClock::default(),
             preview: None,
             apply_asked: false,
             applying: false,
             apply_error: None,
             focus_handle: cx.focus_handle(),
+            confirm_focus: cx.focus_handle(),
             body_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
         }
@@ -480,13 +517,19 @@ impl StructPane {
         !self.edits.is_empty() || self.applying
     }
 
+    /// Whether the pane has a sheet of its own up — the batch preview — which
+    /// the window's shortcuts must not act behind.
+    pub fn modal_open(&self) -> bool {
+        self.preview.is_some()
+    }
+
     /// Says, in the pane itself, why the gesture that was just tried is being
     /// refused while changes are staged.
     ///
     /// The counterpart of [`StructPane::has_pending_edits`] for the shell: a
     /// tab that simply would not close, with nothing said, would read as a bug.
     pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
-        self.notice = Some(ts!("struct.discard_first"));
+        self.notice = Some(Notice::warn(ts!("struct.discard_first")));
         cx.notify();
     }
 
@@ -563,7 +606,7 @@ impl StructPane {
     /// sent, and it keeps this the one way the pane arrives at a structure.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.has_pending_edits() {
-            self.notice = Some(ts!("struct.discard_first"));
+            self.notice = Some(Notice::warn(ts!("struct.discard_first")));
             cx.notify();
             return;
         }
@@ -576,7 +619,7 @@ impl StructPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
@@ -787,6 +830,13 @@ impl StructPane {
         self.fill_fields(cx);
     }
 
+    /// Puts the caret in the column form's name field, where filling in a
+    /// column starts.
+    fn focus_name(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.name_input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    }
+
     /// Appends a column and starts filling it in.
     fn add_column(&mut self, cx: &mut Context<Self>) {
         if self.read_only || self.structure().is_none() {
@@ -971,7 +1021,12 @@ impl StructPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -1002,7 +1057,12 @@ impl StructPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -1013,14 +1073,14 @@ impl StructPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
 
         self.applying = true;
         self.apply_error = None;
-        self.notice = Some(ts!("struct.applying"));
+        self.notice = Some(Notice::warn(ts!("struct.applying")));
         let generation = self.generation;
         let restore = self.restore_auto_commit;
 
@@ -1108,7 +1168,7 @@ impl StructPane {
             self.refresh(cx);
         }
         match outcome {
-            Ok(applied) => self.notice = Some(ts!("struct.applied", count = applied)),
+            Ok(applied) => self.notice = Some(Notice::info(ts!("struct.applied", count = applied))),
             Err(failure) => {
                 self.notice = None;
                 self.apply_error = Some(ApplyProblem {
@@ -1212,19 +1272,19 @@ impl StructPane {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .h(px(30.))
+            .h(rugpui::scaled(30., cx))
             .px(px(10.))
             .border_b_1()
             .border_color(chrome.border)
             .child(icons::icon(
                 self.target.folder.icon(),
-                px(14.),
+                rugpui::scaled(14., cx),
                 chrome.text_muted,
             ))
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(chrome.text)
                     .child(self.heading()),
             )
@@ -1233,7 +1293,7 @@ impl StructPane {
                 header.child(
                     div()
                         .flex_none()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!("struct.loading")),
                 )
@@ -1242,7 +1302,7 @@ impl StructPane {
                 div()
                     .flex_none()
                     .whitespace_nowrap()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.accent)
                     .child(pending)
             }))
@@ -1283,7 +1343,7 @@ impl StructPane {
     }
 
     /// The one line that says why nothing here can be staged.
-    fn render_banner(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+    fn render_banner(&self, chrome: &Theme, cx: &App) -> Option<impl IntoElement + use<>> {
         let reason = self.read_only_reason()?;
         Some(
             div()
@@ -1293,7 +1353,7 @@ impl StructPane {
                 .border_b_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(reason),
         )
@@ -1302,8 +1362,8 @@ impl StructPane {
     /// The structure, or the one line that stands in for it.
     fn render_body(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let content = match &self.load {
-            Load::Running => note(ts!("struct.loading"), chrome.text_muted),
-            Load::Failed(message) => note(message.clone(), chrome.danger),
+            Load::Running => note(ts!("struct.loading"), chrome.text_muted, cx),
+            Load::Failed(message) => note(message.clone(), chrome.danger, cx),
             Load::Ready(structure) => self.render_structure(structure, chrome, cx),
         };
 
@@ -1356,11 +1416,11 @@ impl StructPane {
             .flex()
             .flex_col()
             .gap(px(14.))
-            .children(creating.then(|| self.render_name(chrome)))
+            .children(creating.then(|| self.render_name(chrome, cx)))
             .child(self.render_columns(structure, chrome, cx))
             .child(self.render_editor(chrome, cx))
             .child(self.render_constraints(structure, chrome, cx))
-            .children((!creating).then(|| self.render_name(chrome)))
+            .children((!creating).then(|| self.render_name(chrome, cx)))
             .children(self.render_statements(chrome, cx))
             .into_any_element()
     }
@@ -1412,11 +1472,12 @@ impl StructPane {
                         pane.select(Some(Selection::Column(index)), cx);
                     });
                 },
+                cx,
             )
             .child(
                 div()
                     .flex_none()
-                    .w(px(84.))
+                    .w(rugpui::scaled(84., cx))
                     .px(px(4.))
                     .children(writable.then(|| {
                         Button::new(("struct-drop", index), label)
@@ -1449,11 +1510,12 @@ impl StructPane {
                             pane.select(Some(Selection::Added(position)), cx);
                         });
                     },
+                    cx,
                 )
                 .child(
                     div()
                         .flex_none()
-                        .w(px(84.))
+                        .w(rugpui::scaled(84., cx))
                         .px(px(4.))
                         .children(writable.then(|| {
                             Button::new(("struct-remove", position), ts!("struct.remove"))
@@ -1469,8 +1531,12 @@ impl StructPane {
         let add = writable.then(|| {
             Button::new("struct-add-column", ts!("struct.add_column"))
                 .variant(ButtonVariant::Secondary)
-                .on_click(move |_, _window, cx| {
-                    adder.update(cx, |pane, cx| pane.add_column(cx));
+                // And straight into its name: a column is added to be named.
+                .on_click(move |_, window, cx| {
+                    adder.update(cx, |pane, cx| {
+                        pane.add_column(cx);
+                        pane.focus_name(window, cx);
+                    });
                 })
         });
 
@@ -1490,13 +1556,15 @@ impl StructPane {
                             ts!("struct.state"),
                         ],
                         chrome,
+                        cx,
                     )
-                    .child(div().flex_none().w(px(84.))),
+                    .child(div().flex_none().w(rugpui::scaled(84., cx))),
                 )
                 .children(rows)
                 .children(added)
                 .child(div().flex().flex_row().pt(px(6.)).children(add)),
             chrome,
+            cx,
         )
         .into_any_element()
     }
@@ -1513,6 +1581,7 @@ impl StructPane {
         zebra: bool,
         chrome: &Theme,
         click: impl Fn(&mut Window, &mut App) + 'static,
+        cx: &App,
     ) -> gpui::Stateful<Div> {
         let cells = [
             (SharedString::from(draft.name.clone()), false),
@@ -1549,7 +1618,7 @@ impl StructPane {
             .when(zebra && !selected, |row| row.bg(chrome.surface))
             .when(selected, |row| row.bg(chrome.surface_hover))
             .children(cells.into_iter().map(|(text, muted)| {
-                cell(text, muted, chrome).when(struck, |cell| cell.line_through())
+                cell(text, muted, chrome, cx).when(struck, |cell| cell.line_through())
             }))
             .on_click(move |_, window, cx| click(window, cx))
     }
@@ -1560,10 +1629,11 @@ impl StructPane {
             return section(
                 ts!("struct.edit_column"),
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("struct.no_selection")),
                 chrome,
+                cx,
             )
             .into_any_element();
         };
@@ -1590,6 +1660,7 @@ impl StructPane {
                             // column's own DDL says.
                             Checkbox::new("struct-not-null", SharedString::new_static("NOT NULL"))
                                 .checked(draft.not_null)
+                                .tab_index(tab::NOT_NULL)
                                 .on_toggle(move |checked, _window, cx| {
                                     nulls.update(cx, |pane, cx| {
                                         pane.set_field(DraftValue::NotNull(checked), cx);
@@ -1599,6 +1670,7 @@ impl StructPane {
                         .child(
                             Checkbox::new("struct-has-default", ts!("struct.has_default"))
                                 .checked(draft.default_sql.is_some())
+                                .tab_index(tab::HAS_DEFAULT)
                                 .on_toggle(move |checked, _window, cx| {
                                     this.update(cx, |pane, cx| pane.set_has_default(checked, cx));
                                 }),
@@ -1606,6 +1678,7 @@ impl StructPane {
                 )
                 .when(!writable, |form| form.opacity(0.6)),
             chrome,
+            cx,
         )
         .into_any_element()
     }
@@ -1654,34 +1727,43 @@ impl StructPane {
                     dropped,
                     index % 2 == 1,
                     chrome,
+                    cx,
                 )
-                .child(div().flex_none().w(px(84.)).px(px(4.)).children(
-                    writable.then(|| {
-                        Button::new(("struct-drop-constraint", index), label)
-                            .variant(ButtonVariant::Secondary)
-                            .disabled(!droppable)
-                            .on_click(move |_, _window, cx| {
-                                this.update(cx, |pane, cx| {
-                                    pane.toggle_constraint_drop(index, cx);
-                                });
-                            })
-                    }),
-                ))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(rugpui::scaled(84., cx))
+                        .px(px(4.))
+                        .children(writable.then(|| {
+                            Button::new(("struct-drop-constraint", index), label)
+                                .variant(ButtonVariant::Secondary)
+                                .disabled(!droppable)
+                                .on_click(move |_, _window, cx| {
+                                    this.update(cx, |pane, cx| {
+                                        pane.toggle_constraint_drop(index, cx);
+                                    });
+                                })
+                        })),
+                )
             });
 
-        let staged =
-            added.iter().enumerate().map(|(position, draft)| {
-                let this = this.clone();
-                constraint_row(
-                    SharedString::new_static(draft.kind.keyword()),
-                    &draft.name,
-                    reference_summary(draft),
-                    false,
-                    (structure.constraints.len() + position) % 2 == 1,
-                    chrome,
-                )
-                .child(div().flex_none().w(px(84.)).px(px(4.)).children(
-                    writable.then(|| {
+        let staged = added.iter().enumerate().map(|(position, draft)| {
+            let this = this.clone();
+            constraint_row(
+                SharedString::new_static(draft.kind.keyword()),
+                &draft.name,
+                reference_summary(draft),
+                false,
+                (structure.constraints.len() + position) % 2 == 1,
+                chrome,
+                cx,
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(rugpui::scaled(84., cx))
+                    .px(px(4.))
+                    .children(writable.then(|| {
                         Button::new(("struct-remove-constraint", position), ts!("struct.remove"))
                             .variant(ButtonVariant::Secondary)
                             .on_click(move |_, _window, cx| {
@@ -1689,13 +1771,13 @@ impl StructPane {
                                     pane.remove_added_constraint(position, cx);
                                 });
                             })
-                    }),
-                ))
-            });
+                    })),
+            )
+        });
 
         let listing = if structure.constraints.is_empty() && added.is_empty() {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(ts!("struct.empty"))
         } else {
@@ -1711,15 +1793,16 @@ impl StructPane {
                             ts!("struct.columns"),
                         ],
                         chrome,
+                        cx,
                     )
-                    .child(div().flex_none().w(px(84.))),
+                    .child(div().flex_none().w(rugpui::scaled(84., cx))),
                 )
                 .children(loaded)
                 .children(staged)
                 .children((!droppable && !structure.constraints.is_empty()).then(|| {
                     div()
                         .pt(px(6.))
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.text_muted)
                         .child(ts!(
                             "struct.no_constraint_drop",
@@ -1737,7 +1820,7 @@ impl StructPane {
                 (creating && writable).then(|| self.render_add_constraint(structure, chrome, cx)),
             );
 
-        section(ts!("struct.constraints"), body, chrome).into_any_element()
+        section(ts!("struct.constraints"), body, chrome, cx).into_any_element()
     }
 
     /// The form that gives a table being created a key or a reference.
@@ -1811,7 +1894,7 @@ impl StructPane {
             .border_color(chrome.border)
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.text_muted)
                     .child(ts!("struct.new_constraint")),
             )
@@ -1824,8 +1907,8 @@ impl StructPane {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(120.))
-                            .text_size(px(11.))
+                            .w(rugpui::scaled(120., cx))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.text_muted)
                             .child(ts!("struct.kind")),
                     )
@@ -1840,15 +1923,15 @@ impl StructPane {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(120.))
-                            .text_size(px(11.))
+                            .w(rugpui::scaled(120., cx))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(chrome.text_muted)
                             .child(ts!("struct.columns")),
                     )
                     .when(candidates.is_empty(), |row| {
                         row.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(rugpui::TextSize::Xs.size(cx))
                                 .text_color(chrome.text_muted)
                                 .child(ts!("struct.empty")),
                         )
@@ -1910,12 +1993,18 @@ impl StructPane {
     /// starts empty and is the one field the statement cannot be written
     /// without. The same input and the same staging slot either way — there is
     /// one name being typed — and only the words around it differ.
-    fn render_name(&self, chrome: &Theme) -> AnyElement {
+    fn render_name(&self, chrome: &Theme, cx: &App) -> AnyElement {
         let (title, label) = match self.mode {
             Mode::Alter => (ts!("struct.rename_table"), ts!("struct.new_name")),
             Mode::Create => (ts!("struct.new_table"), ts!("struct.table_name")),
         };
-        section(title, form_row(label, self.rename_input.clone()), chrome).into_any_element()
+        section(
+            title,
+            form_row(label, self.rename_input.clone()),
+            chrome,
+            cx,
+        )
+        .into_any_element()
     }
 
     /// The statements the staged edits would send, or the refusal they earned.
@@ -1930,13 +2019,13 @@ impl StructPane {
                 .flex_col()
                 .gap(px(2.))
                 .font_family(mono)
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text)
                 .children(statements.into_iter().map(SharedString::from)),
             // The generator's own sentence, which already names the product and
             // the reason it cannot do this — see `struct_edit::PlanError`.
             Err(error) => div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.danger)
                 .child(SharedString::from(error.to_string())),
         };
@@ -1953,6 +2042,7 @@ impl StructPane {
                     .border_color(chrome.border)
                     .child(body),
                 chrome,
+                cx,
             )
             .into_any_element(),
         )
@@ -1981,7 +2071,7 @@ impl StructPane {
             div()
                 .when(index > 0, |block| block.mt(px(8.)))
                 .font_family(mono.clone())
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text)
                 .child(SharedString::from(statement.clone()))
         });
@@ -1992,14 +2082,14 @@ impl StructPane {
             .gap(px(12.))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(chrome.danger)
                     .child(ts!("struct.apply_no_undo")),
             )
             .child(
                 div()
                     .id("struct-apply-preview")
-                    .max_h(px(260.))
+                    .max_h(rugpui::scaled(260., cx))
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
                     .p(px(8.))
@@ -2017,6 +2107,7 @@ impl StructPane {
                     .gap(px(8.))
                     .child(
                         Button::new("struct-apply-cancel", ts!("common.cancel"))
+                            .focus_handle(&self.confirm_focus)
                             .variant(ButtonVariant::Secondary)
                             .on_click({
                                 let this = this.clone();
@@ -2041,7 +2132,7 @@ impl StructPane {
             modal(
                 "struct-apply-modal",
                 ts!("struct.apply_title", count = statements.len()),
-                px(560.),
+                rugpui::scaled(560., cx),
                 body,
                 move |_window, cx| {
                     dismiss.update(cx, |pane, cx| {
@@ -2050,6 +2141,10 @@ impl StructPane {
                     });
                 },
             )
+            // On Cancel, for the apply preview's reason: a batch of DDL is
+            // read before it is run, and Enter must not be what runs it.
+            .initial_focus(&self.confirm_focus)
+            .escape_dismisses(true)
             .into_any_element(),
         )
     }
@@ -2060,7 +2155,7 @@ impl StructPane {
     /// still on screen — the reloaded one, which is the point — and a failure
     /// drawn in its place would take away the one reading that says what the
     /// committed half did.
-    fn render_apply_error(&self, chrome: &Theme) -> Option<impl IntoElement + use<>> {
+    fn render_apply_error(&self, chrome: &Theme, cx: &App) -> Option<impl IntoElement + use<>> {
         let problem = self.apply_error.as_ref()?;
         Some(
             div()
@@ -2073,10 +2168,10 @@ impl StructPane {
                 .border_b_1()
                 .border_color(chrome.border)
                 .bg(chrome.surface)
-                .child(error_lines(&problem.error, chrome))
+                .child(error_lines(&problem.error, chrome, cx))
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(chrome.danger)
                         .child(problem.stopped.clone()),
                 ),
@@ -2095,8 +2190,31 @@ impl Render for StructPane {
         self.watch_scroll(cx);
         let chrome = theme(cx);
         let header = self.render_header(&chrome, cx);
-        let banner = self.render_banner(&chrome);
-        let failure = self.render_apply_error(&chrome);
+        let banner = self.render_banner(&chrome, cx);
+        self.notice_clock
+            .watch(self.notice.as_ref(), cx, |pane, shown| {
+                let still = pane.notice.as_ref() == Some(shown);
+                if still {
+                    pane.notice = None;
+                }
+                still
+            });
+        let notice = self.notice.as_ref().map(|notice| {
+            let this = cx.entity();
+            render_notice(
+                ("struct-notice", cx.entity_id()),
+                notice,
+                &chrome,
+                move |_, cx| {
+                    this.update(cx, |pane, cx| {
+                        pane.notice = None;
+                        cx.notify();
+                    });
+                },
+                cx,
+            )
+        });
+        let failure = self.render_apply_error(&chrome, cx);
         let body = self.render_body(&chrome, cx);
         let preview = self.render_apply_preview(&chrome, cx);
 
@@ -2128,25 +2246,10 @@ impl Render for StructPane {
                 cx.listener(|pane, _: &MouseUpEvent, _window, cx| pane.release(cx)),
             )
             .child(header)
+            .children(notice)
             .children(banner)
             .children(failure)
             .child(body)
-            .children(self.notice.clone().map(|notice| {
-                div()
-                    .absolute()
-                    .bottom(px(6.))
-                    .left(px(10.))
-                    .right(px(10.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded_md()
-                    .bg(chrome.surface)
-                    .border_1()
-                    .border_color(chrome.border)
-                    .text_size(px(11.))
-                    .text_color(chrome.text_muted)
-                    .child(notice)
-            }))
             // Last, so it draws over everything else including the notice
             // (architecture document, §7.8).
             .children(preview)
@@ -2158,6 +2261,7 @@ fn section<E: IntoElement>(
     title: SharedString,
     body: E,
     chrome: &Theme,
+    cx: &App,
 ) -> impl IntoElement + use<E> {
     div()
         .flex()
@@ -2165,7 +2269,7 @@ fn section<E: IntoElement>(
         .gap(px(6.))
         .child(
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(chrome.text_muted)
                 .child(title),
         )
@@ -2178,14 +2282,14 @@ fn section<E: IntoElement>(
 /// widest cell truncates: [`crate::table_detail`]'s idiom, and for its reason —
 /// a column list is tens of rows and never the millions the result grid has to
 /// survive.
-fn cell(text: SharedString, muted: bool, chrome: &Theme) -> Div {
+fn cell(text: SharedString, muted: bool, chrome: &Theme, cx: &App) -> Div {
     div()
         .flex_1()
         .min_w_0()
         .truncate()
         .px(px(6.))
         .py(px(3.))
-        .text_size(px(11.))
+        .text_size(rugpui::TextSize::Xs.size(cx))
         .text_color(if muted {
             chrome.text_muted
         } else {
@@ -2195,13 +2299,13 @@ fn cell(text: SharedString, muted: bool, chrome: &Theme) -> Div {
 }
 
 /// The heading row of one of the pane's tables.
-fn headings<const N: usize>(headers: [SharedString; N], chrome: &Theme) -> Div {
+fn headings<const N: usize>(headers: [SharedString; N], chrome: &Theme, cx: &App) -> Div {
     div()
         .flex()
         .flex_row()
         .border_b_1()
         .border_color(chrome.border)
-        .children(headers.into_iter().map(|text| cell(text, true, chrome)))
+        .children(headers.into_iter().map(|text| cell(text, true, chrome, cx)))
 }
 
 /// One row of the constraint table, up to the button at the end of it.
@@ -2216,6 +2320,7 @@ fn constraint_row(
     struck: bool,
     zebra: bool,
     chrome: &Theme,
+    cx: &App,
 ) -> Div {
     let named = if name.is_empty() {
         NOTHING
@@ -2231,7 +2336,7 @@ fn constraint_row(
             [(kind, false), (named, true), (columns, true)]
                 .into_iter()
                 .map(|(text, muted)| {
-                    cell(text, muted, chrome).when(struck, |cell| cell.line_through())
+                    cell(text, muted, chrome, cx).when(struck, |cell| cell.line_through())
                 }),
         )
 }
@@ -3223,7 +3328,10 @@ mod tests {
                 assert_eq!(pane.title(), "APP.NOTE", "and the tab renamed itself");
                 assert_eq!(pane.apply_label(), ts!("struct.apply"));
                 assert!(!pane.has_pending_edits());
-                assert_eq!(pane.notice, Some(ts!("struct.applied", count = 1)));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.applied", count = 1))
+                );
                 assert!(pane.apply_error.is_none());
 
                 // The reload is against the table that now exists, and what it
@@ -3381,7 +3489,10 @@ mod tests {
             .update(cx, |pane, _window, cx| {
                 pane.detach(cx);
                 pane.refresh(cx);
-                assert_eq!(pane.notice, Some(ts!("explorer.disconnected")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("explorer.disconnected"))
+                );
                 assert!(pane.structure().is_some(), "what was read is still there");
             })
             .expect("the window is open");
@@ -3402,12 +3513,18 @@ mod tests {
                 assert!(pane.has_pending_edits());
 
                 pane.refresh(cx);
-                assert_eq!(pane.notice, Some(ts!("struct.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.discard_first"))
+                );
                 assert!(pane.structure().is_some(), "nothing was thrown away");
                 assert!(pane.has_pending_edits());
 
                 pane.warn_pending(cx);
-                assert_eq!(pane.notice, Some(ts!("struct.discard_first")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.discard_first"))
+                );
             })
             .expect("the window is open");
         connected.close().expect("close");
@@ -3507,7 +3624,10 @@ mod tests {
                 stage_batch(pane, "VARCHAR(80)", cx);
                 pane.apply(cx);
                 assert!(pane.preview.is_none(), "the confirmation was raised");
-                assert_eq!(pane.notice, Some(ts!("query.uncommitted_pending")));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("query.uncommitted_pending"))
+                );
 
                 handle.clear_uncommitted();
                 pane.apply(cx);
@@ -3553,7 +3673,10 @@ mod tests {
                 assert!(!pane.has_pending_edits(), "the buffer outlived the batch");
                 assert!(pane.preview.is_none());
                 assert!(pane.apply_error.is_none());
-                assert_eq!(pane.notice, Some(ts!("struct.applied", count = 2)));
+                assert_eq!(
+                    pane.notice.as_ref().map(|notice| notice.text.clone()),
+                    Some(ts!("struct.applied", count = 2))
+                );
                 // The reload is what makes the server's own spelling visible:
                 // H2 answers CHARACTER VARYING, which nothing on this side
                 // typed and nothing on this side could have guessed.

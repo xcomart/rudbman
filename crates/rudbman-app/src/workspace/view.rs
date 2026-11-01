@@ -74,7 +74,10 @@ pub(super) fn render_tab_strip(
             // Stable while the tab lives: an index id would name a different
             // tab after every reorder, shuffling whatever gpui keeps per
             // element — including the drag the reorder itself started.
-            let tab = TabItem::new(("pane-tab", item.entity_id()), title);
+            let mut tab = TabItem::new(("pane-tab", item.entity_id()), title);
+            if item.unsaved(cx) {
+                tab = tab.mark(icons::UNSAVED, ts!("query.unsaved"));
+            }
             match chrome.colors.get(&item.connection(cx)) {
                 Some(color) => tab.dot(*color),
                 None => tab,
@@ -89,8 +92,17 @@ pub(super) fn render_tab_strip(
         .menu_icon(icons::TAB_LIST)
         // The second slot is never read: this strip carries no "+". The close
         // button reuses the right-click menu's own row, as the connection
-        // strip's does.
-        .tooltips(ts!("tab.tip_pane_list"), "", ts!("context.close_tab"))
+        // strip's does, with the chord the row shows.
+        .tooltips(
+            ts!("tab.tip_pane_list"),
+            "",
+            match CLOSE_TAB_SHORTCUT {
+                Some((_, label)) => {
+                    SharedString::from(format!("{} ({label})", ts!("context.close_tab")))
+                }
+                None => ts!("context.close_tab"),
+            },
+        )
         .drag_source(id.as_u64())
         .drop_indicator(chrome.drop.indicator(id.as_u64()))
         .on_drag_over({
@@ -219,7 +231,7 @@ pub(super) fn render_pane(
                 // A work area belongs to a connection, so a pane inside one is
                 // empty because nothing that would fill it has been opened yet
                 // — never because there is nothing to connect to.
-                None => render_placeholder(theme),
+                None => render_placeholder(theme, cx),
             };
             div()
                 .id(("pane", id.as_u64()))
@@ -316,7 +328,7 @@ pub(super) fn render_pane(
 /// It paints no fill of its own. The work area behind it already carries the
 /// tinted fill for these pixels, and a second one here would compose back to
 /// opaque; see [`app_settings::window_tint`].
-pub(super) fn render_placeholder(theme: &Theme) -> AnyElement {
+pub(super) fn render_placeholder(theme: &Theme, cx: &App) -> AnyElement {
     let (title, hint) = (ts!("empty.connected_title"), ts!("empty.connected_hint"));
     div()
         .flex()
@@ -327,10 +339,15 @@ pub(super) fn render_placeholder(theme: &Theme) -> AnyElement {
         .items_center()
         .justify_center()
         .gap(px(8.))
-        .child(div().text_size(px(18.)).text_color(theme.text).child(title))
         .child(
             div()
-                .text_size(px(13.))
+                .text_size(rugpui::scaled(18., cx))
+                .text_color(theme.text)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(rugpui::TextSize::Body.size(cx))
                 .text_color(theme.text_muted)
                 .child(hint),
         )
@@ -441,7 +458,9 @@ impl Render for Workspace {
             .is_open()
             .then(|| div().absolute().inset_0().child(self.update.clone()));
         let confirm = self.render_confirm(cx);
+        let close_question = self.render_close_question(cx);
         let rename_tab = self.render_rename_tab(cx);
+        let history = self.render_history(cx);
         let context_menu = self.render_context_menu(cx);
 
         // With client-side decorations the compositor stops drawing the drop
@@ -499,25 +518,39 @@ impl Render for Workspace {
                     workspace.clear_tab_drop(cx);
                 }),
             )
-            .on_action(cx.listener(Self::new_connection_action))
-            .on_action(cx.listener(Self::open_settings_action))
-            .on_action(cx.listener(Self::show_about_action))
-            .on_action(cx.listener(Self::check_updates_action))
-            .on_action(cx.listener(Self::toggle_explorer_action))
-            .on_action(cx.listener(Self::new_query_action))
-            .on_action(cx.listener(Self::query_object_action))
-            .on_action(cx.listener(Self::open_sql_file_action))
-            .on_action(cx.listener(Self::extract_script_action))
-            .on_action(cx.listener(Self::transfer_table_action))
-            .on_action(cx.listener(Self::backup_schema_action))
-            .on_action(cx.listener(Self::open_erd_action))
-            .on_action(cx.listener(Self::add_to_builder_action))
-            .on_action(cx.listener(Self::new_builder_action))
-            .on_action(cx.listener(Self::close_pane_action))
-            .on_action(cx.listener(Self::focus_next_pane_action))
-            .on_action(cx.listener(Self::focus_prev_pane_action))
-            .on_action(cx.listener(Self::split_right_action))
-            .on_action(cx.listener(Self::split_below_action))
+            .on_action(cx.listener(Self::open_app_menu_action))
+            .on_action(cx.listener(actions::unless_held(Self::new_connection_action)))
+            .on_action(cx.listener(actions::unless_held(Self::open_settings_action)))
+            .on_action(cx.listener(actions::unless_held(Self::show_about_action)))
+            .on_action(cx.listener(actions::unless_held(Self::check_updates_action)))
+            .on_action(cx.listener(actions::unless_held(Self::toggle_explorer_action)))
+            .on_action(cx.listener(actions::unless_held(Self::new_query_action)))
+            .on_action(cx.listener(actions::unless_held(Self::query_object_action)))
+            .on_action(cx.listener(actions::unless_held(Self::open_sql_file_action)))
+            .on_action(cx.listener(actions::unless_held(Self::save_sql_file_action)))
+            .on_action(cx.listener(actions::unless_held(Self::explain_query_action)))
+            .on_action(cx.listener(actions::unless_held(Self::show_query_history_action)))
+            .on_action(cx.listener(actions::unless_held(Self::save_sql_file_as_action)))
+            .on_action(cx.listener(actions::unless_held(Self::extract_script_action)))
+            .on_action(cx.listener(actions::unless_held(Self::transfer_table_action)))
+            .on_action(cx.listener(actions::unless_held(Self::backup_schema_action)))
+            .on_action(cx.listener(actions::unless_held(Self::open_erd_action)))
+            .on_action(cx.listener(actions::unless_held(Self::add_to_builder_action)))
+            .on_action(cx.listener(actions::unless_held(Self::new_builder_action)))
+            .on_action(cx.listener(actions::unless_held(Self::close_pane_action)))
+            .on_action(cx.listener(actions::unless_held(Self::focus_next_pane_action)))
+            .on_action(cx.listener(actions::unless_held(Self::focus_prev_pane_action)))
+            .on_action(cx.listener(actions::unless_held(Self::split_right_action)))
+            .on_action(cx.listener(actions::unless_held(Self::split_below_action)))
+            .on_action(cx.listener(actions::unless_held(Self::close_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::next_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::prev_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::select_tab_action)))
+            .on_action(cx.listener(actions::unless_held(Self::next_connection_action)))
+            .on_action(cx.listener(actions::unless_held(Self::prev_connection_action)))
+            .on_action(cx.listener(actions::unless_held(Self::next_region_action)))
+            .on_action(cx.listener(actions::unless_held(Self::prev_region_action)))
+            .on_action(cx.listener(actions::unless_held(Self::reopen_closed_tab_action)))
             .on_action(cx.listener(Self::dismiss_dialog_action))
             .child(toolbar)
             .child(body)
@@ -531,10 +564,23 @@ impl Render for Workspace {
             .children(update)
             .children(confirm)
             .children(rename_tab)
+            .children(history)
+            .children(close_question)
+            // Over every other dialog: a quit, or a close of the window, can
+            // be asked for with one up.
+            .child(self.close_guard.clone())
             // Last: it paints above the dialogs, as its own backdrop already
             // implies, and it takes no room in the column — the element is an
             // empty absolute box whose two halves are anchored to the window.
-            .children(context_menu);
+            .children(context_menu)
+            // Toasts over everything, menus included, and clear of the status
+            // bar: feedback that belongs to no pane (`Workspace::say_not_live`
+            // and the failures behind a command) has to be readable whatever
+            // is open.
+            .child(
+                rugpui_shell::toast_stack()
+                    .bottom_inset(rugpui::scaled(STATUS_BAR_HEIGHT, cx) + px(8.)),
+            );
 
         let Some(tiling) = tiling else {
             // A server-decorated window: the compositor frames and shadows it,
@@ -563,11 +609,13 @@ impl Workspace {
             ContextTarget::Connection(index) => self.connection_rows(*index, cx),
             ContextTarget::PaneTab { pane, index } => self.pane_tab_rows(*pane, *index, cx),
             ContextTarget::Profile(id) => self.profile_rows(*id, cx),
+            ContextTarget::History(id) => self.history_rows(*id, cx),
         };
 
         Some(
             rugpui::ContextMenu::new("workspace-context")
                 .position(menu.position)
+                .highlight_first(menu.by_keyboard)
                 .entries(context_menu::entries(rows))
                 .on_dismiss(move |_window, cx| {
                     this.update(cx, |workspace, cx| {
@@ -614,7 +662,7 @@ impl Workspace {
                 .flex_none()
                 .items_center()
                 .gap(px(2.))
-                .h(px(TOOLBAR_HEIGHT))
+                .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
                 .px(px(4.))
                 .bg(theme.surface)
                 .border_b_1()
@@ -631,7 +679,7 @@ impl Workspace {
                 div()
                     .flex_none()
                     .w(px(TRAFFIC_LIGHT_GAP))
-                    .h(px(TOOLBAR_HEIGHT))
+                    .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
                     .bg(theme.surface)
                     .border_b_1()
                     .border_color(theme.border)
@@ -652,10 +700,12 @@ impl Workspace {
             // Use the shipped PNG so the title bar preserves the icon's
             // colors on every platform instead of tinting its alpha mask.
             let icon = (!cfg!(target_os = "macos")).then(|| {
-                let icon = img(icons::APP_ICON).size(px(16.)).flex_none();
+                let icon = img(icons::APP_ICON)
+                    .size(rugpui::scaled(16., cx))
+                    .flex_none();
                 if !titlebar_active {
                     div()
-                        .size(px(16.))
+                        .size(rugpui::scaled(16., cx))
                         .flex_none()
                         .opacity(0.55)
                         .child(icon)
@@ -670,14 +720,14 @@ impl Workspace {
                 .flex_none()
                 .items_center()
                 .gap(px(6.))
-                .h(px(TOOLBAR_HEIGHT))
+                .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
                 .px(px(10.))
                 .bg(theme.surface)
                 .border_b_1()
                 .border_color(theme.border)
                 // A shade quieter than a tab title, which is the one label in
                 // this row that has to be read.
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(titlebar_text)
                 .children(icon)
                 .child(APP_NAME)
@@ -696,7 +746,7 @@ impl Workspace {
             .flex_none()
             .items_center()
             .w_full()
-            .h(px(TOOLBAR_HEIGHT))
+            .h(rugpui::scaled(TOOLBAR_HEIGHT, cx))
             .when(custom, |this| {
                 // Occluding is load-bearing, not just hygiene: the workspace
                 // root tracks focus, and gpui's focus transfer marks every
@@ -722,14 +772,17 @@ impl Workspace {
     /// Builds the dropdown menu shown on the platforms without a native one.
     ///
     /// Every row dispatches the action its keyboard shortcut dispatches, so the
-    /// menu adds a way in rather than a second implementation.
+    /// menu adds a way in rather than a second implementation — and it is the
+    /// one list of every command and its chord that the window has, which is
+    /// why the pane and tab commands are on it too and why a chord that only
+    /// works from the explorer says so beside it.
     ///
-    /// The pane commands are deliberately absent. They act on panes that hold
-    /// nothing yet, so a row offering to split the empty state would promise
-    /// something it cannot deliver; the shortcuts stay bound so that the layout
-    /// code is exercised, and the rows arrive with the panels in M2.
+    /// Grouped by what the rows act on, with a rule between groups: the
+    /// connections, the query tab and its file, the object selected in the
+    /// explorer, the window's layout, and the application. A list of
+    /// twenty-odd rows without them reads as one undifferentiated column.
     ///
-    /// Every other row is grayed exactly when the action behind it would return
+    /// Every row is grayed exactly when the action behind it would return
     /// without doing anything — the welcome screen has no session, so all but
     /// the connection, settings and about rows arrive muted. Drawn rather than
     /// dropped, for the reason the explorer's menu draws its own: a command that
@@ -754,64 +807,108 @@ impl Workspace {
         let addable = relation_live
             && self.active_connection().map(|open| open.id)
                 == relation.as_ref().map(|target| target.connection);
+        let query = self.active_query().is_some();
+        let (tabs, panes, reopenable) = self.work_area().map_or((0, 0, false), |area| {
+            (
+                area.panes
+                    .get(area.active())
+                    .map_or(0, |pane| pane.items().len()),
+                area.panes.leaf_count(),
+                !area.closed.is_empty(),
+            )
+        });
+        let row = |label: SharedString, action: Box<dyn gpui::Action>| {
+            MenuEntry::new(label)
+                .on_activate(move |window, cx| window.dispatch_action(action.boxed_clone(), cx))
+        };
+        let chord = |key: &str| format!("{SHORTCUT_MODIFIER}+{key}");
+        let pane_chord = |key: &str| format!("{PANE_SHORTCUT_LABEL}+{key}");
+        // The two chords bound in the explorer's key context only: in the SQL
+        // editor the same keys run a statement and move the caret.
+        let in_explorer = |key: &str| ts!("menu.in_explorer", shortcut = chord(key));
+        let save_as = match SAVE_AS_SHORTCUT {
+            Some((_, label)) => {
+                row(ts!("menu.save_sql_file_as"), Box::new(SaveSqlFileAs)).shortcut(label)
+            }
+            None => row(ts!("menu.save_sql_file_as"), Box::new(SaveSqlFileAs)),
+        };
+        let close_tab = match CLOSE_TAB_SHORTCUT {
+            Some((_, label)) => row(ts!("context.close_tab"), Box::new(CloseTab)).shortcut(label),
+            None => row(ts!("context.close_tab"), Box::new(CloseTab)),
+        };
         let entries = vec![
-            MenuEntry::new(ts!("menu.new_connection"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+N"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(NewConnection), cx)),
-            MenuEntry::new(ts!("menu.new_query"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+T"))
-                .disabled(!live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(NewQuery), cx)),
-            MenuEntry::new(ts!("menu.query_object"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+Enter"))
-                .disabled(!(live && relation.is_some()))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(QueryObject), cx)),
-            MenuEntry::new(ts!("menu.open_sql_file"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+O"))
-                .disabled(!live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSqlFile), cx)),
-            MenuEntry::new(ts!("menu.extract_script"))
-                .disabled(!relation_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(ExtractScript), cx)),
-            MenuEntry::new(ts!("menu.transfer_table"))
-                .disabled(!relation_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(TransferTable), cx)),
-            MenuEntry::new(ts!("menu.backup_schema"))
-                .disabled(!scope_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(BackupSchema), cx)),
-            MenuEntry::new(ts!("menu.erd"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+E"))
-                .disabled(!scope_live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenErd), cx)),
-            MenuEntry::new(ts!("menu.new_builder"))
-                .disabled(!live)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(NewBuilder), cx)),
-            MenuEntry::new(ts!("menu.add_to_builder"))
-                .disabled(!addable)
-                .on_activate(|window, cx| window.dispatch_action(Box::new(AddToBuilder), cx)),
-            MenuEntry::new(ts!("menu.toggle_explorer"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+B"))
-                .disabled(self.connections.is_empty())
-                .on_activate(|window, cx| window.dispatch_action(Box::new(ToggleExplorer), cx)),
-            MenuEntry::new(ts!("menu.settings"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+,"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
+            row(ts!("menu.new_connection"), Box::new(NewConnection)).shortcut(chord("N")),
             MenuEntry::separator(),
+            row(ts!("menu.new_query"), Box::new(NewQuery))
+                .shortcut(chord("T"))
+                .disabled(!live),
+            row(ts!("menu.open_sql_file"), Box::new(OpenSqlFile))
+                .shortcut(chord("O"))
+                .disabled(!live),
+            // Not gated on the session: saving writes the editor's text, which
+            // a pane whose connection has gone still holds.
+            row(ts!("menu.save_sql_file"), Box::new(SaveSqlFile))
+                .shortcut(chord("S"))
+                .disabled(!query),
+            save_as.disabled(!query),
+            close_tab.disabled(tabs == 0),
+            row(ts!("context.reopen_tab"), Box::new(ReopenClosedTab))
+                .shortcut(chord("Shift+T"))
+                .disabled(!(live && reopenable)),
+            row(ts!("context.explain"), Box::new(ExplainQuery))
+                .shortcut(crate::query::EXPLAIN_KEY)
+                .disabled(!(live && query)),
+            row(ts!("menu.query_history"), Box::new(ShowQueryHistory))
+                .shortcut(chord("Shift+H"))
+                .disabled(self.connections.is_empty()),
+            MenuEntry::separator(),
+            row(ts!("menu.query_object"), Box::new(QueryObject))
+                .shortcut(in_explorer("Enter"))
+                .disabled(!(live && relation.is_some())),
+            row(ts!("menu.erd"), Box::new(OpenErd))
+                .shortcut(in_explorer("E"))
+                .disabled(!scope_live),
+            row(ts!("menu.extract_script"), Box::new(ExtractScript)).disabled(!relation_live),
+            row(ts!("menu.transfer_table"), Box::new(TransferTable)).disabled(!relation_live),
+            row(ts!("menu.backup_schema"), Box::new(BackupSchema)).disabled(!scope_live),
+            row(ts!("menu.new_builder"), Box::new(NewBuilder)).disabled(!live),
+            row(ts!("menu.add_to_builder"), Box::new(AddToBuilder)).disabled(!addable),
+            MenuEntry::separator(),
+            row(ts!("menu.toggle_explorer"), Box::new(ToggleExplorer))
+                .shortcut(chord("B"))
+                .disabled(self.connections.is_empty()),
+            row(ts!("context.split_right"), Box::new(SplitRight))
+                .shortcut(pane_chord("Shift+D"))
+                .disabled(!live),
+            row(ts!("context.split_below"), Box::new(SplitBelow))
+                .shortcut(pane_chord("Shift+S"))
+                .disabled(!live),
+            row(ts!("context.close_pane"), Box::new(ClosePane))
+                .shortcut(pane_chord("W"))
+                .disabled(panes < 2),
+            row(ts!("menu.next_pane"), Box::new(FocusNextPane))
+                .shortcut(pane_chord("]"))
+                .disabled(panes < 2),
+            row(ts!("menu.prev_pane"), Box::new(FocusPrevPane))
+                .shortcut(pane_chord("["))
+                .disabled(panes < 2),
+            MenuEntry::separator(),
+            row(ts!("menu.settings"), Box::new(OpenSettings)).shortcut(chord(",")),
             // Next to About, where a Help menu would put it and where users of
             // every other desktop application look for it.
-            MenuEntry::new(ts!("menu.check_updates"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(CheckUpdates), cx)),
-            MenuEntry::new(ts!("menu.about"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(ShowAbout), cx)),
+            row(ts!("menu.check_updates"), Box::new(CheckUpdates)),
+            row(ts!("menu.about"), Box::new(ShowAbout)),
             MenuEntry::separator(),
-            MenuEntry::new(ts!("menu.quit"))
-                .shortcut(format!("{SHORTCUT_MODIFIER}+Q"))
-                .on_activate(|window, cx| window.dispatch_action(Box::new(Quit), cx)),
+            row(ts!("menu.quit"), Box::new(Quit)).shortcut(chord("Q")),
         ];
 
         MenuButton::new("app-menu")
             .tooltip(ts!("menu.tip_menu"))
+            // A tab stop, so the menu is a keyboard's way in as well as
+            // `F10`'s; Enter, Space or Down open it on its first row.
+            .tab_index(0)
             .open(self.menu_open)
+            .highlight_first(self.menu_by_keyboard)
             .entries(entries)
             .on_open_change(move |open, _window, cx| {
                 this.update(cx, |workspace, cx| workspace.set_menu_open(open, cx));
@@ -841,8 +938,17 @@ impl Workspace {
                 // different tab after every reorder, shuffling whatever gpui
                 // keeps per element — including the drag the reorder itself
                 // started.
-                TabItem::new(("connection", connection.id.0), title)
-                    .status(connection.state.tab_status())
+                let tab = TabItem::new(("connection", connection.id.0), title)
+                    .status(connection.state.tab_status());
+                // The same dot a file with unsaved changes wears, for a
+                // transaction with uncommitted ones: both are work that has not
+                // been made to stick, and either is lost by closing the tab.
+                match &connection.state {
+                    ConnectionState::Open(connected) if connected.handle().has_uncommitted() => {
+                        tab.mark(icons::UNSAVED, ts!("statusbar.uncommitted"))
+                    }
+                    _ => tab,
+                }
             })
             .collect();
 
@@ -908,7 +1014,10 @@ impl Workspace {
             // command, worded the same way, and neither takes an ellipsis.
             .tooltips(
                 ts!("tab.tip_list"),
-                ts!("tab.tip_new", shortcut = format!("{SHORTCUT_MODIFIER}+N")),
+                ts!(
+                    "tab.tip_manage",
+                    shortcut = format!("{SHORTCUT_MODIFIER}+N")
+                ),
                 ts!("tab.close"),
             )
             .on_new(|window, cx| window.dispatch_action(Box::new(NewConnection), cx))
@@ -1004,11 +1113,247 @@ impl Workspace {
                     // see [`app_settings::window_tint`].
                     .bg(app_settings::window_tint(theme.background, cx))
                     .child(match work {
-                        Some((root, chrome)) => render_pane(root, &chrome, cx),
+                        Some((root, chrome)) => {
+                            // A tab that is not open says why, in the room the
+                            // panes would have — or, while it still shows the
+                            // tabs its dead session left, in a band above them.
+                            let empty = self.work_area().is_some_and(|area| {
+                                area.panes.leaves().iter().all(|(_, pane)| pane.is_empty())
+                            });
+                            match self.render_connection_card(!empty, cx) {
+                                Some(card) if empty => card,
+                                Some(band) => div()
+                                    .flex()
+                                    .flex_col()
+                                    .size_full()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .child(band)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .min_h_0()
+                                            .child(render_pane(root, &chrome, cx)),
+                                    )
+                                    .into_any_element(),
+                                None => render_pane(root, &chrome, cx),
+                            }
+                        }
                         None => self.render_welcome(&theme, cx),
                     }),
             )
             .into_any_element()
+    }
+
+    /// What the work area says about a connection tab that is not open:
+    /// connecting, failed, or ended. `None` for an open one.
+    ///
+    /// The status bar's one cell is where this used to be said, cut off at the
+    /// width of the window and with nothing to do about it; the empty pane
+    /// under it meanwhile said "pick a table in the explorer" as though the
+    /// connection were live. So the card says it in full — the whole message,
+    /// the hint the connection dialog's "Test" gives for the same failure —
+    /// and carries what to do next: try again in the same tab, fix the
+    /// profile, trust a bastion's new host key, or copy the message for
+    /// someone who can help. While an attempt runs it says so and offers to
+    /// stop waiting.
+    ///
+    /// `band` draws it as a strip over the tabs a dead session left behind
+    /// rather than as a card in the middle of an empty area.
+    pub(super) fn render_connection_card(
+        &self,
+        band: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let open = self.active_connection()?;
+        let index = self.active_connection;
+        let theme = theme(cx);
+        let name = closing::connection_title(&open.profile).to_string();
+        let this = cx.entity();
+        let (title, message, hint, host_key) = match &open.state {
+            ConnectionState::Open(_) => return None,
+            ConnectionState::Connecting { .. } => {
+                let seconds = app_settings::current(cx).login_timeout_s;
+                (
+                    ts!("connect.card_connecting", name = name),
+                    None,
+                    (seconds > 0).then(|| ts!("connect.card_connecting_hint", seconds = seconds)),
+                    None,
+                )
+            }
+            ConnectionState::Failed(failure) => (
+                ts!("connect.card_failed", name = name),
+                Some(failure.message.clone()),
+                failure.hint.clone(),
+                failure.host_key.clone(),
+            ),
+            ConnectionState::Dead(reason) => (
+                ts!("connect.card_dead", name = name),
+                Some(reason.clone()),
+                None,
+                None,
+            ),
+        };
+        let connecting = matches!(open.state, ConnectionState::Connecting { .. });
+        let profile = open.profile.id;
+
+        let mut buttons: Vec<AnyElement> = Vec::new();
+        if connecting {
+            let this = this.clone();
+            buttons.push(
+                Button::new("connection-card-cancel", ts!("common.cancel"))
+                    .variant(ButtonVariant::Secondary)
+                    .compact()
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |workspace, cx| workspace.cancel_connect(index, cx));
+                    })
+                    .into_any_element(),
+            );
+        } else {
+            if host_key.is_some() {
+                let this = this.clone();
+                buttons.push(
+                    Button::new("connection-card-trust", ts!("connect.trust_and_reconnect"))
+                        .variant(ButtonVariant::Primary)
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |workspace, cx| {
+                                workspace.trust_and_reconnect(index, window, cx)
+                            });
+                        })
+                        .into_any_element(),
+                );
+            }
+            let reconnect = this.clone();
+            buttons.push(
+                Button::new("connection-card-reconnect", ts!("connect.reconnect"))
+                    .variant(if host_key.is_some() {
+                        ButtonVariant::Secondary
+                    } else {
+                        ButtonVariant::Primary
+                    })
+                    .compact()
+                    .on_click(move |_, window, cx| {
+                        reconnect
+                            .update(cx, |workspace, cx| workspace.reconnect(index, window, cx));
+                    })
+                    .into_any_element(),
+            );
+            let edit = this.clone();
+            buttons.push(
+                Button::new("connection-card-edit", ts!("connect.edit_connection"))
+                    .variant(ButtonVariant::Secondary)
+                    .compact()
+                    .on_click(move |_, window, cx| {
+                        edit.update(cx, |workspace, cx| {
+                            workspace.edit_profile(profile, window, cx)
+                        });
+                    })
+                    .into_any_element(),
+            );
+            if let Some(message) = message.clone() {
+                buttons.push(
+                    Button::new("connection-card-copy", ts!("context.copy_message"))
+                        .variant(ButtonVariant::Secondary)
+                        .compact()
+                        .on_click(move |_, _window, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                message.to_string(),
+                            ));
+                        })
+                        .into_any_element(),
+                );
+            }
+        }
+
+        let question = host_key.map(|offer| {
+            div()
+                .text_size(rugpui::TextSize::Sm.size(cx))
+                .text_color(theme.text)
+                .child(ts!(
+                    "connect.host_key_question",
+                    host = offer.host.clone(),
+                    algorithm = offer.algorithm.clone(),
+                    fingerprint = offer.fingerprint.clone()
+                ))
+        });
+        let text = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .min_w_0()
+            .child(
+                div()
+                    .text_size(if band {
+                        rugpui::TextSize::Body.size(cx)
+                    } else {
+                        rugpui::scaled(16., cx)
+                    })
+                    .text_color(theme.text)
+                    .child(title),
+            )
+            .children(message.map(|message| {
+                div()
+                    .id("connection-card-message")
+                    .max_h(rugpui::scaled(if band { 60. } else { 220. }, cx))
+                    .overflow_y_scroll()
+                    .text_size(rugpui::TextSize::Sm.size(cx))
+                    .text_color(theme.danger)
+                    .child(message)
+            }))
+            // The hints are the connection dialog's, written to follow its
+            // "could not connect: …" — so an arrow, not a sentence, leads in.
+            .children(hint.map(|hint| {
+                div()
+                    .text_size(rugpui::TextSize::Sm.size(cx))
+                    .text_color(theme.text_muted)
+                    .child(SharedString::from(format!("→ {hint}")))
+            }))
+            .children(question);
+        let row = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(8.))
+            .children(buttons);
+
+        Some(if band {
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .flex_none()
+                .items_center()
+                .gap(px(12.))
+                .px(px(12.))
+                .py(px(8.))
+                .bg(theme.surface)
+                .border_b_1()
+                .border_color(theme.border)
+                .child(div().flex_1().min_w_0().child(text))
+                .child(row)
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .p(px(24.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .max_w(rugpui::scaled(560., cx))
+                        .child(text)
+                        .child(row),
+                )
+                .into_any_element()
+        })
     }
 
     /// Renders the welcome screen: what the window is, with nothing open.
@@ -1044,12 +1389,16 @@ impl Workspace {
                     this.update(cx, |workspace, cx| workspace.open_profile(id, window, cx));
                 }
             },
-            Some(std::rc::Rc::new(move |id, position, _window, cx| {
-                this.update(cx, |workspace, cx| {
-                    workspace.open_context_menu(ContextTarget::Profile(id), position, cx);
-                });
-            })),
+            Some(std::rc::Rc::new(
+                move |id, position, by_keyboard, _window, cx| {
+                    this.update(cx, |workspace, cx| {
+                        workspace.open_context_menu(ContextTarget::Profile(id), position, cx);
+                        workspace.context_by_keyboard(by_keyboard);
+                    });
+                },
+            )),
             None,
+            cx,
         );
 
         // A first run has nothing saved and no habit of the chord yet, so the
@@ -1066,10 +1415,10 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .w(px(WELCOME_WIDTH))
+                .w(rugpui::scaled(WELCOME_WIDTH, cx))
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(rugpui::TextSize::Xs.size(cx))
                         .text_color(theme.text_muted)
                         .child(ts!("welcome.saved")),
                 )
@@ -1085,19 +1434,19 @@ impl Workspace {
             .gap(px(14.))
             .child(
                 div()
-                    .text_size(px(30.))
+                    .text_size(rugpui::scaled(30., cx))
                     .text_color(theme.text)
                     .child(APP_NAME),
             )
             .child(
                 div()
-                    .text_size(px(13.))
+                    .text_size(rugpui::TextSize::Body.size(cx))
                     .text_color(theme.text_muted)
                     .child(hint),
             )
             .child(
                 div()
-                    .w(px(WELCOME_WIDTH))
+                    .w(rugpui::scaled(WELCOME_WIDTH, cx))
                     .debug_selector(|| WELCOME_NEW_SELECTOR.to_string())
                     .child(
                         Button::new("welcome-new", ts!("welcome.new_connection"))
@@ -1300,10 +1649,36 @@ impl Workspace {
         let state = match &connection.state {
             ConnectionState::Connecting { .. } => ts!("statusbar.connecting"),
             ConnectionState::Open(_) => ts!("statusbar.connected"),
-            ConnectionState::Failed(error) => ts!("statusbar.failed", error = error.to_string()),
+            ConnectionState::Failed(failure) => {
+                ts!("statusbar.failed", error = failure.message.to_string())
+            }
             ConnectionState::Dead(reason) => reason.clone(),
         };
         (label, state)
+    }
+
+    /// The status bar's transaction cell, and its hover text: present only
+    /// while the session on screen holds writes nobody has committed or rolled
+    /// back.
+    ///
+    /// The cell the architecture document's window layout always had a place
+    /// for. Under manual commit it is the one thing on screen saying that the
+    /// grid applies, structure changes and transfers on this connection will
+    /// refuse, and that closing the tab would roll the writes back; the hover
+    /// names the query tab they came from, which is where Commit is.
+    pub(super) fn transaction_cell(&self) -> Option<(SharedString, SharedString)> {
+        let ConnectionState::Open(connected) = &self.active_connection()?.state else {
+            return None;
+        };
+        let handle = connected.handle();
+        if !handle.has_uncommitted() {
+            return None;
+        }
+        let tip = match handle.uncommitted_writer() {
+            Some(tab) => ts!("statusbar.uncommitted_in", tab = tab),
+            None => ts!("statusbar.uncommitted_tip"),
+        };
+        Some((ts!("statusbar.uncommitted"), tip))
     }
 
     /// The two right-hand status bar cells — rows and elapsed time — which the
@@ -1321,6 +1696,7 @@ impl Workspace {
         let theme = theme(cx);
         let (connection, state) = self.status_cells();
         let (rows, elapsed) = self.query_cells(cx);
+        let transaction = self.transaction_cell();
         let state_color = match self.active_connection().map(|open| &open.state) {
             Some(ConnectionState::Open(_)) => Some(theme.success),
             Some(ConnectionState::Failed(_) | ConnectionState::Dead(_)) => Some(theme.danger),
@@ -1333,7 +1709,7 @@ impl Workspace {
             .flex_none()
             .items_center()
             .gap(px(14.))
-            .h(px(STATUS_BAR_HEIGHT))
+            .h(rugpui::scaled(STATUS_BAR_HEIGHT, cx))
             .px(px(10.))
             // The bar is inert, so a press on it must not move the keyboard.
             // Without this the workspace root's `track_focus` would claim the
@@ -1342,17 +1718,30 @@ impl Workspace {
             .bg(theme.surface)
             .border_t_1()
             .border_color(theme.border)
-            .text_size(px(11.))
+            .text_size(rugpui::TextSize::Xs.size(cx))
             .text_color(theme.text_muted)
             .child(div().flex_none().whitespace_nowrap().child(connection))
             .child(
                 div()
+                    .id("status-state")
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .when_some(state_color, |cell, color| cell.text_color(color))
+                    // The cell is cut at the window's width; the whole of it
+                    // is a hover away, and in the work area's card.
+                    .tooltip(rugpui::tooltip_label(state.clone()))
                     .child(state),
             )
+            .children(transaction.map(|(label, tip)| {
+                div()
+                    .id("status-transaction")
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_color(theme.accent)
+                    .tooltip(rugpui::tooltip_label(tip))
+                    .child(label)
+            }))
             .child(
                 div()
                     .flex_none()
@@ -1385,14 +1774,14 @@ impl Workspace {
             .gap(px(12.))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(theme.text)
                     .child(ts!("query.confirm_body", count = pending.request.count)),
             )
             .child(
                 div()
                     .id("confirm-preview")
-                    .max_h(px(200.))
+                    .max_h(rugpui::scaled(200., cx))
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
                     .p(px(8.))
@@ -1400,7 +1789,7 @@ impl Workspace {
                     .bg(theme.surface)
                     .border_1()
                     .border_color(theme.border)
-                    .text_size(px(11.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
                     .text_color(theme.text_muted)
                     .child(pending.request.preview.clone()),
             )
@@ -1413,6 +1802,7 @@ impl Workspace {
                     .child(
                         Button::new("confirm-cancel", ts!("common.cancel"))
                             .variant(ButtonVariant::Secondary)
+                            .focus_handle(&self.confirm_focus)
                             .on_click({
                                 let this = this.clone();
                                 move |_, window, cx| {
@@ -1437,7 +1827,7 @@ impl Workspace {
             modal(
                 "query-confirm",
                 ts!("query.confirm_title"),
-                px(460.),
+                rugpui::scaled(460., cx),
                 body,
                 move |window, cx| {
                     dismiss.update(cx, |workspace, cx| {
@@ -1445,6 +1835,10 @@ impl Workspace {
                     });
                 },
             )
+            // On Cancel: the question is whether to write, and an `Enter`
+            // meant for the editor behind it must not be what says yes.
+            .initial_focus(&self.confirm_focus)
+            .escape_dismisses(true)
             .into_any_element(),
         )
     }

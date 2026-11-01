@@ -210,6 +210,27 @@ fn probe_message(failure: &ProbeFailure) -> SharedString {
     }
 }
 
+/// What a download that did not land says: not found, the network, a
+/// checksum that does not match, or a file that could not be written.
+///
+/// Shared with the connection dialog, whose own "Download" fetches the same
+/// artifacts the same way.
+pub(crate) fn download_failure(error: DownloadError) -> SharedString {
+    match error {
+        DownloadError::NotFound(url) => ts!("driver.not_found", url = url),
+        DownloadError::Network(message) => ts!("driver.network_failed", error = message),
+        DownloadError::Checksum { expected, actual } => {
+            ts!(
+                "driver.checksum_failed",
+                expected = expected,
+                actual = actual
+            )
+        }
+        DownloadError::Io(message) => ts!("driver.save_failed", error = message),
+        DownloadError::Canceled => ts!("driver.download_canceled"),
+    }
+}
+
 /// A download in flight.
 struct Download {
     /// What is being fetched, for the message.
@@ -262,6 +283,10 @@ pub struct DriverManager {
     table_comments_input: Entity<TextInput>,
     /// Query answering column comments the driver leaves blank.
     column_comments_input: Entity<TextInput>,
+    /// The label column's width: the widest label of the form in the
+    /// language on screen ([`rugpui::fit_label_width`]), measured each frame
+    /// so a translated label is not broken mid-word and every row lines up.
+    label_width: gpui::Pixels,
 }
 
 impl DriverManager {
@@ -298,6 +323,7 @@ impl DriverManager {
             status,
             confirming: false,
             focus_handle: cx.focus_handle(),
+            label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             list_scroll: ScrollHandle::new(),
             list_scrollbar: ScrollbarState::new(),
             body_scroll: ScrollHandle::new(),
@@ -413,6 +439,17 @@ impl DriverManager {
         }
         self.store.upsert(driver);
         cx.notify();
+    }
+
+    /// Selects driver `id`, when the store has one by that id.
+    ///
+    /// What the connection dialog opens the manager with: the driver its form
+    /// names, which is the one the user came here to give a JAR, rather than
+    /// whichever happens to head the list.
+    pub fn show_driver(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.store.get(id).is_some() {
+            self.select(id.to_string(), cx);
+        }
     }
 
     /// Selects `id`, keeping whatever was typed into the driver being left.
@@ -656,22 +693,7 @@ impl DriverManager {
                 self.report(ts!("driver.download_canceled"), false, cx);
             }
             Err(error) => {
-                let message = match error {
-                    DownloadError::NotFound(url) => ts!("driver.not_found", url = url),
-                    DownloadError::Network(message) => {
-                        ts!("driver.network_failed", error = message)
-                    }
-                    DownloadError::Checksum { expected, actual } => {
-                        ts!(
-                            "driver.checksum_failed",
-                            expected = expected,
-                            actual = actual
-                        )
-                    }
-                    DownloadError::Io(message) => ts!("driver.save_failed", error = message),
-                    DownloadError::Canceled => unreachable!("handled above"),
-                };
-                self.report(message, true, cx);
+                self.report(download_failure(error), true, cx);
             }
         }
     }
@@ -858,14 +880,14 @@ impl DriverManager {
                     })
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(rugpui::TextSize::Sm.size(cx))
                             .text_color(chrome.text)
                             .truncate()
                             .child(name),
                     )
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(rugpui::scaled(10., cx))
                             .text_color(if driver.jars.is_empty() {
                                 chrome.danger
                             } else {
@@ -885,7 +907,7 @@ impl DriverManager {
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(LIST_WIDTH))
+            .w(rugpui::scaled(LIST_WIDTH, cx))
             .min_h_0()
             .child(
                 div()
@@ -895,7 +917,7 @@ impl DriverManager {
                     .flex_col()
                     .gap(px(2.))
                     .min_h_0()
-                    .max_h(px(BODY_MAX_HEIGHT))
+                    .max_h(rugpui::scaled(BODY_MAX_HEIGHT, cx))
                     .overflow_y_scroll()
                     .smooth_scroll(&self.list_scroll)
                     .restrict_scroll_to_axis()
@@ -968,7 +990,7 @@ impl DriverManager {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_size(px(11.))
+                                    .text_size(rugpui::TextSize::Xs.size(cx))
                                     .text_color(chrome.text)
                                     .child(SharedString::from(class.clone())),
                             )
@@ -976,7 +998,7 @@ impl DriverManager {
                                 row.child(
                                     div()
                                         .flex_none()
-                                        .text_size(px(10.))
+                                        .text_size(rugpui::scaled(10., cx))
                                         .text_color(chrome.accent)
                                         .child(ts!("driver.probe_recommended")),
                                 )
@@ -1120,7 +1142,7 @@ impl DriverManager {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(11.))
+                            .text_size(rugpui::TextSize::Xs.size(cx))
                             .text_color(if missing { chrome.danger } else { chrome.text })
                             .child(SharedString::from(path.display().to_string())),
                     )
@@ -1132,7 +1154,7 @@ impl DriverManager {
                         row.child(
                             div()
                                 .flex_none()
-                                .text_size(px(10.))
+                                .text_size(rugpui::scaled(10., cx))
                                 .text_color(chrome.danger)
                                 .child(ts!("driver.jar_missing")),
                         )
@@ -1212,7 +1234,7 @@ impl DriverManager {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(11.))
+                                .text_size(rugpui::TextSize::Xs.size(cx))
                                 .text_color(chrome.text_muted)
                                 .child(label),
                         )
@@ -1329,7 +1351,7 @@ impl DriverManager {
                 .min_w_0()
                 .items_center()
                 .justify_center()
-                .text_size(px(12.))
+                .text_size(rugpui::TextSize::Sm.size(cx))
                 .text_color(chrome.text_muted)
                 .child(ts!("driver.none_selected"))
                 .into_any_element();
@@ -1356,25 +1378,37 @@ impl DriverManager {
                     .flex_col()
                     .gap(px(10.))
                     .min_h_0()
-                    .max_h(px(BODY_MAX_HEIGHT))
+                    .max_h(rugpui::scaled(BODY_MAX_HEIGHT, cx))
                     .overflow_y_scroll()
                     .smooth_scroll(&self.body_scroll)
                     .restrict_scroll_to_axis()
-                    .child(form_row(ts!("driver.name"), self.name_input.clone()))
-                    .child(form_row(ts!("driver.class"), class_row))
-                    .child(form_row(
-                        ts!("driver.url_template"),
-                        self.url_template_input.clone(),
-                    ))
-                    .child(form_row(
-                        ts!("driver.default_port"),
-                        self.port_input.clone(),
-                    ))
-                    .child(form_row(ts!("driver.dialect"), self.dialect_input.clone()))
-                    .child(form_row(ts!("driver.maven"), maven))
-                    .child(form_row(ts!("driver.jars"), jars))
-                    .child(form_row(ts!("driver.table_comments"), table_comments))
-                    .child(form_row(ts!("driver.column_comments"), column_comments)),
+                    .child(
+                        form_row(ts!("driver.name"), self.name_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(form_row(ts!("driver.class"), class_row).label_width(self.label_width))
+                    .child(
+                        form_row(ts!("driver.url_template"), self.url_template_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("driver.default_port"), self.port_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("driver.dialect"), self.dialect_input.clone())
+                            .label_width(self.label_width),
+                    )
+                    .child(form_row(ts!("driver.maven"), maven).label_width(self.label_width))
+                    .child(form_row(ts!("driver.jars"), jars).label_width(self.label_width))
+                    .child(
+                        form_row(ts!("driver.table_comments"), table_comments)
+                            .label_width(self.label_width),
+                    )
+                    .child(
+                        form_row(ts!("driver.column_comments"), column_comments)
+                            .label_width(self.label_width),
+                    ),
             )
             .children(self.hovering_scrollbar(BODY_SCROLLBAR, cx).render(chrome))
             .into_any_element()
@@ -1387,7 +1421,7 @@ impl DriverManager {
 
         let status = self.status.clone().map(|message| {
             div()
-                .text_size(px(11.))
+                .text_size(rugpui::TextSize::Xs.size(cx))
                 .text_color(if self.status_is_error {
                     chrome.danger
                 } else {
@@ -1414,7 +1448,7 @@ impl DriverManager {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(12.))
+                        .text_size(rugpui::TextSize::Sm.size(cx))
                         .child(ts!("driver.delete_confirm", name = name)),
                 )
                 .child(
@@ -1518,8 +1552,26 @@ impl Focusable for DriverManager {
     }
 }
 
+impl DriverManager {
+    /// Every label the form can show, for [`rugpui::fit_label_width`].
+    fn form_labels(&self) -> Vec<SharedString> {
+        vec![
+            ts!("driver.name"),
+            ts!("driver.class"),
+            ts!("driver.url_template"),
+            ts!("driver.default_port"),
+            ts!("driver.dialect"),
+            ts!("driver.maven"),
+            ts!("driver.jars"),
+            ts!("driver.table_comments"),
+            ts!("driver.column_comments"),
+        ]
+    }
+}
+
 impl Render for DriverManager {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.label_width = rugpui::fit_label_width(self.form_labels(), window, cx);
         self.watch_scroll(cx);
         let chrome = theme(cx);
         let list = self.render_list(&chrome, cx);
@@ -1586,7 +1638,7 @@ fn file_name_of(path: &std::path::Path) -> String {
 fn hint(text: SharedString, cx: &App) -> impl IntoElement + use<> {
     let chrome = theme(cx);
     div()
-        .text_size(px(11.))
+        .text_size(rugpui::TextSize::Xs.size(cx))
         .text_color(chrome.text_muted)
         .child(text)
 }

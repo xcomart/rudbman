@@ -34,13 +34,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Closes the tab `index` of `pane`.
-    ///
-    /// Dropping the tab drops the view in it, which closes whatever cursor or
-    /// fetch it was holding. The neighbor that takes its place inherits the
-    /// keyboard when the closed tab had it, because the tab strip is a place a
-    /// user closes several tabs in a row from and a focus that fell back to the
-    /// shell every time would swallow the editor shortcuts in between.
+    /// Closes the tab `index` of `pane`, through every guard a close passes;
+    /// see [`Workspace::request_close`].
     pub(super) fn close_tab(
         &mut self,
         pane: PaneId,
@@ -48,30 +43,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.refuse_close(pane, &[index], window, cx) {
-            return;
-        }
-        let active = self
-            .work_area()
-            .and_then(|area| area.panes.get(pane))
-            .is_some_and(|pane| pane.active_index() == index);
-        // Only the active tab is rendered, so only it can be holding the
-        // keyboard; see [`Workspace::reclaim_focus`].
-        let held = active && self.pane_holds_focus(pane, window, cx);
-        let Some(closed) = self
-            .work_area_mut()
-            .and_then(|area| area.panes.get_mut(pane))
-            .and_then(|pane| pane.close(index))
-        else {
-            return;
-        };
-        if let Some(area) = self.work_area_mut() {
-            area.tab_names.remove(&closed.entity_id());
-        }
-        drop(closed);
-        self.finish_tab_close(pane, held, window, cx);
-        self.drop_stale_confirm(cx);
-        cx.notify();
+        self.close_tabs(pane, &[index], window, cx);
     }
 
     /// Whether any of `victims` is holding work a close would destroy, and —
@@ -137,18 +109,13 @@ impl Workspace {
         true
     }
 
-    /// Closes several tabs of `pane` at once.
+    /// Closes several tabs of `pane` at once, through every guard a close
+    /// passes; see [`Workspace::request_close`].
     ///
     /// `victims` are tab indices into the strip as it stands, in any order.
-    /// They are removed from the highest down so that the ones still to go do
-    /// not shift out from under the list — which is the whole reason this is
-    /// not a loop over [`Workspace::close_tab`].
-    ///
-    /// The keyboard follows the same rule one close does, and is asked about
-    /// once rather than once per tab: only the active tab is rendered, so only
-    /// it can be holding the focus, and whatever is left on top afterwards
-    /// takes it. That is what makes "close the other tabs" leave the user
-    /// typing in the tab they kept.
+    /// They are turned into the tabs' identities before anything is asked, so
+    /// a question answered a moment later still closes the tabs it was asked
+    /// about.
     pub(super) fn close_tabs(
         &mut self,
         pane: PaneId,
@@ -156,23 +123,65 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if victims.is_empty() {
+        let Some(target) = self.work_area().and_then(|area| area.panes.get(pane)) else {
+            return;
+        };
+        let tabs: Vec<gpui::EntityId> = victims
+            .iter()
+            .filter_map(|index| target.items().get(*index).map(PaneItem::entity_id))
+            .collect();
+        if tabs.is_empty() {
             return;
         }
-        if self.refuse_close(pane, victims, window, cx) {
-            return;
+        self.request_close(
+            closing::CloseRequest::Tabs { pane, tabs },
+            closing::CloseAnswers::default(),
+            window,
+            cx,
+        );
+    }
+
+    /// Closes several tabs of `pane`, now and unasked.
+    ///
+    /// They are removed from the highest index down so that the ones still to
+    /// go do not shift out from under the list. Every query and builder tab
+    /// among them is remembered for "Reopen closed tab" first.
+    ///
+    /// The keyboard follows the rule one close always followed, and is asked
+    /// about once rather than once per tab: only the active tab is rendered,
+    /// so only it can be holding the focus, and whatever is left on top
+    /// afterwards takes it — which is what makes "close the other tabs" leave
+    /// the user typing in the tab they kept, and closing a tab in the
+    /// background leave the keyboard where it was. The neighbor that takes a
+    /// closed tab's place inherits the keyboard when the closed tab had it,
+    /// because the tab strip is a place a user closes several tabs in a row
+    /// from, and a focus that fell back to the shell every time would swallow
+    /// the editor shortcuts in between.
+    pub(super) fn close_tabs_now(
+        &mut self,
+        pane: PaneId,
+        victims: &[usize],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .map(Pane::active_index);
+        let held = active.is_some_and(|active| victims.contains(&active))
+            && self.pane_holds_focus(pane, window, cx);
+        let mut order = victims.to_vec();
+        order.sort_unstable();
+        order.dedup();
+        for index in &order {
+            self.remember_closed(pane, *index, cx);
         }
-        let held = self.pane_holds_focus(pane, window, cx);
         let Some(target) = self
             .work_area_mut()
             .and_then(|area| area.panes.get_mut(pane))
         else {
             return;
         };
-
-        let mut order = victims.to_vec();
-        order.sort_unstable();
-        order.dedup();
         // Dropping the tabs drops the views in them, and with those whatever
         // cursor or fetch each was holding.
         let mut closed = Vec::new();
@@ -504,8 +513,16 @@ impl Workspace {
             return;
         };
 
+        let mut landed = None;
         match outcome {
             Ok(connected) => {
+                // Where the session landed — the database and schema its URL
+                // named, or the driver's default — which is what the tree opens
+                // onto once the root is filled in below.
+                landed = Some(explorer::Scope {
+                    catalog: connected.info.catalog.clone(),
+                    schema: connected.info.schema.clone(),
+                });
                 // A tunnel that dies takes the session above it with it, and the
                 // tab has to say so rather than going quiet: the transaction the
                 // user was in the middle of is gone (§9.3).
@@ -532,10 +549,16 @@ impl Workspace {
             }
             Err(error) => {
                 log::warn!("connecting {} failed: {error}", connection.profile.name);
-                connection.state = ConnectionState::Failed(error.message().into());
+                connection.state =
+                    ConnectionState::Failed(Failure::of(&error, &connection.profile));
             }
         }
+        let id = connection.id;
         self.sync_explorer_root(index, cx);
+        if let Some(scope) = landed {
+            self.explorer
+                .update(cx, |explorer, cx| explorer.reveal(id, scope, cx));
+        }
         cx.notify();
     }
 
@@ -594,21 +617,50 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Closes the active pane, unless it is the last one of its work area.
+    /// Closes the active pane, unless it is the last one of its work area,
+    /// through every guard a close passes; see [`Workspace::request_close`].
     ///
-    /// The marker moves to the pane that follows the closed one in layout order,
-    /// which is the neighbor that grew into the freed space.
+    /// The guards are the same ones a close of each of its tabs would meet:
+    /// a pane is closed by `Alt+W` (`Cmd+W` on macOS) and by its strip's menu,
+    /// and a pane holding a tab with staged edits, or a file with changes, is
+    /// holding them whichever of the two gestures reaches for it.
     pub(super) fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.active_pane() else {
             return;
         };
+        self.request_close(
+            closing::CloseRequest::Pane(target),
+            closing::CloseAnswers::default(),
+            window,
+            cx,
+        );
+    }
+
+    /// Closes `pane`, now and unasked, unless it is the last one of its work
+    /// area.
+    ///
+    /// The marker moves to the pane that follows the closed one in layout
+    /// order, which is the neighbor that grew into the freed space.
+    pub(super) fn close_pane_now(
+        &mut self,
+        target: PaneId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(area) = self.work_area() else {
             return;
         };
+        if area.panes.leaf_count() <= 1 {
+            return;
+        }
+        let count = area.panes.get(target).map_or(0, |pane| pane.items().len());
         let next = area.panes.next_leaf(target).unwrap_or(target);
         // Asked before the pane goes, because afterwards there is nothing left
         // to ask whether its editor or its detail panel had the keyboard.
         let held = self.pane_holds_focus(target, window, cx);
+        for index in 0..count {
+            self.remember_closed(target, index, cx);
+        }
         let Some(area) = self.work_area_mut() else {
             return;
         };
@@ -631,8 +683,18 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Moves the pane marker one step along the layout order.
-    pub(super) fn cycle_pane(&mut self, forward: bool, cx: &mut Context<Self>) {
+    /// Moves the pane marker one step along the layout order, and the
+    /// keyboard with it.
+    ///
+    /// The keyboard follows because the marker is where typing is expected to
+    /// go: a frame drawn round one pane while the caret stayed in the other
+    /// had the user typing into the pane they had just moved away from.
+    pub(super) fn cycle_pane(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(from) = self.active_pane() else {
             return;
         };
@@ -646,8 +708,195 @@ impl Workspace {
         };
         if let Some(next) = next {
             area.active_pane = next;
+            self.focus_active_tab(next, window, cx);
             cx.notify();
         }
+    }
+
+    /// Brings the tab one step along the active pane's strip to the front,
+    /// wrapping at either end, and puts the keyboard in it.
+    pub(super) fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.active_pane() else {
+            return;
+        };
+        let Some((count, active)) = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .map(|pane| (pane.items().len(), pane.active_index()))
+        else {
+            return;
+        };
+        if count < 2 {
+            return;
+        }
+        let next = if forward {
+            (active + 1) % count
+        } else {
+            (active + count - 1) % count
+        };
+        self.show_tab(pane, next, window, cx);
+    }
+
+    /// Brings tab `index` of the active pane to the front — the last one for
+    /// `8` — and puts the keyboard in it.
+    pub(super) fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.active_pane() else {
+            return;
+        };
+        let Some(count) = self
+            .work_area()
+            .and_then(|area| area.panes.get(pane))
+            .map(|pane| pane.items().len())
+        else {
+            return;
+        };
+        if count == 0 {
+            return;
+        }
+        let index = if index >= 8 { count - 1 } else { index };
+        if index < count {
+            self.show_tab(pane, index, window, cx);
+        }
+    }
+
+    /// Brings tab `index` of `pane` to the front with the keyboard in it —
+    /// what a tab chosen from the keyboard is for, where a click on a strip
+    /// leaves the keyboard where it was.
+    fn show_tab(
+        &mut self,
+        pane: PaneId,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.activate_tab(pane, index, window, cx);
+        self.focus_active_tab(pane, window, cx);
+    }
+
+    /// Brings the connection tab one step along the strip to the front,
+    /// wrapping, and the keyboard into its work area.
+    pub(super) fn cycle_connection(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.connections.len();
+        if count < 2 {
+            return;
+        }
+        let next = if forward {
+            (self.active_connection + 1) % count
+        } else {
+            (self.active_connection + count - 1) % count
+        };
+        self.select_connection(next, window, cx);
+        match self.active_pane() {
+            Some(pane) => self.focus_active_tab(pane, window, cx),
+            None => self.focus_shell(window, cx),
+        }
+    }
+
+    /// Moves the keyboard to the next region of the window — the explorer,
+    /// the active tab, and a query tab's results — wrapping round, as `F6`
+    /// does in every application with panes.
+    ///
+    /// The regions are the ones there are right now: no explorer while it is
+    /// hidden, no results while the tab on top has none to show. From
+    /// anywhere else — the shell, after a dialog — the first region is next.
+    pub(super) fn cycle_region(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let query = self.active_query().cloned();
+        let has_results = query
+            .as_ref()
+            .is_some_and(|pane| pane.read(cx).has_result_grid());
+        let mut regions = Vec::new();
+        if self.explorer_showing() {
+            regions.push(Region::Explorer);
+        }
+        if self.active_pane().is_some() {
+            regions.push(Region::Tab);
+        }
+        if has_results {
+            regions.push(Region::Results);
+        }
+        if regions.is_empty() {
+            return;
+        }
+        let explorer = self.explorer.read(cx).focus_handle(cx);
+        let current = if explorer.contains_focused(window, cx) {
+            Some(Region::Explorer)
+        } else if query
+            .as_ref()
+            .is_some_and(|pane| pane.read(cx).results_hold_focus(window, cx))
+        {
+            Some(Region::Results)
+        } else if self.area_holds_focus(window, cx) {
+            Some(Region::Tab)
+        } else {
+            None
+        };
+        let at = current.and_then(|current| regions.iter().position(|region| *region == current));
+        let next = match (at, forward) {
+            (None, true) => 0,
+            (None, false) => regions.len() - 1,
+            (Some(at), true) => (at + 1) % regions.len(),
+            (Some(at), false) => (at + regions.len() - 1) % regions.len(),
+        };
+        match regions[next] {
+            Region::Explorer => self
+                .explorer
+                .update(cx, |explorer, cx| explorer.take_focus(window, cx)),
+            Region::Tab => {
+                if let Some(pane) = self.active_pane() {
+                    self.focus_active_tab(pane, window, cx);
+                }
+            }
+            Region::Results => {
+                if let Some(query) = query {
+                    query.update(cx, |pane, cx| pane.focus_results(window, cx));
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Where the keyboard is, as a region a dialog can give it back to.
+    pub(super) fn focus_origin_now(&self, window: &Window, cx: &App) -> FocusOrigin {
+        if self
+            .explorer
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            FocusOrigin::Explorer
+        } else if self.area_holds_focus(window, cx) {
+            FocusOrigin::Area
+        } else {
+            FocusOrigin::Shell
+        }
+    }
+
+    /// Gives the keyboard back to where it was before the dialog that has just
+    /// closed took it: the explorer, the active tab — whatever it is showing
+    /// now — or the shell.
+    pub(super) fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match std::mem::take(&mut self.focus_origin) {
+            FocusOrigin::Explorer if self.explorer_showing() => {
+                self.explorer
+                    .update(cx, |explorer, cx| explorer.take_focus(window, cx));
+            }
+            FocusOrigin::Area => match self.active_pane() {
+                Some(pane) => self.focus_active_tab(pane, window, cx),
+                None => self.focus_shell(window, cx),
+            },
+            _ => self.focus_shell(window, cx),
+        }
+        cx.notify();
     }
 
     /// Puts the keyboard back on the shell after a dialog closes.
@@ -723,13 +972,15 @@ impl Workspace {
     /// and the context menus: those are transient and dismiss themselves on the
     /// next press, so a dialog appearing over one takes nothing away.
     ///
-    /// One caller, and the reason this exists at all: the start-up update check
-    /// announces itself only into an empty window. It is the one dialog nobody
-    /// asked for, and it must not land on top of a half-typed connection form
-    /// or a running backup.
+    /// Two callers. The start-up update check announces itself only into an
+    /// empty window — it is the one dialog nobody asked for, and it must not
+    /// land on top of a half-typed connection form or a running backup. And
+    /// [`Workspace::shortcuts_held`], below.
     pub(super) fn dialog_open(&self, cx: &App) -> bool {
         self.rename_tab.is_some()
+            || self.history.is_some()
             || self.confirm.is_some()
+            || self.close_question.is_some()
             || self.about.read(cx).is_open()
             || self.connect.read(cx).is_open()
             || self.settings.read(cx).is_open()
@@ -737,5 +988,27 @@ impl Workspace {
             || self.transfer.read(cx).is_open()
             || self.backup.read(cx).is_open()
             || self.update.read(cx).is_open()
+    }
+
+    /// Whether the window's own shortcuts are held back, because something
+    /// modal is up in front of the panes they act on.
+    ///
+    /// Every dialog is a child of the workspace root, so a chord pressed inside
+    /// one still walks up to the `Workspace` key context and matches there:
+    /// `Ctrl+N` inside the connection dialog would close it and open it again
+    /// over the first profile, `Ctrl+S` would save the query tab behind it, and
+    /// `Alt+W` would close the pane under it. A dialog that wants one of those
+    /// chords for itself binds it in its own key context, which gpui prefers
+    /// for being deeper. The sheets a pane puts up over itself — an apply
+    /// preview, a discard question, a value viewer — hold them back too, but
+    /// only the active pane's: a sheet in a pane the marker is not on covers
+    /// nothing the shortcuts would act on.
+    pub(super) fn shortcuts_held(&self, cx: &App) -> bool {
+        self.dialog_open(cx)
+            || self
+                .work_area()
+                .and_then(|area| area.panes.get(area.active()))
+                .and_then(Pane::active)
+                .is_some_and(|item| item.modal_open(cx))
     }
 }

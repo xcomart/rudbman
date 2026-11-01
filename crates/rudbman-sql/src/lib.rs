@@ -132,6 +132,8 @@
 //!   makes it.
 //! * [`mod@dml`] — [`plan_edits`], [`TableEdits`], [`DmlStatement`],
 //!   [`DmlValue`]: the grid's staged edits turned into parameterized SQL.
+//! * [`mod@explain`] — [`explain`], [`Explain`]: the statements that ask a
+//!   dialect for a statement's plan without running it.
 //! * [`mod@lexer`] — [`Token`], [`TokenKind`], [`LineState`], [`lex_line`],
 //!   [`lex`], [`Lexer`].
 //! * [`mod@state`] — [`LineStateCodec`], which packs a [`LineState`] into the
@@ -148,6 +150,7 @@ pub mod completion;
 pub mod ddl;
 pub mod dialect;
 pub mod dml;
+pub mod explain;
 pub mod format;
 pub mod ident;
 pub mod lexer;
@@ -165,6 +168,7 @@ pub use dialect::{Dialect, DialectId, Syntax};
 pub use dml::{
     DmlError, DmlKind, DmlStatement, DmlValue, InsertCell, RowUpdate, TableEdits, plan_edits,
 };
+pub use explain::{Explain, explain};
 pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
 pub use state::LineStateCodec;

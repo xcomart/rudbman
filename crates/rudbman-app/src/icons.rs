@@ -107,6 +107,7 @@ pub const RUN_STATEMENT: &str = "icons/run-statement.svg";
 pub const RUN_SELECTION: &str = "icons/run-selection.svg";
 pub const RUN_ALL: &str = "icons/run-all.svg";
 pub const STOP: &str = "icons/stop.svg";
+pub const EXPLAIN: &str = "icons/explain.svg";
 pub const COMMIT: &str = "icons/commit.svg";
 pub const ROLLBACK: &str = "icons/rollback.svg";
 pub const UNDO: &str = "icons/undo.svg";
@@ -121,6 +122,11 @@ pub const REPLACE: &str = "icons/replace.svg";
 
 /// Shows and hides the explorer.
 pub const SIDEBAR: &str = "icons/sidebar.svg";
+
+/// The mark behind a query tab's title while the editor holds changes its
+/// file does not: the filled dot editors put there, drawn as a tab mark so
+/// that it carries a tooltip saying so.
+pub const UNSAVED: &str = "icons/unsaved.svg";
 
 /// The explorer tree's disclosure mark on a closed node.
 ///
@@ -157,6 +163,7 @@ const OWN: &[(&str, &[u8])] = &[
     ),
     (RUN_ALL, include_bytes!("../assets/icons/run-all.svg")),
     (STOP, include_bytes!("../assets/icons/stop.svg")),
+    (EXPLAIN, include_bytes!("../assets/icons/explain.svg")),
     (UNDO, include_bytes!("../assets/icons/undo.svg")),
     (REDO, include_bytes!("../assets/icons/redo.svg")),
     (CUT, include_bytes!("../assets/icons/cut.svg")),
@@ -180,6 +187,7 @@ const OWN: &[(&str, &[u8])] = &[
     (REFRESH, include_bytes!("../assets/icons/refresh.svg")),
     (COPY, include_bytes!("../assets/icons/copy.svg")),
     (SIDEBAR, include_bytes!("../assets/icons/sidebar.svg")),
+    (UNSAVED, include_bytes!("../assets/icons/unsaved.svg")),
     (
         CHEVRON_RIGHT,
         include_bytes!("../assets/icons/chevron-right.svg"),

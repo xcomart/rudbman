@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::icons;
-use gpui::{MouseButton, Stateful, Svg};
+use gpui::{MouseButton, Pixels, Stateful, Svg};
 use rugpui::tooltip_label;
 
 fn tool_button(
@@ -11,13 +11,14 @@ fn tool_button(
     label: SharedString,
     enabled: bool,
     chrome: &Theme,
+    size: Pixels,
 ) -> Stateful<Div> {
     div()
         .id(id)
         .debug_selector(move || id.to_string())
         .flex()
         .flex_none()
-        .size(px(26.))
+        .size(size)
         .items_center()
         .justify_center()
         .rounded_sm()
@@ -29,7 +30,7 @@ fn tool_button(
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         })
         .when(!enabled, |button| button.opacity(0.35))
-        .child(icon)
+        .child(icon.debug_selector(move || format!("{id}-icon")))
 }
 
 impl QueryPane {
@@ -47,14 +48,18 @@ impl QueryPane {
             self.session.is_some() && !running && !self.applying && self.transaction.is_none();
         let canceling = matches!(&self.run, RunState::Running(run) if run.canceling);
         let modifier = SHORTCUT_MODIFIER;
+        // The icons and the square around each, at the interface size.
+        let icon_size = rugpui::scaled(16., cx);
+        let button_size = rugpui::scaled(26., cx);
         let button = |id, icon, label: SharedString, shortcut, enabled, action: Box<dyn Action>| {
             let handle = handle.clone();
             tool_button(
                 id,
-                icons::icon(icon, px(16.), chrome.icon),
+                icons::icon(icon, icon_size, chrome.icon),
                 format!("{label} ({modifier}+{shortcut})").into(),
                 enabled,
                 chrome,
+                button_size,
             )
             .when(enabled, |button| {
                 button.on_click(move |_, window, cx| {
@@ -75,20 +80,37 @@ impl QueryPane {
                 .border_color(chrome.border)
                 .children(buttons)
         };
+        // Lit only while there is something to commit: the buttons stay
+        // usable under manual commit — a procedure or a `SELECT … FOR UPDATE`
+        // opens a transaction the bookkeeping cannot see — but are drawn to be
+        // seen only when the session is known to hold writes.
+        let pending = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.has_uncommitted());
+        let lit = |button: Stateful<Div>| {
+            button.when(pending, |button| {
+                button
+                    .bg(chrome.accent.opacity(0.18))
+                    .border_1()
+                    .border_color(chrome.accent)
+            })
+        };
         let this = cx.entity();
-        let commit = tool_button(
+        let commit = lit(tool_button(
             "query-commit",
-            icons::icon(icons::COMMIT, px(16.), chrome.icon),
+            icons::icon(icons::COMMIT, icon_size, chrome.icon),
             if self.transaction == Some(TransactionAction::Commit) {
                 ts!("query.committing")
             } else if self.restore_auto_commit {
                 ts!("query.commit_auto")
             } else {
-                ts!("query.commit")
+                format!("{} ({})", ts!("query.commit"), keys::COMMIT_KEY).into()
             },
             self.can_finish_transaction(),
             chrome,
-        )
+            button_size,
+        ))
         .when(self.can_finish_transaction(), |button| {
             button.on_click(move |_, _, cx| {
                 this.update(cx, |pane, cx| {
@@ -97,19 +119,20 @@ impl QueryPane {
             })
         });
         let this = cx.entity();
-        let rollback = tool_button(
+        let rollback = lit(tool_button(
             "query-rollback",
-            icons::icon(icons::ROLLBACK, px(16.), chrome.icon),
+            icons::icon(icons::ROLLBACK, icon_size, chrome.icon),
             if self.transaction == Some(TransactionAction::Rollback) {
                 ts!("query.rolling_back")
             } else if self.restore_auto_commit {
                 ts!("query.rollback_auto")
             } else {
-                ts!("query.rollback")
+                format!("{} ({})", ts!("query.rollback"), keys::ROLLBACK_KEY).into()
             },
             self.can_finish_transaction(),
             chrome,
-        )
+            button_size,
+        ))
         .when(self.can_finish_transaction(), |button| {
             button.on_click(move |_, _, cx| {
                 this.update(cx, |pane, cx| {
@@ -117,17 +140,37 @@ impl QueryPane {
                 });
             })
         });
+        // Not `button`: its tooltip writes the chord as the modifier plus a
+        // key, and this chord carries its own modifier.
+        let explain = {
+            let handle = handle.clone();
+            tool_button(
+                "query-explain",
+                icons::icon(icons::EXPLAIN, icon_size, chrome.icon),
+                format!("{} ({})", ts!("context.explain"), keys::EXPLAIN_KEY).into(),
+                can_run,
+                chrome,
+                button_size,
+            )
+            .when(can_run, |button| {
+                button.on_click(move |_, window, cx| {
+                    handle.focus(window, cx);
+                    handle.dispatch_action(&keys::ExplainStatement, window, cx);
+                })
+            })
+        };
         let this = cx.entity();
         let cancel = tool_button(
             "query-cancel",
-            icons::icon(icons::STOP, px(16.), chrome.danger),
+            icons::icon(icons::STOP, icon_size, chrome.danger),
             if canceling {
                 ts!("query.canceling")
             } else {
-                ts!("query.cancel")
+                format!("{} (Esc)", ts!("query.cancel")).into()
             },
             running && !canceling,
             chrome,
+            button_size,
         )
         .when(running && !canceling, |button| {
             button.on_click(move |_, _, cx| {
@@ -172,6 +215,7 @@ impl QueryPane {
                     can_run,
                     Box::new(RunAll),
                 ),
+                explain.into_any_element(),
                 cancel.into_any_element(),
             ]))
             .child(group(vec![

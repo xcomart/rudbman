@@ -154,6 +154,7 @@ fn a_detached_pane_grays_the_menus_run_rows(cx: &mut TestAppContext) {
         ts!("context.run_statement"),
         ts!("context.run_selection"),
         ts!("context.run_all"),
+        ts!("context.explain"),
     ] {
         assert!(
             !context_menu::row(&rows, &label).is_enabled(),

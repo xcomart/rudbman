@@ -9,7 +9,7 @@ impl QueryPane {
     /// The counterpart of [`QueryPane::has_pending_edits`] for the shell: a tab
     /// that simply would not close, with nothing said, would read as a bug.
     pub fn warn_pending(&mut self, cx: &mut Context<Self>) {
-        self.notice = Some(ts!("data.discard_first"));
+        self.notice = Some(Notice::warn(ts!("data.discard_first")));
         cx.notify();
     }
 
@@ -66,6 +66,55 @@ impl QueryPane {
             }
         });
         cx.notify();
+    }
+
+    /// What result `id`'s grid asked for from the keyboard: the data pane's
+    /// answers ([`crate::data_pane`]'s `answer_grid`), within what a result
+    /// takes — no inserted rows to pass over, since a result has none, and
+    /// nothing at all while it is read-only or an apply is out.
+    pub(super) fn answer_grid(
+        &mut self,
+        id: u64,
+        request: &GridRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(grid) = self.grid_of(id).cloned() else {
+            return;
+        };
+        if !grid.read(cx).source().writable() || self.applying {
+            return;
+        }
+        match request {
+            GridRequest::Delete => {
+                grid.update(cx, |grid, cx| {
+                    let rows = crate::data_edit::selected_rows(grid.selection());
+                    grid.source_mut(cx).toggle_rows_deleted(rows);
+                });
+                cx.notify();
+            }
+            GridRequest::Edit { row, column, text } => {
+                if grid.read(cx).source().uses_value_viewer(*row, *column) {
+                    self.open_value_editor(id, *row, *column, text.clone(), window, cx);
+                    return;
+                }
+                grid.update(cx, |grid, cx| match text {
+                    Some(text) => grid.begin_edit_with(*row, *column, text, window, cx),
+                    None => grid.begin_edit(*row, *column, window, cx),
+                });
+            }
+            GridRequest::Paste { text } => {
+                grid.update(cx, |grid, cx| {
+                    let cells = crate::data_edit::paste_targets(
+                        grid.selection(),
+                        &grid.visible_column_indices(),
+                        crate::data_edit::parse_tsv(text),
+                    );
+                    grid.source_mut(cx).paste(cells);
+                });
+                cx.notify();
+            }
+        }
     }
 
     /// Throws away everything staged against one row.
@@ -138,7 +187,12 @@ impl QueryPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -204,7 +258,12 @@ impl QueryPane {
             .as_ref()
             .is_some_and(SessionHandle::has_uncommitted)
         {
-            self.notice = Some(ts!("query.uncommitted_pending"));
+            self.notice = Some(Notice::warn(
+                self.session
+                    .as_ref()
+                    .map(SessionHandle::uncommitted_refusal)
+                    .unwrap_or_else(|| ts!("query.uncommitted_pending")),
+            ));
             cx.notify();
             return;
         }
@@ -215,14 +274,14 @@ impl QueryPane {
             return;
         }
         let Some(session) = self.session.clone() else {
-            self.notice = Some(ts!("explorer.disconnected"));
+            self.notice = Some(Notice::warn(ts!("explorer.disconnected")));
             cx.notify();
             return;
         };
 
         self.applying = true;
         self.apply_error = None;
-        self.notice = Some(ts!("data.applying"));
+        self.notice = Some(Notice::warn(ts!("data.applying")));
         let generation = self.generation;
         let transactional = self.transactional;
         let restore = self.restore_auto_commit;
@@ -284,7 +343,7 @@ impl QueryPane {
                     self.pending_sort = sort;
                     self.start(vec![executed], Some(base), window, cx);
                 }
-                self.notice = Some(ts!("data.applied", count = applied));
+                self.notice = Some(Notice::info(ts!("data.applied", count = applied)));
             }
             Err(failure) => {
                 self.notice = None;

@@ -25,6 +25,39 @@ impl QueryPane {
         cx.notify();
     }
 
+    /// `Shift+F10` and the Menu key: the menu of whichever surface of the
+    /// pane has the keyboard, as a right click there would raise it — the
+    /// editor's at the caret, the result grid's over its cursor cell, hung
+    /// just inside the grid. Anywhere else the key goes on up.
+    pub(super) fn open_menu_from_keyboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.read(cx).focus_handle(cx).is_focused(window) {
+            let caret = self.editor.read(cx).caret_bounds();
+            let Some(caret) = caret else {
+                cx.propagate();
+                return;
+            };
+            self.close_completion(cx);
+            self.context_menu = Some(PaneMenu::Editor {
+                position: caret.bottom_left(),
+            });
+        } else if let Some(id) = self.active_id()
+            && self
+                .grid_of(id)
+                .is_some_and(|grid| grid.read(cx).focus_handle(cx).contains_focused(window, cx))
+        {
+            self.context_menu = Some(PaneMenu::Grid {
+                id,
+                target: MenuTarget::Cell,
+                position: self.grid_bounds.get().origin + gpui::point(px(16.), px(16.)),
+            });
+        } else {
+            cx.propagate();
+            return;
+        }
+        self.menu_by_keyboard = true;
+        cx.notify();
+    }
+
     /// Puts the pane's right-click menu away.
     ///
     /// What the workspace runs before it opens another overlay, so that only
@@ -33,6 +66,30 @@ impl QueryPane {
         if self.context_menu.take().is_some() {
             cx.notify();
         }
+    }
+
+    /// The menu of row `index` of the execution log: its two lines, to copy.
+    pub(super) fn log_rows(&self, index: usize) -> Vec<MenuRow> {
+        let entry = self.results.iter().find_map(|tab| match &tab.body {
+            ResultBody::Log(log) => log.entries.get(index),
+            ResultBody::Rows(_) => None,
+        });
+        let copy = |text: Option<SharedString>| {
+            let enabled = text.is_some();
+            let text = text.unwrap_or_default();
+            move |label: SharedString| {
+                let text = text.clone();
+                MenuRow::new(label).enabled(enabled).on_activate(
+                    move |_window: &mut Window, cx: &mut App| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()));
+                    },
+                )
+            }
+        };
+        vec![
+            copy(entry.map(|entry| entry.message.clone()))(ts!("context.copy_message")),
+            copy(entry.map(|entry| entry.sql.clone()))(ts!("context.copy_sql")),
+        ]
     }
 
     /// The editor's right-click menu: everything a SQL buffer can be asked to
@@ -140,6 +197,12 @@ impl QueryPane {
                 format!("{modifier}+Shift+Enter"),
                 attached,
                 Box::new(RunAll),
+            ),
+            row(
+                ts!("context.explain"),
+                super::keys::EXPLAIN_KEY.to_string(),
+                attached,
+                Box::new(super::keys::ExplainStatement),
             ),
             MenuRow::separator(),
             row(

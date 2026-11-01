@@ -32,7 +32,9 @@ impl Workspace {
             .get(&tab)
             .cloned()
             .unwrap_or_else(|| item.title(cx).to_string());
-        self.close_overlays(window, cx);
+        if !self.close_overlays(window, cx) {
+            return;
+        }
         let this = cx.weak_entity();
         let input = cx.new(|cx| {
             let mut input = TextInput::new(cx).on_submit(move |_, window, cx| {
@@ -81,11 +83,21 @@ impl Workspace {
                 if name.is_empty() {
                     open.work.tab_names.remove(&rename.tab);
                 } else {
-                    open.work.tab_names.insert(rename.tab, name);
+                    open.work.tab_names.insert(rename.tab, name.clone());
+                }
+                // A query pane keeps a copy, for naming itself as the tab a
+                // transaction was opened from.
+                let query = open
+                    .work
+                    .queries()
+                    .into_iter()
+                    .find(|pane| pane.entity_id() == rename.tab);
+                if let Some(query) = query {
+                    query.update(cx, |pane, _| pane.set_tab_name(Some(name)));
                 }
             }
         }
-        self.focus_shell(window, cx);
+        self.restore_focus(window, cx);
         cx.notify();
     }
 
@@ -101,7 +113,7 @@ impl Workspace {
             .child(rename.input.clone())
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(rugpui::TextSize::Sm.size(cx))
                     .text_color(theme.text_muted)
                     .child(ts!("tab_name.hint")),
             )
@@ -134,7 +146,7 @@ impl Workspace {
             modal(
                 "tab-name-dialog",
                 ts!("tab_name.title"),
-                px(400.),
+                rugpui::scaled(400., cx),
                 body,
                 move |window, cx| {
                     dismiss.update(cx, |workspace, cx| {
