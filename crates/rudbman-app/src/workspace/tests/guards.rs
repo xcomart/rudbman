@@ -66,15 +66,19 @@ fn a_shortcut_inside_a_dialog_leaves_the_window_behind_it_alone(cx: &mut gpui::T
         .expect("the window is open");
 }
 
-/// A workspace over its own H2 database `name`, with a transfer started in it
-/// that cannot finish inside the test.
-fn start_endless_transfer(
-    name: &str,
-    cx: &mut gpui::TestAppContext,
-) -> (gpui::WindowHandle<Workspace>, gpui::VisualTestContext) {
-    // A view that sleeps per row, for the transfer dialog's own reason.
+/// A transfer that is running stays on screen through anything that would
+/// open another dialog over it, and the job under it goes on. A quit asks
+/// first while it runs, naming the transfer, and stops asking once it ends.
+///
+/// One test rather than two because each needs a job that cannot finish, and
+/// on the Windows runner a second such job in the same run held its test for
+/// as long as the whole view took to read.
+#[gpui::test]
+fn a_running_transfer_outlasts_every_other_dialog(cx: &mut gpui::TestAppContext) {
+    // A view that sleeps per row, for the transfer dialog's own reason: a
+    // job that cannot finish inside the test.
     let (window, source) = workspace_over_h2_with(
-        name,
+        "guards-running-source",
         &[
             "CREATE ALIAS NAP AS 'long nap(long ms) throws Exception { \
                  Thread.sleep(ms); return ms; }'",
@@ -97,14 +101,6 @@ fn start_endless_transfer(
         })
         .expect("the window is open");
     cx.run_until_parked();
-    (window, cx)
-}
-
-/// A transfer that is running stays on screen through anything that would
-/// open another dialog over it, and the job under it goes on.
-#[gpui::test]
-fn a_running_transfer_outlasts_every_other_dialog(cx: &mut gpui::TestAppContext) {
-    let (window, mut cx) = start_endless_transfer("guards-running-source", cx);
 
     window
         .update(&mut cx, |workspace, window, cx| {
@@ -121,20 +117,6 @@ fn a_running_transfer_outlasts_every_other_dialog(cx: &mut gpui::TestAppContext)
                 workspace.transfer.read(cx).is_running(),
                 "the job is still running under its card"
             );
-            workspace.transfer.update(cx, |dialog, cx| dialog.close(cx));
-        })
-        .expect("the window is open");
-}
-
-/// Quitting while a transfer is writing asks first, naming the transfer, and
-/// stops asking once the transfer is no longer running.
-#[gpui::test]
-fn a_running_transfer_holds_a_quit_until_answered(cx: &mut gpui::TestAppContext) {
-    let (window, mut cx) = start_endless_transfer("guards-quit-transfer", cx);
-
-    window
-        .update(&mut cx, |workspace, _window, cx| {
-            assert!(workspace.transfer.read(cx).is_running(), "the job started");
             assert_eq!(workspace.unsaved_work(cx), [ts!("closing.work_transfer")]);
         })
         .expect("the window is open");
