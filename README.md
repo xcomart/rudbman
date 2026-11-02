@@ -432,6 +432,15 @@ single origin of those trees:
 [rulogman](https://github.com/xcomart/rulogman) points its patch table at the
 same copy, so a fix made there reaches both projects.
 
+## AI-assisted development
+
+Parts of the code in this repository were generated with AI coding agents. That
+code is held to the same tests and CI checks as code written by hand, and the
+maintainers are responsible for it in the same way. If you use an agent to
+contribute, first read
+[Using AI coding agents](CONTRIBUTING.md#using-ai-coding-agents) in the
+contribution guide.
+
 ## Contributing
 
 See the [contribution guide](CONTRIBUTING.md) for development setup, bridge and
