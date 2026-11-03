@@ -86,8 +86,9 @@ use rudbman_core::ConnectionProfile;
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::{ConstraintDrop, ConstraintKind, Dialect, TableAlter, plan_alter};
 use rugpui::{
-    Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to, scrolled, theme,
+    Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarExt as _,
+    ScrollbarState, TextInput, Theme, form_row, hide_later, hide_now, modal, scroll_to, scrolled,
+    theme,
 };
 
 use crate::builder_sql;
@@ -311,6 +312,8 @@ pub struct StructPane {
     focus_handle: FocusHandle,
     /// Scroll of everything below the header.
     body_scroll: ScrollHandle,
+    /// Scroll of the statements the apply question lists.
+    preview_scroll: ScrollHandle,
     /// Whether the body's overlay bar is on screen.
     body_scrollbar: ScrollbarState,
     /// The apply preview's Cancel button, which takes the keyboard when it
@@ -396,6 +399,7 @@ impl StructPane {
             focus_handle: cx.focus_handle(),
             confirm_focus: cx.focus_handle(),
             body_scroll: ScrollHandle::new(),
+            preview_scroll: ScrollHandle::new(),
             body_scrollbar: ScrollbarState::new(),
         }
     }
@@ -1037,6 +1041,7 @@ impl StructPane {
         if let Some(Ok(statements)) = self.plan()
             && !statements.is_empty()
         {
+            self.preview_scroll.set_offset(gpui::Point::default());
             self.preview = Some(statements);
         }
         cx.notify();
@@ -2088,16 +2093,25 @@ impl StructPane {
             )
             .child(
                 div()
-                    .id("struct-apply-preview")
-                    .max_h(rugpui::scaled(260., cx))
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .p(px(8.))
-                    .rounded_md()
-                    .bg(chrome.surface)
-                    .border_1()
-                    .border_color(chrome.border)
-                    .children(listing),
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("struct-apply-preview")
+                            .track_scroll(&self.preview_scroll)
+                            .max_h(rugpui::scaled(260., cx))
+                            .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
+                            .p(px(8.))
+                            .rounded_md()
+                            .bg(chrome.surface)
+                            .border_1()
+                            .border_color(chrome.border)
+                            .children(listing),
+                    )
+                    .with_scrollbar("struct-apply-preview-scrollbar", &self.preview_scroll),
             )
             .child(
                 div()

@@ -339,6 +339,7 @@ impl Workspace {
     ) {
         self.menu_open = false;
         self.close_context_menus(cx);
+        self.close_scroll.set_offset(Point::default());
         self.close_question = Some(CloseQuestion {
             request,
             answers,
@@ -693,13 +694,23 @@ impl Workspace {
                     .gap(px(12.))
                     .child(
                         div()
-                            .id("close-question-body")
+                            .relative()
                             .flex()
                             .flex_col()
-                            .gap(px(4.))
-                            .max_h(rugpui::scaled(240., cx))
-                            .overflow_y_scroll()
-                            .children(body.into_iter().map(line)),
+                            .min_h_0()
+                            .child(
+                                div()
+                                    .id("close-question-body")
+                                    .track_scroll(&self.close_scroll)
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.))
+                                    .max_h(rugpui::scaled(240., cx))
+                                    .overflow_y_scroll()
+                                    .restrict_scroll_to_axis()
+                                    .children(body.into_iter().map(line)),
+                            )
+                            .with_scrollbar("close-question-scrollbar", &self.close_scroll),
                     )
                     .child(buttons),
                 move |window, cx| {

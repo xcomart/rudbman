@@ -397,6 +397,7 @@ impl Workspace {
             .detach();
         cx.subscribe(&pane, |workspace, pane, event, cx| {
             let QueryPaneEvent::ConfirmWrites(request) = event;
+            workspace.confirm_scroll.set_offset(Point::default());
             workspace.confirm = Some(PendingConfirm {
                 pane: pane.clone(),
                 request: Box::new(ConfirmRequest {

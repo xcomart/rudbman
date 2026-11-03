@@ -37,12 +37,12 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, FocusHandle, IntoElement, ParentElement, SharedString, Styled, Window, div,
-    prelude::*, px,
+    AnyElement, App, FocusHandle, IntoElement, ParentElement, ScrollHandle, SharedString, Styled,
+    Window, div, prelude::*, px,
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::DmlError;
-use rugpui::{Button, ButtonVariant, Theme, modal, theme};
+use rugpui::{Button, ButtonVariant, ScrollbarExt as _, Theme, modal, theme};
 
 use crate::data_edit::{EditCounts, PlanError, PlannedStatement};
 use crate::i18n::ts;
@@ -255,13 +255,15 @@ pub(crate) fn render_discard_confirm(
 /// batch that fails half way stays half applied.
 ///
 /// `on_cancel` is shared by the button and the modal's dismiss, as above;
-/// `on_run` is what sends the batch. The Cancel button takes the keyboard
-/// when it opens, through `cancel_focus`, for the discard question's reason:
-/// this is a write, and reading it is the point.
+/// `on_run` is what sends the batch. `scroll` is the listing's, which the pane
+/// keeps so a long batch can be read to its end. The Cancel button takes the
+/// keyboard when it opens, through `cancel_focus`, for the discard question's
+/// reason: this is a write, and reading it is the point.
 pub(crate) fn render_apply_preview(
     statements: &[PlannedStatement],
     transactional: bool,
     cancel_focus: &FocusHandle,
+    scroll: &ScrollHandle,
     cx: &mut App,
     on_cancel: impl Fn(&mut Window, &mut App) + 'static,
     on_run: impl Fn(&mut Window, &mut App) + 'static,
@@ -305,16 +307,25 @@ pub(crate) fn render_apply_preview(
         }))
         .child(
             div()
-                .id("data-apply-preview")
-                .max_h(rugpui::scaled(260., cx))
-                .overflow_y_scroll()
-                .restrict_scroll_to_axis()
-                .p(px(8.))
-                .rounded_md()
-                .bg(chrome.surface)
-                .border_1()
-                .border_color(chrome.border)
-                .children(listing),
+                .relative()
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .child(
+                    div()
+                        .id("data-apply-preview")
+                        .track_scroll(scroll)
+                        .max_h(rugpui::scaled(260., cx))
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .p(px(8.))
+                        .rounded_md()
+                        .bg(chrome.surface)
+                        .border_1()
+                        .border_color(chrome.border)
+                        .children(listing),
+                )
+                .with_scrollbar("data-apply-preview-scrollbar", scroll),
         )
         .child(
             div()

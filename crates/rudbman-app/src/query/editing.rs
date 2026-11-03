@@ -230,6 +230,7 @@ impl QueryPane {
             // and generated no statement can produce.
             Ok(statements) if statements.is_empty() => {}
             Ok(statements) => {
+                self.preview_scroll.set_offset(gpui::Point::default());
                 self.preview = Some(ApplyPreview {
                     tab: id,
                     statements,

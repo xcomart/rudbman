@@ -15,7 +15,7 @@
 
 use super::*;
 use crate::query_history::{HistoryEntry, Outcome, QueryHistory, local_time};
-use rugpui::TextInput;
+use rugpui::{ScrollbarExt as _, TextInput};
 
 /// Height of one row of the list, before the interface size scales it.
 const ROW_HEIGHT: f32 = 44.;
@@ -38,6 +38,8 @@ pub(super) struct HistoryView {
     /// The highlighted row, as an index into what the search lets through.
     selected: usize,
     scroll: gpui::UniformListScrollHandle,
+    /// Scroll of the whole statement under the list, which a long one needs.
+    preview_scroll: gpui::ScrollHandle,
     /// Where the list was drawn last, for the menu `Shift+F10` opens over it.
     list_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     /// Whether "delete the whole history" is waiting to be confirmed.
@@ -124,6 +126,7 @@ impl Workspace {
             entries: QueryHistory::entries(cx, profile),
             selected: 0,
             scroll: gpui::UniformListScrollHandle::new(),
+            preview_scroll: gpui::ScrollHandle::new(),
             list_bounds: std::rc::Rc::default(),
             confirm_clear: false,
             _search_changed: search_changed,
@@ -368,6 +371,10 @@ impl Workspace {
                         .absolute()
                         .size_full(),
                 )
+                .with_scrollbar(
+                    "history-list-scrollbar",
+                    &history.scroll.0.borrow().base_handle,
+                )
                 .into_any_element()
         };
 
@@ -379,28 +386,38 @@ impl Workspace {
                 _ => None,
             };
             div()
-                .id("history-preview")
+                .relative()
                 .flex()
                 .flex_col()
-                .gap(px(4.))
-                .max_h(rugpui::scaled(140., cx))
-                .overflow_y_scroll()
-                .p(px(8.))
-                .rounded_sm()
-                .bg(theme.surface)
-                .text_size(rugpui::TextSize::Sm.size(cx))
+                .min_h_0()
                 .child(
                     div()
-                        .font_family(crate::app_settings::monospace_family(cx))
-                        .text_color(theme.text)
-                        .whitespace_normal()
-                        .child(SharedString::from(entry.sql.clone())),
+                        .id("history-preview")
+                        .track_scroll(&history.preview_scroll)
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .max_h(rugpui::scaled(140., cx))
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .p(px(8.))
+                        .rounded_sm()
+                        .bg(theme.surface)
+                        .text_size(rugpui::TextSize::Sm.size(cx))
+                        .child(
+                            div()
+                                .font_family(crate::app_settings::monospace_family(cx))
+                                .text_color(theme.text)
+                                .whitespace_normal()
+                                .child(SharedString::from(entry.sql.clone())),
+                        )
+                        .children(failure.map(|message| {
+                            div()
+                                .text_color(theme.danger)
+                                .child(SharedString::from(message))
+                        })),
                 )
-                .children(failure.map(|message| {
-                    div()
-                        .text_color(theme.danger)
-                        .child(SharedString::from(message))
-                }))
+                .with_scrollbar("history-preview-scrollbar", &history.preview_scroll)
         });
 
         let footer = if history.confirm_clear {

@@ -1296,12 +1296,22 @@ impl Workspace {
             )
             .children(message.map(|message| {
                 div()
-                    .id("connection-card-message")
-                    .max_h(rugpui::scaled(if band { 60. } else { 220. }, cx))
-                    .overflow_y_scroll()
-                    .text_size(rugpui::TextSize::Sm.size(cx))
-                    .text_color(theme.danger)
-                    .child(message)
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("connection-card-message")
+                            .track_scroll(&self.card_scroll)
+                            .max_h(rugpui::scaled(if band { 60. } else { 220. }, cx))
+                            .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
+                            .text_size(rugpui::TextSize::Sm.size(cx))
+                            .text_color(theme.danger)
+                            .child(message),
+                    )
+                    .with_scrollbar("connection-card-scrollbar", &self.card_scroll)
             }))
             // The hints are the connection dialog's, written to follow its
             // "could not connect: …" — so an arrow, not a sentence, leads in.
@@ -1780,18 +1790,27 @@ impl Workspace {
             )
             .child(
                 div()
-                    .id("confirm-preview")
-                    .max_h(rugpui::scaled(200., cx))
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .p(px(8.))
-                    .rounded_md()
-                    .bg(theme.surface)
-                    .border_1()
-                    .border_color(theme.border)
-                    .text_size(rugpui::TextSize::Xs.size(cx))
-                    .text_color(theme.text_muted)
-                    .child(pending.request.preview.clone()),
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("confirm-preview")
+                            .track_scroll(&self.confirm_scroll)
+                            .max_h(rugpui::scaled(200., cx))
+                            .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
+                            .p(px(8.))
+                            .rounded_md()
+                            .bg(theme.surface)
+                            .border_1()
+                            .border_color(theme.border)
+                            .text_size(rugpui::TextSize::Xs.size(cx))
+                            .text_color(theme.text_muted)
+                            .child(pending.request.preview.clone()),
+                    )
+                    .with_scrollbar("confirm-preview-scrollbar", &self.confirm_scroll),
             )
             .child(
                 div()
