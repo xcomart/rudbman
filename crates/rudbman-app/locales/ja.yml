@@ -359,6 +359,15 @@ explorer:
   unknown_connection: "（接続）"
   load_failed_unknown: 読み込めませんでした。
 
+  filter_placeholder: "名前で絞り込み"
+  filter_hint: "カンマは「または」、* と ? はワイルドカード、! は除外です。Enter で一致するフォルダーを開きます (%{shortcut})"
+  filter_targets: "フィルターを適用するフォルダー"
+  filter_all: "すべて"
+  filter_none: "なし"
+  filter_more: "%{first} 他 %{count}"
+  filter_all_objects: "すべてのオブジェクト"
+  filter_status: "読み込み済み %{read} 件中 %{shown} 件が一致"
+
   tables: テーブル
   views: ビュー
   procedures: プロシージャー

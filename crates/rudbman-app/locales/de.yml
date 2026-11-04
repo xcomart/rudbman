@@ -359,6 +359,15 @@ explorer:
   unknown_connection: "(Verbindung)"
   load_failed_unknown: Das konnte nicht geladen werden.
 
+  filter_placeholder: "Nach Name filtern"
+  filter_hint: "Komma bedeutet „oder“, * und ? sind Platzhalter, ! schließt aus. Enter öffnet die Ordner mit Treffern (%{shortcut})"
+  filter_targets: "Ordner, die der Filter eingrenzt"
+  filter_all: "Alle"
+  filter_none: "Keine"
+  filter_more: "%{first} +%{count}"
+  filter_all_objects: "Alle Objekte"
+  filter_status: "%{shown} von %{read} geladenen Objekten passen"
+
   tables: Tabellen
   views: Sichten
   procedures: Prozeduren

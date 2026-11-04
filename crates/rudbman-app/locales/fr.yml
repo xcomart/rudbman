@@ -359,6 +359,15 @@ explorer:
   unknown_connection: "(connexion)"
   load_failed_unknown: Impossible de charger ceci.
 
+  filter_placeholder: "Filtrer par nom"
+  filter_hint: "La virgule signifie « ou », * et ? sont des jokers, ! exclut. Entrée ouvre les dossiers qui ont des résultats (%{shortcut})"
+  filter_targets: "Dossiers concernés par le filtre"
+  filter_all: "Tous"
+  filter_none: "Aucun"
+  filter_more: "%{first} +%{count}"
+  filter_all_objects: "Tous les objets"
+  filter_status: "%{shown} sur %{read} objets chargés correspondent"
+
   tables: Tables
   views: Vues
   procedures: Procédures

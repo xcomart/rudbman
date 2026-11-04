@@ -359,6 +359,15 @@ explorer:
   unknown_connection: "(подключение)"
   load_failed_unknown: Не удалось загрузить.
 
+  filter_placeholder: "Фильтр по имени"
+  filter_hint: "Запятая означает «или», * и ? — подстановочные знаки, ! исключает. Enter раскрывает папки с совпадениями (%{shortcut})"
+  filter_targets: "Папки, к которым применяется фильтр"
+  filter_all: "Все"
+  filter_none: "Нет"
+  filter_more: "%{first} +%{count}"
+  filter_all_objects: "Все объекты"
+  filter_status: "Совпадает %{shown} из %{read} загруженных объектов"
+
   tables: Таблицы
   views: Представления
   procedures: Процедуры

@@ -359,6 +359,15 @@ explorer:
   unknown_connection: "(conexión)"
   load_failed_unknown: No se pudo cargar.
 
+  filter_placeholder: "Filtrar por nombre"
+  filter_hint: "La coma significa «o», * y ? son comodines, ! excluye. Intro abre las carpetas con coincidencias (%{shortcut})"
+  filter_targets: "Carpetas que filtra"
+  filter_all: "Todas"
+  filter_none: "Ninguna"
+  filter_more: "%{first} +%{count}"
+  filter_all_objects: "Todos los objetos"
+  filter_status: "%{shown} de %{read} objetos cargados coinciden"
+
   tables: Tablas
   views: Vistas
   procedures: Procedimientos

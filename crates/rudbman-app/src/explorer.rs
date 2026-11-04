@@ -74,10 +74,13 @@ use gpui::{
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session};
 use rugpui::{
-    Button, ButtonVariant, ChildState, Theme, TreeEvent, TreeRowInfo, TreeSource, TreeView, theme,
+    Button, ButtonVariant, ChildState, ContextMenu, TextInput, Theme, TreeEvent, TreeRowInfo,
+    TreeSource, TreeView, theme,
 };
 
 use crate::app_settings;
+use crate::context_menu::{self, MenuRow};
+use crate::explorer_filter::{ExplorerFilter, FolderSet};
 use crate::i18n::ts;
 use crate::icons;
 
@@ -502,6 +505,18 @@ pub struct ExplorerSource {
     /// by, and a comment edited in the database would otherwise make yesterday's
     /// selection name a node that no longer exists.
     remarks: HashMap<NodeId, SharedString>,
+    /// Each connection's filter; a connection with none is drawn whole.
+    ///
+    /// Per connection for the reason the roots are: switching tabs swaps the
+    /// tree, and the text typed over one database means nothing over another.
+    filters: HashMap<ConnectionId, ExplorerFilter>,
+    /// What a narrowed folder shows: the children its filter lets through.
+    ///
+    /// Kept beside [`ExplorerSource::children`] rather than written over it,
+    /// so that changing the filter is a pass over what is already here and
+    /// never a round trip. Present only for a loaded folder its connection's
+    /// filter narrows; [`TreeSource::children`] answers from it first.
+    shown: HashMap<NodeId, Vec<NodeId>>,
 }
 
 impl ExplorerSource {
@@ -528,6 +543,8 @@ impl ExplorerSource {
             .retain(|node, _| node.connection() != connection);
         self.remarks
             .retain(|node, _| node.connection() != connection);
+        self.shown.retain(|node, _| node.connection() != connection);
+        self.filters.remove(&connection);
     }
 
     /// The roots, in tab order — every open connection, drawn or not.
@@ -564,6 +581,7 @@ impl ExplorerSource {
 
     /// Marks a node's children as being fetched.
     pub fn mark_loading(&mut self, node: NodeId) {
+        self.shown.remove(&node);
         self.children.insert(node, ChildState::Loading);
     }
 
@@ -573,6 +591,125 @@ impl ExplorerSource {
         self.errors.retain(|child, _| !node.contains(child));
         self.counts.retain(|child, _| !node.contains(child));
         self.remarks.retain(|child, _| !node.contains(child));
+        self.shown.retain(|child, _| !node.contains(child));
+    }
+
+    /// `connection`'s filter, or `None` while it has never had one.
+    pub fn filter(&self, connection: ConnectionId) -> Option<&ExplorerFilter> {
+        self.filters.get(&connection)
+    }
+
+    /// Replaces `connection`'s filter and narrows every folder it has loaded.
+    ///
+    /// Nothing is fetched and nothing is forgotten: the folders keep what
+    /// they read, and a folder loaded later is narrowed as it arrives.
+    pub fn set_filter(&mut self, connection: ConnectionId, filter: ExplorerFilter) {
+        self.filters.insert(connection, filter);
+        let folders: Vec<NodeId> = self
+            .children
+            .keys()
+            .filter(|node| node.connection() == connection && matches!(node, NodeId::Folder { .. }))
+            .cloned()
+            .collect();
+        for folder in folders {
+            self.narrow(&folder);
+        }
+    }
+
+    /// Recomputes what one folder shows under its connection's filter.
+    fn narrow(&mut self, node: &NodeId) {
+        let NodeId::Folder {
+            connection, folder, ..
+        } = node
+        else {
+            return;
+        };
+        let filter = self
+            .filters
+            .get(connection)
+            .filter(|filter| filter.narrows(*folder));
+        let loaded = match self.children.get(node) {
+            Some(ChildState::Loaded(ids)) if !self.errors.contains_key(node) => Some(ids),
+            _ => None,
+        };
+        match (filter, loaded) {
+            (Some(filter), Some(ids)) => {
+                let shown = ids
+                    .iter()
+                    .filter(|id| match id {
+                        NodeId::Object { name, .. } => filter.admits(name),
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect();
+                self.shown.insert(node.clone(), shown);
+            }
+            _ => {
+                self.shown.remove(node);
+            }
+        }
+    }
+
+    /// How many of a narrowed folder's objects pass its filter, or `None` when
+    /// the folder is not being narrowed — not loaded, or not one the filter
+    /// names.
+    pub fn matched(&self, node: &NodeId) -> Option<usize> {
+        self.shown.get(node).map(Vec::len)
+    }
+
+    /// Whether a folder is worth opening to see what the filter found in it:
+    /// one its connection's filter narrows that has a match, or that has not
+    /// been read yet — or is being read — and so may have one.
+    pub fn may_match(&self, node: &NodeId) -> bool {
+        let NodeId::Folder {
+            connection, folder, ..
+        } = node
+        else {
+            return false;
+        };
+        let narrowed = self
+            .filters
+            .get(connection)
+            .is_some_and(|filter| filter.narrows(*folder));
+        if !narrowed {
+            return false;
+        }
+        match self.matched(node) {
+            Some(count) => count > 0,
+            // Read but not narrowed is a folder that failed: its error row is
+            // what opening it would show, and that is no match.
+            None => !matches!(self.children.get(node), Some(ChildState::Loaded(_))),
+        }
+    }
+
+    /// Where the selection goes when the filter hides `selected`: the folder
+    /// it was drawn in, or `None` while it is still on screen.
+    ///
+    /// The rule [`TreeView::collapse`] follows for a node closed over the
+    /// selection, and for the same reason — but here there is a second one.
+    /// The sidebar's chords and its menu act on the selection, and a table the
+    /// user can no longer see is not one they meant `Ctrl+Enter` for.
+    pub fn hidden_selection_folder(&self, selected: &NodeId) -> Option<NodeId> {
+        if !matches!(selected, NodeId::Object { .. }) {
+            return None;
+        }
+        let folder = selected.refresh_root();
+        let shown = self.shown.get(&folder)?;
+        (!shown.contains(selected)).then_some(folder)
+    }
+
+    /// The objects `connection`'s filter lets through, and how many it was
+    /// choosing from, over every folder it narrows that has been read.
+    pub fn filter_totals(&self, connection: ConnectionId) -> (usize, usize) {
+        self.shown
+            .iter()
+            .filter(|(node, _)| node.connection() == connection)
+            .fold((0, 0), |(shown, read), (node, ids)| {
+                (
+                    shown + ids.len(),
+                    read + self.counts.get(node).copied().unwrap_or(ids.len()),
+                )
+            })
     }
 
     /// Records the children a fetch produced.
@@ -593,7 +730,8 @@ impl ExplorerSource {
                 child.id
             })
             .collect();
-        self.children.insert(node, ChildState::Loaded(ids));
+        self.children.insert(node.clone(), ChildState::Loaded(ids));
+        self.narrow(&node);
     }
 
     /// The catalog's comment on `id`, for the rows that carry one.
@@ -609,6 +747,7 @@ impl ExplorerSource {
     pub fn set_error(&mut self, node: NodeId, message: SharedString) {
         self.errors.insert(node.clone(), message);
         self.counts.remove(&node);
+        self.shown.remove(&node);
         self.children.insert(
             node.clone(),
             ChildState::Loaded(vec![NodeId::Error(Box::new(node))]),
@@ -667,6 +806,11 @@ impl TreeSource for ExplorerSource {
                 },
             )),
             NodeId::Object { .. } | NodeId::Error(_) => ChildState::Leaf,
+            // A folder the filter narrows: only what passed. The full list
+            // stays in `children`, for the next filter and the count.
+            other if self.shown.contains_key(other) => {
+                ChildState::Loaded(self.shown.get(other).cloned().unwrap_or_default())
+            }
             other => self
                 .children
                 .get(other)
@@ -724,13 +868,30 @@ impl TreeSource for ExplorerSource {
 
         // Only a loaded folder gets a count: a badge that read "0" while the
         // fetch was still out would be a wrong answer rather than a missing one.
+        // A folder the filter narrows reads "found/all", in the accent while it
+        // found something — the one place the tree says it is not whole.
+        let matched = self.matched(id);
         let badge = self.counts.get(id).map(|count| {
+            let (text, color) = match matched {
+                Some(found) => (
+                    format!("{found}/{count}"),
+                    if found > 0 {
+                        chrome.accent
+                    } else {
+                        chrome.text_muted
+                    },
+                ),
+                None => (count.to_string(), chrome.text_muted),
+            };
             div()
                 .flex_none()
                 .text_size(rugpui::scaled(10., cx))
-                .text_color(chrome.text_muted)
-                .child(SharedString::from(count.to_string()))
+                .text_color(color)
+                .child(SharedString::from(text))
         });
+        // A narrowed folder with nothing in it is drawn quieter, so the eye
+        // goes to the ones that did find something.
+        let quiet = matched == Some(0);
 
         // The catalog's comment, after the name and quieter than it — the same
         // treatment the folder count gets, and for the same reason: it is a
@@ -769,6 +930,7 @@ impl TreeSource for ExplorerSource {
                     .flex_1()
                     .min_w_0()
                     .truncate()
+                    .when(quiet, |label| label.text_color(chrome.text_muted))
                     .when(info.selected, |label| label.text_color(chrome.text))
                     .child(label),
             )
@@ -1088,6 +1250,73 @@ pub enum ExplorerEvent {
     },
 }
 
+gpui::actions!(
+    explorer,
+    [
+        /// Put the keyboard in the filter box.
+        FocusFilter,
+        /// Empty the filter box, or hand the keyboard back to the tree when
+        /// there is nothing in it.
+        ClearFilter,
+    ]
+);
+
+/// Key context of the filter box, under [`KEY_CONTEXT`].
+///
+/// Its own, so that `Escape` there clears the box rather than reaching the
+/// window, which would close whatever dialog it thinks is open.
+const FILTER_KEY_CONTEXT: &str = "ExplorerFilter";
+
+/// The chord that puts the keyboard in the filter box, as the tooltip spells
+/// it.
+const FILTER_CHORD: &str = if cfg!(target_os = "macos") {
+    "Cmd+F"
+} else {
+    "Ctrl+F"
+};
+
+/// Marks the sidebar's own chords as registered, once per application.
+struct Bindings;
+
+impl gpui::Global for Bindings {}
+
+/// Registers the filter's chords, once per application.
+///
+/// `Ctrl+F` is free in the sidebar — the tree has no find of its own — and
+/// bound only there, so the SQL editor's find is untouched.
+fn bind_keys(cx: &mut App) {
+    if cx.has_global::<Bindings>() {
+        return;
+    }
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        gpui::KeyBinding::new(&format!("{modifier}-f"), FocusFilter, Some(KEY_CONTEXT)),
+        gpui::KeyBinding::new("escape", ClearFilter, Some(FILTER_KEY_CONTEXT)),
+    ]);
+    cx.set_global(Bindings);
+}
+
+/// What the filter's menu button says: which folders it narrows.
+fn targets_label(targets: FolderSet) -> SharedString {
+    if targets.is_all() {
+        return ts!("explorer.filter_all");
+    }
+    let count = targets.iter().count();
+    match targets.iter().next() {
+        None => ts!("explorer.filter_none"),
+        Some(first) if count == 1 => first.label(),
+        Some(first) => ts!(
+            "explorer.filter_more",
+            first = first.label(),
+            count = count - 1
+        ),
+    }
+}
+
 /// The sidebar view.
 pub struct Explorer {
     tree: Entity<TreeView<ExplorerSource>>,
@@ -1101,8 +1330,23 @@ pub struct Explorer {
     /// The connections whose tree is still opening onto the scope their
     /// session landed in; see [`Explorer::reveal`].
     reveals: HashMap<ConnectionId, Reveal>,
+    /// The filter box over the tree.
+    ///
+    /// One box for every connection: the text it holds is each connection's
+    /// own, swapped in as the tab on top changes — see [`Explorer::show_root`].
+    filter_input: Entity<TextInput>,
+    /// Whether the menu of the folders the filter narrows is out.
+    targets_open: bool,
+    /// Set by a row of that menu, so that the dismissal every activation is
+    /// followed by leaves it open. The menu is a row of switches, and ticking
+    /// three of them should not take opening it three times.
+    targets_kept: bool,
+    /// Where the menu's button was drawn last, for the menu to hang under.
+    targets_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// Keeps the tree's subscription alive.
     _events: Subscription,
+    /// Keeps the filter box's subscription alive.
+    _filter_events: Subscription,
 }
 
 /// A walk from a connection's root down to the catalog and schema its session
@@ -1149,6 +1393,23 @@ impl Explorer {
             }
         });
 
+        bind_keys(cx);
+        let this = cx.weak_entity();
+        let filter_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder(ts!("explorer.filter_placeholder"))
+                .on_submit(move |_text, window, cx| {
+                    let _ = this.update(cx, |explorer, cx| explorer.open_matches(window, cx));
+                })
+        });
+        // The box owns the text and the source owns the filter, so the one has
+        // to tell the other — on every keystroke, as rudbgen's box does: this
+        // narrows what is already here, so there is nothing to wait for.
+        let filter_events = cx.observe(&filter_input, |explorer, input, cx| {
+            let text = input.read(cx).content().to_string();
+            explorer.set_filter_text(text, cx);
+        });
+
         Self {
             tree,
             focus_handle: cx.focus_handle(),
@@ -1156,8 +1417,135 @@ impl Explorer {
             generation: 0,
             pending: HashMap::new(),
             reveals: HashMap::new(),
+            filter_input,
+            targets_open: false,
+            targets_kept: false,
+            targets_bounds: Rc::default(),
             _events: events,
+            _filter_events: filter_events,
         }
+    }
+
+    /// The connection whose tree is on screen.
+    fn visible_root(&self, cx: &App) -> Option<ConnectionId> {
+        self.tree
+            .read(cx)
+            .source()
+            .visible_roots()
+            .into_iter()
+            .next()
+    }
+
+    /// The filter of the connection on screen, as it stands, and that
+    /// connection.
+    fn visible_filter(&self, cx: &App) -> Option<(ConnectionId, ExplorerFilter)> {
+        let root = self.visible_root(cx)?;
+        let filter = self
+            .tree
+            .read(cx)
+            .source()
+            .filter(root)
+            .cloned()
+            .unwrap_or_default();
+        Some((root, filter))
+    }
+
+    /// Draws the tree of `connection`, or none, and puts its filter in the box.
+    ///
+    /// What the workspace calls whenever the tab on top changes. The box is
+    /// shared, so the text it holds has to follow the tree it filters.
+    pub fn show_root(&mut self, connection: Option<ConnectionId>, cx: &mut Context<Self>) {
+        self.update_source(cx, |source| source.set_visible_root(connection));
+        let text = connection
+            .and_then(|root| self.tree.read(cx).source().filter(root))
+            .map(|filter| filter.text().to_string())
+            .unwrap_or_default();
+        self.targets_open = false;
+        if self.filter_input.read(cx).content() != text {
+            self.filter_input
+                .update(cx, |input, cx| input.set_content(text, cx));
+        }
+    }
+
+    /// The box's text changed: narrow the connection on screen by it.
+    fn set_filter_text(&mut self, text: String, cx: &mut Context<Self>) {
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        if filter.text() == text {
+            return;
+        }
+        filter.set_text(text);
+        self.apply_filter(root, filter, cx);
+    }
+
+    /// Hands `filter` to the source, and lifts a selection it hid onto the
+    /// folder that was drawing it.
+    fn apply_filter(&mut self, root: ConnectionId, filter: ExplorerFilter, cx: &mut Context<Self>) {
+        self.update_source(cx, |source| source.set_filter(root, filter));
+        self.tree.update(cx, |tree, cx| {
+            let lifted = tree
+                .selected()
+                .and_then(|selected| tree.source().hidden_selection_folder(selected));
+            if let Some(folder) = lifted {
+                tree.set_selected(Some(folder), cx);
+            }
+        });
+    }
+
+    /// Ticks or unticks one folder in the filter's menu, or with `None` every
+    /// folder at once — all of them, or none when all were ticked.
+    fn toggle_target(&mut self, folder: Option<Folder>, cx: &mut Context<Self>) {
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        let targets = filter.targets();
+        filter.set_targets(match folder {
+            Some(folder) => targets.toggled(folder),
+            None if targets.is_all() => FolderSet::NONE,
+            None => FolderSet::ALL,
+        });
+        self.apply_filter(root, filter, cx);
+    }
+
+    /// `Enter` in the box: opens every folder on screen the filter may have
+    /// found something in, and hands the keyboard to the tree.
+    ///
+    /// Only the folders already drawn — under a schema that is open — so that
+    /// a server with hundreds of schemas is not read end to end by one key. A
+    /// folder not read yet is opened too, which is what reads it; it arrives
+    /// narrowed.
+    fn open_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let tree = self.tree.read(cx);
+        let folders: Vec<NodeId> = tree
+            .rows()
+            .iter()
+            .filter_map(|row| row.id())
+            .filter(|id| tree.source().may_match(id))
+            .cloned()
+            .collect();
+        self.tree.update(cx, |tree, cx| {
+            for folder in &folders {
+                tree.expand(folder, cx);
+            }
+        });
+        self.take_focus(window, cx);
+    }
+
+    /// Puts the keyboard in the filter box.
+    fn focus_filter(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.filter_input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    }
+
+    /// `Escape` in the box: empties it, or — already empty — goes back to the
+    /// tree, so that a second `Escape` is the way out of the box.
+    fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter_input.read(cx).content().is_empty() {
+            self.take_focus(window, cx);
+            return;
+        }
+        self.filter_input.update(cx, |input, cx| input.clear(cx));
     }
 
     /// Marks the node as loading and asks the workspace to fetch it.
@@ -1376,6 +1764,144 @@ impl Explorer {
 impl EventEmitter<ExplorerEvent> for Explorer {}
 
 impl Explorer {
+    /// The strip over the tree: the filter box, and the button that says
+    /// which folders it narrows.
+    fn render_filter(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        // The hint follows a language switch, which the box outlives.
+        let placeholder = ts!("explorer.filter_placeholder");
+        if self.filter_input.read(cx).current_placeholder() != &placeholder {
+            self.filter_input
+                .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
+        let targets = self
+            .visible_filter(cx)
+            .map(|(_, filter)| filter.targets())
+            .unwrap_or_default();
+        let open = self.targets_open;
+        let this = cx.entity();
+        let bounds = self.targets_bounds.clone();
+
+        div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .px(px(8.))
+            .pb(px(6.))
+            .child(
+                div()
+                    .id("explorer-filter-field")
+                    .key_context(FILTER_KEY_CONTEXT)
+                    .flex_1()
+                    .min_w_0()
+                    .tooltip(rugpui::tooltip_label(ts!(
+                        "explorer.filter_hint",
+                        shortcut = FILTER_CHORD
+                    )))
+                    .child(self.filter_input.clone()),
+            )
+            .child(
+                div()
+                    .id("explorer-filter-targets")
+                    .relative()
+                    .flex_none()
+                    .tooltip(rugpui::tooltip_label(ts!("explorer.filter_targets")))
+                    .child(
+                        Button::new(
+                            "explorer-filter-targets-button",
+                            format!("{} \u{25be}", targets_label(targets)),
+                        )
+                        .compact()
+                        .variant(ButtonVariant::Secondary)
+                        .on_click(move |_, _window, cx| {
+                            this.update(cx, |explorer, cx| {
+                                explorer.targets_open = !open;
+                                cx.notify();
+                            });
+                        }),
+                    )
+                    .child(
+                        gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    ),
+            )
+    }
+
+    /// The menu of folders the filter narrows, while it is out.
+    fn render_targets_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        if !self.targets_open {
+            return None;
+        }
+        let targets = self.visible_filter(cx)?.1.targets();
+        let this = cx.entity();
+        let row = |label: SharedString, checked: bool, folder: Option<Folder>| {
+            let this = this.clone();
+            MenuRow::new(label)
+                .checked(checked)
+                .on_activate(move |_window, cx| {
+                    this.update(cx, |explorer, cx| {
+                        explorer.targets_kept = true;
+                        explorer.toggle_target(folder, cx);
+                    });
+                })
+        };
+        let mut rows = vec![
+            row(ts!("explorer.filter_all_objects"), targets.is_all(), None),
+            MenuRow::separator(),
+        ];
+        rows.extend(
+            FOLDERS
+                .into_iter()
+                .map(|folder| row(folder.label(), targets.contains(folder), Some(folder))),
+        );
+        let under = self.targets_bounds.get().bottom_left() + gpui::point(px(0.), px(2.));
+        Some(
+            ContextMenu::new("explorer-filter-targets-menu")
+                .position(under)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |explorer, cx| {
+                        // The dismissal that follows a tick: stay out.
+                        if std::mem::take(&mut explorer.targets_kept) {
+                            return;
+                        }
+                        explorer.targets_open = false;
+                        cx.notify();
+                    });
+                }),
+        )
+    }
+
+    /// The line under the tree while a filter is narrowing it: how much it
+    /// let through of what has been read.
+    ///
+    /// Of what has been *read*, and it says so, because a folder nobody has
+    /// opened has not been filtered — the count is not a search of the
+    /// database.
+    fn render_filter_status(&self, chrome: &Theme, cx: &App) -> Option<impl IntoElement + use<>> {
+        let (root, filter) = self.visible_filter(cx)?;
+        if !filter.is_active() {
+            return None;
+        }
+        let (shown, read) = self.tree.read(cx).source().filter_totals(root);
+        Some(
+            div()
+                .flex_none()
+                .px(px(10.))
+                .py(px(4.))
+                .border_t_1()
+                .border_color(chrome.border)
+                .truncate()
+                .text_size(rugpui::scaled(10., cx))
+                .text_color(chrome.text_muted)
+                .child(ts!("explorer.filter_status", shown = shown, read = read)),
+        )
+    }
+}
+
+impl Explorer {
     /// Puts the keyboard on the tree, where the arrows walk it.
     pub fn take_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         let handle = self.tree.read(cx).focus_handle(cx);
@@ -1403,6 +1929,10 @@ impl Render for Explorer {
             .iter()
             .any(|root| source.info.get(root).is_some_and(|info| info.live));
         let this = cx.entity();
+        // Only over a tree: with nothing open there is nothing to narrow.
+        let filter = (!empty).then(|| self.render_filter(cx));
+        let status = self.render_filter_status(&chrome, cx);
+        let targets_menu = self.render_targets_menu(cx);
 
         div()
             .id("explorer")
@@ -1441,6 +1971,7 @@ impl Render for Explorer {
                             }),
                     ),
             )
+            .children(filter)
             .child(if empty {
                 // A tree with no roots would draw as a blank rectangle, which
                 // reads as broken rather than as empty.
@@ -1470,6 +2001,14 @@ impl Render for Explorer {
                     )
                     .into_any_element()
             })
+            .children(status)
+            .children(targets_menu)
+            .on_action(cx.listener(|explorer, _: &FocusFilter, window, cx| {
+                explorer.focus_filter(window, cx);
+            }))
+            .on_action(cx.listener(|explorer, _: &ClearFilter, window, cx| {
+                explorer.clear_filter(window, cx);
+            }))
             // `Shift+F10` and the Menu key: the selected node's menu, the one a
             // right click on it raises.
             .on_action(
@@ -2661,6 +3200,324 @@ pub(crate) mod tests {
         );
     }
 
+    /// A folder of `C` under `public`, and the objects to fill it with.
+    fn folder_of(kind: Folder, names: &[&str]) -> (NodeId, Vec<Child>) {
+        let folder = NodeId::Folder {
+            connection: C,
+            scope: scope("public"),
+            folder: kind,
+        };
+        let items = names
+            .iter()
+            .map(|name| {
+                Child::plain(NodeId::Object {
+                    connection: C,
+                    scope: scope("public"),
+                    folder: kind,
+                    name: (*name).to_string(),
+                })
+            })
+            .collect();
+        (folder, items)
+    }
+
+    /// The names the tree would draw under `folder`.
+    fn names_in(source: &ExplorerSource, folder: &NodeId) -> Vec<String> {
+        match source.children(Some(folder)) {
+            ChildState::Loaded(ids) => ids
+                .into_iter()
+                .filter_map(|id| match id {
+                    NodeId::Object { name, .. } => Some(name),
+                    _ => None,
+                })
+                .collect(),
+            other => panic!("{folder:?} is {other:?}"),
+        }
+    }
+
+    /// A filter of `text` over `targets`.
+    fn filter(text: &str, targets: FolderSet) -> ExplorerFilter {
+        let mut filter = ExplorerFilter::default();
+        filter.set_text(text);
+        filter.set_targets(targets);
+        filter
+    }
+
+    #[test]
+    fn a_filter_narrows_only_the_folders_it_names_and_keeps_the_whole_list() {
+        let mut source = ExplorerSource::default();
+        show_live_root(&mut source);
+        let (tables, table_items) =
+            folder_of(Folder::Tables, &["customer", "orders", "tmp_customer"]);
+        let (sequences, sequence_items) =
+            folder_of(Folder::Sequences, &["customer_seq", "orders_seq"]);
+        source.set_children(tables.clone(), table_items);
+        source.set_children(sequences.clone(), sequence_items);
+
+        let tables_only = FolderSet::NONE.toggled(Folder::Tables);
+        source.set_filter(C, filter("cust, !tmp*", tables_only));
+        assert_eq!(names_in(&source, &tables), ["customer"]);
+        assert_eq!(source.matched(&tables), Some(1));
+        // The count is still the whole folder's: the badge reads "1/3".
+        assert_eq!(source.counts.get(&tables), Some(&3));
+        // Not one of the filter's folders, so drawn whole and not counted.
+        assert_eq!(
+            names_in(&source, &sequences),
+            ["customer_seq", "orders_seq"]
+        );
+        assert_eq!(source.matched(&sequences), None);
+        assert_eq!(source.filter_totals(C), (1, 3));
+
+        // Every folder, same text: the sequences narrow too, with nothing
+        // read again.
+        source.set_filter(C, filter("cust, !tmp*", FolderSet::ALL));
+        assert_eq!(names_in(&source, &sequences), ["customer_seq"]);
+        assert_eq!(source.filter_totals(C), (2, 5));
+
+        // A blank box gives the tree back whole.
+        source.set_filter(C, filter("", FolderSet::ALL));
+        assert_eq!(names_in(&source, &tables).len(), 3);
+        assert_eq!(source.matched(&tables), None);
+        assert_eq!(source.filter_totals(C), (0, 0));
+    }
+
+    #[test]
+    fn a_folder_read_after_the_filter_arrives_narrowed_and_stays_so_on_a_reload() {
+        let mut source = ExplorerSource::default();
+        show_live_root(&mut source);
+        source.set_filter(C, filter("*_seq", FolderSet::ALL));
+        let (sequences, items) = folder_of(Folder::Sequences, &["orders_seq", "orders_seq_old"]);
+        assert!(
+            source.may_match(&sequences),
+            "not read yet, so it may hold one"
+        );
+
+        source.set_children(sequences.clone(), items.clone());
+        assert_eq!(names_in(&source, &sequences), ["orders_seq"]);
+
+        source.mark_loading(sequences.clone());
+        assert_eq!(source.children(Some(&sequences)), ChildState::Loading);
+        source.set_children(sequences.clone(), items);
+        assert_eq!(names_in(&source, &sequences), ["orders_seq"]);
+    }
+
+    #[test]
+    fn only_a_narrowed_folder_with_a_match_or_not_read_yet_is_worth_opening() {
+        let mut source = ExplorerSource::default();
+        show_live_root(&mut source);
+        let (tables, table_items) = folder_of(Folder::Tables, &["orders"]);
+        let (views, view_items) = folder_of(Folder::Views, &["v_orders"]);
+        let (procedures, _) = folder_of(Folder::Procedures, &[]);
+        let (triggers, _) = folder_of(Folder::Triggers, &[]);
+        source.set_children(tables.clone(), table_items);
+        source.set_children(views.clone(), view_items);
+        assert!(!source.may_match(&views), "no filter, nothing to look for");
+
+        source.set_filter(C, filter("v_*", FolderSet::ALL.toggled(Folder::Triggers)));
+        assert!(
+            !source.may_match(&tables),
+            "read, and nothing in it matched"
+        );
+        assert!(source.may_match(&views));
+        assert!(source.may_match(&procedures), "not read yet");
+        source.mark_loading(procedures.clone());
+        assert!(source.may_match(&procedures), "being read");
+        source.set_error(procedures.clone(), "denied".into());
+        assert!(!source.may_match(&procedures), "its error row is no match");
+        assert!(
+            !source.may_match(&triggers),
+            "not one of the filter's folders"
+        );
+        assert!(!source.may_match(&NodeId::Connection(C)));
+    }
+
+    #[gpui::test]
+    fn a_selection_the_filter_hides_comes_up_to_its_folder(cx: &mut gpui::TestAppContext) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        let (tables, items) = folder_of(Folder::Tables, &["orders", "customer"]);
+        let orders = items[0].id.clone();
+        let customer = items[1].id.clone();
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, |source| {
+                    show_live_root(source);
+                    source.set_children(root.clone(), vec![Child::plain(tables.clone())]);
+                    source.set_children(tables.clone(), items);
+                });
+                explorer.tree.update(cx, |tree, cx| {
+                    tree.expand(&root, cx);
+                    tree.expand(&tables, cx);
+                    tree.set_selected(Some(orders.clone()), cx);
+                });
+                explorer
+                    .filter_input
+                    .update(cx, |input, cx| input.set_content("ord", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                // Still on screen: left where it was.
+                assert_eq!(explorer.tree.read(cx).selected(), Some(&orders));
+                explorer
+                    .filter_input
+                    .update(cx, |input, cx| input.set_content("cust", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                assert_eq!(explorer.tree.read(cx).selected(), Some(&tables));
+                let source = explorer.tree.read(cx).source();
+                assert_eq!(source.hidden_selection_folder(&customer), None);
+                assert_eq!(source.hidden_selection_folder(&tables), None);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_failed_folder_and_a_closed_connection_drop_what_the_filter_showed() {
+        let mut source = ExplorerSource::default();
+        show_live_root(&mut source);
+        source.set_filter(C, filter("a", FolderSet::ALL));
+        let (tables, items) = folder_of(Folder::Tables, &["a", "b"]);
+        source.set_children(tables.clone(), items);
+        assert_eq!(source.matched(&tables), Some(1));
+
+        // The error row is what the folder shows, filter or not.
+        source.set_error(tables.clone(), "denied".into());
+        assert_eq!(source.matched(&tables), None);
+        assert_eq!(
+            source.children(Some(&tables)),
+            ChildState::Loaded(vec![NodeId::Error(Box::new(tables.clone()))])
+        );
+
+        source.remove_root(C);
+        assert!(source.filter(C).is_none());
+        assert!(source.shown.is_empty());
+    }
+
+    #[gpui::test]
+    fn each_connection_keeps_its_own_text_in_the_filter_box(cx: &mut gpui::TestAppContext) {
+        const D: ConnectionId = ConnectionId(2);
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let text_of = |explorer: &Explorer, connection, cx: &App| {
+            explorer
+                .tree
+                .read(cx)
+                .source()
+                .filter(connection)
+                .map(|filter| filter.text().to_string())
+        };
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, |source| {
+                    for connection in [C, D] {
+                        source.upsert_root(
+                            connection,
+                            RootInfo {
+                                name: "test".into(),
+                                color: None,
+                                live: true,
+                            },
+                        );
+                    }
+                });
+                explorer.show_root(Some(C), cx);
+                explorer
+                    .filter_input
+                    .update(cx, |input, cx| input.set_content("orders", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                assert_eq!(text_of(explorer, C, cx).as_deref(), Some("orders"));
+                explorer.show_root(Some(D), cx);
+                assert_eq!(explorer.filter_input.read(cx).content(), "");
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                // Emptying the box for D did not empty C's filter.
+                assert_eq!(text_of(explorer, C, cx).as_deref(), Some("orders"));
+                explorer.show_root(Some(C), cx);
+                assert_eq!(explorer.filter_input.read(cx).content(), "orders");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn enter_opens_the_folders_the_filter_may_have_found_something_in(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        let (tables, table_items) = folder_of(Folder::Tables, &["orders", "customer"]);
+        let (views, view_items) = folder_of(Folder::Views, &["v_customer"]);
+        let (triggers, _) = folder_of(Folder::Triggers, &[]);
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, |source| {
+                    show_live_root(source);
+                    source.set_children(
+                        root.clone(),
+                        [&tables, &views, &triggers]
+                            .map(|folder| Child::plain(folder.clone()))
+                            .to_vec(),
+                    );
+                    source.set_children(tables.clone(), table_items);
+                    source.set_children(views.clone(), view_items);
+                });
+                explorer.tree.update(cx, |tree, cx| tree.expand(&root, cx));
+                explorer
+                    .filter_input
+                    .update(cx, |input, cx| input.set_content("order", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, window, cx| {
+                explorer.open_matches(window, cx);
+                let tree = explorer.tree.read(cx);
+                assert!(tree.is_expanded(&tables), "it holds a match");
+                assert!(!tree.is_expanded(&views), "read, and nothing matched");
+                assert!(tree.is_expanded(&triggers), "not read yet, so it may");
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, _cx| {
+                assert!(
+                    explorer.pending.contains_key(&triggers),
+                    "opening the unread folder asked for it"
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn the_targets_button_names_what_the_filter_narrows() {
+        assert_eq!(targets_label(FolderSet::ALL), ts!("explorer.filter_all"));
+        assert_eq!(targets_label(FolderSet::NONE), ts!("explorer.filter_none"));
+        let views = FolderSet::NONE.toggled(Folder::Views);
+        assert_eq!(targets_label(views), Folder::Views.label());
+        let more = views.toggled(Folder::Sequences).toggled(Folder::Tables);
+        assert_eq!(
+            targets_label(more),
+            ts!(
+                "explorer.filter_more",
+                first = Folder::Tables.label(),
+                count = 2
+            )
+        );
+    }
+
     #[test]
     fn every_label_the_explorer_draws_has_a_translation() {
         for folder in FOLDERS {
@@ -2675,6 +3532,14 @@ pub(crate) mod tests {
             ts!("explorer.loading"),
             ts!("explorer.unknown_connection"),
             ts!("explorer.load_failed_unknown"),
+            ts!("explorer.filter_placeholder"),
+            ts!("explorer.filter_hint", shortcut = FILTER_CHORD),
+            ts!("explorer.filter_targets"),
+            ts!("explorer.filter_all"),
+            ts!("explorer.filter_none"),
+            ts!("explorer.filter_more", first = "x", count = 1),
+            ts!("explorer.filter_all_objects"),
+            ts!("explorer.filter_status", shown = 1, read = 2),
         ] {
             assert!(!label.is_empty());
             assert!(!label.starts_with("explorer."), "{label:?}");

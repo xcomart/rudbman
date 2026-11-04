@@ -359,6 +359,15 @@ explorer:
   unknown_connection: "（连接）"
   load_failed_unknown: 无法加载。
 
+  filter_placeholder: "按名称筛选"
+  filter_hint: "逗号表示“或”，* 和 ? 是通配符，! 表示排除。按 Enter 展开有匹配项的文件夹 (%{shortcut})"
+  filter_targets: "筛选作用的文件夹"
+  filter_all: "全部"
+  filter_none: "无"
+  filter_more: "%{first} 等 %{count} 个"
+  filter_all_objects: "所有对象"
+  filter_status: "已加载 %{read} 个对象，其中 %{shown} 个匹配"
+
   tables: 表
   views: 视图
   procedures: 存储过程

@@ -19,6 +19,7 @@ mod driver_manager;
 mod erd_layout;
 mod erd_pane;
 mod explorer;
+mod explorer_filter;
 mod extract_dialog;
 mod i18n;
 mod icons;

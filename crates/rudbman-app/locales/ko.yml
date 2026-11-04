@@ -359,6 +359,15 @@ explorer:
   unknown_connection: "(연결)"
   load_failed_unknown: 불러오지 못했습니다.
 
+  filter_placeholder: "이름으로 거르기"
+  filter_hint: "쉼표는 '또는', *와 ?는 와일드카드, !는 제외입니다. Enter를 누르면 일치하는 폴더를 펼칩니다 (%{shortcut})"
+  filter_targets: "필터를 적용할 폴더"
+  filter_all: "전체"
+  filter_none: "없음"
+  filter_more: "%{first} 외 %{count}"
+  filter_all_objects: "전체 객체"
+  filter_status: "불러온 %{read}개 중 %{shown}개 일치"
+
   tables: 테이블
   views: 뷰
   procedures: 프로시저

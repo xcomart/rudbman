@@ -467,9 +467,8 @@ impl Workspace {
     /// wording.
     pub(super) fn sync_visible_root(&mut self, cx: &mut Context<Self>) {
         let visible = self.active_connection().map(|open| open.id);
-        self.explorer.update(cx, |explorer, cx| {
-            explorer.update_source(cx, |source| source.set_visible_root(visible));
-        });
+        self.explorer
+            .update(cx, |explorer, cx| explorer.show_root(visible, cx));
     }
 
     /// Whether the sidebar is actually on screen.
