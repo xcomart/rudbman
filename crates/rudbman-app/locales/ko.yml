@@ -360,9 +360,10 @@ explorer:
   load_failed_unknown: 불러오지 못했습니다.
 
   filter_placeholder: "이름으로 거르기"
-  filter_hint: "쉼표는 '또는', *와 ?는 와일드카드, !는 제외입니다. Enter를 누르면 일치하는 폴더를 펼칩니다 (%{shortcut})"
+  filter_hint: "쉼표는 '또는', *와 ?는 와일드카드, !는 제외입니다 (%{shortcut})"
   filter_placeholder_regex: "정규식으로 거르기"
-  filter_hint_regex: "이름의 어느 부분이든 맞으면 통과하는 정규식입니다. 대소문자는 무시합니다. Enter를 누르면 일치하는 폴더를 펼칩니다 (%{shortcut})"
+  filter_hint_regex: "이름의 어느 부분이든 맞으면 통과하는 정규식입니다. 대소문자는 무시합니다 (%{shortcut})"
+  filter_hint_enter: "Enter를 누르면 일치하는 폴더를 펼칩니다"
   filter_regex: "입력을 정규식으로 해석 (Alt+R)"
   filter_targets: "필터를 적용할 폴더"
   filter_all: "전체"

@@ -1412,10 +1412,15 @@ fn history_label(entry: &FilterSnapshot) -> SharedString {
 
 /// A button whose menu hangs under it: drawn where `bounds` can see it, so
 /// that the menu knows where that is.
+///
+/// While its menu is `open` the button has no tooltip: the pointer is still
+/// resting on it after the click, and the tooltip that rest brings up would
+/// sit over the menu's first row.
 fn menu_button(
     id: &'static str,
     tooltip: SharedString,
     label: String,
+    open: bool,
     bounds: Rc<Cell<Bounds<Pixels>>>,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
@@ -1423,7 +1428,7 @@ fn menu_button(
         .id(id)
         .relative()
         .flex_none()
-        .tooltip(rugpui::tooltip_label(tooltip))
+        .when(!open, |this| this.tooltip(rugpui::tooltip_label(tooltip)))
         .child(
             Button::new((id, 0usize), label)
                 .compact()
@@ -2228,6 +2233,7 @@ impl Explorer {
                 } else {
                     format!("{} \u{25be}", targets_label(filter.targets()))
                 },
+                open,
                 self.targets_bounds.clone(),
                 move |_window, cx| {
                     this.update(cx, |explorer, cx| {
@@ -2268,6 +2274,7 @@ impl Explorer {
                 "explorer-filter-history",
                 ts!("explorer.history_hint"),
                 format!("{} \u{25be}", ts!("explorer.history")),
+                open,
                 self.history_bounds.clone(),
                 move |_window, cx| {
                     this.update(cx, |explorer, cx| {
@@ -2297,7 +2304,16 @@ impl Explorer {
                             .key_context(FILTER_KEY_CONTEXT)
                             .flex_1()
                             .min_w_0()
-                            .tooltip(rugpui::tooltip_label(hint))
+                            // Two lines rather than one long one: a tooltip's
+                            // text never wraps, and the rule with the Enter
+                            // sentence after it ran wider than a narrow window
+                            // in the longer languages.
+                            .tooltip(
+                                rugpui::Tooltip::new()
+                                    .text(hint)
+                                    .note(ts!("explorer.filter_hint_enter"))
+                                    .build(),
+                            )
                             .child(self.filter_input.clone()),
                     )
                     .child(regex),
@@ -4527,6 +4543,7 @@ pub(crate) mod tests {
             ts!("explorer.scope_all"),
             ts!("explorer.filter_placeholder_regex"),
             ts!("explorer.filter_hint_regex", shortcut = FILTER_CHORD),
+            ts!("explorer.filter_hint_enter"),
             ts!("explorer.filter_regex"),
         ]
         .into_iter()

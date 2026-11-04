@@ -360,9 +360,10 @@ explorer:
   load_failed_unknown: Impossible de charger ceci.
 
   filter_placeholder: "Filtrer par nom"
-  filter_hint: "La virgule signifie « ou », * et ? sont des jokers, ! exclut. Entrée ouvre les dossiers qui ont des résultats (%{shortcut})"
+  filter_hint: "La virgule signifie « ou », * et ? sont des jokers, ! exclut (%{shortcut})"
   filter_placeholder_regex: "Filtrer par expression régulière"
-  filter_hint_regex: "Une expression régulière, cherchée n'importe où dans le nom, sans tenir compte de la casse. Entrée ouvre les dossiers qui ont des résultats (%{shortcut})"
+  filter_hint_regex: "Une expression régulière, cherchée n'importe où dans le nom, sans tenir compte de la casse (%{shortcut})"
+  filter_hint_enter: "Entrée ouvre les dossiers qui ont des résultats"
   filter_regex: "Lire la saisie comme une expression régulière (Alt+R)"
   filter_targets: "Dossiers concernés par le filtre"
   filter_all: "Tous"

@@ -360,9 +360,10 @@ explorer:
   load_failed_unknown: Das konnte nicht geladen werden.
 
   filter_placeholder: "Nach Name filtern"
-  filter_hint: "Komma bedeutet „oder“, * und ? sind Platzhalter, ! schließt aus. Enter öffnet die Ordner mit Treffern (%{shortcut})"
+  filter_hint: "Komma bedeutet „oder“, * und ? sind Platzhalter, ! schließt aus (%{shortcut})"
   filter_placeholder_regex: "Mit regulärem Ausdruck filtern"
-  filter_hint_regex: "Ein regulärer Ausdruck, der irgendwo im Namen passt, ohne Groß-/Kleinschreibung. Enter öffnet die Ordner mit Treffern (%{shortcut})"
+  filter_hint_regex: "Ein regulärer Ausdruck, der irgendwo im Namen passt, ohne Groß-/Kleinschreibung (%{shortcut})"
+  filter_hint_enter: "Enter öffnet die Ordner mit Treffern"
   filter_regex: "Eingabe als regulären Ausdruck lesen (Alt+R)"
   filter_targets: "Ordner, die der Filter eingrenzt"
   filter_all: "Alle"

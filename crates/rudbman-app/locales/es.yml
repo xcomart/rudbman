@@ -360,9 +360,10 @@ explorer:
   load_failed_unknown: No se pudo cargar.
 
   filter_placeholder: "Filtrar por nombre"
-  filter_hint: "La coma significa «o», * y ? son comodines, ! excluye. Intro abre las carpetas con coincidencias (%{shortcut})"
+  filter_hint: "La coma significa «o», * y ? son comodines, ! excluye (%{shortcut})"
   filter_placeholder_regex: "Filtrar con expresión regular"
-  filter_hint_regex: "Una expresión regular que coincide en cualquier parte del nombre, sin distinguir mayúsculas. Intro abre las carpetas con coincidencias (%{shortcut})"
+  filter_hint_regex: "Una expresión regular que coincide en cualquier parte del nombre, sin distinguir mayúsculas (%{shortcut})"
+  filter_hint_enter: "Intro abre las carpetas con coincidencias"
   filter_regex: "Leer la entrada como expresión regular (Alt+R)"
   filter_targets: "Carpetas que filtra"
   filter_all: "Todas"

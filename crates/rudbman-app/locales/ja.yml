@@ -360,9 +360,10 @@ explorer:
   load_failed_unknown: 読み込めませんでした。
 
   filter_placeholder: "名前で絞り込み"
-  filter_hint: "カンマは「または」、* と ? はワイルドカード、! は除外です。Enter で一致するフォルダーを開きます (%{shortcut})"
+  filter_hint: "カンマは「または」、* と ? はワイルドカード、! は除外です (%{shortcut})"
   filter_placeholder_regex: "正規表現で絞り込み"
-  filter_hint_regex: "名前のどこかに一致する正規表現です。大文字と小文字は区別しません。Enter で一致するフォルダーを開きます (%{shortcut})"
+  filter_hint_regex: "名前のどこかに一致する正規表現です。大文字と小文字は区別しません (%{shortcut})"
+  filter_hint_enter: "Enter で一致するフォルダーを開きます"
   filter_regex: "入力を正規表現として扱う (Alt+R)"
   filter_targets: "フィルターを適用するフォルダー"
   filter_all: "すべて"

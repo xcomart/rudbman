@@ -542,11 +542,12 @@ explorer:
 
   # The filter box over the tree, and the tooltip that explains what it takes.
   filter_placeholder: "Filter by name"
-  filter_hint: "Comma means or, * and ? are wildcards, ! leaves a name out. Enter opens the folders with matches (%{shortcut})"
+  filter_hint: "Comma means or, * and ? are wildcards, ! leaves a name out (%{shortcut})"
   # The box switched to a regular expression: its placeholder, its tooltip, and
   # the `.*` button that switches it.
   filter_placeholder_regex: "Filter by regular expression"
-  filter_hint_regex: "A regular expression, matched anywhere in the name, ignoring case. Enter opens the folders with matches (%{shortcut})"
+  filter_hint_regex: "A regular expression, matched anywhere in the name, ignoring case (%{shortcut})"
+  filter_hint_enter: "Enter opens the folders with matches"
   filter_regex: "Read the box as a regular expression (Alt+R)"
   # The button beside it, which says which folders the filter narrows: all of
   # them, none, one folder's name, or the first and how many more.

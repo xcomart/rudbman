@@ -360,9 +360,10 @@ explorer:
   load_failed_unknown: 无法加载。
 
   filter_placeholder: "按名称筛选"
-  filter_hint: "逗号表示“或”，* 和 ? 是通配符，! 表示排除。按 Enter 展开有匹配项的文件夹 (%{shortcut})"
+  filter_hint: "逗号表示“或”，* 和 ? 是通配符，! 表示排除 (%{shortcut})"
   filter_placeholder_regex: "按正则表达式筛选"
-  filter_hint_regex: "匹配名称任意位置的正则表达式，不区分大小写。按 Enter 展开有匹配项的文件夹 (%{shortcut})"
+  filter_hint_regex: "匹配名称任意位置的正则表达式，不区分大小写 (%{shortcut})"
+  filter_hint_enter: "按 Enter 展开有匹配项的文件夹"
   filter_regex: "将输入作为正则表达式 (Alt+R)"
   filter_targets: "筛选作用的文件夹"
   filter_all: "全部"
