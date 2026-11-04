@@ -154,6 +154,20 @@ impl FilterHistory {
         });
     }
 
+    /// Takes one entry out of `profile`'s list, leaving the rest as they
+    /// were.
+    pub fn remove(cx: &mut App, profile: Uuid, snapshot: &FilterSnapshot) {
+        Self::init(cx);
+        cx.update_global::<Self, _>(|history, cx| {
+            let entries = history.loaded(profile);
+            let before = entries.len();
+            entries.retain(|entry| entry != snapshot);
+            if entries.len() != before {
+                history.changed(profile, cx);
+            }
+        });
+    }
+
     /// Deletes `profile`'s whole list.
     pub fn clear(cx: &mut App, profile: Uuid) {
         Self::init(cx);
@@ -319,6 +333,32 @@ mod tests {
             FilterHistory::clear(cx, profile);
             assert!(FilterHistory::entries(cx, profile).is_empty());
         });
+    }
+
+    #[gpui::test]
+    fn one_entry_can_go_and_the_rest_stay_in_order(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let profile = Uuid::new_v4();
+        cx.update(|cx| {
+            FilterHistory::use_directory(cx, directory.path());
+            for text in ["orders", "cust", "*_seq"] {
+                FilterHistory::record(cx, profile, named(text));
+            }
+            FilterHistory::remove(cx, profile, &named("cust"));
+            // One that is not there changes nothing.
+            FilterHistory::remove(cx, profile, &named("gone"));
+            assert_eq!(
+                FilterHistory::entries(cx, profile),
+                vec![named("*_seq"), named("orders")]
+            );
+            cx.update_global::<FilterHistory, _>(|history, _| history.flush());
+        });
+        // And it stays gone in the file.
+        let path = FilterHistory::path(directory.path(), profile);
+        assert_eq!(
+            read(&path).expect("readable"),
+            vec![named("*_seq"), named("orders")]
+        );
     }
 
     #[gpui::test]

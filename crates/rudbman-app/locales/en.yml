@@ -605,8 +605,12 @@ explorer:
   # empty history, and the row that forgets it.
   history: "History"
   history_hint: "Filters used on this connection's profile"
+  history_remove_note: "Remove one entry with its × or the Delete key"
   history_empty: "No filters used yet"
   history_clear: "Clear this connection's history"
+  filter_reset: "Reset"
+  filter_reset_hint: "Puts the text, conditions and folders back as they started"
+  filter_reset_note: "The history stays, and keeps the filter you reset"
   # The first rows of the filter's folder menu: narrow the database the
   # connection landed in (its name in brackets when the session reported it),
   # or every database the tree shows. `scope_all` also marks the button and a

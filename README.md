@@ -73,8 +73,9 @@ JVM bridge.
   schema (contains, starts with, wildcard, regex, empty…) taken all together
   or any one of them. It narrows the folders you pick, in the database the
   connection landed in or in all of them, keeps its own state for each
-  connection tab, and remembers the filters you used for each profile. Each
-  profile can also hide catalogs, schemas and objects for good, by regular
+  connection tab, and remembers the filters you used for each profile — one
+  click resets the whole filter, and an entry of the remembered list goes with
+  its × or <kbd>Delete</kbd>. Each profile can also hide catalogs, schemas and objects for good, by regular
   expression (or show only the ones a list matches), as SQL Workbench/J's
   schema and catalog filters do; a level left with one member is skipped as if
   the rest were never there — and a

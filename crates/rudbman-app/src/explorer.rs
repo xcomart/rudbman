@@ -1448,10 +1448,12 @@ fn history_label(entry: &FilterSnapshot) -> SharedString {
 ///
 /// While its menu is `open` the button has no tooltip: the pointer is still
 /// resting on it after the click, and the tooltip that rest brings up would
-/// sit over the menu's first row.
+/// sit over the menu's first row. A `note` goes on a line of its own under the
+/// tooltip's text, since a tooltip's line never wraps.
 fn menu_button(
     id: &'static str,
     tooltip: SharedString,
+    note: Option<SharedString>,
     label: String,
     open: bool,
     bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -1461,7 +1463,10 @@ fn menu_button(
         .id(id)
         .relative()
         .flex_none()
-        .when(!open, |this| this.tooltip(rugpui::tooltip_label(tooltip)))
+        .when(!open, |this| match note {
+            Some(note) => this.tooltip(rugpui::Tooltip::new().text(tooltip).note(note).build()),
+            None => this.tooltip(rugpui::tooltip_label(tooltip)),
+        })
         .child(
             Button::new((id, 0usize), label)
                 .compact()
@@ -1823,6 +1828,37 @@ impl Explorer {
         self.rows.clear();
         self.open_select = None;
         self.apply_filter(root, filter, cx);
+    }
+
+    /// Puts the filter of the connection on screen back the way a new tab
+    /// starts it: the box empty and read as terms, every folder, the landed
+    /// database only, no conditions and the panel shut.
+    ///
+    /// The history is left alone, and is given the filter that was on first:
+    /// a reset is the user done with that filter, as leaving the tab is, and
+    /// what it threw away is then one pick from the history away.
+    fn reset_filter(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.visible_root(cx) else {
+            return;
+        };
+        self.record_history(root, cx);
+        self.apply_filter(root, ExplorerFilter::default(), cx);
+        // After the filter, so the box's own notice finds nothing to change.
+        if !self.filter_input.read(cx).content().is_empty() {
+            self.filter_input.update(cx, |input, cx| input.clear(cx));
+        }
+        self.rows.clear();
+        self.open_select = None;
+        self.conditions_open = false;
+        self.targets_open = false;
+        self.history_open = false;
+        cx.notify();
+    }
+
+    /// Whether the filter on screen is already the one a reset would leave.
+    fn filter_is_reset(&self, cx: &App) -> bool {
+        self.visible_filter(cx)
+            .is_none_or(|(_, filter)| filter == ExplorerFilter::default())
     }
 
     /// Puts the conditions together the other way.
@@ -2292,6 +2328,7 @@ impl Explorer {
             menu_button(
                 "explorer-filter-targets",
                 ts!("explorer.filter_targets"),
+                None,
                 if filter.all_databases() {
                     format!(
                         "{} \u{b7} {} \u{25be}",
@@ -2336,11 +2373,33 @@ impl Explorer {
                         }),
                 )
         };
+        let reset = {
+            let this = this.clone();
+            div()
+                .id("explorer-filter-reset")
+                .flex_none()
+                .tooltip(
+                    rugpui::Tooltip::new()
+                        .text(ts!("explorer.filter_reset_hint"))
+                        .note(ts!("explorer.filter_reset_note"))
+                        .build(),
+                )
+                .child(
+                    Button::new("explorer-filter-reset-button", ts!("explorer.filter_reset"))
+                        .compact()
+                        .variant(ButtonVariant::Secondary)
+                        .disabled(self.filter_is_reset(cx))
+                        .on_click(move |_, _window, cx| {
+                            this.update(cx, |explorer, cx| explorer.reset_filter(cx));
+                        }),
+                )
+        };
         let history = {
             let open = self.history_open;
             menu_button(
                 "explorer-filter-history",
                 ts!("explorer.history_hint"),
+                Some(ts!("explorer.history_remove_note")),
                 format!("{} \u{25be}", ts!("explorer.history")),
                 open,
                 self.history_bounds.clone(),
@@ -2395,7 +2454,8 @@ impl Explorer {
                     .gap(px(4.))
                     .child(targets)
                     .child(conditions)
-                    .child(history),
+                    .child(history)
+                    .child(reset),
             )
     }
 
@@ -2564,12 +2624,31 @@ impl Explorer {
     }
 
     /// The history menu, while it is out: the profile's filters, newest
-    /// first, and the row that forgets them.
+    /// first, each with a × that forgets it alone, and the row that forgets
+    /// them all.
     fn render_history_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         if !self.history_open {
             return None;
         }
         let root = self.visible_root(cx)?;
+        let rows = self.history_rows(root, cx);
+        let this = cx.entity();
+        let under = self.history_bounds.get().bottom_left() + gpui::point(px(0.), px(2.));
+        Some(
+            ContextMenu::new("explorer-filter-history-menu")
+                .position(under)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |explorer, cx| {
+                        explorer.history_open = false;
+                        cx.notify();
+                    });
+                }),
+        )
+    }
+
+    /// The rows of the history menu for the profile `root` was opened from.
+    fn history_rows(&self, root: ConnectionId, cx: &mut Context<Self>) -> Vec<MenuRow> {
         let profile = self.profiles.get(&root).copied();
         let entries = profile
             .map(|profile| FilterHistory::entries(cx, profile))
@@ -2578,9 +2657,23 @@ impl Explorer {
         let mut rows: Vec<MenuRow> = entries
             .into_iter()
             .map(|entry| {
-                let this = this.clone();
-                MenuRow::new(history_label(&entry)).on_activate(move |_window, cx| {
-                    this.update(cx, |explorer, cx| explorer.use_history(&entry, cx));
+                let run = this.clone();
+                let row = MenuRow::new(history_label(&entry));
+                let row = match profile {
+                    Some(profile) => {
+                        let this = this.clone();
+                        let gone = entry.clone();
+                        row.on_remove(move |_window, cx| {
+                            FilterHistory::remove(cx, profile, &gone);
+                            // The menu is drawn from the history, which is no
+                            // view of its own to redraw it.
+                            this.update(cx, |_, cx| cx.notify());
+                        })
+                    }
+                    None => row,
+                };
+                row.on_activate(move |_window, cx| {
+                    run.update(cx, |explorer, cx| explorer.use_history(&entry, cx));
                 })
             })
             .collect();
@@ -2594,18 +2687,7 @@ impl Explorer {
                 },
             ));
         }
-        let under = self.history_bounds.get().bottom_left() + gpui::point(px(0.), px(2.));
-        Some(
-            ContextMenu::new("explorer-filter-history-menu")
-                .position(under)
-                .entries(context_menu::entries(rows))
-                .on_dismiss(move |_window, cx| {
-                    this.update(cx, |explorer, cx| {
-                        explorer.history_open = false;
-                        cx.notify();
-                    });
-                }),
-        )
+        rows
     }
 
     /// The menu of what the filter narrows, while it is out: the database
@@ -4628,6 +4710,134 @@ pub(crate) mod tests {
             .unwrap();
     }
 
+    /// The reset puts every part of the filter back — the box, the mode, the
+    /// folders, the scope and the conditions — and leaves the history alone
+    /// but for the filter it threw away, which goes on top.
+    #[gpui::test]
+    fn a_reset_puts_the_filter_back_and_keeps_the_old_one_in_the_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let profile = Uuid::new_v4();
+        let root = NodeId::Connection(C);
+        let (tables, items) = folder_of(Folder::Tables, &["orders", "customer", "audit"]);
+        let earlier = FilterSnapshot {
+            text: "orders".to_string(),
+            ..FilterSnapshot::default()
+        };
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, |source| {
+                    show_live_root(source);
+                    source.set_children(root.clone(), vec![Child::plain(tables.clone())]);
+                    source.set_children(tables.clone(), items);
+                });
+                explorer.set_profile(C, profile);
+                FilterHistory::record(cx, profile, earlier.clone());
+                assert!(explorer.filter_is_reset(cx), "nothing typed yet");
+                explorer
+                    .filter_input
+                    .update(cx, |input, cx| input.set_content("cust", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, window, cx| {
+                explorer.toggle_regex(cx);
+                explorer.toggle_target(Some(Folder::Views), cx);
+                explorer.set_all_databases(true, cx);
+                explorer.toggle_conditions(window, cx);
+                assert_eq!(
+                    names_in(explorer.tree.read(cx).source(), &tables),
+                    ["customer"]
+                );
+                assert!(!explorer.filter_is_reset(cx));
+
+                explorer.reset_filter(cx);
+                let (_, filter) = explorer.visible_filter(cx).expect("a tree on screen");
+                assert!(filter == ExplorerFilter::default());
+                assert!(explorer.filter_is_reset(cx));
+                assert_eq!(explorer.filter_input.read(cx).content(), "");
+                assert!(explorer.rows.is_empty());
+                assert!(!explorer.conditions_open);
+                assert_eq!(names_in(explorer.tree.read(cx).source(), &tables).len(), 3);
+
+                let entries = FilterHistory::entries(cx, profile);
+                assert_eq!(entries.len(), 2, "the old filter added, nothing taken");
+                assert_eq!(entries[0].text, "cust");
+                assert!(entries[0].regex && entries[0].all_databases);
+                assert_eq!(entries[1], earlier);
+            })
+            .unwrap();
+        // The box's notice of its emptied text comes after, and finds nothing
+        // left to change.
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                assert!(explorer.filter_is_reset(cx));
+            })
+            .unwrap();
+    }
+
+    /// Every entry of the history menu carries a × that forgets it alone; the
+    /// row that forgets them all, and the one that says there are none, do
+    /// not.
+    #[gpui::test]
+    fn one_history_entry_goes_from_its_menu_row(cx: &mut gpui::TestAppContext) {
+        use crate::context_menu::{labels, row};
+
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let profile = Uuid::new_v4();
+        let named = |text: &str| FilterSnapshot {
+            text: text.to_string(),
+            ..FilterSnapshot::default()
+        };
+        let label = |text: &str| history_label(&named(text)).to_string();
+        let rows = window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, show_live_root);
+                explorer.set_profile(C, profile);
+                for text in ["orders", "cust", "*_seq"] {
+                    FilterHistory::record(cx, profile, named(text));
+                }
+                explorer.history_rows(C, cx)
+            })
+            .unwrap();
+        let clear = ts!("explorer.history_clear").to_string();
+        assert_eq!(
+            labels(&rows),
+            [
+                label("*_seq"),
+                label("cust"),
+                label("orders"),
+                String::new(),
+                clear.clone()
+            ]
+        );
+        assert!(row(&rows, &label("cust")).is_removable());
+        assert!(!row(&rows, &clear).is_removable());
+
+        cx.update_window(window.into(), |_, window, cx| {
+            row(&rows, &label("cust")).remove(window, cx);
+        })
+        .unwrap();
+        let rows = window
+            .update(cx, |explorer, _window, cx| {
+                assert_eq!(
+                    FilterHistory::entries(cx, profile),
+                    vec![named("*_seq"), named("orders")],
+                    "the rest stay, in their order"
+                );
+                FilterHistory::clear(cx, profile);
+                explorer.history_rows(C, cx)
+            })
+            .unwrap();
+        assert_eq!(labels(&rows), [ts!("explorer.history_empty").to_string()]);
+        assert!(!rows[0].is_removable());
+    }
+
     #[test]
     fn a_history_entry_reads_as_its_text_conditions_and_folders() {
         let entry = FilterSnapshot {
@@ -4713,6 +4923,10 @@ pub(crate) mod tests {
             ts!("explorer.history_hint"),
             ts!("explorer.history_empty"),
             ts!("explorer.history_clear"),
+            ts!("explorer.history_remove_note"),
+            ts!("explorer.filter_reset"),
+            ts!("explorer.filter_reset_hint"),
+            ts!("explorer.filter_reset_note"),
             ts!("explorer.scope_landed_named", name = "app"),
             ts!("explorer.scope_landed"),
             ts!("explorer.scope_all"),
