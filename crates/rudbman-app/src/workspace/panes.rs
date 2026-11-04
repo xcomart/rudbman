@@ -447,10 +447,13 @@ impl Workspace {
         };
         let id = open.id;
         let profile = open.profile.id;
+        let hide = open.profile.explorer.clone();
         let live = info.live;
         self.explorer.update(cx, |explorer, cx| {
             explorer.update_source(cx, |source| source.upsert_root(id, info));
             explorer.set_profile(id, profile);
+            // Before the reload below, which reads the root under them.
+            explorer.set_hide(id, &hide);
             // A root opened while the handshake was still out answered "the
             // connection is closed"; now that there is a session, that row has
             // to go rather than stay until the tab does.

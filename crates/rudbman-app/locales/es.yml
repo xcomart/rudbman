@@ -238,6 +238,7 @@ connect:
   section:
     behavior: Comportamiento
     tunnel: Túnel SSH
+    explorer: "Ocultar en el explorador"
 
   read_only: Abrir la conexión en solo lectura
   auto_commit: Confirmar cada sentencia al ejecutarla
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: Frase de contraseña de la clave
   tunnel_remote: Base de datos
   tunnel_hint: La base de datos se nombra tal como la ve el bastión. rudbman abre un puerto local libre y conecta el controlador a ese puerto.
+
+  hide_hint: "Nombres que el árbol del explorador omite. Una expresión regular por línea, comparada con el nombre completo, sin distinguir mayúsculas. Un nivel de catálogo o esquema que queda con un solo elemento se omite."
+  hide_catalogs: "Catálogos"
+  hide_schemas: "Esquemas"
+  hide_objects: "Objetos"
+  hide_show_only: "Mostrar solo lo que coincide con la lista"
+  hide_folders: "Se aplica a"
+  hide_invalid: "La línea %{line} no es una expresión regular válida: %{reason}"
+  hide_refused: "No se guardó: una lista de ocultación de la sección del explorador tiene una expresión regular no válida."
+  hide_count: "Patrones: %{count}"
 
   test: Probar
   testing: Conectando…

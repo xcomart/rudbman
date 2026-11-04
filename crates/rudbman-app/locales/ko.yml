@@ -238,6 +238,7 @@ connect:
   section:
     behavior: 동작
     tunnel: SSH 터널
+    explorer: "탐색기에서 숨기기"
 
   read_only: 읽기 전용으로 연결
   auto_commit: 실행할 때마다 자동으로 커밋
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: 키 암호 구절
   tunnel_remote: 데이터베이스
   tunnel_hint: 데이터베이스 주소는 배스천에서 보이는 이름으로 적습니다. rudbman이 비어 있는 로컬 포트를 잡아 드라이버를 그 포트에 연결합니다.
+
+  hide_hint: "탐색기 트리에서 뺄 이름입니다. 한 줄에 정규식 하나를 쓰며, 이름 전체와 비교하고 대소문자는 무시합니다. 숨긴 뒤 하나만 남은 카탈로그·스키마 단계는 건너뜁니다."
+  hide_catalogs: "카탈로그"
+  hide_schemas: "스키마"
+  hide_objects: "객체"
+  hide_show_only: "목록과 일치하는 것만 보이기"
+  hide_folders: "적용할 폴더"
+  hide_invalid: "%{line}번째 줄의 정규식이 올바르지 않습니다: %{reason}"
+  hide_refused: "탐색기 숨김 목록에 올바르지 않은 정규식이 있어 저장하지 않았습니다."
+  hide_count: "패턴 %{count}개"
 
   test: 연결 테스트
   testing: 연결 중…

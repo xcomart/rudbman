@@ -48,7 +48,8 @@ pub use paths::{
     known_hosts_file, settings_file, snippets_dir, ui_themes_dir,
 };
 pub use profile::{
-    ConnectionProfile, ConnectionStore, DriverDef, DriverStore, KeepAlive, TunnelAuth, TunnelConfig,
+    ConnectionProfile, ConnectionStore, DriverDef, DriverStore, ExplorerHide, HideList, KeepAlive,
+    TunnelAuth, TunnelConfig,
 };
 pub use secrets::{SecretSlot, SecretStore, init as init_secrets};
 pub use settings::{AppSettings, TitlebarStyle, WindowState};

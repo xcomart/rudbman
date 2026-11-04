@@ -366,6 +366,7 @@ connect:
   section:
     behavior: Behavior
     tunnel: SSH tunnel
+    explorer: "Hide in the explorer"
 
   read_only: Open the connection read-only
   auto_commit: Commit each statement as it runs
@@ -386,6 +387,16 @@ connect:
   tunnel_passphrase: Key passphrase
   tunnel_remote: Database
   tunnel_hint: The database is named as the bastion sees it. rudbman binds a free local port and connects the driver to that.
+
+  hide_hint: "Names the explorer tree leaves out. One regular expression a line, matched against the whole name, ignoring case. A catalog or schema level left with one member is skipped."
+  hide_catalogs: "Catalogs"
+  hide_schemas: "Schemas"
+  hide_objects: "Objects"
+  hide_show_only: "Show only what the list matches"
+  hide_folders: "Applies to"
+  hide_invalid: "Line %{line} is not a valid regular expression: %{reason}"
+  hide_refused: "Not saved: a hide list in the explorer section has an invalid regular expression."
+  hide_count: "Patterns: %{count}"
 
   # The buttons along the bottom, and what they report.
   test: Test

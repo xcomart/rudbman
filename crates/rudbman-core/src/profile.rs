@@ -245,6 +245,70 @@ impl Default for KeepAlive {
 
 pub use rudbkit_core::{TunnelAuth, TunnelConfig};
 
+/// One list of names the explorer leaves out of a profile's tree.
+///
+/// The patterns are regular expressions, one per entry, which the application
+/// matches against the *whole* name and without regard to case: a list is
+/// there to take things away, and a pattern that also caught every name it
+/// happened to appear inside would take away more than its author read in
+/// it. Nothing is checked here — the dialog refuses a pattern that does not
+/// compile, and the explorer passes over one that slipped in by hand.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HideList {
+    /// The patterns, in the order they were written.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub patterns: Vec<String>,
+    /// Turns the list around: only the names it matches are shown.
+    ///
+    /// SQL Workbench/J's "inclusion" filter, for the profile that wants one
+    /// schema out of hundreds rather than the hundreds left out.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub show_only: bool,
+}
+
+impl HideList {
+    /// Whether the list says nothing at all, as a new profile's does.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// What the explorer leaves out of a profile's tree, as SQL Workbench/J's
+/// schema and catalog filters do.
+///
+/// Per profile because it is a fact about one database — its system schemas,
+/// its recycle bin — rather than about the user. Applied while the tree is
+/// read, *before* the layer-skipping rule counts what a level holds, so that a
+/// database whose only other schemas are hidden lands on its folders exactly as
+/// one that never had them would.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExplorerHide {
+    /// Catalogs — what MySQL and SQL Server call databases.
+    #[serde(skip_serializing_if = "HideList::is_default")]
+    pub catalogs: HideList,
+    /// Schemas.
+    #[serde(skip_serializing_if = "HideList::is_default")]
+    pub schemas: HideList,
+    /// Objects, in the folders [`ExplorerHide::object_folders`] names.
+    #[serde(skip_serializing_if = "HideList::is_default")]
+    pub objects: HideList,
+    /// The folders the object list applies to, by the explorer's names for
+    /// them — `Tables`, `Views`, `Procedures`, `Functions`, `Sequences`,
+    /// `Triggers`. `None` is every folder; a name no folder answers to is
+    /// passed over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_folders: Option<Vec<String>>,
+}
+
+impl ExplorerHide {
+    /// Whether nothing is hidden or set, as in a new profile.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// A single saved database connection.
 ///
 /// Everything needed to open a JDBC session except the password, which lives in
@@ -297,6 +361,9 @@ pub struct ConnectionProfile {
     /// places where keeping one is not allowed or there is no keychain to keep
     /// it in.
     pub remember_password: bool,
+    /// What the explorer leaves out of this profile's tree.
+    #[serde(skip_serializing_if = "ExplorerHide::is_default")]
+    pub explorer: ExplorerHide,
 }
 
 impl Default for ConnectionProfile {
@@ -323,6 +390,7 @@ impl Default for ConnectionProfile {
             confirm_writes: true,
             tunnel: None,
             remember_password: true,
+            explorer: ExplorerHide::default(),
         }
     }
 }
@@ -382,6 +450,7 @@ impl fmt::Debug for ConnectionProfile {
             .field("confirm_writes", &self.confirm_writes)
             .field("tunnel", &self.tunnel)
             .field("remember_password", &self.remember_password)
+            .field("explorer", &self.explorer)
             .finish()
     }
 }
@@ -975,6 +1044,38 @@ mod tests {
         let json = serde_json::to_string(&profile).expect("serialize");
         let back: ConnectionProfile = serde_json::from_str(&json).expect("parse");
         assert!(!back.remember_password);
+    }
+
+    /// A profile written before the hide lists existed reads with none, one
+    /// that never sets any writes none, and one that does keeps all of it.
+    #[test]
+    fn the_explorer_hide_lists_default_empty_and_round_trip() {
+        let json = r#"{ "connections": [{ "name": "old" }] }"#;
+        let store: ConnectionStore = serde_json::from_str(json).expect("parse");
+        assert!(store.connections()[0].explorer.is_default());
+
+        let plain = serde_json::to_string(&sample("plain")).expect("serialize");
+        assert!(!plain.contains("explorer"), "{plain}");
+
+        let mut profile = sample("busy");
+        profile.explorer = ExplorerHide {
+            schemas: HideList {
+                patterns: vec!["pg_temp_.*".to_string(), "information_schema".to_string()],
+                show_only: false,
+            },
+            catalogs: HideList {
+                patterns: vec!["app_.*".to_string()],
+                show_only: true,
+            },
+            objects: HideList {
+                patterns: vec!["BIN\\$.*".to_string()],
+                show_only: false,
+            },
+            object_folders: Some(vec!["Tables".to_string()]),
+        };
+        let json = serde_json::to_string(&profile).expect("serialize");
+        let back: ConnectionProfile = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back.explorer, profile.explorer);
     }
 
     #[test]

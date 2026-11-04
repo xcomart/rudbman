@@ -238,6 +238,7 @@ connect:
   section:
     behavior: Comportement
     tunnel: Tunnel SSH
+    explorer: "Masquer dans l’explorateur"
 
   read_only: Ouvrir la connexion en lecture seule
   auto_commit: Valider chaque instruction à son exécution
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: Phrase secrète de la clé
   tunnel_remote: Base de données
   tunnel_hint: La base de données est nommée telle que l’hôte de rebond la voit. rudbman ouvre un port local libre et y branche le pilote.
+
+  hide_hint: "Noms que l’arborescence de l’explorateur laisse de côté. Une expression régulière par ligne, comparée au nom entier, sans tenir compte de la casse. Un niveau de catalogue ou de schéma qui ne garde qu’un élément est sauté."
+  hide_catalogs: "Catalogues"
+  hide_schemas: "Schémas"
+  hide_objects: "Objets"
+  hide_show_only: "N’afficher que ce que la liste désigne"
+  hide_folders: "S’applique à"
+  hide_invalid: "La ligne %{line} n’est pas une expression régulière valide : %{reason}"
+  hide_refused: "Non enregistré : une liste de masquage de la section explorateur contient une expression régulière non valide."
+  hide_count: "Motifs : %{count}"
 
   test: Tester
   testing: Connexion en cours…

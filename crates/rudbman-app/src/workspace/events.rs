@@ -39,6 +39,7 @@ impl Workspace {
             // place; anything else opens a tab of its own.
             ConnectionDialogEvent::Connect { profile, typed } => {
                 self.profiles = load_profiles();
+                self.sync_hide_lists(cx);
                 let typed = typed.borrow_mut().take();
                 let waiting = self.pending_reconnect.take().and_then(|(tab, id)| {
                     (id == profile.id)
@@ -58,6 +59,7 @@ impl Workspace {
                 dialog.update(cx, |dialog, cx| dialog.close(cx));
                 self.pending_reconnect = None;
                 self.profiles = load_profiles();
+                self.sync_hide_lists(cx);
                 self.restore_focus(window, cx);
             }
         }

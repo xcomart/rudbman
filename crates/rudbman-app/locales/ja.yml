@@ -238,6 +238,7 @@ connect:
   section:
     behavior: 動作
     tunnel: SSH トンネル
+    explorer: "エクスプローラーで非表示"
 
   read_only: 読み取り専用で接続する
   auto_commit: 文を実行するたびにコミットする
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: 鍵のパスフレーズ
   tunnel_remote: データベース
   tunnel_hint: データベースは踏み台から見える名前で指定します。rudbman が空いているローカルポートを確保し、ドライバーをそこへ接続します。
+
+  hide_hint: "エクスプローラーのツリーから外す名前です。1 行に正規表現を 1 つ書き、名前全体と比較します。大文字と小文字は区別しません。非表示にした後で 1 つだけ残ったカタログ・スキーマの階層は省略します。"
+  hide_catalogs: "カタログ"
+  hide_schemas: "スキーマ"
+  hide_objects: "オブジェクト"
+  hide_show_only: "リストに一致するものだけ表示"
+  hide_folders: "対象フォルダー"
+  hide_invalid: "%{line} 行目の正規表現が正しくありません: %{reason}"
+  hide_refused: "保存しませんでした。エクスプローラーの非表示リストに正しくない正規表現があります。"
+  hide_count: "パターン %{count} 個"
 
   test: 接続テスト
   testing: 接続しています…

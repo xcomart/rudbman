@@ -238,6 +238,7 @@ connect:
   section:
     behavior: Verhalten
     tunnel: SSH-Tunnel
+    explorer: "Im Explorer ausblenden"
 
   read_only: Verbindung schreibgeschützt öffnen
   auto_commit: Jede Anweisung beim Ausführen sofort festschreiben
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: Passphrase des Schlüssels
   tunnel_remote: Datenbank
   tunnel_hint: Die Datenbank wird so benannt, wie der Bastion-Host sie sieht. rudbman bindet einen freien lokalen Port und verbindet den Treiber damit.
+
+  hide_hint: "Namen, die der Explorer-Baum auslässt. Ein regulärer Ausdruck pro Zeile, verglichen mit dem ganzen Namen, ohne Groß-/Kleinschreibung. Eine Katalog- oder Schemaebene, in der nur ein Eintrag bleibt, wird übersprungen."
+  hide_catalogs: "Kataloge"
+  hide_schemas: "Schemas"
+  hide_objects: "Objekte"
+  hide_show_only: "Nur anzeigen, was die Liste trifft"
+  hide_folders: "Gilt für"
+  hide_invalid: "Zeile %{line} ist kein gültiger regulärer Ausdruck: %{reason}"
+  hide_refused: "Nicht gespeichert: Eine Ausblendliste im Explorer-Abschnitt enthält einen ungültigen regulären Ausdruck."
+  hide_count: "Muster: %{count}"
 
   test: Testen
   testing: Verbindung wird hergestellt…

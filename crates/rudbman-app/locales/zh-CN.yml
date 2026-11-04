@@ -238,6 +238,7 @@ connect:
   section:
     behavior: 行为
     tunnel: SSH 隧道
+    explorer: "在资源管理器中隐藏"
 
   read_only: 以只读方式打开连接
   auto_commit: 每条语句执行后立即提交
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: 密钥口令
   tunnel_remote: 数据库
   tunnel_hint: 数据库地址填堡垒机所看到的名字。rudbman 会绑定一个空闲的本地端口，并把驱动接到该端口。
+
+  hide_hint: "资源管理器树中不显示的名称。每行一个正则表达式，与完整名称比较，不区分大小写。隐藏后只剩一项的目录或模式层级会被跳过。"
+  hide_catalogs: "目录"
+  hide_schemas: "模式"
+  hide_objects: "对象"
+  hide_show_only: "只显示与列表匹配的项"
+  hide_folders: "适用于"
+  hide_invalid: "第 %{line} 行不是有效的正则表达式：%{reason}"
+  hide_refused: "未保存：资源管理器部分的隐藏列表中有无效的正则表达式。"
+  hide_count: "模式 %{count} 个"
 
   test: 测试
   testing: 正在连接…

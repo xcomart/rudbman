@@ -47,8 +47,8 @@ use gpui::{
     Subscription, Task, Window, div, prelude::*, px,
 };
 use rudbman_core::{
-    ConnectionProfile, ConnectionStore, DriverDef, DriverStore, KeepAlive, SecretSlot, SecretStore,
-    TunnelAuth, TunnelConfig,
+    ConnectionProfile, ConnectionStore, DriverDef, DriverStore, ExplorerHide, HideList, KeepAlive,
+    SecretSlot, SecretStore, TunnelAuth, TunnelConfig,
 };
 use rugpui::{
     Button, ButtonVariant, Checkbox, Collapsible, DismissReason, DraggedThumb, Scrollbar,
@@ -62,6 +62,9 @@ use crate::connection::{
     self, CATALOG_PLACEHOLDERS, ConnectError, Credentials, placeholders_of, substitute,
 };
 use crate::driver_manager::{DriverManager, DriverManagerEvent};
+use crate::explorer::FOLDERS;
+use crate::explorer_filter::FolderSet;
+use crate::explorer_hide;
 use crate::i18n::ts;
 use crate::icons;
 use crate::maven::Coordinate;
@@ -198,6 +201,22 @@ mod tab {
     pub const TUNNEL_REMOTE_HOST: isize = 208;
     /// Target port.
     pub const TUNNEL_REMOTE_PORT: isize = 209;
+    /// The explorer section's disclosure.
+    pub const EXPLORER: isize = 210;
+    /// Hidden catalogs.
+    pub const HIDE_CATALOGS: isize = 211;
+    /// Their "show only".
+    pub const HIDE_CATALOGS_ONLY: isize = 212;
+    /// Hidden schemas.
+    pub const HIDE_SCHEMAS: isize = 213;
+    /// Their "show only".
+    pub const HIDE_SCHEMAS_ONLY: isize = 214;
+    /// Hidden objects.
+    pub const HIDE_OBJECTS: isize = 215;
+    /// Their "show only".
+    pub const HIDE_OBJECTS_ONLY: isize = 216;
+    /// The folders the object list applies to, in the order drawn.
+    pub const HIDE_FOLDERS: isize = 217;
     /// New profile.
     pub const NEW: isize = 220;
     /// Duplicate profile.
@@ -226,6 +245,13 @@ gpui::actions!(
 
 /// The key context the dialog renders in.
 const KEY_CONTEXT: &str = "ConnectionDialog";
+
+/// Where each of the explorer's hide lists sits in the dialog's arrays.
+const HIDE_CATALOGS: usize = 0;
+/// See [`HIDE_CATALOGS`].
+const HIDE_SCHEMAS: usize = 1;
+/// See [`HIDE_CATALOGS`].
+const HIDE_OBJECTS: usize = 2;
 
 /// Marks the dialog's chords as registered.
 struct Bindings;
@@ -341,6 +367,19 @@ pub struct ConnectionDialog {
     tunnel_auth: TunnelAuth,
     /// Whether the profile has a keep-alive probe.
     keep_alive_enabled: bool,
+    /// Whether the explorer section is unfolded.
+    explorer_open: bool,
+    /// The explorer's hide lists, a pattern a line: catalogs, schemas,
+    /// objects, at [`HIDE_CATALOGS`] and the two after it.
+    hide_inputs: [Entity<TextInput>; 3],
+    /// Each list's "show only what the list matches".
+    hide_show_only: [bool; 3],
+    /// The folders the object list applies to.
+    hide_folders: FolderSet,
+    /// Each list's first line that does not compile, as the sentence under it.
+    hide_errors: [Option<SharedString>; 3],
+    /// Checks a list again whenever its text changes.
+    _hide_watch: Vec<Subscription>,
     /// Whether the session is opened read-only.
     read_only: bool,
     /// Whether statements commit as they run.
@@ -463,6 +502,27 @@ impl ConnectionDialog {
             cx.new(move |cx| TextInput::new(cx).masked(true).tab_index(index))
         };
 
+        // A sample pattern each, for the same reason as the placeholders
+        // below. Three rows: a list is a handful of lines, and a longer one
+        // scrolls inside its field rather than pushing the form apart.
+        let hide_input = |cx: &mut Context<Self>, placeholder: &'static str, index: isize| {
+            cx.new(move |cx| {
+                TextInput::new(cx)
+                    .multiline(3)
+                    .placeholder(placeholder)
+                    .tab_index(index)
+            })
+        };
+        let hide_inputs = [
+            hide_input(cx, "template[01]", tab::HIDE_CATALOGS),
+            hide_input(cx, "pg_temp_.*", tab::HIDE_SCHEMAS),
+            hide_input(cx, "BIN\\$.*", tab::HIDE_OBJECTS),
+        ];
+        let hide_watch = hide_inputs
+            .iter()
+            .map(|input| cx.observe(input, |dialog, _, cx| dialog.check_hide_lists(cx)))
+            .collect();
+
         // Every placeholder is a sample value — a host name, a port, a
         // statement — and reads the same in every language.
         Self {
@@ -478,6 +538,12 @@ impl ConnectionDialog {
             tunnel_enabled: false,
             tunnel_auth: TunnelAuth::Agent,
             keep_alive_enabled: false,
+            explorer_open: false,
+            hide_inputs,
+            hide_show_only: [false; 3],
+            hide_folders: FolderSet::ALL,
+            hide_errors: [None, None, None],
+            _hide_watch: hide_watch,
             read_only: false,
             auto_commit: true,
             confirm_writes: true,
@@ -732,6 +798,24 @@ impl ConnectionDialog {
             cx,
         );
 
+        let hide = &profile.explorer;
+        for (input, list) in
+            self.hide_inputs
+                .iter()
+                .zip([&hide.catalogs, &hide.schemas, &hide.objects])
+        {
+            set_text(input, list.patterns.join("\n"), cx);
+        }
+        self.hide_show_only = [
+            hide.catalogs.show_only,
+            hide.schemas.show_only,
+            hide.objects.show_only,
+        ];
+        self.hide_folders = explorer_hide::object_folders(hide);
+        // Unfolded when there is something in it, as the tunnel is.
+        self.explorer_open = !hide.is_default();
+        self.check_hide_lists(cx);
+
         self.rebuild_props(&profile.props, cx);
         // A different profile starts with its own URL values and driver defaults.
         // Reusing the previous inputs would retain its host, port and database
@@ -906,7 +990,46 @@ impl ConnectionDialog {
             local_port: 0,
         });
 
+        let list = |index: usize| HideList {
+            patterns: explorer_hide::patterns_of(&text(&self.hide_inputs[index], cx)),
+            show_only: self.hide_show_only[index],
+        };
+        profile.explorer = ExplorerHide {
+            catalogs: list(HIDE_CATALOGS),
+            schemas: list(HIDE_SCHEMAS),
+            objects: list(HIDE_OBJECTS),
+            object_folders: explorer_hide::object_folders_value(self.hide_folders),
+        };
+
         profile
+    }
+
+    /// Checks the three hide lists again: outlines a list holding a line
+    /// that does not compile, and names that line under it.
+    fn check_hide_lists(&mut self, cx: &mut Context<Self>) {
+        for index in 0..self.hide_inputs.len() {
+            let input = self.hide_inputs[index].clone();
+            let error = explorer_hide::first_invalid_line(&text(&input, cx))
+                .map(|(line, reason)| ts!("connect.hide_invalid", line = line, reason = reason));
+            input.update(cx, |input, cx| input.set_invalid(error.is_some(), cx));
+            if self.hide_errors[index] != error {
+                self.hide_errors[index] = error;
+                cx.notify();
+            }
+        }
+    }
+
+    /// Refuses a save while a hide list holds a line that does not compile:
+    /// saved, it would hide nothing, and nothing on screen would say why.
+    /// Unfolds the section, so that the line is in sight.
+    fn hide_lists_refused(&mut self, cx: &mut Context<Self>) -> bool {
+        self.check_hide_lists(cx);
+        if self.hide_errors.iter().all(Option::is_none) {
+            return false;
+        }
+        self.explorer_open = true;
+        self.report(Level::Error, ts!("connect.hide_refused"), cx);
+        true
     }
 
     /// Writes the form to `connections.json` and the keychain.
@@ -1126,6 +1249,9 @@ impl ConnectionDialog {
     /// "Save" from the discard question: saves, and closes when that worked.
     fn save_and_close(&mut self, cx: &mut Context<Self>) {
         self.asking_discard = false;
+        if self.hide_lists_refused(cx) {
+            return;
+        }
         let result = self.persist(cx);
         let ok = result.is_ok();
         self.saved(result, false, cx);
@@ -1143,12 +1269,18 @@ impl ConnectionDialog {
 
     /// Saves and reports it.
     fn save(&mut self, cx: &mut Context<Self>) {
+        if self.hide_lists_refused(cx) {
+            return;
+        }
         let result = self.persist(cx);
         self.saved(result, false, cx);
     }
 
     /// Saves, then asks the shell to open the profile.
     fn connect(&mut self, cx: &mut Context<Self>) {
+        if self.hide_lists_refused(cx) {
+            return;
+        }
         let result = self.persist(cx);
         self.saved(result, true, cx);
     }
@@ -2309,6 +2441,127 @@ impl ConnectionDialog {
             .children(keep_alive_body)
     }
 
+    /// The explorer section: what the tree leaves out of this profile's
+    /// database. Folded away while it says nothing, as the tunnel is.
+    fn render_explorer(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let this = cx.entity();
+        let open = self.explorer_open;
+        let note = |text: SharedString, cx: &App| {
+            div()
+                .text_size(rugpui::TextSize::Xs.size(cx))
+                .text_color(chrome.text_muted)
+                .child(text)
+        };
+
+        let body = open.then(|| {
+            let list = |index: usize,
+                        label: SharedString,
+                        only: (&'static str, isize),
+                        extra: Option<gpui::AnyElement>,
+                        cx: &App| {
+                let this = this.clone();
+                let show_only = Checkbox::new(only.0, ts!("connect.hide_show_only"))
+                    .checked(self.hide_show_only[index])
+                    .tab_index(only.1)
+                    .on_toggle(move |checked, _window, cx| {
+                        this.update(cx, |dialog, cx| {
+                            dialog.hide_show_only[index] = checked;
+                            cx.notify();
+                        });
+                    });
+                let error = self.hide_errors[index].clone().map(|message| {
+                    div()
+                        .text_size(rugpui::TextSize::Xs.size(cx))
+                        .text_color(chrome.danger)
+                        .child(message)
+                });
+                form_row(
+                    label,
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .child(self.hide_inputs[index].clone())
+                        .children(error)
+                        .child(show_only)
+                        .children(extra),
+                )
+                .label_width(self.label_width)
+            };
+
+            let folders = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap_x(px(12.))
+                .gap_y(px(4.))
+                .child(note(ts!("connect.hide_folders"), cx))
+                .children(FOLDERS.iter().enumerate().map(|(position, folder)| {
+                    let folder = *folder;
+                    let this = this.clone();
+                    Checkbox::new(("connect-hide-folder", position), folder.label())
+                        .checked(self.hide_folders.contains(folder))
+                        .tab_index(tab::HIDE_FOLDERS)
+                        .on_toggle(move |_, _window, cx| {
+                            this.update(cx, |dialog, cx| {
+                                dialog.hide_folders = dialog.hide_folders.toggled(folder);
+                                cx.notify();
+                            });
+                        })
+                }));
+
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(note(ts!("connect.hide_hint"), cx))
+                .child(list(
+                    HIDE_CATALOGS,
+                    ts!("connect.hide_catalogs"),
+                    ("connect-hide-catalogs-only", tab::HIDE_CATALOGS_ONLY),
+                    None,
+                    cx,
+                ))
+                .child(list(
+                    HIDE_SCHEMAS,
+                    ts!("connect.hide_schemas"),
+                    ("connect-hide-schemas-only", tab::HIDE_SCHEMAS_ONLY),
+                    None,
+                    cx,
+                ))
+                .child(list(
+                    HIDE_OBJECTS,
+                    ts!("connect.hide_objects"),
+                    ("connect-hide-objects-only", tab::HIDE_OBJECTS_ONLY),
+                    Some(folders.into_any_element()),
+                    cx,
+                ))
+        });
+
+        // Folded, the header still says the lists are there: a tree missing
+        // half its schemas should not take unfolding every section to explain.
+        let count: usize = self
+            .hide_inputs
+            .iter()
+            .map(|input| explorer_hide::patterns_of(&text(input, cx)).len())
+            .sum();
+        let mut section =
+            Collapsible::new("connect-explorer-section", ts!("connect.section.explorer"))
+                .open(open)
+                .on_toggle(cx.processor(|dialog, open, _window, cx| {
+                    dialog.explorer_open = open;
+                    cx.notify();
+                }))
+                .tab_index(tab::EXPLORER)
+                .arrow_icons(icons::CHEVRON_RIGHT, icons::CHEVRON_DOWN)
+                .children(body);
+        if count > 0 {
+            section = section.trailing(note(ts!("connect.hide_count", count = count), cx));
+        }
+        section
+    }
+
     /// The scrolling form for the selected profile.
     fn render_form(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let colors = self.render_colors(chrome, cx);
@@ -2317,6 +2570,7 @@ impl ConnectionDialog {
         let props = self.render_props(cx);
         let behavior = self.render_behavior(cx);
         let tunnel = self.render_tunnel(chrome, cx);
+        let explorer = self.render_explorer(chrome, cx);
 
         div()
             .relative()
@@ -2384,7 +2638,8 @@ impl ConnectionDialog {
                     // No `section` title over this one: the collapsible's own
                     // header is the heading, and a second copy of the words
                     // above it would only say them twice.
-                    .child(card(chrome, tunnel)),
+                    .child(card(chrome, tunnel))
+                    .child(card(chrome, explorer)),
             )
             .children(
                 self.hovering_scrollbar(SCROLLBARS[1].0, Surface::Body, cx)
@@ -2677,6 +2932,9 @@ impl ConnectionDialog {
             ts!("connect.tunnel_passphrase"),
             ts!("connect.tunnel_password"),
             ts!("connect.tunnel_remote"),
+            ts!("connect.hide_catalogs"),
+            ts!("connect.hide_schemas"),
+            ts!("connect.hide_objects"),
         ]
         .into_iter()
         .chain(
@@ -3813,6 +4071,16 @@ mod tests {
             ts!("connect.add_prop"),
             ts!("connect.section.behavior"),
             ts!("connect.section.tunnel"),
+            ts!("connect.section.explorer"),
+            ts!("connect.hide_hint"),
+            ts!("connect.hide_catalogs"),
+            ts!("connect.hide_schemas"),
+            ts!("connect.hide_objects"),
+            ts!("connect.hide_show_only"),
+            ts!("connect.hide_folders"),
+            ts!("connect.hide_invalid", line = 2, reason = "x"),
+            ts!("connect.hide_refused"),
+            ts!("connect.hide_count", count = 3),
             ts!("connect.read_only"),
             ts!("connect.auto_commit"),
             ts!("connect.confirm_writes"),
@@ -3950,6 +4218,83 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         (dialog, cx)
+    }
+
+    /// The hide lists go into the form and come back out unchanged — which is
+    /// what keeps a profile nobody touched from reading as edited — and a list
+    /// with a line that does not compile is named, outlined and refused.
+    #[gpui::test]
+    fn the_hide_lists_fill_the_form_and_a_broken_one_is_refused(cx: &mut gpui::TestAppContext) {
+        use crate::explorer::Folder;
+        use rudbman_core::{ExplorerHide, HideList};
+
+        let (dialog, mut cx) = open_over_a_profile(cx);
+        cx.update(|_, cx| {
+            dialog.update(cx, |dialog, cx| {
+                let mut profile = dialog.current().cloned().expect("a profile is selected");
+                profile.explorer = ExplorerHide {
+                    schemas: HideList {
+                        patterns: vec!["pg_temp_.*".to_owned(), "information_schema".to_owned()],
+                        show_only: false,
+                    },
+                    objects: HideList {
+                        patterns: vec!["BIN\\$.*".to_owned()],
+                        show_only: true,
+                    },
+                    object_folders: Some(vec![crate::explorer_hide::folder_key(Folder::Tables)]),
+                    ..ExplorerHide::default()
+                };
+                dialog.store.upsert(profile.clone());
+                dialog.fill_form(cx);
+                assert!(
+                    dialog.explorer_open,
+                    "a section with lists in it is unfolded"
+                );
+                assert_eq!(
+                    text(&dialog.hide_inputs[HIDE_SCHEMAS], cx),
+                    "pg_temp_.*\ninformation_schema"
+                );
+                assert_eq!(dialog.collect(cx).explorer, profile.explorer);
+
+                // A blank line and stray spaces are not a change of list.
+                set_text(
+                    &dialog.hide_inputs[HIDE_SCHEMAS],
+                    " pg_temp_.*\n\ninformation_schema ",
+                    cx,
+                );
+                assert_eq!(dialog.collect(cx).explorer, profile.explorer);
+
+                set_text(&dialog.hide_inputs[HIDE_CATALOGS], "ok\n(broken", cx);
+            });
+        });
+        // The list is checked by watching its field, which reports on the next
+        // turn of the loop.
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            dialog.update(cx, |dialog, cx| {
+                assert!(dialog.hide_errors[HIDE_CATALOGS].is_some());
+                assert!(dialog.hide_errors[HIDE_SCHEMAS].is_none());
+                dialog.explorer_open = false;
+                let before = dialog
+                    .store
+                    .get(dialog.selected.expect("selected"))
+                    .cloned();
+                dialog.save(cx);
+                assert_eq!(
+                    dialog.status.as_ref().map(|(level, _)| *level),
+                    Some(Level::Error)
+                );
+                assert!(dialog.explorer_open, "the refusal unfolds the section");
+                assert_eq!(
+                    dialog
+                        .store
+                        .get(dialog.selected.expect("selected"))
+                        .cloned(),
+                    before,
+                    "nothing was saved"
+                );
+            });
+        });
     }
 
     /// A profile that does not remember its password writes nothing to the

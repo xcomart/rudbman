@@ -67,6 +67,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -84,6 +85,7 @@ use crate::context_menu::{self, MenuRow};
 use crate::explorer_filter::{
     Candidate, Combine, Condition, ExplorerFilter, Field, FilterSnapshot, FolderSet, Op,
 };
+use crate::explorer_hide::HideRules;
 use crate::explorer_history::FilterHistory;
 use crate::i18n::ts;
 use crate::icons;
@@ -1107,10 +1109,26 @@ pub fn folders_of(connection: ConnectionId, scope: Scope) -> Vec<NodeId> {
 /// until it has been asked for. A level of one or none is therefore not
 /// returned — the fetch goes on to the next level in the same call, so opening a
 /// connection on a one-schema database lands directly on the folders.
-pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<Child>, String> {
+///
+/// `hide` is the profile's hide lists, and they are applied *before* a level is
+/// counted: a database whose other schemas are all hidden lands on its folders
+/// as one that never had them would. A level that had members and has none
+/// left once they are taken out is empty rather than skipped — skipping it
+/// would read the level under it unqualified, which is what a product with no
+/// such level gets, and would show the very things that were hidden.
+pub fn load_children(
+    session: &Session,
+    node: &NodeId,
+    hide: &HideRules,
+) -> Result<Vec<Child>, String> {
     match node {
         NodeId::Connection(connection) => {
-            let catalogs = names(session, &DescribeRequest::new("catalogs"))?;
+            let listed = names(session, &DescribeRequest::new("catalogs"))?;
+            let had_any = !listed.is_empty();
+            let catalogs: Vec<_> = listed
+                .into_iter()
+                .filter(|(name, _)| !hide.hides_catalog(name))
+                .collect();
             if catalogs.len() > 1 {
                 return Ok(catalogs
                     .into_iter()
@@ -1122,16 +1140,20 @@ pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<Child>, Str
                     })
                     .collect());
             }
+            if had_any && catalogs.is_empty() {
+                return Ok(Vec::new());
+            }
             // One catalog or none: it becomes part of the scope rather than a
             // row of its own.
             next_level(
                 session,
                 *connection,
                 catalogs.into_iter().next().map(|(name, _)| name),
+                hide,
             )
         }
         NodeId::Catalog { connection, name } => {
-            next_level(session, *connection, Some(name.clone()))
+            next_level(session, *connection, Some(name.clone()), hide)
         }
         NodeId::Folder {
             connection,
@@ -1146,6 +1168,7 @@ pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<Child>, Str
             }
             Ok(names(session, &request)?
                 .into_iter()
+                .filter(|(name, _)| !hide.hides_object(*folder, name))
                 .map(|(name, remarks)| Child {
                     id: NodeId::Object {
                         connection: *connection,
@@ -1168,15 +1191,22 @@ pub fn load_children(session: &Session, node: &NodeId) -> Result<Vec<Child>, Str
 /// The second half of the layer-skipping rule. A product with no schemas at all
 /// — SQLite — and one with exactly one both land on the folders, with whatever
 /// single schema there was folded into the scope so that the queries underneath
-/// stay qualified.
+/// stay qualified. The hidden schemas are taken out before they are counted;
+/// see [`load_children`].
 fn next_level(
     session: &Session,
     connection: ConnectionId,
     catalog: Option<String>,
+    hide: &HideRules,
 ) -> Result<Vec<Child>, String> {
     let mut request = DescribeRequest::new("schemas");
     request.catalog = catalog.clone();
-    let schemas = names(session, &request)?;
+    let listed = names(session, &request)?;
+    let had_any = !listed.is_empty();
+    let schemas: Vec<_> = listed
+        .into_iter()
+        .filter(|(name, _)| !hide.hides_schema(name))
+        .collect();
 
     if schemas.len() > 1 {
         return Ok(schemas
@@ -1189,6 +1219,9 @@ fn next_level(
                 })
             })
             .collect());
+    }
+    if had_any && schemas.is_empty() {
+        return Ok(Vec::new());
     }
     Ok(folders_of(
         connection,
@@ -1471,6 +1504,9 @@ pub struct Explorer {
     /// The profile each connection was opened from, which its filter history
     /// is kept under; see [`Explorer::set_profile`].
     profiles: HashMap<ConnectionId, Uuid>,
+    /// Each connection's hide lists, compiled, with the lists they were
+    /// compiled from; see [`Explorer::set_hide`].
+    hides: HashMap<ConnectionId, (rudbman_core::ExplorerHide, Arc<HideRules>)>,
     /// Whether the history menu is out.
     history_open: bool,
     /// Where its button was drawn last.
@@ -1574,6 +1610,7 @@ impl Explorer {
             targets_kept: false,
             targets_bounds: Rc::default(),
             profiles: HashMap::new(),
+            hides: HashMap::new(),
             history_open: false,
             history_bounds: Rc::default(),
             conditions_open: false,
@@ -1590,6 +1627,37 @@ impl Explorer {
     /// the same filters, run after run.
     pub fn set_profile(&mut self, connection: ConnectionId, profile: Uuid) {
         self.profiles.insert(connection, profile);
+    }
+
+    /// Gives `connection` its profile's hide lists, and says whether they
+    /// differ from the ones it had — in which case what was read under the old
+    /// ones is out of date, and the caller reloads the root.
+    pub fn set_hide(
+        &mut self,
+        connection: ConnectionId,
+        hide: &rudbman_core::ExplorerHide,
+    ) -> bool {
+        if self
+            .hides
+            .get(&connection)
+            .is_some_and(|(current, _)| current == hide)
+        {
+            return false;
+        }
+        let had = self.hides.contains_key(&connection);
+        self.hides
+            .insert(connection, (hide.clone(), Arc::new(HideRules::new(hide))));
+        // The first lists a connection is given are not a change: nothing has
+        // been read under any others.
+        had
+    }
+
+    /// The hide lists every read under `connection` is to apply.
+    pub fn hide_rules(&self, connection: ConnectionId) -> Arc<HideRules> {
+        self.hides
+            .get(&connection)
+            .map(|(_, rules)| rules.clone())
+            .unwrap_or_default()
     }
 
     /// Writes the filter of `root` into its profile's history, when there is
@@ -2991,7 +3059,8 @@ pub(crate) mod tests {
         let connected = h2_fixture("explorer-levels");
         let session = connected.session();
 
-        let children = load_children(session, &NodeId::Connection(C)).expect("the root loads");
+        let children = load_children(session, &NodeId::Connection(C), &HideRules::default())
+            .expect("the root loads");
         assert!(
             children
                 .iter()
@@ -3016,6 +3085,76 @@ pub(crate) mod tests {
         assert!(catalog.is_some(), "the one catalog is remembered");
     }
 
+    /// The hide lists are applied before a level is counted, not after.
+    ///
+    /// With every schema but `APP` hidden, the schema level has one member
+    /// and is skipped, so the root lands on `APP`'s folders — exactly as a
+    /// database that only ever had `APP` would. An object list takes its names
+    /// out of the folders it names and no others, and a level whose members
+    /// are all hidden comes back empty rather than skipped.
+    #[test]
+    fn the_hide_lists_apply_before_the_layer_skipping_count() {
+        use rudbman_core::{ExplorerHide, HideList};
+
+        let connected = h2_fixture("explorer-hide");
+        let session = connected.session();
+        let hide = |hide: ExplorerHide| HideRules::new(&hide);
+        let list = |patterns: &[&str], show_only: bool| HideList {
+            patterns: patterns.iter().map(|p| (*p).to_owned()).collect(),
+            show_only,
+        };
+
+        let only_app = hide(ExplorerHide {
+            schemas: list(&["app"], true),
+            objects: list(&["person"], false),
+            object_folders: Some(vec![crate::explorer_hide::folder_key(Folder::Tables)]),
+            ..ExplorerHide::default()
+        });
+        let children =
+            load_children(session, &NodeId::Connection(C), &only_app).expect("the root loads");
+        assert!(
+            children
+                .iter()
+                .all(|child| matches!(child.id, NodeId::Folder { .. })),
+            "one schema left is no level of its own: {children:?}"
+        );
+        let NodeId::Folder { scope, .. } = &children[0].id else {
+            unreachable!()
+        };
+        assert_eq!(scope.schema.as_deref(), Some("APP"));
+
+        let objects = |folder: Folder, rules: &HideRules| -> Vec<String> {
+            let node = NodeId::Folder {
+                connection: C,
+                scope: scope.clone(),
+                folder,
+            };
+            load_children(session, &node, rules)
+                .expect("the folder loads")
+                .into_iter()
+                .filter_map(|child| match child.id {
+                    NodeId::Object { name, .. } => Some(name),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(objects(Folder::Tables, &only_app), vec!["TEAM".to_string()]);
+        // The sequence named for the table is in a folder the list does not
+        // name, and stays.
+        assert!(objects(Folder::Sequences, &only_app).contains(&"PERSON_SEQ".to_string()));
+
+        let nothing = hide(ExplorerHide {
+            schemas: list(&[".*"], false),
+            ..ExplorerHide::default()
+        });
+        assert!(
+            load_children(session, &NodeId::Connection(C), &nothing)
+                .expect("the root loads")
+                .is_empty(),
+            "every schema hidden is an empty tree, not the unqualified folders"
+        );
+    }
+
     /// The folders under a schema, and what they hold.
     #[test]
     fn a_schema_lists_its_tables_views_and_sequences() {
@@ -3032,7 +3171,7 @@ pub(crate) mod tests {
             folder: kind,
         };
         let names = |kind: Folder| -> Vec<String> {
-            load_children(session, &folder(kind))
+            load_children(session, &folder(kind), &HideRules::default())
                 .unwrap_or_else(|error| panic!("{kind:?}: {error}"))
                 .into_iter()
                 .filter_map(|child| match child.id {
@@ -3077,7 +3216,8 @@ pub(crate) mod tests {
             },
             folder: Folder::Tables,
         };
-        let children = load_children(connected.session(), &folder).expect("the folder loads");
+        let children = load_children(connected.session(), &folder, &HideRules::default())
+            .expect("the folder loads");
 
         let mut source = ExplorerSource::default();
         source.set_children(folder, children);
@@ -3117,8 +3257,8 @@ pub(crate) mod tests {
             },
             folder: Folder::Tables,
         };
-        let children =
-            load_children(session, &broken).expect("an unknown schema is empty, not an error");
+        let children = load_children(session, &broken, &HideRules::default())
+            .expect("an unknown schema is empty, not an error");
         assert!(children.is_empty(), "{children:?}");
 
         // What a real refusal does to the source: one error row under the node,
@@ -3940,8 +4080,12 @@ pub(crate) mod tests {
             catalog: connected.info.catalog.clone(),
             schema: connected.info.schema.clone(),
         };
-        let children =
-            load_children(connected.session(), &NodeId::Connection(C)).expect("the root loads");
+        let children = load_children(
+            connected.session(),
+            &NodeId::Connection(C),
+            &HideRules::default(),
+        )
+        .expect("the root loads");
         let found = revealed_child(&children, &target);
         assert!(
             matches!(&found, Some(NodeId::Schema { name, .. }) if name == "PUBLIC"),
@@ -4411,6 +4555,37 @@ pub(crate) mod tests {
                 assert_eq!(names_in(explorer.tree.read(cx).source(), &tables).len(), 3);
             })
             .unwrap();
+    }
+
+    /// A connection's first hide lists are no change — nothing was read under
+    /// others — the same lists again are none either, and different ones are,
+    /// which is what tells the workspace to read the tree again.
+    #[gpui::test]
+    fn new_hide_lists_are_a_change_and_the_same_ones_are_not(cx: &mut gpui::TestAppContext) {
+        use rudbman_core::{ExplorerHide, HideList};
+
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let some = ExplorerHide {
+            schemas: HideList {
+                patterns: vec!["sys".to_owned()],
+                show_only: false,
+            },
+            ..ExplorerHide::default()
+        };
+        window
+            .update(cx, |explorer, _window, _cx| {
+                assert!(
+                    !explorer.hide_rules(C).hides_schema("sys"),
+                    "none given yet"
+                );
+                assert!(!explorer.set_hide(C, &ExplorerHide::default()));
+                assert!(!explorer.set_hide(C, &ExplorerHide::default()));
+                assert!(explorer.set_hide(C, &some));
+                assert!(explorer.hide_rules(C).hides_schema("SYS"));
+                assert!(!explorer.set_hide(C, &some));
+            })
+            .expect("the window is open");
     }
 
     #[gpui::test]
