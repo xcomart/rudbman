@@ -446,9 +446,11 @@ impl Workspace {
             live: matches!(open.state, ConnectionState::Open(_)),
         };
         let id = open.id;
+        let profile = open.profile.id;
         let live = info.live;
         self.explorer.update(cx, |explorer, cx| {
             explorer.update_source(cx, |source| source.upsert_root(id, info));
+            explorer.set_profile(id, profile);
             // A root opened while the handshake was still out answered "the
             // connection is closed"; now that there is a session, that row has
             // to go rather than stay until the tab does.

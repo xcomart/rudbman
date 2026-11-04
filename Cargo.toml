@@ -70,6 +70,9 @@ env_logger = "0.11"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
+# The explorer filter's "matches the expression" condition. Already in the
+# tree through the editor's crates, so this adds a name, not a build.
+regex = "1"
 directories = "6"
 keyring = "4"
 # Linux only, and the version `keyring` already talks to the Secret Service

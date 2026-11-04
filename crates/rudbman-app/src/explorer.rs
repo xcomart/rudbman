@@ -74,13 +74,17 @@ use gpui::{
 };
 use rudbman_jdbc::{DescribeRequest, Error as JdbcError, Session};
 use rugpui::{
-    Button, ButtonVariant, ChildState, ContextMenu, TextInput, Theme, TreeEvent, TreeRowInfo,
-    TreeSource, TreeView, theme,
+    Button, ButtonVariant, ChildState, ContextMenu, Segmented, Select, TextInput, Theme, TreeEvent,
+    TreeRowInfo, TreeSource, TreeView, theme,
 };
+use uuid::Uuid;
 
 use crate::app_settings;
 use crate::context_menu::{self, MenuRow};
-use crate::explorer_filter::{ExplorerFilter, FolderSet};
+use crate::explorer_filter::{
+    Candidate, Combine, Condition, ExplorerFilter, Field, FilterSnapshot, FolderSet, Op,
+};
+use crate::explorer_history::FilterHistory;
 use crate::i18n::ts;
 use crate::icons;
 
@@ -517,6 +521,9 @@ pub struct ExplorerSource {
     /// never a round trip. Present only for a loaded folder its connection's
     /// filter narrows; [`TreeSource::children`] answers from it first.
     shown: HashMap<NodeId, Vec<NodeId>>,
+    /// The catalog and schema each connection's session landed in, which is
+    /// the database its filter narrows unless told to narrow them all.
+    landed: HashMap<ConnectionId, Scope>,
 }
 
 impl ExplorerSource {
@@ -545,6 +552,7 @@ impl ExplorerSource {
             .retain(|node, _| node.connection() != connection);
         self.shown.retain(|node, _| node.connection() != connection);
         self.filters.remove(&connection);
+        self.landed.remove(&connection);
     }
 
     /// The roots, in tab order — every open connection, drawn or not.
@@ -616,18 +624,53 @@ impl ExplorerSource {
         }
     }
 
-    /// Recomputes what one folder shows under its connection's filter.
-    fn narrow(&mut self, node: &NodeId) {
+    /// Records the catalog and schema `connection`'s session landed in.
+    ///
+    /// Narrows again whatever its filter has already narrowed, since which
+    /// folders count as "the connected database" may have just changed.
+    pub fn set_landed(&mut self, connection: ConnectionId, scope: Scope) {
+        self.landed.insert(connection, scope);
+        if let Some(filter) = self.filters.get(&connection).cloned() {
+            self.set_filter(connection, filter);
+        }
+    }
+
+    /// The name of the database `connection` landed in, for the filter's menu.
+    pub fn landed_name(&self, connection: ConnectionId) -> Option<&str> {
+        let landed = self.landed.get(&connection)?;
+        landed.catalog.as_deref().or(landed.schema.as_deref())
+    }
+
+    /// The filter that narrows `node`, when one does: its connection's, when
+    /// that names the folder's kind and — unless it narrows every database —
+    /// the folder is in the database the session landed in.
+    ///
+    /// A connection whose landing is not known has every database narrowed,
+    /// rather than none: a filter that did nothing would read as broken.
+    fn narrowing(&self, node: &NodeId) -> Option<&ExplorerFilter> {
         let NodeId::Folder {
-            connection, folder, ..
+            connection,
+            scope,
+            folder,
         } = node
         else {
-            return;
+            return None;
         };
         let filter = self
             .filters
             .get(connection)
-            .filter(|filter| filter.narrows(*folder));
+            .filter(|filter| filter.narrows(*folder))?;
+        let in_scope = filter.all_databases()
+            || self
+                .landed
+                .get(connection)
+                .is_none_or(|landed| in_database(landed, scope));
+        in_scope.then_some(filter)
+    }
+
+    /// Recomputes what one folder shows under its connection's filter.
+    fn narrow(&mut self, node: &NodeId) {
+        let filter = self.narrowing(node);
         let loaded = match self.children.get(node) {
             Some(ChildState::Loaded(ids)) if !self.errors.contains_key(node) => Some(ids),
             _ => None,
@@ -637,7 +680,14 @@ impl ExplorerSource {
                 let shown = ids
                     .iter()
                     .filter(|id| match id {
-                        NodeId::Object { name, .. } => filter.admits(name),
+                        NodeId::Object { name, scope, .. } => filter.admits(&Candidate {
+                            name,
+                            remarks: self.remarks.get(*id).map(SharedString::as_ref),
+                            // A product with no schema level keeps its
+                            // database in the catalog, and that is the name
+                            // a user filtering by schema means.
+                            schema: scope.schema.as_deref().or(scope.catalog.as_deref()),
+                        }),
                         _ => true,
                     })
                     .cloned()
@@ -661,17 +711,7 @@ impl ExplorerSource {
     /// one its connection's filter narrows that has a match, or that has not
     /// been read yet — or is being read — and so may have one.
     pub fn may_match(&self, node: &NodeId) -> bool {
-        let NodeId::Folder {
-            connection, folder, ..
-        } = node
-        else {
-            return false;
-        };
-        let narrowed = self
-            .filters
-            .get(connection)
-            .is_some_and(|filter| filter.narrows(*folder));
-        if !narrowed {
+        if self.narrowing(node).is_none() {
             return false;
         }
         match self.matched(node) {
@@ -1022,6 +1062,27 @@ impl ExplorerSource {
     }
 }
 
+/// Whether a folder of `scope` is in the database a session landed in.
+///
+/// "The database" is the catalog where the product has catalogs — every
+/// schema of the PostgreSQL or SQL Server database connected to, the MySQL
+/// database itself — and the schema where it has none, which is Oracle's
+/// user. A side that does not name a level — a catalog level that was
+/// skipped, a product with no schemas — does not rule the folder out. Names
+/// are compared without regard to ASCII case, because `getCatalog` and
+/// `getCatalogs` may fold them differently.
+fn in_database(landed: &Scope, scope: &Scope) -> bool {
+    let same = |a: &Option<String>, b: &Option<String>| match (a, b) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        _ => true,
+    };
+    if landed.catalog.is_some() {
+        same(&landed.catalog, &scope.catalog)
+    } else {
+        same(&landed.schema, &scope.schema)
+    }
+}
+
 /// The five folder nodes of one scope.
 pub fn folders_of(connection: ConnectionId, scope: Scope) -> Vec<NodeId> {
     FOLDERS
@@ -1258,6 +1319,8 @@ gpui::actions!(
         /// Empty the filter box, or hand the keyboard back to the tree when
         /// there is nothing in it.
         ClearFilter,
+        /// Read the filter box as a regular expression, or as its own terms.
+        ToggleRegex,
     ]
 );
 
@@ -1296,6 +1359,8 @@ fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         gpui::KeyBinding::new(&format!("{modifier}-f"), FocusFilter, Some(KEY_CONTEXT)),
         gpui::KeyBinding::new("escape", ClearFilter, Some(FILTER_KEY_CONTEXT)),
+        // `Alt+R`, as the find bars of most editors have it.
+        gpui::KeyBinding::new("alt-r", ToggleRegex, Some(FILTER_KEY_CONTEXT)),
     ]);
     cx.set_global(Bindings);
 }
@@ -1315,6 +1380,61 @@ fn targets_label(targets: FolderSet) -> SharedString {
             count = count - 1
         ),
     }
+}
+
+/// How a history entry reads in the menu: what the box held, the conditions
+/// spelled out, and the folders when they were not all of them.
+fn history_label(entry: &FilterSnapshot) -> SharedString {
+    let mut parts = Vec::new();
+    if !entry.text.is_empty() {
+        // An expression is set off the way one is usually written, so it is
+        // not taken for the box's terms.
+        parts.push(if entry.regex {
+            format!("/{}/", entry.text)
+        } else {
+            entry.text.clone()
+        });
+    }
+    if !entry.conditions.is_empty() {
+        parts.push(entry.conditions_summary());
+    }
+    if let Some(folders) = &entry.targets {
+        let targets = folders
+            .iter()
+            .fold(FolderSet::NONE, |set, folder| set.toggled(*folder));
+        parts.push(format!("[{}]", targets_label(targets)));
+    }
+    if entry.all_databases {
+        parts.push(format!("[{}]", ts!("explorer.scope_all")));
+    }
+    SharedString::from(parts.join("  \u{b7}  "))
+}
+
+/// A button whose menu hangs under it: drawn where `bounds` can see it, so
+/// that the menu knows where that is.
+fn menu_button(
+    id: &'static str,
+    tooltip: SharedString,
+    label: String,
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .relative()
+        .flex_none()
+        .tooltip(rugpui::tooltip_label(tooltip))
+        .child(
+            Button::new((id, 0usize), label)
+                .compact()
+                .variant(ButtonVariant::Secondary)
+                .on_click(move |_, window, cx| on_click(window, cx)),
+        )
+        .child(
+            gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
+                .absolute()
+                .size_full(),
+        )
 }
 
 /// The sidebar view.
@@ -1343,10 +1463,37 @@ pub struct Explorer {
     targets_kept: bool,
     /// Where the menu's button was drawn last, for the menu to hang under.
     targets_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The profile each connection was opened from, which its filter history
+    /// is kept under; see [`Explorer::set_profile`].
+    profiles: HashMap<ConnectionId, Uuid>,
+    /// Whether the history menu is out.
+    history_open: bool,
+    /// Where its button was drawn last.
+    history_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Whether the conditions panel is showing.
+    conditions_open: bool,
+    /// The panel's rows, one per condition of the filter on screen, in order.
+    rows: Vec<ConditionRow>,
+    /// The key the next row gets.
+    next_row: usize,
+    /// The row whose field (`true`) or comparison (`false`) list is out.
+    open_select: Option<(usize, bool)>,
     /// Keeps the tree's subscription alive.
     _events: Subscription,
     /// Keeps the filter box's subscription alive.
     _filter_events: Subscription,
+}
+
+/// One row of the conditions panel, as drawn: the field and the comparison
+/// are read from the filter, the value lives in its own box.
+struct ConditionRow {
+    /// What the row's widgets are keyed by. The row's place changes as rows
+    /// above it are removed; this does not.
+    key: usize,
+    /// The value box.
+    input: Entity<TextInput>,
+    /// Keeps the box's subscription alive.
+    _edits: Subscription,
 }
 
 /// A walk from a connection's root down to the catalog and schema its session
@@ -1421,9 +1568,222 @@ impl Explorer {
             targets_open: false,
             targets_kept: false,
             targets_bounds: Rc::default(),
+            profiles: HashMap::new(),
+            history_open: false,
+            history_bounds: Rc::default(),
+            conditions_open: false,
+            rows: Vec::new(),
+            next_row: 0,
+            open_select: None,
             _events: events,
             _filter_events: filter_events,
         }
+    }
+
+    /// Tells the explorer which profile `connection` was opened from: what its
+    /// filter history is kept under, so that every tab on one profile offers
+    /// the same filters, run after run.
+    pub fn set_profile(&mut self, connection: ConnectionId, profile: Uuid) {
+        self.profiles.insert(connection, profile);
+    }
+
+    /// Writes the filter of `root` into its profile's history, when there is
+    /// something in it to keep.
+    fn record_history(&self, root: ConnectionId, cx: &mut App) {
+        let Some(profile) = self.profiles.get(&root).copied() else {
+            return;
+        };
+        let Some(snapshot) = self
+            .tree
+            .read(cx)
+            .source()
+            .filter(root)
+            .map(ExplorerFilter::snapshot)
+        else {
+            return;
+        };
+        FilterHistory::record(cx, profile, snapshot);
+    }
+
+    /// Puts a filter from the history back: its text, its folders and its
+    /// conditions, with the panel open when it has any.
+    fn use_history(&mut self, snapshot: &FilterSnapshot, cx: &mut Context<Self>) {
+        let Some(root) = self.visible_root(cx) else {
+            return;
+        };
+        self.apply_filter(root, ExplorerFilter::from_snapshot(snapshot), cx);
+        if self.filter_input.read(cx).content() != snapshot.text {
+            let text = snapshot.text.clone();
+            self.filter_input
+                .update(cx, |input, cx| input.set_content(text, cx));
+        }
+        self.rebuild_rows(cx);
+        self.conditions_open = !snapshot.conditions.is_empty();
+        // Used again, so it goes back to the top.
+        self.record_history(root, cx);
+        cx.notify();
+    }
+
+    /// A row for the panel, its box holding `value`.
+    fn new_row(&mut self, value: &str, cx: &mut Context<Self>) -> ConditionRow {
+        let key = self.next_row;
+        self.next_row += 1;
+        let this = cx.weak_entity();
+        let value = value.to_string();
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new(cx)
+                .placeholder(ts!("explorer.condition_value"))
+                .on_submit(move |_text, window, cx| {
+                    let _ = this.update(cx, |explorer, cx| explorer.open_matches(window, cx));
+                });
+            input.set_content(value, cx);
+            input
+        });
+        let edits = cx.observe(&input, move |explorer, input, cx| {
+            let value = input.read(cx).content().to_string();
+            explorer.edit_condition(key, cx, |condition| condition.value = value);
+        });
+        ConditionRow {
+            key,
+            input,
+            _edits: edits,
+        }
+    }
+
+    /// Builds the panel's rows afresh from the filter on screen.
+    fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
+        let conditions = self
+            .visible_filter(cx)
+            .map(|(_, filter)| filter.conditions().to_vec())
+            .unwrap_or_default();
+        let mut rows = Vec::with_capacity(conditions.len());
+        for condition in &conditions {
+            rows.push(self.new_row(&condition.value, cx));
+        }
+        self.rows = rows;
+        self.open_select = None;
+        self.mark_invalid(cx);
+    }
+
+    /// Marks the filter box, and the value box of every row, whose
+    /// expression does not compile.
+    fn mark_invalid(&self, cx: &mut Context<Self>) {
+        let Some((_, filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        let text_invalid = filter.text_invalid();
+        self.filter_input
+            .update(cx, |input, cx| input.set_invalid(text_invalid, cx));
+        for (index, row) in self.rows.iter().enumerate() {
+            let invalid = filter.is_invalid(index);
+            row.input
+                .update(cx, |input, cx| input.set_invalid(invalid, cx));
+        }
+    }
+
+    /// Changes the condition drawn by row `key`, and narrows by the result.
+    fn edit_condition(
+        &mut self,
+        key: usize,
+        cx: &mut Context<Self>,
+        edit: impl FnOnce(&mut Condition),
+    ) {
+        let Some(index) = self.rows.iter().position(|row| row.key == key) else {
+            return;
+        };
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        let mut conditions = filter.conditions().to_vec();
+        let Some(condition) = conditions.get_mut(index) else {
+            return;
+        };
+        let before = condition.clone();
+        edit(condition);
+        if *condition == before {
+            return;
+        }
+        filter.set_conditions(filter.combine(), conditions);
+        self.apply_filter(root, filter, cx);
+    }
+
+    /// Adds an empty row at the bottom of the panel and puts the keyboard in
+    /// it.
+    fn add_condition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        let mut conditions = filter.conditions().to_vec();
+        conditions.push(Condition::default());
+        filter.set_conditions(filter.combine(), conditions);
+        let row = self.new_row("", cx);
+        let handle = row.input.read(cx).focus_handle(cx);
+        self.rows.push(row);
+        self.apply_filter(root, filter, cx);
+        window.focus(&handle, cx);
+    }
+
+    /// Takes row `key` out of the panel, and its condition out of the filter.
+    fn remove_condition(&mut self, key: usize, cx: &mut Context<Self>) {
+        let Some(index) = self.rows.iter().position(|row| row.key == key) else {
+            return;
+        };
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        let mut conditions = filter.conditions().to_vec();
+        if index < conditions.len() {
+            conditions.remove(index);
+        }
+        self.rows.remove(index);
+        self.open_select = None;
+        filter.set_conditions(filter.combine(), conditions);
+        self.apply_filter(root, filter, cx);
+    }
+
+    /// Empties the panel.
+    fn clear_conditions(&mut self, cx: &mut Context<Self>) {
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        filter.set_conditions(filter.combine(), Vec::new());
+        self.rows.clear();
+        self.open_select = None;
+        self.apply_filter(root, filter, cx);
+    }
+
+    /// Puts the conditions together the other way.
+    fn set_combine(&mut self, combine: Combine, cx: &mut Context<Self>) {
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        if filter.combine() == combine {
+            return;
+        }
+        let conditions = filter.conditions().to_vec();
+        filter.set_conditions(combine, conditions);
+        self.apply_filter(root, filter, cx);
+    }
+
+    /// Opens or closes the conditions panel.
+    ///
+    /// Opening an empty one starts a row, since a panel is opened to write
+    /// one. Closing it is the user done with the conditions, which is when
+    /// they are worth keeping in the history.
+    fn toggle_conditions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.conditions_open {
+            self.conditions_open = false;
+            self.open_select = None;
+            if let Some(root) = self.visible_root(cx) {
+                self.record_history(root, cx);
+            }
+        } else {
+            self.conditions_open = true;
+            if self.rows.is_empty() {
+                self.add_condition(window, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// The connection whose tree is on screen.
@@ -1455,16 +1815,27 @@ impl Explorer {
     /// What the workspace calls whenever the tab on top changes. The box is
     /// shared, so the text it holds has to follow the tree it filters.
     pub fn show_root(&mut self, connection: Option<ConnectionId>, cx: &mut Context<Self>) {
+        let previous = self.visible_root(cx);
+        if previous == connection {
+            return;
+        }
+        // Leaving a tab is done with its filter, which is worth keeping.
+        if let Some(previous) = previous {
+            self.record_history(previous, cx);
+        }
         self.update_source(cx, |source| source.set_visible_root(connection));
         let text = connection
             .and_then(|root| self.tree.read(cx).source().filter(root))
             .map(|filter| filter.text().to_string())
             .unwrap_or_default();
         self.targets_open = false;
+        self.history_open = false;
         if self.filter_input.read(cx).content() != text {
             self.filter_input
                 .update(cx, |input, cx| input.set_content(text, cx));
         }
+        self.rebuild_rows(cx);
+        self.conditions_open = !self.rows.is_empty() && self.conditions_open;
     }
 
     /// The box's text changed: narrow the connection on screen by it.
@@ -1483,6 +1854,7 @@ impl Explorer {
     /// folder that was drawing it.
     fn apply_filter(&mut self, root: ConnectionId, filter: ExplorerFilter, cx: &mut Context<Self>) {
         self.update_source(cx, |source| source.set_filter(root, filter));
+        self.mark_invalid(cx);
         self.tree.update(cx, |tree, cx| {
             let lifted = tree
                 .selected()
@@ -1508,6 +1880,28 @@ impl Explorer {
         self.apply_filter(root, filter, cx);
     }
 
+    /// Reads the box as a regular expression, or as its own terms.
+    fn toggle_regex(&mut self, cx: &mut Context<Self>) {
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        filter.set_regex(!filter.regex());
+        self.apply_filter(root, filter, cx);
+        cx.notify();
+    }
+
+    /// Narrows every database, or only the one the connection landed in.
+    fn set_all_databases(&mut self, all: bool, cx: &mut Context<Self>) {
+        let Some((root, mut filter)) = self.visible_filter(cx) else {
+            return;
+        };
+        if filter.all_databases() == all {
+            return;
+        }
+        filter.set_all_databases(all);
+        self.apply_filter(root, filter, cx);
+    }
+
     /// `Enter` in the box: opens every folder on screen the filter may have
     /// found something in, and hands the keyboard to the tree.
     ///
@@ -1529,6 +1923,9 @@ impl Explorer {
                 tree.expand(folder, cx);
             }
         });
+        if let Some(root) = self.visible_root(cx) {
+            self.record_history(root, cx);
+        }
         self.take_focus(window, cx);
     }
 
@@ -1615,6 +2012,9 @@ impl Explorer {
     /// matching name, and the walk ends at the folders, or at the first level
     /// with no such child.
     pub fn reveal(&mut self, connection: ConnectionId, target: Scope, cx: &mut Context<Self>) {
+        // The same scope is the database the filter narrows by default.
+        let landed = target.clone();
+        self.update_source(cx, |source| source.set_landed(connection, landed));
         let root = NodeId::Connection(connection);
         self.reveals.insert(
             connection,
@@ -1764,78 +2164,391 @@ impl Explorer {
 impl EventEmitter<ExplorerEvent> for Explorer {}
 
 impl Explorer {
-    /// The strip over the tree: the filter box, and the button that says
-    /// which folders it narrows.
+    /// The strip over the tree: the filter box on a line of its own, and under
+    /// it the three buttons — the folders it narrows, the conditions, and the
+    /// history.
+    ///
+    /// Two lines rather than one because the sidebar is narrow, and a box
+    /// squeezed to fit three buttons beside it would show three letters of
+    /// what was typed.
     fn render_filter(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        // The hint follows a language switch, which the box outlives.
-        let placeholder = ts!("explorer.filter_placeholder");
+        let filter = self
+            .visible_filter(cx)
+            .map(|(_, filter)| filter)
+            .unwrap_or_default();
+        // The hint follows a language switch, which the box outlives, and the
+        // mode, which changes what the box takes.
+        let placeholder = if filter.regex() {
+            ts!("explorer.filter_placeholder_regex")
+        } else {
+            ts!("explorer.filter_placeholder")
+        };
         if self.filter_input.read(cx).current_placeholder() != &placeholder {
             self.filter_input
                 .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
         }
-        let targets = self
-            .visible_filter(cx)
-            .map(|(_, filter)| filter.targets())
-            .unwrap_or_default();
-        let open = self.targets_open;
+        let hint = if filter.regex() {
+            ts!("explorer.filter_hint_regex", shortcut = FILTER_CHORD)
+        } else {
+            ts!("explorer.filter_hint", shortcut = FILTER_CHORD)
+        };
         let this = cx.entity();
-        let bounds = self.targets_bounds.clone();
+        let regex = {
+            let this = this.clone();
+            div()
+                .id("explorer-filter-regex")
+                .flex_none()
+                .tooltip(rugpui::tooltip_label(ts!("explorer.filter_regex")))
+                .child(
+                    Button::new("explorer-filter-regex-button", ".*")
+                        .compact()
+                        .variant(if filter.regex() {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Secondary
+                        })
+                        .on_click(move |_, _window, cx| {
+                            this.update(cx, |explorer, cx| explorer.toggle_regex(cx));
+                        }),
+                )
+        };
+
+        let targets = {
+            let open = self.targets_open;
+            let this = this.clone();
+            menu_button(
+                "explorer-filter-targets",
+                ts!("explorer.filter_targets"),
+                if filter.all_databases() {
+                    format!(
+                        "{} \u{b7} {} \u{25be}",
+                        targets_label(filter.targets()),
+                        ts!("explorer.scope_all")
+                    )
+                } else {
+                    format!("{} \u{25be}", targets_label(filter.targets()))
+                },
+                self.targets_bounds.clone(),
+                move |_window, cx| {
+                    this.update(cx, |explorer, cx| {
+                        explorer.targets_open = !open;
+                        cx.notify();
+                    });
+                },
+            )
+        };
+        let conditions = {
+            let live = filter.live_conditions();
+            let label = if live > 0 {
+                ts!("explorer.conditions_count", count = live)
+            } else {
+                ts!("explorer.conditions")
+            };
+            let this = this.clone();
+            div()
+                .id("explorer-filter-conditions")
+                .flex_none()
+                .tooltip(rugpui::tooltip_label(ts!("explorer.conditions_hint")))
+                .child(
+                    Button::new("explorer-filter-conditions-button", label)
+                        .compact()
+                        .variant(if self.conditions_open || live > 0 {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Secondary
+                        })
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |explorer, cx| explorer.toggle_conditions(window, cx));
+                        }),
+                )
+        };
+        let history = {
+            let open = self.history_open;
+            menu_button(
+                "explorer-filter-history",
+                ts!("explorer.history_hint"),
+                format!("{} \u{25be}", ts!("explorer.history")),
+                self.history_bounds.clone(),
+                move |_window, cx| {
+                    this.update(cx, |explorer, cx| {
+                        explorer.history_open = !open;
+                        cx.notify();
+                    });
+                },
+            )
+        };
 
         div()
             .flex()
-            .flex_row()
+            .flex_col()
             .flex_none()
-            .items_center()
             .gap(px(4.))
             .px(px(8.))
             .pb(px(6.))
             .child(
                 div()
-                    .id("explorer-filter-field")
-                    .key_context(FILTER_KEY_CONTEXT)
-                    .flex_1()
-                    .min_w_0()
-                    .tooltip(rugpui::tooltip_label(ts!(
-                        "explorer.filter_hint",
-                        shortcut = FILTER_CHORD
-                    )))
-                    .child(self.filter_input.clone()),
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .id("explorer-filter-field")
+                            .key_context(FILTER_KEY_CONTEXT)
+                            .flex_1()
+                            .min_w_0()
+                            .tooltip(rugpui::tooltip_label(hint))
+                            .child(self.filter_input.clone()),
+                    )
+                    .child(regex),
             )
             .child(
                 div()
-                    .id("explorer-filter-targets")
-                    .relative()
-                    .flex_none()
-                    .tooltip(rugpui::tooltip_label(ts!("explorer.filter_targets")))
-                    .child(
-                        Button::new(
-                            "explorer-filter-targets-button",
-                            format!("{} \u{25be}", targets_label(targets)),
-                        )
-                        .compact()
-                        .variant(ButtonVariant::Secondary)
-                        .on_click(move |_, _window, cx| {
-                            this.update(cx, |explorer, cx| {
-                                explorer.targets_open = !open;
-                                cx.notify();
-                            });
-                        }),
-                    )
-                    .child(
-                        gpui::canvas(move |drawn, _, _| bounds.set(drawn), |_, _, _, _| {})
-                            .absolute()
-                            .size_full(),
-                    ),
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(targets)
+                    .child(conditions)
+                    .child(history),
             )
     }
 
-    /// The menu of folders the filter narrows, while it is out.
+    /// The conditions panel, between the strip and the tree, while it is
+    /// open.
+    fn render_conditions(
+        &self,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        if !self.conditions_open {
+            return None;
+        }
+        let (_, filter) = self.visible_filter(cx)?;
+        let this = cx.entity();
+
+        let combine = {
+            let this = this.clone();
+            Segmented::new("explorer-combine")
+                .options([
+                    ("all", ts!("explorer.combine_all")),
+                    ("any", ts!("explorer.combine_any")),
+                ])
+                .selected(match filter.combine() {
+                    Combine::All => 0,
+                    Combine::Any => 1,
+                })
+                .on_select(move |index, _window, cx| {
+                    let combine = if index == 0 {
+                        Combine::All
+                    } else {
+                        Combine::Any
+                    };
+                    this.update(cx, |explorer, cx| explorer.set_combine(combine, cx));
+                })
+        };
+
+        let rows = self
+            .rows
+            .iter()
+            .zip(filter.conditions())
+            .map(|(row, condition)| {
+                let key = row.key;
+                let pick = |which: bool, options: Vec<SharedString>, selected: SharedString| {
+                    let chosen = this.clone();
+                    let toggled = this.clone();
+                    let open = self.open_select == Some((key, which));
+                    Select::new((
+                        if which {
+                            "explorer-condition-field"
+                        } else {
+                            "explorer-condition-op"
+                        },
+                        key,
+                    ))
+                    .chevron_icon(icons::CHEVRON_DOWN)
+                    .options(options)
+                    .selected(Some(selected))
+                    .open(open)
+                    .on_select(move |index, _label, _window, cx| {
+                        chosen.update(cx, |explorer, cx| {
+                            explorer.open_select = None;
+                            explorer.edit_condition(key, cx, |condition| {
+                                if which {
+                                    if let Some(field) = Field::ALL.get(index) {
+                                        condition.field = *field;
+                                    }
+                                } else if let Some(op) = Op::ALL.get(index) {
+                                    condition.op = *op;
+                                }
+                            });
+                            cx.notify();
+                        });
+                    })
+                    .on_open_change(move |opened, _window, cx| {
+                        toggled.update(cx, |explorer, cx| {
+                            explorer.open_select = opened.then_some((key, which));
+                            cx.notify();
+                        });
+                    })
+                };
+                let field = pick(
+                    true,
+                    Field::ALL.iter().map(|field| field.label()).collect(),
+                    condition.field.label(),
+                );
+                let op = pick(
+                    false,
+                    Op::ALL.iter().map(|op| op.label()).collect(),
+                    condition.op.label(),
+                );
+                let remove = {
+                    let this = this.clone();
+                    Button::new(("explorer-condition-remove", key), "\u{2715}")
+                        .compact()
+                        .variant(ButtonVariant::Ghost)
+                        .on_click(move |_, _window, cx| {
+                            this.update(cx, |explorer, cx| explorer.remove_condition(key, cx));
+                        })
+                };
+                // A comparison that takes no value has no box: an empty one
+                // would look like something still to fill in.
+                let value = if condition.op.takes_value() {
+                    div().min_w_0().child(row.input.clone()).into_any_element()
+                } else {
+                    div().into_any_element()
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(4.))
+                            .child(div().flex_none().w(rugpui::scaled(84., cx)).child(field))
+                            .child(div().flex_1().min_w_0().child(op))
+                            .child(div().flex_none().child(remove)),
+                    )
+                    .child(value)
+            })
+            .collect::<Vec<_>>();
+
+        let add = {
+            let this = this.clone();
+            Button::new("explorer-condition-add", ts!("explorer.condition_add"))
+                .compact()
+                .variant(ButtonVariant::Secondary)
+                .on_click(move |_, window, cx| {
+                    this.update(cx, |explorer, cx| explorer.add_condition(window, cx));
+                })
+        };
+        let clear = Button::new("explorer-condition-clear", ts!("explorer.condition_clear"))
+            .compact()
+            .variant(ButtonVariant::Secondary)
+            .disabled(self.rows.is_empty())
+            .on_click(move |_, _window, cx| {
+                this.update(cx, |explorer, cx| explorer.clear_conditions(cx));
+            });
+
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap(px(6.))
+                .px(px(8.))
+                .py(px(6.))
+                .border_t_1()
+                .border_b_1()
+                .border_color(chrome.border)
+                .child(combine)
+                .children(rows)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .child(add)
+                        .child(clear),
+                ),
+        )
+    }
+
+    /// The history menu, while it is out: the profile's filters, newest
+    /// first, and the row that forgets them.
+    fn render_history_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        if !self.history_open {
+            return None;
+        }
+        let root = self.visible_root(cx)?;
+        let profile = self.profiles.get(&root).copied();
+        let entries = profile
+            .map(|profile| FilterHistory::entries(cx, profile))
+            .unwrap_or_default();
+        let this = cx.entity();
+        let mut rows: Vec<MenuRow> = entries
+            .into_iter()
+            .map(|entry| {
+                let this = this.clone();
+                MenuRow::new(history_label(&entry)).on_activate(move |_window, cx| {
+                    this.update(cx, |explorer, cx| explorer.use_history(&entry, cx));
+                })
+            })
+            .collect();
+        if rows.is_empty() {
+            rows.push(MenuRow::new(ts!("explorer.history_empty")).enabled(false));
+        } else if let Some(profile) = profile {
+            rows.push(MenuRow::separator());
+            rows.push(MenuRow::new(ts!("explorer.history_clear")).on_activate(
+                move |_window, cx| {
+                    FilterHistory::clear(cx, profile);
+                },
+            ));
+        }
+        let under = self.history_bounds.get().bottom_left() + gpui::point(px(0.), px(2.));
+        Some(
+            ContextMenu::new("explorer-filter-history-menu")
+                .position(under)
+                .entries(context_menu::entries(rows))
+                .on_dismiss(move |_window, cx| {
+                    this.update(cx, |explorer, cx| {
+                        explorer.history_open = false;
+                        cx.notify();
+                    });
+                }),
+        )
+    }
+
+    /// The menu of what the filter narrows, while it is out: the database
+    /// the connection landed in or all of them, then the folders.
     fn render_targets_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         if !self.targets_open {
             return None;
         }
-        let targets = self.visible_filter(cx)?.1.targets();
+        let (root, filter) = self.visible_filter(cx)?;
+        let targets = filter.targets();
+        let everywhere = filter.all_databases();
+        let landed = match self.tree.read(cx).source().landed_name(root) {
+            Some(name) => ts!("explorer.scope_landed_named", name = name),
+            None => ts!("explorer.scope_landed"),
+        };
         let this = cx.entity();
+        let scope = |label: SharedString, all: bool| {
+            let this = this.clone();
+            MenuRow::new(label)
+                .checked(everywhere == all)
+                .on_activate(move |_window, cx| {
+                    this.update(cx, |explorer, cx| {
+                        explorer.targets_kept = true;
+                        explorer.set_all_databases(all, cx);
+                    });
+                })
+        };
         let row = |label: SharedString, checked: bool, folder: Option<Folder>| {
             let this = this.clone();
             MenuRow::new(label)
@@ -1848,6 +2561,9 @@ impl Explorer {
                 })
         };
         let mut rows = vec![
+            scope(landed, false),
+            scope(ts!("explorer.scope_all"), true),
+            MenuRow::separator(),
             row(ts!("explorer.filter_all_objects"), targets.is_all(), None),
             MenuRow::separator(),
         ];
@@ -1896,7 +2612,15 @@ impl Explorer {
                 .truncate()
                 .text_size(rugpui::scaled(10., cx))
                 .text_color(chrome.text_muted)
-                .child(ts!("explorer.filter_status", shown = shown, read = read)),
+                .child(match filter.live_conditions() {
+                    0 => ts!("explorer.filter_status", shown = shown, read = read),
+                    count => ts!(
+                        "explorer.filter_status_conditions",
+                        shown = shown,
+                        read = read,
+                        count = count
+                    ),
+                }),
         )
     }
 }
@@ -1933,6 +2657,10 @@ impl Render for Explorer {
         let filter = (!empty).then(|| self.render_filter(cx));
         let status = self.render_filter_status(&chrome, cx);
         let targets_menu = self.render_targets_menu(cx);
+        let history_menu = self.render_history_menu(cx);
+        let conditions = (!empty)
+            .then(|| self.render_conditions(&chrome, cx))
+            .flatten();
 
         div()
             .id("explorer")
@@ -1972,6 +2700,7 @@ impl Render for Explorer {
                     ),
             )
             .children(filter)
+            .children(conditions)
             .child(if empty {
                 // A tree with no roots would draw as a blank rectangle, which
                 // reads as broken rather than as empty.
@@ -2003,11 +2732,15 @@ impl Render for Explorer {
             })
             .children(status)
             .children(targets_menu)
+            .children(history_menu)
             .on_action(cx.listener(|explorer, _: &FocusFilter, window, cx| {
                 explorer.focus_filter(window, cx);
             }))
             .on_action(cx.listener(|explorer, _: &ClearFilter, window, cx| {
                 explorer.clear_filter(window, cx);
+            }))
+            .on_action(cx.listener(|explorer, _: &ToggleRegex, _window, cx| {
+                explorer.toggle_regex(cx);
             }))
             // `Shift+F10` and the Menu key: the selected node's menu, the one a
             // right click on it raises.
@@ -3502,6 +4235,235 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_connected_database_is_the_catalog_or_where_there_is_none_the_schema() {
+        let at = |catalog: Option<&str>, schema: Option<&str>| Scope {
+            catalog: catalog.map(str::to_string),
+            schema: schema.map(str::to_string),
+        };
+        // PostgreSQL, SQL Server: every schema of the database connected to.
+        let postgres = at(Some("app"), Some("public"));
+        assert!(in_database(&postgres, &at(Some("app"), Some("sales"))));
+        assert!(!in_database(&postgres, &at(Some("other"), Some("public"))));
+        // A catalog level nobody named rules nothing out.
+        assert!(in_database(&postgres, &at(None, Some("sales"))));
+        // MySQL: the catalog is the database, whatever case it comes back in.
+        assert!(in_database(
+            &at(Some("shop"), None),
+            &at(Some("SHOP"), None)
+        ));
+        // Oracle: no catalogs, so the user's own schema.
+        let oracle = at(None, Some("SCOTT"));
+        assert!(in_database(&oracle, &at(None, Some("scott"))));
+        assert!(!in_database(&oracle, &at(None, Some("HR"))));
+        // SQLite: neither level, so everything.
+        assert!(in_database(&at(None, None), &at(None, None)));
+    }
+
+    #[test]
+    fn the_filter_narrows_the_database_the_session_landed_in_unless_told_otherwise() {
+        let mut source = ExplorerSource::default();
+        show_live_root(&mut source);
+        let scope_in = |catalog: &str| Scope {
+            catalog: Some(catalog.to_string()),
+            schema: Some("public".to_string()),
+        };
+        let folder_in = |catalog: &str| NodeId::Folder {
+            connection: C,
+            scope: scope_in(catalog),
+            folder: Folder::Tables,
+        };
+        let objects_in = |catalog: &str| {
+            ["orders", "customer"]
+                .map(|name| {
+                    Child::plain(NodeId::Object {
+                        connection: C,
+                        scope: scope_in(catalog),
+                        folder: Folder::Tables,
+                        name: name.to_string(),
+                    })
+                })
+                .to_vec()
+        };
+        let app = folder_in("app");
+        let other = folder_in("other");
+        source.set_children(app.clone(), objects_in("app"));
+        source.set_children(other.clone(), objects_in("other"));
+        source.set_filter(C, filter("cust", FolderSet::ALL));
+        // Where the session landed is not known yet: every database narrows.
+        assert_eq!(source.matched(&app), Some(1));
+        assert_eq!(source.matched(&other), Some(1));
+
+        source.set_landed(
+            C,
+            Scope {
+                catalog: Some("APP".to_string()),
+                schema: Some("public".to_string()),
+            },
+        );
+        assert_eq!(source.landed_name(C), Some("APP"));
+        assert_eq!(names_in(&source, &app), ["customer"]);
+        assert_eq!(names_in(&source, &other), ["orders", "customer"]);
+        assert_eq!(source.matched(&other), None);
+        assert!(!source.may_match(&other));
+        assert_eq!(source.filter_totals(C), (1, 2));
+
+        let mut everywhere = filter("cust", FolderSet::ALL);
+        everywhere.set_all_databases(true);
+        source.set_filter(C, everywhere);
+        assert_eq!(names_in(&source, &other), ["customer"]);
+        assert_eq!(source.filter_totals(C), (2, 4));
+    }
+
+    #[gpui::test]
+    fn the_conditions_panel_narrows_and_a_used_filter_comes_back_from_the_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let profile = Uuid::new_v4();
+        let root = NodeId::Connection(C);
+        let (tables, items) = folder_of(Folder::Tables, &["orders", "customer", "audit"]);
+        window
+            .update(cx, |explorer, window, cx| {
+                explorer.update_source(cx, |source| {
+                    show_live_root(source);
+                    source.set_children(root.clone(), vec![Child::plain(tables.clone())]);
+                    source.set_children(tables.clone(), items);
+                });
+                explorer.set_profile(C, profile);
+                // Opening an empty panel starts a row.
+                explorer.toggle_conditions(window, cx);
+                assert!(explorer.conditions_open);
+                assert_eq!(explorer.rows.len(), 1);
+                let key = explorer.rows[0].key;
+                explorer.edit_condition(key, cx, |condition| condition.op = Op::StartsWith);
+                // Still no value: the row narrows nothing yet.
+                assert_eq!(names_in(explorer.tree.read(cx).source(), &tables).len(), 3);
+            })
+            .unwrap();
+        // Typed in a later update, as a user types: gpui turns a new
+        // subscription on only after the update that made it, so a value set
+        // in that same update would go unseen.
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.rows[0]
+                    .input
+                    .update(cx, |input, cx| input.set_content("cu", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, window, cx| {
+                assert_eq!(
+                    names_in(explorer.tree.read(cx).source(), &tables),
+                    ["customer"]
+                );
+                // Closing the panel is the filter used: into the history.
+                explorer.toggle_conditions(window, cx);
+                let entries = FilterHistory::entries(cx, profile);
+                assert_eq!(entries.len(), 1);
+                assert_eq!(
+                    entries[0].conditions,
+                    vec![Condition {
+                        field: Field::Name,
+                        op: Op::StartsWith,
+                        value: "cu".to_string(),
+                    }]
+                );
+
+                explorer.clear_conditions(cx);
+                assert!(explorer.rows.is_empty());
+                assert_eq!(names_in(explorer.tree.read(cx).source(), &tables).len(), 3);
+
+                explorer.use_history(&entries[0], cx);
+                assert!(explorer.conditions_open);
+                assert_eq!(explorer.rows.len(), 1);
+                assert_eq!(explorer.rows[0].input.read(cx).content(), "cu");
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                assert_eq!(
+                    names_in(explorer.tree.read(cx).source(), &tables),
+                    ["customer"]
+                );
+                let key = explorer.rows[0].key;
+                explorer.remove_condition(key, cx);
+                assert!(explorer.rows.is_empty());
+                assert_eq!(names_in(explorer.tree.read(cx).source(), &tables).len(), 3);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn leaving_a_tab_keeps_its_filter_in_its_profiles_history(cx: &mut gpui::TestAppContext) {
+        const D: ConnectionId = ConnectionId(2);
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, |source| {
+                    for connection in [C, D] {
+                        source.upsert_root(
+                            connection,
+                            RootInfo {
+                                name: "test".into(),
+                                color: None,
+                                live: true,
+                            },
+                        );
+                    }
+                });
+                explorer.set_profile(C, first);
+                explorer.set_profile(D, second);
+                explorer.show_root(Some(C), cx);
+                explorer
+                    .filter_input
+                    .update(cx, |input, cx| input.set_content("orders", cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.show_root(Some(D), cx);
+                let kept = FilterHistory::entries(cx, first);
+                assert_eq!(kept.len(), 1);
+                assert_eq!(kept[0].text, "orders");
+                assert!(FilterHistory::entries(cx, second).is_empty());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_history_entry_reads_as_its_text_conditions_and_folders() {
+        let entry = FilterSnapshot {
+            text: "cust".to_string(),
+            targets: Some(vec![Folder::Views]),
+            combine: Combine::All,
+            conditions: vec![Condition {
+                field: Field::Remarks,
+                op: Op::NotEmpty,
+                value: String::new(),
+            }],
+            all_databases: true,
+            regex: false,
+        };
+        assert_eq!(
+            history_label(&entry).to_string(),
+            format!(
+                "cust  \u{b7}  {} {}  \u{b7}  [{}]  \u{b7}  [{}]",
+                Field::Remarks.label(),
+                Op::NotEmpty.label(),
+                Folder::Views.label(),
+                ts!("explorer.scope_all")
+            )
+        );
+    }
+
+    #[test]
     fn the_targets_button_names_what_the_filter_narrows() {
         assert_eq!(targets_label(FolderSet::ALL), ts!("explorer.filter_all"));
         assert_eq!(targets_label(FolderSet::NONE), ts!("explorer.filter_none"));
@@ -3540,7 +4502,37 @@ pub(crate) mod tests {
             ts!("explorer.filter_more", first = "x", count = 1),
             ts!("explorer.filter_all_objects"),
             ts!("explorer.filter_status", shown = 1, read = 2),
-        ] {
+            ts!(
+                "explorer.filter_status_conditions",
+                shown = 1,
+                read = 2,
+                count = 1
+            ),
+            ts!("explorer.conditions"),
+            ts!("explorer.conditions_count", count = 2),
+            ts!("explorer.conditions_hint"),
+            ts!("explorer.combine_all"),
+            ts!("explorer.combine_any"),
+            ts!("explorer.combine_and"),
+            ts!("explorer.combine_or"),
+            ts!("explorer.condition_value"),
+            ts!("explorer.condition_add"),
+            ts!("explorer.condition_clear"),
+            ts!("explorer.history"),
+            ts!("explorer.history_hint"),
+            ts!("explorer.history_empty"),
+            ts!("explorer.history_clear"),
+            ts!("explorer.scope_landed_named", name = "app"),
+            ts!("explorer.scope_landed"),
+            ts!("explorer.scope_all"),
+            ts!("explorer.filter_placeholder_regex"),
+            ts!("explorer.filter_hint_regex", shortcut = FILTER_CHORD),
+            ts!("explorer.filter_regex"),
+        ]
+        .into_iter()
+        .chain(Field::ALL.map(Field::label))
+        .chain(Op::ALL.map(Op::label))
+        {
             assert!(!label.is_empty());
             assert!(!label.starts_with("explorer."), "{label:?}");
         }

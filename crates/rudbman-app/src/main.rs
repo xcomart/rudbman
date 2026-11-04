@@ -20,6 +20,7 @@ mod erd_layout;
 mod erd_pane;
 mod explorer;
 mod explorer_filter;
+mod explorer_history;
 mod extract_dialog;
 mod i18n;
 mod icons;
