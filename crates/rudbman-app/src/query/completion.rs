@@ -74,6 +74,9 @@ pub(super) struct CompletionState {
     loading: bool,
     pub(super) wanted: bool,
     pub(super) explicit: bool,
+    /// Where the word being completed starts. A caret move keeps the popup
+    /// only while the caret's own word still starts here.
+    start: Option<usize>,
     dismissed: Option<Snapshot>,
     debounce: Option<Task<()>>,
 }
@@ -83,6 +86,24 @@ impl QueryPane {
         self.context_menu = None;
         self.completion.dismissed = None;
         self.refresh_completion(true, window, cx);
+    }
+
+    /// The caret moved while completion was wanted.
+    ///
+    /// Walking inside the word being completed re-filters the list, as typing
+    /// would. Anywhere else — another identifier, whitespace, another
+    /// statement, a selection — takes it down: recomputing there would make
+    /// the popup chase the caret round the script.
+    pub(super) fn completion_caret_moved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        let on_the_word = Snapshot::read(editor)
+            .request(self.dialect, self.completion.explicit)
+            .is_some_and(|request| Some(request.replace.start) == self.completion.start);
+        if on_the_word {
+            self.refresh_completion(self.completion.explicit, window, cx);
+        } else {
+            self.close_completion(cx);
+        }
     }
 
     pub(super) fn refresh_completion(
@@ -120,6 +141,7 @@ impl QueryPane {
         };
         self.completion.wanted = true;
         self.completion.explicit = explicit;
+        self.completion.start = Some(request.replace.start);
         let items = request.candidates(self.dialect, &self.completion.tables);
         let selected = self
             .completion
@@ -244,6 +266,7 @@ impl QueryPane {
         let editor = self.editor.read(cx);
         self.completion.dismissed = Some(Snapshot::read(editor));
         self.completion.wanted = false;
+        self.completion.start = None;
         self.completion.debounce = None;
         if self.completion.popup.take().is_some() {
             self.editor

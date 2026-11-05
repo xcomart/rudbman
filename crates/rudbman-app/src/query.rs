@@ -901,7 +901,7 @@ impl QueryPane {
                     }
                     EditorEvent::SelectionChanged => {
                         if pane.completion.wanted {
-                            pane.refresh_completion(pane.completion.explicit, window, cx);
+                            pane.completion_caret_moved(window, cx);
                         }
                         cx.notify();
                     }
