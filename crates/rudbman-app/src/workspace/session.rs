@@ -855,6 +855,8 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
+        // CUSTOMER has to outlive the only session to its database.
+        connection::h2::keep_driver_loaded();
         let expected = window
             .update(cx, |workspace, window, cx| {
                 let expected = workspace.connections[0].work.snapshot(cx);

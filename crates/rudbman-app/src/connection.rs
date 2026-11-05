@@ -1062,6 +1062,33 @@ pub(crate) mod h2 {
             "sa",
         )
     }
+
+    /// Keeps the H2 driver's class loader open for the rest of the test process.
+    ///
+    /// The bridge closes a driver's class loader together with the last
+    /// session that uses it, and H2 keeps its in-memory databases in that
+    /// loader's statics. Closing the only H2 session and connecting again
+    /// therefore loads a new, empty engine, `DB_CLOSE_DELAY=-1` or not: the
+    /// database is gone, not just closed. A test that closes a connection and
+    /// reconnects to the same in-memory database calls this before the close.
+    /// Without it the test passes only while some other test running alongside
+    /// happens to hold an H2 session.
+    ///
+    /// The pin is a session to a database of its own, opened once and never
+    /// closed. A failure to open it is left for the test's own connection to
+    /// report.
+    pub fn keep_driver_loaded() {
+        static PIN: std::sync::OnceLock<Option<super::Connected>> = std::sync::OnceLock::new();
+        PIN.get_or_init(|| {
+            super::connect(
+                &profile("driver-loader-pin"),
+                &driver(),
+                &super::Credentials::typed(Some(String::new()), None),
+                &super::AppSettings::default(),
+            )
+            .ok()
+        });
+    }
 }
 
 #[cfg(test)]
