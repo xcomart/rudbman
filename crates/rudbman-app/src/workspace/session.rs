@@ -4,6 +4,7 @@
 use super::*;
 use crate::builder_pane::BuilderWorkspace;
 use crate::explorer::Scope;
+use crate::explorer_filter::FilterSnapshot;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -16,6 +17,15 @@ pub(super) struct SavedWorkspace {
     active_pane: usize,
     next_query: u64,
     next_builder: u64,
+    /// The explorer's filter over the connection, as it was left: closing the
+    /// tab and connecting again, or restarting, finds the tree narrowed the
+    /// same way. `None` — and nothing written — for a filter that narrows
+    /// nothing, which is also what a file from before this field reads as.
+    ///
+    /// Not part of [`WorkArea::snapshot`], which knows nothing of the sidebar:
+    /// [`Workspace::connection_snapshot`] adds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    explorer_filter: Option<FilterSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -127,6 +137,7 @@ impl WorkArea {
                 .unwrap_or(0),
             next_query: self.next_query,
             next_builder: self.next_builder,
+            explorer_filter: None,
         }
     }
 
@@ -301,8 +312,17 @@ fn write_pending(
 }
 
 impl Workspace {
+    /// What connection `index` saves as its profile's workspace: its work
+    /// area, and the explorer's filter over it.
+    fn connection_snapshot(&self, index: usize, cx: &App) -> Option<SavedWorkspace> {
+        let open = self.connections.get(index)?;
+        let mut snapshot = open.work.snapshot(cx);
+        snapshot.explorer_filter = self.explorer.read(cx).saved_filter(open.id, cx);
+        Some(snapshot)
+    }
+
     fn checkpoint_connection(&mut self, index: usize, cx: &App) {
-        let Some(open) = self.connections.get_mut(index) else {
+        let Some(open) = self.connections.get(index) else {
             return;
         };
         if !matches!(
@@ -311,7 +331,10 @@ impl Workspace {
         ) {
             return;
         }
-        let snapshot = open.work.snapshot(cx);
+        let Some(snapshot) = self.connection_snapshot(index, cx) else {
+            return;
+        };
+        let open = &mut self.connections[index];
         if open.work.checkpoint.as_ref() != Some(&snapshot) {
             self.sessions.queue(open.profile.id, snapshot.clone());
             open.work.checkpoint = Some(snapshot);
@@ -518,7 +541,14 @@ impl Workspace {
             .unwrap_or(first);
         area.next_query = area.next_query.max(saved.next_query);
         area.next_builder = area.next_builder.max(saved.next_builder);
-        area.checkpoint = Some(area.snapshot(cx));
+        // Only a saved filter is put back. A reconnect of a dead tab hands in
+        // its work area alone, and the explorer kept that tab's filter all
+        // along under the same connection.
+        if let Some(filter) = &saved.explorer_filter {
+            self.explorer
+                .update(cx, |explorer, cx| explorer.restore_filter(id, filter, cx));
+        }
+        self.connections[index].work.checkpoint = self.connection_snapshot(index, cx);
         self.active_connection = previous;
         if index == previous && !self.dialog_open(cx) {
             self.focus_active_tab(self.connections[index].work.active(), window, cx);
@@ -914,6 +944,75 @@ mod tests {
         assert_eq!(saved.load(second), Some(second_state));
     }
 
+    /// The explorer's filter goes with the profile's workspace: a tab closed
+    /// with the tree narrowed comes back narrowed the same way on the next
+    /// connection, and one closed with nothing narrowed writes nothing.
+    #[gpui::test]
+    fn the_explorer_filter_survives_closing_and_connecting_again(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let (window, id) =
+            workspace_over_h2_with("workspace-filter", &["set db_close_delay -1"], cx);
+        let filter = FilterSnapshot {
+            text: "cust".into(),
+            targets: Some(vec![Folder::Tables]),
+            all_databases: true,
+            ..FilterSnapshot::default()
+        };
+        let profile = window
+            .update(cx, |workspace, window, cx| {
+                workspace.sessions = storage(directory.path());
+                let narrowed = filter.clone();
+                workspace.explorer.update(cx, |explorer, cx| {
+                    explorer.restore_filter(id, &narrowed, cx)
+                });
+                let profile = workspace.connections[0].profile.clone();
+                workspace.close_connection(0, window, cx);
+                profile
+            })
+            .unwrap();
+        assert_eq!(
+            storage(directory.path())
+                .load(profile.id)
+                .and_then(|saved| saved.explorer_filter),
+            Some(filter.clone())
+        );
+        cx.run_until_parked();
+
+        let connect = || {
+            connection::connect(
+                &profile,
+                &connection::h2::driver(),
+                &connection::Credentials::typed(Some(String::new()), None),
+                &AppSettings::default(),
+            )
+            .unwrap()
+        };
+        let connected = connect();
+        window
+            .update(cx, |workspace, window, cx| {
+                let reopened = push_connection(workspace, profile.clone(), connected, window, cx);
+                assert_ne!(reopened, id);
+                workspace.restore_connection_workspace(0, window, cx);
+                assert_eq!(
+                    workspace.explorer.read(cx).saved_filter(reopened, cx),
+                    Some(filter.clone())
+                );
+
+                // Put back to nothing, and closed: nothing to bring back.
+                workspace.explorer.update(cx, |explorer, cx| {
+                    explorer.restore_filter(reopened, &FilterSnapshot::default(), cx)
+                });
+                workspace.close_connection(0, window, cx);
+            })
+            .unwrap();
+        assert_eq!(
+            storage(directory.path())
+                .load(profile.id)
+                .map(|saved| saved.explorer_filter),
+            Some(None)
+        );
+    }
+
     #[gpui::test]
     fn closing_the_last_tab_saves_an_empty_workspace(cx: &mut gpui::TestAppContext) {
         let directory = tempfile::tempdir().unwrap();
@@ -981,6 +1080,7 @@ mod tests {
             active_pane: 0,
             next_query: 1,
             next_builder: 1,
+            explorer_filter: None,
         };
         let mut future = state.clone();
         future.version = 2;

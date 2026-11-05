@@ -1683,6 +1683,36 @@ impl Explorer {
         FilterHistory::record(cx, profile, snapshot);
     }
 
+    /// What `connection`'s filter is saved as with its profile's workspace,
+    /// or `None` while it lets through what a new tab's would.
+    pub fn saved_filter(&self, connection: ConnectionId, cx: &App) -> Option<FilterSnapshot> {
+        let snapshot = self.tree.read(cx).source().filter(connection)?.snapshot();
+        (snapshot != ExplorerFilter::default().snapshot()).then_some(snapshot)
+    }
+
+    /// Gives `connection` the filter its profile's workspace was saved with —
+    /// the one left on the tree when the profile's tab last closed — with the
+    /// box and the conditions panel's rows following it when the tree is on
+    /// screen. The panel stays shut: the Conditions button already says how
+    /// many there are.
+    pub fn restore_filter(
+        &mut self,
+        connection: ConnectionId,
+        snapshot: &FilterSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_filter(connection, ExplorerFilter::from_snapshot(snapshot), cx);
+        if self.visible_root(cx) == Some(connection) {
+            if self.filter_input.read(cx).content() != snapshot.text {
+                let text = snapshot.text.clone();
+                self.filter_input
+                    .update(cx, |input, cx| input.set_content(text, cx));
+            }
+            self.rebuild_rows(cx);
+        }
+        cx.notify();
+    }
+
     /// Puts a filter from the history back: its text, its folders and its
     /// conditions, with the panel open when it has any.
     fn use_history(&mut self, snapshot: &FilterSnapshot, cx: &mut Context<Self>) {
@@ -4776,6 +4806,54 @@ pub(crate) mod tests {
         window
             .update(cx, |explorer, _window, cx| {
                 assert!(explorer.filter_is_reset(cx));
+            })
+            .unwrap();
+    }
+
+    /// A filter put back from a saved workspace lands in the box and the
+    /// panel's rows of the tree on screen, narrows the tree, and is what the
+    /// workspace would save again; one that narrows nothing saves as nothing.
+    #[gpui::test]
+    fn a_restored_filter_fills_the_box_and_is_saved_back(cx: &mut gpui::TestAppContext) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        let (tables, items) = folder_of(Folder::Tables, &["orders", "customer", "audit"]);
+        let saved = FilterSnapshot {
+            text: "cust".to_string(),
+            conditions: vec![Condition {
+                field: Field::Name,
+                op: Op::EndsWith,
+                value: "mer".to_string(),
+            }],
+            ..FilterSnapshot::default()
+        };
+        window
+            .update(cx, |explorer, _window, cx| {
+                explorer.update_source(cx, |source| {
+                    show_live_root(source);
+                    source.set_children(root.clone(), vec![Child::plain(tables.clone())]);
+                    source.set_children(tables.clone(), items);
+                });
+                assert_eq!(explorer.saved_filter(C, cx), None, "none set yet");
+                explorer.restore_filter(C, &saved, cx);
+                assert_eq!(explorer.filter_input.read(cx).content(), "cust");
+                assert_eq!(explorer.rows.len(), 1);
+                assert!(!explorer.conditions_open);
+                assert_eq!(
+                    names_in(explorer.tree.read(cx).source(), &tables),
+                    ["customer"]
+                );
+                assert_eq!(explorer.saved_filter(C, cx), Some(saved.clone()));
+            })
+            .unwrap();
+        // The box's notice of its new text finds the filter already set.
+        cx.run_until_parked();
+        window
+            .update(cx, |explorer, _window, cx| {
+                assert_eq!(explorer.saved_filter(C, cx), Some(saved.clone()));
+                explorer.reset_filter(cx);
+                assert_eq!(explorer.saved_filter(C, cx), None);
             })
             .unwrap();
     }
