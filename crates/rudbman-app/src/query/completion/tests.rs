@@ -80,6 +80,47 @@ fn completion_keyboard_accepts_undoes_dismisses_and_preserves_execution(
         .unwrap();
 }
 
+/// The popup stays with the word it was opened for: walking inside that word
+/// re-filters it, and putting the caret anywhere else takes it down instead
+/// of reopening it there.
+#[gpui::test]
+fn completion_does_not_follow_the_caret_away(cx: &mut gpui::TestAppContext) {
+    let (connected, profile) = h2("completion_caret", &[]);
+    let handle = pane(&connected, &profile, 100, cx);
+    let mut cx = VisualTestContext::from_window(handle.into(), cx);
+    let open = |cx: &mut VisualTestContext| {
+        handle
+            .update(cx, |pane, _, _| pane.completion.popup.is_some())
+            .unwrap()
+    };
+
+    source(&handle, "SELECT 1; sel|", &mut cx);
+    cx.simulate_keystrokes("ctrl-space");
+    assert!(open(&mut cx), "Ctrl+Space offered nothing");
+    // Back to the head of the same word: still that word.
+    cx.simulate_keystrokes("left left left");
+    assert!(open(&mut cx), "walking inside the word closed it");
+    // One more step is the space before it, where Ctrl+Space would offer
+    // every keyword: the old popup must not reappear there.
+    cx.simulate_keystrokes("left");
+    assert!(!open(&mut cx), "the popup followed the caret");
+
+    // Onto another keyword, and over the word itself.
+    source(&handle, "SELECT 1; sel|", &mut cx);
+    cx.simulate_keystrokes("ctrl-space");
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            pane.editor.update(cx, |editor, cx| editor.move_to(2, cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(!open(&mut cx), "the popup moved onto SELECT");
+
+    source(&handle, "SELECT 1; sel|", &mut cx);
+    cx.simulate_keystrokes("ctrl-space shift-left");
+    assert!(!open(&mut cx), "the popup survived a selection");
+}
+
 #[gpui::test]
 fn completion_reads_real_table_and_alias_columns_and_stays_closed_after_blur(
     cx: &mut gpui::TestAppContext,

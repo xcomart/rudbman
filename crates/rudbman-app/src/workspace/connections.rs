@@ -296,6 +296,38 @@ impl Workspace {
         self.focus_shell(window, cx);
     }
 
+    /// Hands every open tab the hide lists its profile was last saved with,
+    /// and reloads the tree of each whose lists changed.
+    ///
+    /// Only the lists: everything else a tab took from its profile — the URL,
+    /// the user, read-only — belongs to the session it opened, and changes
+    /// with the next connect. The lists only say what the tree shows, so an
+    /// edit to them is seen at once, with the tree's expansion kept.
+    pub(super) fn sync_hide_lists(&mut self, cx: &mut Context<Self>) {
+        for index in 0..self.connections.len() {
+            let profile = self.connections[index].profile.id;
+            let Some(saved) = self
+                .profiles
+                .get(profile)
+                .map(|saved| saved.explorer.clone())
+            else {
+                continue;
+            };
+            let open = &mut self.connections[index];
+            if open.profile.explorer == saved {
+                continue;
+            }
+            open.profile.explorer = saved.clone();
+            let id = open.id;
+            let live = matches!(open.state, ConnectionState::Open(_));
+            self.explorer.update(cx, |explorer, cx| {
+                if explorer.set_hide(id, &saved) && live {
+                    explorer.reload(&NodeId::Connection(id), cx);
+                }
+            });
+        }
+    }
+
     /// The session of one connection, when it is open.
     pub(super) fn session_of(&self, connection: ConnectionId) -> Option<connection::SessionHandle> {
         self.connections
@@ -328,9 +360,10 @@ impl Workspace {
             return;
         };
 
+        let hide = self.explorer.read(cx).hide_rules(node.connection());
         let fetch = cx.background_spawn({
             let node = node.clone();
-            async move { explorer::load_children(session.session(), &node) }
+            async move { explorer::load_children(session.session(), &node, &hide) }
         });
         let explorer = self.explorer.clone();
         cx.spawn(async move |_workspace, cx| {

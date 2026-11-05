@@ -238,6 +238,7 @@ connect:
   section:
     behavior: Verhalten
     tunnel: SSH-Tunnel
+    explorer: "Im Explorer ausblenden"
 
   read_only: Verbindung schreibgeschützt öffnen
   auto_commit: Jede Anweisung beim Ausführen sofort festschreiben
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: Passphrase des Schlüssels
   tunnel_remote: Datenbank
   tunnel_hint: Die Datenbank wird so benannt, wie der Bastion-Host sie sieht. rudbman bindet einen freien lokalen Port und verbindet den Treiber damit.
+
+  hide_hint: "Namen, die der Explorer-Baum auslässt. Ein regulärer Ausdruck pro Zeile, verglichen mit dem ganzen Namen, ohne Groß-/Kleinschreibung. Eine Katalog- oder Schemaebene, in der nur ein Eintrag bleibt, wird übersprungen."
+  hide_catalogs: "Kataloge"
+  hide_schemas: "Schemas"
+  hide_objects: "Objekte"
+  hide_show_only: "Nur anzeigen, was die Liste trifft"
+  hide_folders: "Gilt für"
+  hide_invalid: "Zeile %{line} ist kein gültiger regulärer Ausdruck: %{reason}"
+  hide_refused: "Nicht gespeichert: Eine Ausblendliste im Explorer-Abschnitt enthält einen ungültigen regulären Ausdruck."
+  hide_count: "Muster: %{count}"
 
   test: Testen
   testing: Verbindung wird hergestellt…
@@ -358,6 +369,53 @@ explorer:
   disconnected: Die Verbindung ist geschlossen.
   unknown_connection: "(Verbindung)"
   load_failed_unknown: Das konnte nicht geladen werden.
+
+  filter_placeholder: "Nach Name filtern"
+  filter_hint: "Komma bedeutet „oder“, * und ? sind Platzhalter, ! schließt aus (%{shortcut})"
+  filter_placeholder_regex: "Mit regulärem Ausdruck filtern"
+  filter_hint_regex: "Ein regulärer Ausdruck, der irgendwo im Namen passt, ohne Groß-/Kleinschreibung (%{shortcut})"
+  filter_hint_enter: "Enter öffnet die Ordner mit Treffern"
+  filter_regex: "Eingabe als regulären Ausdruck lesen (Alt+R)"
+  filter_targets: "Ordner, die der Filter eingrenzt"
+  filter_all: "Alle"
+  filter_none: "Keine"
+  filter_more: "%{first} +%{count}"
+  filter_all_objects: "Alle Objekte"
+  filter_status: "%{shown} von %{read} geladenen Objekten passen"
+  filter_status_conditions: "%{shown} von %{read} geladenen Objekten passen · %{count} Bedingungen"
+  conditions: "Bedingungen"
+  conditions_count: "Bedingungen %{count}"
+  conditions_hint: "Nach mehr als dem Namen eingrenzen: Kommentar, Schema, Platzhalter, regulärer Ausdruck"
+  combine_all: "Alle erfüllt"
+  combine_any: "Eine erfüllt"
+  combine_and: "und"
+  combine_or: "oder"
+  condition_value: "Wert"
+  condition_add: "+ Bedingung"
+  condition_clear: "Leeren"
+  field_name: "Name"
+  field_remarks: "Kommentar"
+  field_schema: "Schema"
+  op_contains: "enthält"
+  op_not_contains: "enthält nicht"
+  op_starts_with: "beginnt mit"
+  op_ends_with: "endet mit"
+  op_equals: "ist"
+  op_wildcard: "Platzhalter"
+  op_regex: "Regex"
+  op_empty: "ist leer"
+  op_not_empty: "ist nicht leer"
+  history: "Verlauf"
+  history_hint: "Filter, die mit diesem Verbindungsprofil benutzt wurden"
+  history_remove_note: "Einen Eintrag mit seinem × oder der Entf-Taste entfernen"
+  history_empty: "Noch keine Filter benutzt"
+  history_clear: "Verlauf dieser Verbindung löschen"
+  filter_reset: "Zurücksetzen"
+  filter_reset_hint: "Setzt Text, Bedingungen und Ordner auf den Anfang zurück"
+  filter_reset_note: "Der Verlauf bleibt und behält den zurückgesetzten Filter"
+  scope_landed_named: "Nur verbundene Datenbank (%{name})"
+  scope_landed: "Nur verbundene Datenbank"
+  scope_all: "Alle Datenbanken"
 
   tables: Tabellen
   views: Sichten

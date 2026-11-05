@@ -69,9 +69,10 @@ use rudbman_core::{
 };
 use rugpui::{
     Button, ButtonVariant, DraggedTab, DraggedThumb, EditorThemeEntry, EditorThemeRegistry,
-    MenuButton, MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarState, Splitter,
-    TabBar, TabDropState, TabItem, TabStatus, Theme, ThemeRegistry, hide_later, hide_now, modal,
-    scroll_to, scrolled, set_editor_theme, set_theme, set_window_tint, theme, theme_store,
+    MenuButton, MenuEntry, ResizeHandle, Scrollbar, ScrollbarAxis, ScrollbarExt as _,
+    ScrollbarState, Splitter, TabBar, TabDropState, TabItem, TabStatus, Theme, ThemeRegistry,
+    hide_later, hide_now, modal, scroll_to, scrolled, set_editor_theme, set_theme, set_window_tint,
+    theme, theme_store,
 };
 use rugpui_shell::chrome::{
     apply_client_inset, client_tiling, draws_own_titlebar, opening_client_inset,
@@ -772,6 +773,12 @@ struct Workspace {
     /// The close question's default answer — Save over a file, Cancel over a
     /// connection — which takes the keyboard when the question opens.
     close_focus: FocusHandle,
+    /// Scroll of what the close question lists, the write confirmation's
+    /// statement and the connection card's message: each scrolls past a few
+    /// lines, and none is drawn for long enough to want a handle of its own.
+    close_scroll: ScrollHandle,
+    confirm_scroll: ScrollHandle,
+    card_scroll: ScrollHandle,
     /// The connection tab that asked the dialog for a password to reconnect
     /// with, and the profile it asked about; see [`Workspace::reconnect_with`].
     pending_reconnect: Option<(ConnectionId, Uuid)>,
@@ -935,6 +942,9 @@ impl Workspace {
             close_question: None,
             confirm_focus: cx.focus_handle(),
             close_focus: cx.focus_handle(),
+            close_scroll: ScrollHandle::new(),
+            confirm_scroll: ScrollHandle::new(),
+            card_scroll: ScrollHandle::new(),
             pending_reconnect: None,
             focus_origin: FocusOrigin::Shell,
             tab_drop: TabDropState::new(),

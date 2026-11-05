@@ -238,6 +238,7 @@ connect:
   section:
     behavior: Поведение
     tunnel: SSH-туннель
+    explorer: "Скрывать в обозревателе"
 
   read_only: Открывать подключение только для чтения
   auto_commit: Фиксировать каждую инструкцию сразу после выполнения
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: Парольная фраза ключа
   tunnel_remote: База данных
   tunnel_hint: База данных указывается так, как её видит бастион. rudbman занимает свободный локальный порт и подключает драйвер к нему.
+
+  hide_hint: "Имена, которые дерево обозревателя пропускает. Одно регулярное выражение на строку, сравнивается со всем именем, без учёта регистра. Уровень каталога или схемы, где остался один элемент, пропускается."
+  hide_catalogs: "Каталоги"
+  hide_schemas: "Схемы"
+  hide_objects: "Объекты"
+  hide_show_only: "Показывать только то, что совпадает со списком"
+  hide_folders: "Применяется к"
+  hide_invalid: "Строка %{line} — неверное регулярное выражение: %{reason}"
+  hide_refused: "Не сохранено: в списке скрытия раздела обозревателя есть неверное регулярное выражение."
+  hide_count: "Шаблонов: %{count}"
 
   test: Проверить
   testing: Подключение…
@@ -358,6 +369,53 @@ explorer:
   disconnected: Подключение закрыто.
   unknown_connection: "(подключение)"
   load_failed_unknown: Не удалось загрузить.
+
+  filter_placeholder: "Фильтр по имени"
+  filter_hint: "Запятая означает «или», * и ? — подстановочные знаки, ! исключает (%{shortcut})"
+  filter_placeholder_regex: "Фильтр по регулярному выражению"
+  filter_hint_regex: "Регулярное выражение, совпадающее в любом месте имени, без учёта регистра (%{shortcut})"
+  filter_hint_enter: "Enter раскрывает папки с совпадениями"
+  filter_regex: "Считать ввод регулярным выражением (Alt+R)"
+  filter_targets: "Папки, к которым применяется фильтр"
+  filter_all: "Все"
+  filter_none: "Нет"
+  filter_more: "%{first} +%{count}"
+  filter_all_objects: "Все объекты"
+  filter_status: "Совпадает %{shown} из %{read} загруженных объектов"
+  filter_status_conditions: "Совпадает %{shown} из %{read} загруженных объектов · условий: %{count}"
+  conditions: "Условия"
+  conditions_count: "Условия %{count}"
+  conditions_hint: "Фильтр не только по имени: комментарий, схема, подстановочные знаки, регулярное выражение"
+  combine_all: "Все условия"
+  combine_any: "Любое условие"
+  combine_and: "и"
+  combine_or: "или"
+  condition_value: "Значение"
+  condition_add: "+ Добавить условие"
+  condition_clear: "Очистить"
+  field_name: "Имя"
+  field_remarks: "Комментарий"
+  field_schema: "Схема"
+  op_contains: "содержит"
+  op_not_contains: "не содержит"
+  op_starts_with: "начинается с"
+  op_ends_with: "заканчивается на"
+  op_equals: "равно"
+  op_wildcard: "шаблон"
+  op_regex: "regex"
+  op_empty: "пусто"
+  op_not_empty: "не пусто"
+  history: "История"
+  history_hint: "Фильтры, использованные с этим профилем подключения"
+  history_remove_note: "Удалите запись её значком × или клавишей Delete"
+  history_empty: "Фильтров пока не было"
+  history_clear: "Очистить историю этого подключения"
+  filter_reset: "Сбросить"
+  filter_reset_hint: "Возвращает текст, условия и папки к исходному состоянию"
+  filter_reset_note: "История остаётся и сохраняет сброшенный фильтр"
+  scope_landed_named: "Только подключённая БД (%{name})"
+  scope_landed: "Только подключённая БД"
+  scope_all: "Все БД"
 
   tables: Таблицы
   views: Представления

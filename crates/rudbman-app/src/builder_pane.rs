@@ -48,7 +48,10 @@ use gpui::{
 use rudbman_erd::{BuilderEdge, BuilderEvent, BuilderView, ErdColumn, ErdTable};
 use rudbman_jdbc::{DescribeRequest, Session};
 use rudbman_sql::Dialect;
-use rugpui::{Button, ButtonVariant, Checkbox, ContextMenu, Select, TextInput, Theme, theme};
+use rugpui::{
+    Button, ButtonVariant, Checkbox, ContextMenu, ScrollbarExt as _, Select, TextInput, Theme,
+    theme,
+};
 
 use crate::builder_sql::{
     BuilderQuery, BuilderTable, Join, JoinKind, SortDir, generate, unique_alias,
@@ -1126,24 +1129,31 @@ impl Render for BuilderPane {
             .child(canvas)
             .child(
                 div()
-                    .id("builder-form")
-                    .track_scroll(&self.body_scroll)
-                    .flex()
-                    .flex_col()
+                    .relative()
                     .flex_none()
                     .h(rugpui::scaled(FORM_HEIGHT, cx))
                     .min_w_0()
-                    .gap(px(12.))
-                    .p(px(10.))
-                    .border_t_1()
-                    .border_color(chrome.border)
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .children(pick_hint)
-                    .children(joins)
-                    .child(conditions)
-                    .children(columns)
-                    .child(preview),
+                    .child(
+                        div()
+                            .id("builder-form")
+                            .track_scroll(&self.body_scroll)
+                            .flex()
+                            .flex_col()
+                            .size_full()
+                            .min_w_0()
+                            .gap(px(12.))
+                            .p(px(10.))
+                            .border_t_1()
+                            .border_color(chrome.border)
+                            .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
+                            .children(pick_hint)
+                            .children(joins)
+                            .child(conditions)
+                            .children(columns)
+                            .child(preview),
+                    )
+                    .with_scrollbar("builder-form-scrollbar", &self.body_scroll),
             )
             // Takes no room in the column above it — the element is an empty
             // absolute box whose two halves are anchored to the window — so it

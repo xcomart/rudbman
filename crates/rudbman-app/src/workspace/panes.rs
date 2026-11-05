@@ -446,9 +446,14 @@ impl Workspace {
             live: matches!(open.state, ConnectionState::Open(_)),
         };
         let id = open.id;
+        let profile = open.profile.id;
+        let hide = open.profile.explorer.clone();
         let live = info.live;
         self.explorer.update(cx, |explorer, cx| {
             explorer.update_source(cx, |source| source.upsert_root(id, info));
+            explorer.set_profile(id, profile);
+            // Before the reload below, which reads the root under them.
+            explorer.set_hide(id, &hide);
             // A root opened while the handshake was still out answered "the
             // connection is closed"; now that there is a session, that row has
             // to go rather than stay until the tab does.
@@ -467,9 +472,8 @@ impl Workspace {
     /// wording.
     pub(super) fn sync_visible_root(&mut self, cx: &mut Context<Self>) {
         let visible = self.active_connection().map(|open| open.id);
-        self.explorer.update(cx, |explorer, cx| {
-            explorer.update_source(cx, |source| source.set_visible_root(visible));
-        });
+        self.explorer
+            .update(cx, |explorer, cx| explorer.show_root(visible, cx));
     }
 
     /// Whether the sidebar is actually on screen.

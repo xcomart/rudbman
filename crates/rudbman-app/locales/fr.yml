@@ -238,6 +238,7 @@ connect:
   section:
     behavior: Comportement
     tunnel: Tunnel SSH
+    explorer: "Masquer dans l’explorateur"
 
   read_only: Ouvrir la connexion en lecture seule
   auto_commit: Valider chaque instruction à son exécution
@@ -256,6 +257,16 @@ connect:
   tunnel_passphrase: Phrase secrète de la clé
   tunnel_remote: Base de données
   tunnel_hint: La base de données est nommée telle que l’hôte de rebond la voit. rudbman ouvre un port local libre et y branche le pilote.
+
+  hide_hint: "Noms que l’arborescence de l’explorateur laisse de côté. Une expression régulière par ligne, comparée au nom entier, sans tenir compte de la casse. Un niveau de catalogue ou de schéma qui ne garde qu’un élément est sauté."
+  hide_catalogs: "Catalogues"
+  hide_schemas: "Schémas"
+  hide_objects: "Objets"
+  hide_show_only: "N’afficher que ce que la liste désigne"
+  hide_folders: "S’applique à"
+  hide_invalid: "La ligne %{line} n’est pas une expression régulière valide : %{reason}"
+  hide_refused: "Non enregistré : une liste de masquage de la section explorateur contient une expression régulière non valide."
+  hide_count: "Motifs : %{count}"
 
   test: Tester
   testing: Connexion en cours…
@@ -358,6 +369,53 @@ explorer:
   disconnected: La connexion est fermée.
   unknown_connection: "(connexion)"
   load_failed_unknown: Impossible de charger ceci.
+
+  filter_placeholder: "Filtrer par nom"
+  filter_hint: "La virgule signifie « ou », * et ? sont des jokers, ! exclut (%{shortcut})"
+  filter_placeholder_regex: "Filtrer par expression régulière"
+  filter_hint_regex: "Une expression régulière, cherchée n'importe où dans le nom, sans tenir compte de la casse (%{shortcut})"
+  filter_hint_enter: "Entrée ouvre les dossiers qui ont des résultats"
+  filter_regex: "Lire la saisie comme une expression régulière (Alt+R)"
+  filter_targets: "Dossiers concernés par le filtre"
+  filter_all: "Tous"
+  filter_none: "Aucun"
+  filter_more: "%{first} +%{count}"
+  filter_all_objects: "Tous les objets"
+  filter_status: "%{shown} sur %{read} objets chargés correspondent"
+  filter_status_conditions: "%{shown} sur %{read} objets chargés correspondent · %{count} conditions"
+  conditions: "Conditions"
+  conditions_count: "Conditions %{count}"
+  conditions_hint: "Filtrer sur autre chose que le nom : commentaire, schéma, joker, expression régulière"
+  combine_all: "Toutes vraies"
+  combine_any: "Au moins une"
+  combine_and: "et"
+  combine_or: "ou"
+  condition_value: "Valeur"
+  condition_add: "+ Ajouter une condition"
+  condition_clear: "Vider"
+  field_name: "Nom"
+  field_remarks: "Commentaire"
+  field_schema: "Schéma"
+  op_contains: "contient"
+  op_not_contains: "ne contient pas"
+  op_starts_with: "commence par"
+  op_ends_with: "finit par"
+  op_equals: "est"
+  op_wildcard: "joker"
+  op_regex: "regex"
+  op_empty: "est vide"
+  op_not_empty: "n'est pas vide"
+  history: "Historique"
+  history_hint: "Filtres utilisés avec ce profil de connexion"
+  history_remove_note: "Retirez une entrée avec son × ou la touche Suppr"
+  history_empty: "Aucun filtre utilisé pour l'instant"
+  history_clear: "Effacer l'historique de cette connexion"
+  filter_reset: "Réinitialiser"
+  filter_reset_hint: "Remet le texte, les conditions et les dossiers à l'état initial"
+  filter_reset_note: "L'historique reste et garde le filtre réinitialisé"
+  scope_landed_named: "Base connectée uniquement (%{name})"
+  scope_landed: "Base connectée uniquement"
+  scope_all: "Toutes les bases"
 
   tables: Tables
   views: Vues

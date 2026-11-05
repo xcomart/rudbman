@@ -1,6 +1,7 @@
 //! Render.
 
 use super::*;
+use rugpui::ScrollbarExt as _;
 
 /// Formats an elapsed duration for the status bar.
 pub(super) fn elapsed_label(elapsed: Duration) -> SharedString {
@@ -46,28 +47,51 @@ pub fn note(text: SharedString, color: Hsla, cx: &App) -> AnyElement {
 /// Shared with the data pane for the reason [`note`] is: a driver's refusal
 /// reads the same wherever the statement came from, and the hint is chosen from
 /// the `SQLSTATE` class rather than from anything about the pane.
-pub fn render_error(error: &QueryError, chrome: &Theme, cx: &App) -> AnyElement {
+///
+/// A driver's message can run to a stack of lines, and the results half can be
+/// a few rows tall, so the envelope scrolls with a bar of its own rather than
+/// running out of the pane.
+pub fn render_error(
+    error: &QueryError,
+    chrome: &Theme,
+    scroll: &gpui::ScrollHandle,
+    cx: &App,
+) -> AnyElement {
     // The words a user pastes into a search or a message to whoever runs the
     // database, so they can be had without retyping them.
     let mut copied = error.message.to_string();
     if let Some(state) = &error.sql_state {
         copied.push_str(&format!(" (SQLSTATE {state})"));
     }
-    error_lines(error, chrome, cx)
+    div()
+        .relative()
+        .flex()
+        .flex_col()
         .flex_1()
         .min_w_0()
         .min_h_0()
-        .p(px(16.))
         .child(
-            div().pt(px(4.)).child(
-                Button::new("query-error-copy", ts!("context.copy_message"))
-                    .variant(ButtonVariant::Secondary)
-                    .compact()
-                    .on_click(move |_, _window, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone()));
-                    }),
-            ),
+            error_lines(error, chrome, cx)
+                .id("query-error")
+                .track_scroll(scroll)
+                .size_full()
+                .p(px(16.))
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .child(
+                    div().pt(px(4.)).child(
+                        Button::new("query-error-copy", ts!("context.copy_message"))
+                            .variant(ButtonVariant::Secondary)
+                            .compact()
+                            .on_click(move |_, _window, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    copied.clone(),
+                                ));
+                            }),
+                    ),
+                ),
         )
+        .with_scrollbar("query-error-scrollbar", scroll)
         .into_any_element()
 }
 
@@ -180,6 +204,7 @@ impl Render for QueryPane {
                 &preview.statements,
                 self.transactional,
                 &self.confirm_focus,
+                &self.preview_scroll,
                 cx,
                 move |_window, cx| {
                     this.update(cx, |pane, cx| {
@@ -540,7 +565,7 @@ impl QueryPane {
         if let Some(error) = &self.error
             && self.results.is_empty()
         {
-            return render_error(error, chrome, cx);
+            return render_error(error, chrome, &self.error_scroll, cx);
         }
         if self.results.is_empty() {
             let text = if self.is_running() {
@@ -586,8 +611,9 @@ impl QueryPane {
                 let pane = cx.entity();
                 let menu = pane.clone();
                 let id = *id;
+                let scroll = log.scroll.0.borrow().base_handle.clone();
                 let chrome = chrome.clone();
-                gpui::uniform_list(
+                let list = gpui::uniform_list(
                     ("query-result-log", id),
                     log.entries.len() + usize::from(self.finished.is_some()),
                     move |range, _, cx| {
@@ -694,8 +720,17 @@ impl QueryPane {
                 .size_full()
                 .flex_1()
                 .min_w_0()
-                .min_h_0()
-                .into_any_element()
+                .min_h_0();
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(list)
+                    .with_scrollbar(("query-result-log-scrollbar", id), &scroll)
+                    .into_any_element()
             }
             None => note(ts!("query.empty"), chrome.text_muted, cx),
         }

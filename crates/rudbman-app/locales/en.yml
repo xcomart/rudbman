@@ -366,6 +366,7 @@ connect:
   section:
     behavior: Behavior
     tunnel: SSH tunnel
+    explorer: "Hide in the explorer"
 
   read_only: Open the connection read-only
   auto_commit: Commit each statement as it runs
@@ -386,6 +387,16 @@ connect:
   tunnel_passphrase: Key passphrase
   tunnel_remote: Database
   tunnel_hint: The database is named as the bastion sees it. rudbman binds a free local port and connects the driver to that.
+
+  hide_hint: "Names the explorer tree leaves out. One regular expression a line, matched against the whole name, ignoring case. A catalog or schema level left with one member is skipped."
+  hide_catalogs: "Catalogs"
+  hide_schemas: "Schemas"
+  hide_objects: "Objects"
+  hide_show_only: "Show only what the list matches"
+  hide_folders: "Applies to"
+  hide_invalid: "Line %{line} is not a valid regular expression: %{reason}"
+  hide_refused: "Not saved: a hide list in the explorer section has an invalid regular expression."
+  hide_count: "Patterns: %{count}"
 
   # The buttons along the bottom, and what they report.
   test: Test
@@ -539,6 +550,74 @@ explorer:
   unknown_connection: "(connection)"
   # An error row whose message went missing, for the same reason.
   load_failed_unknown: This could not be loaded.
+
+  # The filter box over the tree, and the tooltip that explains what it takes.
+  filter_placeholder: "Filter by name"
+  filter_hint: "Comma means or, * and ? are wildcards, ! leaves a name out (%{shortcut})"
+  # The box switched to a regular expression: its placeholder, its tooltip, and
+  # the `.*` button that switches it.
+  filter_placeholder_regex: "Filter by regular expression"
+  filter_hint_regex: "A regular expression, matched anywhere in the name, ignoring case (%{shortcut})"
+  filter_hint_enter: "Enter opens the folders with matches"
+  filter_regex: "Read the box as a regular expression (Alt+R)"
+  # The button beside it, which says which folders the filter narrows: all of
+  # them, none, one folder's name, or the first and how many more.
+  filter_targets: "Folders the filter narrows"
+  filter_all: "All"
+  filter_none: "None"
+  filter_more: "%{first} +%{count}"
+  # The first row of that button's menu, which ticks or unticks every folder.
+  filter_all_objects: "All objects"
+  # The line under the tree while a filter is on. Counts only what has been
+  # read: a folder nobody has opened has not been filtered.
+  filter_status: "%{shown} of %{read} loaded objects match"
+  # The same line while conditions are narrowing the tree too.
+  filter_status_conditions: "%{shown} of %{read} loaded objects match · %{count} conditions"
+  # The conditions panel: its button, the button with how many conditions are
+  # narrowing, its tooltip, and the switch between "every condition" and "any".
+  # `combine_and`/`combine_or` join conditions in a history entry's line.
+  conditions: "Conditions"
+  conditions_count: "Conditions %{count}"
+  conditions_hint: "Narrow by more than the name: comment, schema, wildcard, regular expression"
+  combine_all: "Match all"
+  combine_any: "Match any"
+  combine_and: "and"
+  combine_or: "or"
+  # One condition row: the value box's placeholder, and the panel's buttons.
+  condition_value: "Value"
+  condition_add: "+ Add condition"
+  condition_clear: "Clear"
+  # What a condition looks at. Schema is the database on MySQL/MariaDB.
+  field_name: "Name"
+  field_remarks: "Comment"
+  field_schema: "Schema"
+  # How a condition compares. Every comparison ignores case.
+  op_contains: "contains"
+  op_not_contains: "does not contain"
+  op_starts_with: "starts with"
+  op_ends_with: "ends with"
+  op_equals: "is"
+  op_wildcard: "wildcard"
+  op_regex: "regex"
+  op_empty: "is empty"
+  op_not_empty: "is not empty"
+  # The filter history: its button, the button's tooltip, the one row of an
+  # empty history, and the row that forgets it.
+  history: "History"
+  history_hint: "Filters used on this connection's profile"
+  history_remove_note: "Remove one entry with its × or the Delete key"
+  history_empty: "No filters used yet"
+  history_clear: "Clear this connection's history"
+  filter_reset: "Reset"
+  filter_reset_hint: "Puts the text, conditions and folders back as they started"
+  filter_reset_note: "The history stays, and keeps the filter you reset"
+  # The first rows of the filter's folder menu: narrow the database the
+  # connection landed in (its name in brackets when the session reported it),
+  # or every database the tree shows. `scope_all` also marks the button and a
+  # history entry that narrowed them all.
+  scope_landed_named: "Connected database only (%{name})"
+  scope_landed: "Connected database only"
+  scope_all: "All databases"
 
   # The six folders under a schema.
   tables: Tables

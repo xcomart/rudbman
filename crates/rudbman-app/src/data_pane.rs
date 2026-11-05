@@ -515,6 +515,9 @@ pub struct DataPane {
     /// themselves, and a user who can read the `UPDATE` can see the `WHERE`
     /// clause that decides how much of their table it reaches.
     preview: Option<Vec<PlannedStatement>>,
+    /// Scroll of that listing, and of a failed load's error in place of rows.
+    preview_scroll: gpui::ScrollHandle,
+    error_scroll: gpui::ScrollHandle,
     /// Whether a batch is out on the session.
     ///
     /// Not a state of [`DataPane::load`] because the rows are still there and
@@ -582,6 +585,8 @@ impl DataPane {
             context_menu: None,
             confirm_discard: false,
             preview: None,
+            preview_scroll: gpui::ScrollHandle::new(),
+            error_scroll: gpui::ScrollHandle::new(),
             applying: false,
             apply_error: None,
             focus_handle: cx.focus_handle(),
@@ -1605,7 +1610,10 @@ impl DataPane {
             // and generated no statement can produce. Saying nothing is right:
             // there is no failure and no change.
             Ok(statements) if statements.is_empty() => {}
-            Ok(statements) => self.preview = Some(statements),
+            Ok(statements) => {
+                self.preview_scroll.set_offset(gpui::Point::default());
+                self.preview = Some(statements);
+            }
             Err(error) => self.apply_error = Some(ApplyProblem::local(plan_message(&error))),
         }
         cx.notify();
@@ -2182,7 +2190,7 @@ impl DataPane {
                     )
                     .into_any_element()
             }
-            Load::Failed(error) => render_error(error, chrome, cx),
+            Load::Failed(error) => render_error(error, chrome, &self.error_scroll, cx),
             // A filter that matched nothing has not shown an empty table.
             Load::Ready(rows) if rows.grid.read(cx).source().row_count() == 0 => {
                 let empty = if self.filter.is_some() {
@@ -2286,6 +2294,7 @@ impl Render for DataPane {
                 statements,
                 self.transactional,
                 &self.confirm_focus,
+                &self.preview_scroll,
                 cx,
                 move |_window, cx| {
                     this.update(cx, |pane, cx| {

@@ -67,7 +67,20 @@ JVM bridge.
   Delete….
 - **A schema explorer** — catalogs, schemas, tables, views (materialized ones
   too), procedures, functions, sequences and triggers, opened on connect onto
-  the database and schema the connection landed in — and a detail panel with
+  the database and schema the connection landed in, with a filter over the
+  tree: names (`cust`, `*_seq`, `orders, items`, `!tmp*`) or a regular
+  expression, plus a panel of conditions on the name, the comment or the
+  schema (contains, starts with, wildcard, regex, empty…) taken all together
+  or any one of them. It narrows the folders you pick, in the database the
+  connection landed in or in all of them, keeps its own state for each
+  connection tab — and is back as you left it when the profile connects
+  again — and remembers the filters you used for each profile — one
+  click resets the whole filter, and an entry of the remembered list goes with
+  its × or <kbd>Delete</kbd>. Each profile can also hide catalogs, schemas and objects for good, by regular
+  expression (or show only the ones a list matches), as SQL Workbench/J's
+  schema and catalog filters do; a level left with one member is skipped as if
+  the rest were never there — and a
+  detail panel with
   columns, keys, references in both directions, and DDL in a read-only,
   highlighted editor (the server's own text where the dialect offers it,
   rebuilt from the catalog where it does not). Every kind of object shows its
@@ -258,6 +271,8 @@ macOS), with its chord beside it.
 | | <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save the query tab / save as (no save-as chord on macOS) |
 | Explorer | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Query the selected object |
 | | <kbd>Ctrl</kbd>+<kbd>E</kbd> | ERD of the selection's schema |
+| | <kbd>Ctrl</kbd>+<kbd>F</kbd> | Filter the tree by name; in the box <kbd>Enter</kbd> opens the folders with matches and goes back to the tree, <kbd>Esc</kbd> clears it (pressed again, goes back to the tree) |
+| | <kbd>Alt</kbd>+<kbd>R</kbd> | In the filter box: read it as a regular expression, or as names again |
 | SQL editor | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Run the statement under the caret |
 | | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd> | Run the selection |
 | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Run everything |

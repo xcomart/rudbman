@@ -711,6 +711,10 @@ pub struct QueryPane {
     /// the profile's `confirm_writes` asks for and therefore answers it — so
     /// the batch never goes through [`QueryPane::request`]'s question as well.
     preview: Option<ApplyPreview>,
+    /// Scroll of that preview's statements, and of a failed run's error where
+    /// the results would be.
+    preview_scroll: gpui::ScrollHandle,
+    error_scroll: gpui::ScrollHandle,
     /// Whether a batch is out on the session.
     applying: bool,
     /// Why the last apply did not happen.
@@ -897,7 +901,7 @@ impl QueryPane {
                     }
                     EditorEvent::SelectionChanged => {
                         if pane.completion.wanted {
-                            pane.refresh_completion(pane.completion.explicit, window, cx);
+                            pane.completion_caret_moved(window, cx);
                         }
                         cx.notify();
                     }
@@ -951,6 +955,8 @@ impl QueryPane {
             grid_bounds: std::rc::Rc::default(),
             confirm_focus: cx.focus_handle(),
             preview: None,
+            preview_scroll: gpui::ScrollHandle::new(),
+            error_scroll: gpui::ScrollHandle::new(),
             applying: false,
             apply_error: None,
             completion: completion::CompletionState::default(),

@@ -430,6 +430,7 @@ pub(super) fn run() {
         // quits; the files themselves are read when a profile is first asked
         // about.
         crate::query_history::QueryHistory::init(cx);
+        crate::explorer_history::FilterHistory::init(cx);
         let settings = app_settings::current(cx);
         // Ahead of everything that renders a string — the menu bar included —
         // so nothing is ever built in the wrong language and then corrected.
