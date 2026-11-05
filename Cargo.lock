@@ -2499,7 +2499,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2629,7 +2629,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2673,7 +2673,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2813,7 +2813,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -5586,7 +5586,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-app"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5622,7 +5622,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-core"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "directories",
@@ -5638,7 +5638,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-erd"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "gpui",
  "rugpui",
@@ -5647,7 +5647,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-jdbc"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "jni",
@@ -5664,11 +5664,11 @@ dependencies = [
 
 [[package]]
 name = "rudbman-sql"
-version = "0.3.5"
+version = "0.3.6"
 
 [[package]]
 name = "rudbman-ssh"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "async-trait",
  "futures",
@@ -5680,8 +5680,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui"
-version = "0.1.14"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+version = "0.1.15"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "anyhow",
  "gpui",
@@ -5693,8 +5693,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui-editor"
-version = "0.1.14"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+version = "0.1.15"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "gpui",
  "log",
@@ -5706,8 +5706,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui-grid"
-version = "0.1.14"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+version = "0.1.15"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "gpui",
  "rugpui",
@@ -5716,8 +5716,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui-shell"
-version = "0.1.14"
-source = "git+https://github.com/xcomart/rugpui?rev=0d9846f05246c683afbe7663777b882f1fe63589#0d9846f05246c683afbe7663777b882f1fe63589"
+version = "0.1.15"
+source = "git+https://github.com/xcomart/rugpui?rev=3d3fb681d9517eae1cb3c72255b6f1ad3952a61b#3d3fb681d9517eae1cb3c72255b6f1ad3952a61b"
 dependencies = [
  "anyhow",
  "futures",
