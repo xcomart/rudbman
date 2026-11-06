@@ -140,7 +140,7 @@
 //!   `u32` a general-purpose editor widget can carry per line, and unpacks it
 //!   again.
 //! * [`mod@statement`] — [`StatementSpan`], [`split_statements`],
-//!   [`statement_at`].
+//!   [`statement_at`], [`holds_procedural_block`].
 //! * `keywords` — the reserved-word tables, private.
 
 #![warn(missing_docs)]
@@ -172,4 +172,4 @@ pub use explain::{Explain, explain};
 pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
 pub use state::LineStateCodec;
-pub use statement::{StatementSpan, split_statements, statement_at};
+pub use statement::{StatementSpan, holds_procedural_block, split_statements, statement_at};

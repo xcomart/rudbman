@@ -106,7 +106,10 @@ use rudbman_core::{AppSettings, ConnectionProfile};
 use rudbman_jdbc::{
     BridgeErrorKind, Canceller, ColumnInfo, Cursor, Error as JdbcError, StatementSpec,
 };
-use rudbman_sql::{Dialect, StatementAccess, ends_transaction, split_statements, statement_access};
+use rudbman_sql::{
+    Dialect, StatementAccess, ends_transaction, holds_procedural_block, split_statements,
+    statement_access,
+};
 use rugpui::{Button, ButtonVariant, ContextMenu, ResizeHandle, Theme, theme};
 use rugpui_editor::editor::{
     Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
@@ -864,8 +867,10 @@ impl QueryPane {
                     }
                     EditorEvent::RunSelection { span } => {
                         let text = editor.read(cx).text();
-                        let selected = text.get(span.clone()).unwrap_or_default().to_string();
-                        pane.request_from_editor(vec![(selected, Some(span.clone()))], window, cx);
+                        let selected = text.get(span.clone()).unwrap_or_default();
+                        let statements =
+                            statements::selection_statements(selected, span.start, &pane.dialect);
+                        pane.request_from_editor(statements, window, cx);
                     }
                     EditorEvent::RunAll => {
                         let text = editor.read(cx).text();

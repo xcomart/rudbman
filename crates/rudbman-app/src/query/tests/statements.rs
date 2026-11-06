@@ -178,3 +178,61 @@ fn sql_server_reads_plain_selects_through_a_server_cursor() {
         );
     }
 }
+
+#[test]
+fn a_selection_is_cut_into_its_statements_where_it_sits_in_the_editor() {
+    use crate::query::statements::selection_statements;
+    let sql = |cut: &[(String, Option<std::ops::Range<usize>>)]| {
+        cut.iter().map(|(sql, _)| sql.clone()).collect::<Vec<_>>()
+    };
+    let ranges = |cut: &[(String, Option<std::ops::Range<usize>>)]| {
+        cut.iter()
+            .map(|(_, range)| range.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // The statements the report was about, which MySQL refused sent together.
+    let grants = "CREATE USER IF NOT EXISTS 'aibook'@'%' IDENTIFIED BY 'aibook';\n\
+                  GRANT ALL PRIVILEGES ON financedb.* TO 'aibook'@'%';\n\
+                  FLUSH PRIVILEGES;";
+    let cut = selection_statements(grants, 100, &Dialect::MYSQL);
+    assert_eq!(
+        sql(&cut),
+        [
+            "CREATE USER IF NOT EXISTS 'aibook'@'%' IDENTIFIED BY 'aibook'",
+            "GRANT ALL PRIVILEGES ON financedb.* TO 'aibook'@'%'",
+            "FLUSH PRIVILEGES",
+        ]
+    );
+    // Each range is the statement's place in the editor, not in the selection.
+    for (statement, range) in &cut {
+        let range = range.clone().unwrap();
+        assert_eq!(&grants[range.start - 100..range.end - 100], statement);
+    }
+
+    // One statement loses only its semicolon.
+    let one = selection_statements("select 1;", 4, &Dialect::H2);
+    assert_eq!(sql(&one), ["select 1"]);
+    assert_eq!(ranges(&one), [Some(4..12)]);
+
+    // What the splitter would cut into fragments goes whole, as selected.
+    let block = "begin\n  update t set a = 1;\n  commit;\nend;";
+    let whole = selection_statements(block, 7, &Dialect::ORACLE);
+    assert_eq!(sql(&whole), [block]);
+    assert_eq!(ranges(&whole), [Some(7..7 + block.len())]);
+
+    // A MySQL executable comment standing alone is not dropped.
+    let dump = "/*!40101 SET NAMES utf8mb4 */;\nselect 1;";
+    assert_eq!(sql(&selection_statements(dump, 0, &Dialect::MYSQL)), [dump]);
+    let only = "/*!40101 SET NAMES utf8mb4 */";
+    assert_eq!(sql(&selection_statements(only, 0, &Dialect::MYSQL)), [only]);
+    // One that leads a statement travels with it.
+    assert_eq!(
+        sql(&selection_statements(
+            "/*!40101 SET @x = 1 */ select 1; select 2",
+            0,
+            &Dialect::MYSQL
+        )),
+        ["/*!40101 SET @x = 1 */ select 1", "select 2"]
+    );
+}

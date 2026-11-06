@@ -48,13 +48,14 @@
 //! believes it has found a statement boundary in the middle of a trigger body
 //! will send a fragment to the server. Where these need to work is script
 //! execution (M4), and the decision belongs there, with a whole feature to
-//! design against.
+//! design against. Until then [`holds_procedural_block`] tells a caller when
+//! the pieces would be fragments, so it can send the text whole instead.
 //!
 //! SQL Server's `GO` is not a terminator either, but for a different reason: it
 //! is a batch separator understood by `sqlcmd` and not by the server, and
 //! sending it over JDBC is an error however it is split.
 
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, DialectId};
 use crate::lexer::{Lexer, TokenKind};
 
 /// One statement's place in the script, in bytes.
@@ -245,6 +246,109 @@ pub fn statement_at(source: &str, offset: usize, dialect: &Dialect) -> Option<St
     previous
 }
 
+/// What may follow a leading `BEGIN` that starts a transaction rather than a
+/// block: `BEGIN TRANSACTION`, `BEGIN WORK`, SQLite's `BEGIN IMMEDIATE`,
+/// PostgreSQL's `BEGIN ISOLATION LEVEL ...` and `BEGIN NOT DEFERRABLE`, SQL
+/// Server's `BEGIN DISTRIBUTED TRAN`.
+const TRANSACTION_WORDS: &[&str] = &[
+    "TRANSACTION",
+    "TRAN",
+    "WORK",
+    "DEFERRED",
+    "IMMEDIATE",
+    "EXCLUSIVE",
+    "DISTRIBUTED",
+    "ISOLATION",
+    "READ",
+    "NOT",
+    "DEFERRABLE",
+];
+
+/// Whether [`split_statements`] would cut `source` inside a procedural block.
+///
+/// The splitter does not understand `BEGIN ... END` (see the module
+/// documentation), so a script holding a PL/SQL block, a stored-program body
+/// or an Oracle package specification has to reach the server whole rather
+/// than in the pieces this module would cut it into. This is the test for it:
+/// a conservative heuristic over the words of each piece, not a parser. A
+/// piece is taken for part of a block when
+///
+/// * it starts with `DECLARE`;
+/// * it starts with `BEGIN` and something follows that is not a transaction
+///   mode — `BEGIN;` and `BEGIN TRANSACTION` start transactions;
+/// * a `BEGIN` comes later in it, as in `CREATE PROCEDURE ... BEGIN` or a
+///   trigger body;
+/// * it is `CREATE [OR REPLACE] [EDITIONABLE | NONEDITIONABLE] PACKAGE`,
+///   whose specification has no `BEGIN` but `;`-terminated declarations;
+/// * on SQL Server, it is `CREATE`, `ALTER` or `CREATE OR ALTER` of a
+///   procedure, function or trigger, whose body is the rest of the batch.
+///
+/// A `BEGIN` in a string, a quoted identifier, a comment or a dollar-quoted
+/// body is not a word, so a PostgreSQL function is not a block. A false
+/// positive costs what every selection cost before this existed: the text is
+/// sent as one statement.
+///
+/// ```
+/// use rudbman_sql::{Dialect, holds_procedural_block};
+///
+/// let block = "begin\n  update t set a = 1;\n  commit;\nend;";
+/// assert!(holds_procedural_block(block, &Dialect::ORACLE));
+/// let script = "begin; update t set a = 1; commit;";
+/// assert!(!holds_procedural_block(script, &Dialect::POSTGRES));
+/// ```
+pub fn holds_procedural_block(source: &str, dialect: &Dialect) -> bool {
+    split_statements(source, dialect).into_iter().any(|span| {
+        let sql = span.sql(source);
+        let words: Vec<Option<&str>> = crate::lexer::lex(sql, dialect)
+            .into_iter()
+            .filter(|token| !token.kind.is_trivia())
+            .map(|token| {
+                matches!(
+                    token.kind,
+                    TokenKind::Keyword | TokenKind::Identifier | TokenKind::Function
+                )
+                .then(|| token.text(sql))
+            })
+            .collect();
+        let is = |index: usize, word: &str| {
+            words
+                .get(index)
+                .copied()
+                .flatten()
+                .is_some_and(|found| found.eq_ignore_ascii_case(word))
+        };
+        if is(0, "DECLARE") {
+            return true;
+        }
+        if is(0, "BEGIN") && words.len() > 1 && !TRANSACTION_WORDS.iter().any(|word| is(1, word)) {
+            return true;
+        }
+        if (1..words.len()).any(|index| is(index, "BEGIN")) {
+            return true;
+        }
+        let create = is(0, "CREATE");
+        if create || is(0, "ALTER") {
+            let mut index = 1;
+            while ["OR", "REPLACE", "ALTER", "EDITIONABLE", "NONEDITIONABLE"]
+                .iter()
+                .any(|word| is(index, word))
+            {
+                index += 1;
+            }
+            if create && is(index, "PACKAGE") {
+                return true;
+            }
+            // A T-SQL routine runs to the end of its batch, with or without a
+            // `BEGIN`: nothing in it says where its body stops.
+            return dialect.id() == DialectId::MsSql
+                && ["PROC", "PROCEDURE", "FUNCTION", "TRIGGER"]
+                    .iter()
+                    .any(|word| is(index, word));
+        }
+        false
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +391,116 @@ mod tests {
         let span = split_statements(script, &Dialect::GENERIC)[0];
         assert_eq!(span.text(script), "select 1 ;");
         assert_eq!(span.sql(script), "select 1");
+    }
+
+    #[test]
+    fn plain_statements_hold_no_block() {
+        let grants = "CREATE USER IF NOT EXISTS 'aibook'@'%' IDENTIFIED BY 'aibook';\n\
+                      GRANT ALL PRIVILEGES ON financedb.* TO 'aibook'@'%';\n\
+                      FLUSH PRIVILEGES;";
+        assert!(!holds_procedural_block(grants, &Dialect::MYSQL));
+        assert!(!holds_procedural_block(grants, &Dialect::MARIADB));
+        assert!(!holds_procedural_block("", &Dialect::GENERIC));
+        assert!(!holds_procedural_block(
+            "select 'begin; end' as \"begin\"; -- begin\nselect 2",
+            &Dialect::POSTGRES
+        ));
+        assert!(!holds_procedural_block(
+            "create table package (id int); create index i on package (id)",
+            &Dialect::GENERIC
+        ));
+        // A routine is a block on SQL Server only, where its body has no end.
+        let routine =
+            "create function one() returns int as $$ select 1 $$ language sql;\nselect one();";
+        assert!(!holds_procedural_block(routine, &Dialect::POSTGRES));
+        assert!(!holds_procedural_block(
+            "create view v as select 1 as a; select * from v",
+            &Dialect::MSSQL
+        ));
+    }
+
+    #[test]
+    fn transactions_are_not_blocks() {
+        for (script, dialect) in [
+            (
+                "begin; insert into t values (1); commit;",
+                &Dialect::POSTGRES,
+            ),
+            (
+                "BEGIN TRANSACTION; delete from t; COMMIT",
+                &Dialect::GENERIC,
+            ),
+            ("begin work; update t set a = 1; rollback", &Dialect::MYSQL),
+            (
+                "begin immediate; insert into t values (1); commit",
+                &Dialect::SQLITE,
+            ),
+            (
+                "begin isolation level serializable; select 1; commit",
+                &Dialect::POSTGRES,
+            ),
+            ("begin distributed tran; select 1; commit", &Dialect::MSSQL),
+        ] {
+            assert!(!holds_procedural_block(script, dialect), "{script}");
+        }
+    }
+
+    #[test]
+    fn a_dollar_quoted_body_is_not_a_block() {
+        let function = "create function one() returns int as $$\n\
+                        begin\n  return 1;\nend;\n$$ language plpgsql;\nselect one();";
+        assert!(!holds_procedural_block(function, &Dialect::POSTGRES));
+    }
+
+    #[test]
+    fn procedural_blocks_are_recognized() {
+        for (script, dialect) in [
+            (
+                "begin\n  update t set a = 1;\n  commit;\nend;",
+                &Dialect::ORACLE,
+            ),
+            (
+                "declare\n  n number;\nbegin\n  select count(*) into n from t;\nend;",
+                &Dialect::ORACLE,
+            ),
+            (
+                "create or replace procedure p as\nbegin\n  null;\nend;",
+                &Dialect::ORACLE,
+            ),
+            (
+                "create procedure p as\n  n number;\nbegin\n  n := 1;\nend;",
+                &Dialect::ORACLE,
+            ),
+            (
+                "create or replace editionable package pkg as\n  procedure p;\nend pkg;",
+                &Dialect::ORACLE,
+            ),
+            (
+                "create procedure p()\nbegin\n  select 1;\n  select 2;\nend",
+                &Dialect::MYSQL,
+            ),
+            (
+                "create trigger t before insert on x for each row\nbegin\n  set new.a = 1;\nend",
+                &Dialect::MARIADB,
+            ),
+            (
+                "begin try\n  select 1;\nend try\nbegin catch\nend catch",
+                &Dialect::MSSQL,
+            ),
+            (
+                "create procedure p as\n  select 1;\n  select 2;",
+                &Dialect::MSSQL,
+            ),
+            (
+                "create or alter proc p as select 1; select 2",
+                &Dialect::MSSQL,
+            ),
+            (
+                "alter trigger t on x after insert as\n  update x set a = 1;",
+                &Dialect::MSSQL,
+            ),
+        ] {
+            assert!(holds_procedural_block(script, dialect), "{script}");
+        }
     }
 }

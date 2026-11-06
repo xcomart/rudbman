@@ -16,6 +16,47 @@ pub fn is_write_statement(sql: &str, dialect: &Dialect) -> bool {
                 || sql.contains("/*M!"))
 }
 
+/// The statements a run of the selection sends, each with the range of the
+/// editor it was cut from: `selected` is the selected text and `offset` where
+/// it starts in the editor.
+///
+/// Split like a run of the whole script, because a driver is handed one
+/// statement at a time — MySQL's and MariaDB's refuse several in one without
+/// `allowMultiQueries`, and the others would answer with the first result
+/// only. Sent whole, as written, when splitting would lose part of it: a
+/// procedural block the splitter would cut into fragments
+/// ([`rudbman_sql::holds_procedural_block`]), and a MySQL executable comment
+/// standing as a statement of its own, which the splitter drops as a comment.
+pub(super) fn selection_statements(
+    selected: &str,
+    offset: usize,
+    dialect: &Dialect,
+) -> Vec<(String, Option<std::ops::Range<usize>>)> {
+    let spans = split_statements(selected, dialect);
+    let dropped_executable = || {
+        rudbman_sql::lex(selected, dialect).iter().any(|token| {
+            let text = token.text(selected);
+            token.kind == TokenKind::Comment
+                && (text.starts_with("/*!") || text.starts_with("/*M!"))
+                && !spans
+                    .iter()
+                    .any(|span| span.start <= token.start && token.end <= span.sql_end)
+        })
+    };
+    if spans.is_empty() || holds_procedural_block(selected, dialect) || dropped_executable() {
+        return vec![(selected.to_string(), Some(offset..offset + selected.len()))];
+    }
+    spans
+        .into_iter()
+        .map(|span| {
+            (
+                span.sql(selected).to_string(),
+                Some(offset + span.start..offset + span.sql_end),
+            )
+        })
+        .collect()
+}
+
 /// Quotes an identifier the way `dialect` spells a quoted identifier.
 ///
 /// MySQL is the one that has to be told apart: `"` opens a *string* there
