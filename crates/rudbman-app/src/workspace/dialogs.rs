@@ -446,8 +446,8 @@ impl Workspace {
     /// Opens the platform's save dialog for `pane`, and writes where it says.
     ///
     /// It opens where the bound file is, suggesting its name; a pane bound to
-    /// none starts from the home directory, with the tab's `title` made into a
-    /// file name. Nothing waits on the prompt, for the reason
+    /// none starts from the home directory, with the tab's `title` and today's
+    /// date made into a file name. Nothing waits on the prompt, for the reason
     /// [`Workspace::open_sql_file`] gives.
     pub(super) fn ask_where_to_save(
         &mut self,
@@ -464,8 +464,27 @@ impl Workspace {
             .unwrap_or_else(crate::extract_dialog::default_directory);
         let suggested = match bound.as_deref().and_then(Path::file_name) {
             Some(name) => name.to_string_lossy().into_owned(),
-            None => suggested_file_name(title),
+            None => suggested_file_name(title, &chrono::Local::now().format("%Y%m%d").to_string()),
         };
+        self.prompt_for_save(pane, directory, suggested, window, cx);
+    }
+
+    /// The save dialog itself, opened in `directory` over `suggested`.
+    ///
+    /// A name typed without an extension is written with `.sql` after it: the
+    /// dialogs on Linux and Windows add none of their own, and a script saved
+    /// as `report` is one no file manager opens as SQL. When a file of the
+    /// longer name is already there, the dialog asks again over that name —
+    /// what it asked about replacing was the name as typed, not the file about
+    /// to be written.
+    fn prompt_for_save(
+        &mut self,
+        pane: Entity<QueryPane>,
+        directory: PathBuf,
+        suggested: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
 
         cx.spawn_in(window, async move |workspace, cx| {
@@ -484,9 +503,23 @@ impl Workspace {
                     return;
                 }
             };
+            let chosen = with_sql_extension(&path);
+            if chosen != path && chosen.exists() {
+                let directory = chosen.parent().map(Path::to_path_buf).unwrap_or_default();
+                let name = chosen
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.prompt_for_save(pane, directory, name, window, cx)
+                    })
+                    .ok();
+                return;
+            }
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace.save_pane_to(pane, path, Overwrite::Chosen, window, cx)
+                    workspace.save_pane_to(pane, chosen, Overwrite::Chosen, window, cx)
                 })
                 .ok();
         })
@@ -762,14 +795,36 @@ impl Workspace {
     }
 }
 
-/// The file name a save dialog suggests for a tab titled `title`.
+/// `path` with `.sql` after its name when the name has no extension.
 ///
-/// The title as it reads, with `.sql` after it unless it already ends that
-/// way, and with every character a file name cannot hold on one of the three
-/// platforms swapped for `_` — a tab the user named "매출/분석" is still a
-/// name worth starting from, but the slash would turn it into a directory.
-/// Trailing dots and spaces go too, which Windows would strip on its own.
-fn suggested_file_name(title: &str) -> String {
+/// A name ending in a dot gets only the letters. A name that has an extension
+/// keeps it whatever it is: `notes.txt` was asked for.
+fn with_sql_extension(path: &Path) -> PathBuf {
+    match path.extension() {
+        Some(extension) if !extension.is_empty() => path.to_path_buf(),
+        _ if path.file_name().is_none() => path.to_path_buf(),
+        _ => {
+            let mut name = path.as_os_str().to_os_string();
+            if !name.to_string_lossy().ends_with('.') {
+                name.push(".");
+            }
+            name.push("sql");
+            PathBuf::from(name)
+        }
+    }
+}
+
+/// The file name a save dialog suggests for a tab titled `title`, saved on
+/// `date`.
+///
+/// The title as it reads with `_` and the date after it, then `.sql` — before
+/// any `.sql` the title already ends with, so that a day's scripts sort
+/// together and a second day's does not offer to replace the first's. Every
+/// character a file name cannot hold on one of the three platforms is swapped
+/// for `_` — a tab the user named "매출/분석" is still a name worth starting
+/// from, but the slash would turn it into a directory. Trailing dots and
+/// spaces go too, which Windows would strip on its own.
+fn suggested_file_name(title: &str, date: &str) -> String {
     let cleaned: String = title
         .chars()
         .map(|c| match c {
@@ -779,27 +834,62 @@ fn suggested_file_name(title: &str) -> String {
         })
         .collect();
     let stem = cleaned.trim().trim_end_matches(['.', ' ']);
+    let (stem, extension) = match stem.len().checked_sub(4) {
+        Some(at) if stem.is_char_boundary(at) && stem[at..].eq_ignore_ascii_case(".sql") => {
+            (stem[..at].trim_end_matches(['.', ' ']), &stem[at..])
+        }
+        _ => (stem, ".sql"),
+    };
     let stem = if stem.is_empty() { "query" } else { stem };
-    if stem.to_lowercase().ends_with(".sql") {
-        stem.to_string()
-    } else {
-        format!("{stem}.sql")
-    }
+    format!("{stem}_{date}{extension}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::suggested_file_name;
+    use std::path::{Path, PathBuf};
+
+    use super::{suggested_file_name, with_sql_extension};
 
     #[test]
-    fn a_tab_title_becomes_a_file_name_a_save_dialog_can_take() {
-        assert_eq!(suggested_file_name("쿼리 3"), "쿼리 3.sql");
-        assert_eq!(suggested_file_name("매출/분석"), "매출_분석.sql");
-        assert_eq!(suggested_file_name("a:b*c?"), "a_b_c_.sql");
-        assert_eq!(suggested_file_name("report.sql"), "report.sql");
-        assert_eq!(suggested_file_name("REPORT.SQL"), "REPORT.SQL");
-        assert_eq!(suggested_file_name("draft. "), "draft.sql");
-        assert_eq!(suggested_file_name("  "), "query.sql");
-        assert_eq!(suggested_file_name("tab\tname"), "tab_name.sql");
+    fn a_tab_title_becomes_a_dated_file_name_a_save_dialog_can_take() {
+        let name = |title| suggested_file_name(title, "20261107");
+        assert_eq!(name("쿼리 3"), "쿼리 3_20261107.sql");
+        assert_eq!(name("매출/분석"), "매출_분석_20261107.sql");
+        assert_eq!(name("a:b*c?"), "a_b_c__20261107.sql");
+        assert_eq!(name("report.sql"), "report_20261107.sql");
+        assert_eq!(name("REPORT.SQL"), "REPORT_20261107.SQL");
+        assert_eq!(name("draft. "), "draft_20261107.sql");
+        assert_eq!(name("  "), "query_20261107.sql");
+        assert_eq!(name(".sql"), "query_20261107.sql");
+        assert_eq!(name("tab\tname"), "tab_name_20261107.sql");
+    }
+
+    #[test]
+    fn a_name_typed_without_an_extension_is_saved_as_sql() {
+        let saved = |path: &str| with_sql_extension(Path::new(path));
+        assert_eq!(
+            saved("/home/me/report"),
+            PathBuf::from("/home/me/report.sql")
+        );
+        assert_eq!(
+            saved("/home/me/report."),
+            PathBuf::from("/home/me/report.sql")
+        );
+        assert_eq!(
+            saved("/home/me/매출 분석"),
+            PathBuf::from("/home/me/매출 분석.sql")
+        );
+        assert_eq!(
+            saved("/home/me/report.sql"),
+            PathBuf::from("/home/me/report.sql")
+        );
+        assert_eq!(
+            saved("/home/me/notes.txt"),
+            PathBuf::from("/home/me/notes.txt")
+        );
+        assert_eq!(
+            saved("/home/me/v1.2/report"),
+            PathBuf::from("/home/me/v1.2/report.sql")
+        );
     }
 }
