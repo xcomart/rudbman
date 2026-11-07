@@ -43,10 +43,12 @@
 //! does need is the vertical scrollbar, because a wide table really can have
 //! several hundred columns.
 
+use std::collections::BTreeSet;
+
 use gpui::{
-    Action, App, ClipboardItem, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, MouseButton, MouseUpEvent, Pixels, Point, Render, ScrollHandle,
-    SharedString, Subscription, Window, div, prelude::*, px,
+    Action, App, ClickEvent, ClipboardItem, Context, DragMoveEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseUpEvent,
+    Pixels, Point, Render, ScrollHandle, SharedString, Subscription, Window, div, prelude::*, px,
 };
 use rugpui::{
     Button, ButtonVariant, ContextMenu, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
@@ -63,9 +65,52 @@ use crate::explorer::{Folder, ObjectTarget, describe_failure};
 use crate::i18n::ts;
 use crate::icons;
 use crate::sql_highlight::DialectHighlighter;
+use crate::workspace::SHORTCUT_MODIFIER;
 
 /// Element id of the body's overlay scroll indicator.
 const BODY_SCROLLBAR: &str = "detail-body-scrollbar";
+
+/// Key context of the panel, which its copy and select-all chords are bound in.
+const KEY_CONTEXT: &str = "TableDetail";
+
+gpui::actions!(
+    table_detail,
+    [
+        /// Put the names of the picked columns on the clipboard.
+        CopyColumnNames,
+        /// Pick every column of the columns tab.
+        SelectAllColumns,
+    ]
+);
+
+/// Marks the panel's chords as registered, once per application.
+struct Bindings;
+
+impl gpui::Global for Bindings {}
+
+/// Binds `Ctrl+C` and `Ctrl+A` (`Cmd` on macOS) in the panel.
+///
+/// Only the column list answers them: the DDL editor has chords of its own on
+/// a context inside this one, which win while it has the keyboard.
+fn bind_keys(cx: &mut App) {
+    if cx.has_global::<Bindings>() {
+        return;
+    }
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        KeyBinding::new(&format!("{modifier}-c"), CopyColumnNames, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &format!("{modifier}-a"),
+            SelectAllColumns,
+            Some(KEY_CONTEXT),
+        ),
+    ]);
+    cx.set_global(Bindings);
+}
 
 /// One row of a metadata table, already rendered to text.
 ///
@@ -209,7 +254,53 @@ pub struct TableDetail {
     ddl_editor: Entity<EditorView>,
     /// Where the DDL editor's context menu is open, if it is.
     ddl_menu: Option<Point<Pixels>>,
+    /// The rows of the columns tab that are picked, by index.
+    ///
+    /// A list the reader picks from for the copy commands — the names to
+    /// paste into a select list, the rows to paste into a sheet — and nothing
+    /// else: the panel stays read-only.
+    picked: BTreeSet<usize>,
+    /// Where a `Shift` run of picked rows starts.
+    pick_anchor: Option<usize>,
+    /// Where the column list's context menu is open, if it is.
+    columns_menu: Option<Point<Pixels>>,
     _ddl_events: Subscription,
+}
+
+/// How a click on a row of the column list changes what is picked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PickGesture {
+    /// A plain click: that row alone.
+    Only,
+    /// `Ctrl` (`Cmd` on macOS): that row in or out, the others kept.
+    Toggle,
+    /// `Shift`: the run from where the picking started to that row.
+    Through,
+}
+
+/// The forms a copy of picked columns comes in; see
+/// [`TableDetail::picked_text`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyForm {
+    /// Names, one per line.
+    Lines,
+    /// Names after one another, `a, b, c`: a select list.
+    Inline,
+    /// Every cell of each row, tab-separated, one row per line.
+    Rows,
+}
+
+impl PickGesture {
+    fn of(event: &ClickEvent) -> Self {
+        let modifiers = event.modifiers();
+        if modifiers.shift {
+            Self::Through
+        } else if modifiers.secondary() {
+            Self::Toggle
+        } else {
+            Self::Only
+        }
+    }
 }
 
 impl TableDetail {
@@ -223,6 +314,7 @@ impl TableDetail {
     ///
     /// `dialect` is the connection's, and colors and lays out the DDL.
     pub fn new(target: ObjectTarget, dialect: &str, cx: &mut Context<Self>) -> Self {
+        bind_keys(cx);
         let dialect = Dialect::from_id(dialect);
         let ddl_editor = cx.new(|cx| {
             EditorView::new(cx)
@@ -251,6 +343,9 @@ impl TableDetail {
             dialect,
             ddl_editor,
             ddl_menu: None,
+            picked: BTreeSet::new(),
+            pick_anchor: None,
+            columns_menu: None,
             _ddl_events: ddl_events,
         }
     }
@@ -285,6 +380,11 @@ impl TableDetail {
         self.ddl_editor
             .update(cx, |editor, cx| editor.set_text(ddl, cx));
         self.ddl_menu = None;
+        // A reload may bring other columns, or the same ones in another
+        // order; indices picked from the old list would name the wrong rows.
+        self.picked.clear();
+        self.pick_anchor = None;
+        self.columns_menu = None;
         self.load = match outcome {
             Ok(details) => Load::Ready(Box::new(details)),
             Err(message) => Load::Failed(message),
@@ -563,7 +663,7 @@ impl TableDetail {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         match self.tab {
-            Tab::Columns => table(
+            Tab::Columns => picking_table(
                 [
                     ts!("detail.column"),
                     ts!("detail.type"),
@@ -573,6 +673,7 @@ impl TableDetail {
                     ts!("detail.comment"),
                 ],
                 &details.columns,
+                &self.picked,
                 chrome,
                 cx,
             )
@@ -748,14 +849,143 @@ impl TableDetail {
             .into_any_element()
     }
 
-    /// Puts the DDL editor's right-click menu away.
+    /// The column rows on screen, once they have loaded.
+    fn column_rows(&self) -> &[Row] {
+        match &self.load {
+            Load::Ready(details) => &details.columns,
+            _ => &[],
+        }
+    }
+
+    /// The rows of the columns tab that are picked, in list order.
+    #[cfg(test)]
+    pub fn picked_columns(&self) -> Vec<usize> {
+        self.picked.iter().copied().collect()
+    }
+
+    /// Changes what is picked in the column list for a click on row `index`.
+    fn pick(&mut self, index: usize, gesture: PickGesture, cx: &mut Context<Self>) {
+        match gesture {
+            PickGesture::Only => {
+                self.picked = BTreeSet::from([index]);
+                self.pick_anchor = Some(index);
+            }
+            PickGesture::Toggle => {
+                if !self.picked.remove(&index) {
+                    self.picked.insert(index);
+                }
+                self.pick_anchor = Some(index);
+            }
+            PickGesture::Through => {
+                let from = self.pick_anchor.unwrap_or(index);
+                self.picked = (from.min(index)..=from.max(index)).collect();
+                self.pick_anchor = Some(from);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Picks every row of the column list.
+    pub fn pick_all_columns(&mut self, cx: &mut Context<Self>) {
+        self.picked = (0..self.column_rows().len()).collect();
+        cx.notify();
+    }
+
+    /// What a copy of the picked columns puts on the clipboard: their names
+    /// one per line, their names after one another with a comma, or every
+    /// cell of their rows as tab-separated lines a sheet takes as they are.
+    ///
+    /// `None` with nothing picked, so that a copy over an empty pick leaves
+    /// the clipboard alone.
+    pub fn picked_text(&self, form: CopyForm) -> Option<String> {
+        let rows: Vec<&Row> = self
+            .picked
+            .iter()
+            .filter_map(|index| self.column_rows().get(*index))
+            .collect();
+        if rows.is_empty() {
+            return None;
+        }
+        let name = |row: &&Row| row.first().map(|name| name.to_string()).unwrap_or_default();
+        Some(match form {
+            CopyForm::Lines => rows.iter().map(name).collect::<Vec<_>>().join("\n"),
+            CopyForm::Inline => rows.iter().map(name).collect::<Vec<_>>().join(", "),
+            CopyForm::Rows => rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        // The dash is how an empty cell is drawn, not what is
+                        // in it.
+                        .map(|cell| if *cell == NOTHING { "" } else { cell.as_ref() })
+                        .collect::<Vec<_>>()
+                        .join("\t")
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        })
+    }
+
+    /// Puts the picked columns on the clipboard in `form`.
+    fn copy_picked(&self, form: CopyForm, cx: &mut App) {
+        if let Some(text) = self.picked_text(form) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    /// Puts the DDL editor's right-click menu away, and the column list's.
     ///
     /// What the workspace runs before it opens another overlay, so that only
     /// one full-window backdrop is ever down at a time.
     pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
-        if self.ddl_menu.take().is_some() {
+        let ddl = self.ddl_menu.take().is_some();
+        let columns = self.columns_menu.take().is_some();
+        if ddl || columns {
             cx.notify();
         }
+    }
+
+    /// The column list's context menu: the copies of what is picked.
+    fn render_columns_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let position = self.columns_menu?;
+        let this = cx.entity();
+        let empty = self.picked.is_empty();
+        let copy = |label: SharedString, form: CopyForm| {
+            let this = this.clone();
+            MenuRow::new(label)
+                .enabled(!empty)
+                .on_activate(move |_window, cx| {
+                    let text = this.read(cx).picked_text(form);
+                    if let Some(text) = text {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                })
+        };
+        let rows = vec![
+            copy(ts!("menu.copy_names"), CopyForm::Lines)
+                .shortcut(format!("{SHORTCUT_MODIFIER}+C")),
+            copy(ts!("detail.copy_names_inline"), CopyForm::Inline),
+            copy(ts!("detail.copy_rows"), CopyForm::Rows),
+            MenuRow::separator(),
+            {
+                let this = this.clone();
+                MenuRow::new(ts!("context.select_all"))
+                    .shortcut(format!("{SHORTCUT_MODIFIER}+A"))
+                    .on_activate(move |_window, cx| {
+                        this.update(cx, |detail, cx| detail.pick_all_columns(cx));
+                    })
+            },
+        ];
+        Some(
+            ContextMenu::new("detail-columns-menu")
+                .position(position)
+                .entries(menu_rows::entries(rows))
+                .on_dismiss(move |_, cx| {
+                    this.update(cx, |detail, cx| {
+                        detail.columns_menu = None;
+                        cx.notify();
+                    })
+                }),
+        )
     }
 
     /// The DDL editor's context menu: only what a read-only buffer can do.
@@ -810,10 +1040,22 @@ impl Render for TableDetail {
         let tabs = self.render_tabs(&chrome, cx);
         let body = self.render_body(&chrome, cx);
         let ddl_menu = self.render_ddl_menu(cx);
+        let columns_menu = self.render_columns_menu(cx);
 
         div()
             .id("table-detail")
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|detail, _: &CopyColumnNames, _window, cx| {
+                if detail.tab == Tab::Columns {
+                    detail.copy_picked(CopyForm::Lines, cx);
+                }
+            }))
+            .on_action(cx.listener(|detail, _: &SelectAllColumns, _window, cx| {
+                if detail.tab == Tab::Columns {
+                    detail.pick_all_columns(cx);
+                }
+            }))
             .flex()
             .flex_col()
             .size_full()
@@ -841,6 +1083,7 @@ impl Render for TableDetail {
             .child(tabs)
             .child(body)
             .children(ddl_menu)
+            .children(columns_menu)
     }
 }
 
@@ -1369,53 +1612,125 @@ fn table<const N: usize>(
         return note(ts!("detail.empty"), chrome.text_muted, cx).into_any_element();
     }
 
-    let cell = |text: SharedString, muted: bool| {
-        div()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .px(px(6.))
-            .py(px(3.))
-            .text_size(rugpui::TextSize::Xs.size(cx))
-            .text_color(if muted {
-                chrome.text_muted
-            } else {
-                chrome.text
-            })
-            .child(text)
-    };
-
-    let header = div()
-        .flex()
-        .flex_row()
-        .border_b_1()
-        .border_color(chrome.border)
-        .children(headers.iter().map(|text| cell(text.clone(), true)));
-
     let body = rows.iter().enumerate().map(|(index, row)| {
-        div()
-            .flex()
-            .flex_row()
+        row_cells(row, N, chrome, cx)
             // Zebra striping, because a row of six truncated cells is hard to
             // follow across otherwise.
             .when(index % 2 == 1, |row| row.bg(chrome.surface))
-            .children((0..N).map(|column| {
-                cell(
-                    row.get(column).cloned().unwrap_or_default(),
-                    // The first column is the name and is what the eye follows;
-                    // the rest are detail.
-                    column > 0,
-                )
-            }))
     });
 
     div()
         .flex()
         .flex_col()
         .w_full()
-        .child(header)
+        .child(header_cells(&headers, chrome, cx))
         .children(body)
         .into_any_element()
+}
+
+/// The columns tab's table: [`table`], with rows that can be picked.
+///
+/// A click picks a row — `Ctrl` (`Cmd` on macOS) adds or removes one, `Shift`
+/// takes the run from the last one picked — and takes the keyboard, so that
+/// `Ctrl+C` copies what was picked. A right-click keeps a pick it lands in and
+/// otherwise picks its row first, then asks for the menu of copies.
+fn picking_table<const N: usize>(
+    headers: [SharedString; N],
+    rows: &[Row],
+    picked: &BTreeSet<usize>,
+    chrome: &Theme,
+    cx: &mut Context<TableDetail>,
+) -> impl IntoElement + use<N> {
+    if rows.is_empty() {
+        return note(ts!("detail.empty"), chrome.text_muted, cx).into_any_element();
+    }
+    let body = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let is_picked = picked.contains(&index);
+            row_cells(row, N, chrome, cx)
+                .id(("detail-column-row", index))
+                .debug_selector(move || format!("detail-column-row-{index}"))
+                .cursor_pointer()
+                .when(index % 2 == 1 && !is_picked, |row| row.bg(chrome.surface))
+                .when(is_picked, |row| row.bg(chrome.surface_active))
+                .when(!is_picked, |row| {
+                    row.hover(|style| style.bg(chrome.surface_hover))
+                })
+                .on_click(cx.listener(move |detail, event: &ClickEvent, window, cx| {
+                    detail.focus_handle.focus(window, cx);
+                    detail.pick(index, PickGesture::of(event), cx);
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |detail, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        detail.focus_handle.focus(window, cx);
+                        if !detail.picked.contains(&index) {
+                            detail.pick(index, PickGesture::Only, cx);
+                        }
+                        detail.ddl_menu = None;
+                        detail.columns_menu = Some(event.position);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element()
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .child(header_cells(&headers, chrome, cx))
+        .children(body)
+        .into_any_element()
+}
+
+/// One cell of a metadata table.
+fn table_cell(text: SharedString, muted: bool, chrome: &Theme, cx: &App) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .px(px(6.))
+        .py(px(3.))
+        .text_size(rugpui::TextSize::Xs.size(cx))
+        .text_color(if muted {
+            chrome.text_muted
+        } else {
+            chrome.text
+        })
+        .child(text)
+}
+
+/// The header row of a metadata table.
+fn header_cells(headers: &[SharedString], chrome: &Theme, cx: &App) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .border_b_1()
+        .border_color(chrome.border)
+        .children(
+            headers
+                .iter()
+                .map(|text| table_cell(text.clone(), true, chrome, cx)),
+        )
+}
+
+/// One body row of a metadata table, `width` cells wide.
+fn row_cells(row: &Row, width: usize, chrome: &Theme, cx: &App) -> gpui::Div {
+    div().flex().flex_row().children((0..width).map(|column| {
+        table_cell(
+            row.get(column).cloned().unwrap_or_default(),
+            // The first column is the name and is what the eye follows; the
+            // rest are detail.
+            column > 0,
+            chrome,
+            cx,
+        )
+    }))
 }
 
 /// The placeholder a cell with nothing in it draws.
@@ -1892,6 +2207,106 @@ mod tests {
             });
         });
         cx.update(|cx| assert_eq!(panel.read(cx).ddl_editor.read(cx).text(), ""));
+    }
+
+    /// The column list picks rows the way a file list does — a click one, `Ctrl`
+    /// one more, `Shift` a run — and copies them as names or as rows.
+    #[gpui::test]
+    fn picked_columns_copy_as_names_and_as_rows(cx: &mut gpui::TestAppContext) {
+        cx.update(rugpui::init);
+        let row = |cells: &[&str]| -> Row {
+            cells
+                .iter()
+                .map(|c| SharedString::from(c.to_string()))
+                .collect()
+        };
+        let window = cx.add_window(|_, cx| {
+            let mut panel = TableDetail::new(target(Folder::Tables), "generic", cx);
+            panel.deliver(
+                Ok(Details {
+                    columns: vec![
+                        row(&["ID", "INTEGER", "NO", "—", "PK", "—"]),
+                        row(&["NAME", "VARCHAR(40)", "YES", "—", "—", "the name"]),
+                        row(&["BORN", "DATE", "YES", "—", "—", "—"]),
+                        row(&["CITY", "VARCHAR(20)", "YES", "'Seoul'", "—", "—"]),
+                    ],
+                    ..Details::default()
+                }),
+                cx,
+            );
+            panel
+        });
+        let panel = window.root(cx).expect("the panel is open");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+
+        let click = |cx: &mut gpui::VisualTestContext, index: usize, modifiers: gpui::Modifiers| {
+            let bounds = cx
+                .debug_bounds(Box::leak(
+                    format!("detail-column-row-{index}").into_boxed_str(),
+                ))
+                .expect("the row is drawn");
+            cx.simulate_click(bounds.center(), modifiers);
+        };
+        click(&mut cx, 1, gpui::Modifiers::none());
+        click(&mut cx, 3, gpui::Modifiers::secondary_key());
+        cx.update(|_, cx| {
+            let panel = panel.read(cx);
+            assert_eq!(panel.picked_columns(), vec![1, 3]);
+            assert_eq!(
+                panel.picked_text(CopyForm::Lines).as_deref(),
+                Some("NAME\nCITY")
+            );
+            assert_eq!(
+                panel.picked_text(CopyForm::Inline).as_deref(),
+                Some("NAME, CITY")
+            );
+            assert_eq!(
+                panel.picked_text(CopyForm::Rows).as_deref(),
+                Some("NAME\tVARCHAR(40)\tYES\t\t\tthe name\nCITY\tVARCHAR(20)\tYES\t'Seoul'\t\t")
+            );
+        });
+
+        // A run from the last row picked, and Ctrl+C copies it.
+        click(&mut cx, 0, gpui::Modifiers::shift());
+        cx.update(|_, cx| assert_eq!(panel.read(cx).picked_columns(), vec![0, 1, 2, 3]));
+        click(&mut cx, 2, gpui::Modifiers::secondary_key());
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        });
+        cx.update(|_, cx| {
+            let copied = cx.read_from_clipboard().and_then(|item| item.text());
+            assert_eq!(copied.as_deref(), Some("ID\nNAME\nCITY"));
+        });
+
+        // A right-click outside the pick picks its row alone and opens the menu.
+        let bounds = cx.debug_bounds("detail-column-row-2").expect("drawn");
+        cx.simulate_mouse_down(
+            bounds.center(),
+            gpui::MouseButton::Right,
+            gpui::Modifiers::none(),
+        );
+        cx.simulate_mouse_up(
+            bounds.center(),
+            gpui::MouseButton::Right,
+            gpui::Modifiers::none(),
+        );
+        cx.update(|_, cx| {
+            let panel = panel.read(cx);
+            assert_eq!(panel.picked_columns(), vec![2]);
+            assert!(panel.columns_menu.is_some());
+        });
+
+        cx.simulate_keystrokes("escape");
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        });
+        cx.update(|_, cx| assert_eq!(panel.read(cx).picked_columns(), vec![0, 1, 2, 3]));
     }
 
     /// The editor scrolls itself, so the DDL tab hands it the body's height:

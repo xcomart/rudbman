@@ -467,6 +467,77 @@ impl Workspace {
         self.open_query(&format!("SELECT * FROM {name}"), window, cx);
     }
 
+    /// Puts the `kind` statement of every table in `targets` on the clipboard,
+    /// one after another with a blank line between.
+    ///
+    /// A statement names every column, so the columns are read first — one
+    /// round trip per table, on the session's own thread, as the builder reads
+    /// them. Nothing is copied unless every table answered: half a script on
+    /// the clipboard reads as the whole of one. The toast is the only sign
+    /// the copy happened, since nothing on screen changes.
+    pub(super) fn copy_statements(
+        &mut self,
+        targets: Vec<ObjectTarget>,
+        kind: CopiedStatement,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(connection) = targets.first().map(|target| target.connection) else {
+            return;
+        };
+        let Some(session) = self.session_of(connection) else {
+            return;
+        };
+        let Some(open) = self.connections.iter().find(|open| open.id == connection) else {
+            return;
+        };
+        let dialect = rudbman_sql::Dialect::from_id(&Self::dialect_of(&open.profile));
+        let write = match kind {
+            CopiedStatement::Select => builder_sql::select_statement,
+            CopiedStatement::Insert => builder_sql::insert_statement,
+        };
+
+        let fetch = cx.background_spawn(async move {
+            let mut statements = Vec::with_capacity(targets.len());
+            for target in &targets {
+                let columns = builder_pane::load_columns(session.session(), target)
+                    .map_err(|error| (target.name.clone(), error))?;
+                let names: Vec<String> = columns.into_iter().map(|column| column.name).collect();
+                statements.push(write(
+                    &dialect,
+                    target.catalog.as_deref(),
+                    target.schema.as_deref(),
+                    &target.name,
+                    &names,
+                ));
+            }
+            Ok::<_, (String, String)>(statements.join("\n\n"))
+        });
+        cx.spawn(async move |_workspace, cx| {
+            let outcome = fetch.await;
+            cx.update(|cx| match outcome {
+                Ok(text) => {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    rugpui_shell::show_toast(
+                        rugpui_shell::Toast::info(ts!("toast.sql_copied")),
+                        cx,
+                    );
+                }
+                Err((table, error)) => {
+                    log::error!("the column list could not be read: {error}");
+                    rugpui_shell::show_toast(
+                        rugpui_shell::Toast::error(ts!(
+                            "toast.columns_failed",
+                            table = table,
+                            error = error
+                        )),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
     /// The dialect of the connection whose tab is showing.
     pub(super) fn active_dialect(&self) -> String {
         self.active_connection()

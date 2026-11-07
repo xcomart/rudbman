@@ -28,6 +28,12 @@ menu:
   save_sql_file: SQL ファイルを保存
   save_sql_file_as: 名前を付けて SQL ファイルを保存…
   extract_script: スクリプトを抽出…
+  # Put the names of the explorer rows selected on the clipboard, one per line.
+  copy_names: 名前をコピー
+  # Put a SELECT, or an INSERT with a placeholder per column, of each
+  # selected table on the clipboard.
+  copy_select: SELECT 文をコピー
+  copy_insert: INSERT 文をコピー
   transfer_table: 行を転送…
   backup_schema: スキーマをバックアップ…
   # Draws the ERD of the scope the explorer's selection sits in.
@@ -437,6 +443,8 @@ detail:
   copy: コピー
   empty: ありません
   no_ddl: このオブジェクトに表示できる CREATE 文はありません。
+  copy_names_inline: 名前をカンマ区切りでコピー
+  copy_rows: 行をコピー
   ddl_reconstructed: メタデータから組み立てた参考用です。CHECK 制約・トリガー・パーティション・照合順序は含まれていません。
   ddl_reconstructed_object: カタログから組み立てた参考用です。ルーチンの特性など、カタログにない内容は含まれていません。
 
@@ -878,6 +886,7 @@ toast:
   not_connected: "「%{name}」は接続されていません。先に再接続してください。"
   open_failed: "%{file} を開けませんでした: %{error}"
   columns_failed: "%{table} の列を読み込めませんでした: %{error}"
+  sql_copied: "SQL をクリップボードにコピーしました。"
   keychain_unavailable: "システムのキーチェーンを使用できません (%{error})。保存したパスワードは読み込めず、新しいパスワードも保存されません。"
 
 history:

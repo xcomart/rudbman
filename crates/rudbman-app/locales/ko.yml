@@ -28,6 +28,12 @@ menu:
   save_sql_file: SQL 파일 저장
   save_sql_file_as: 다른 이름으로 SQL 파일 저장…
   extract_script: 스크립트 추출…
+  # Put the names of the explorer rows selected on the clipboard, one per line.
+  copy_names: 이름 복사
+  # Put a SELECT, or an INSERT with a placeholder per column, of each
+  # selected table on the clipboard.
+  copy_select: SELECT 문 복사
+  copy_insert: INSERT 문 복사
   transfer_table: 행 전송…
   backup_schema: 스키마 백업…
   # Draws the ERD of the scope the explorer's selection sits in.
@@ -437,6 +443,8 @@ detail:
   copy: 복사
   empty: 없음
   no_ddl: 이 객체에는 보여줄 CREATE 문이 없습니다.
+  copy_names_inline: 이름을 쉼표로 구분해 복사
+  copy_rows: 행 복사
   ddl_reconstructed: 메타데이터에서 재구성한 참고용입니다. CHECK 제약, 트리거, 파티션, 콜레이션은 포함되지 않습니다.
   ddl_reconstructed_object: 카탈로그에서 재구성한 참고용입니다. 루틴의 특성처럼 카탈로그에 없는 내용은 포함되지 않습니다.
 
@@ -878,6 +886,7 @@ toast:
   not_connected: "“%{name}”은(는) 연결되어 있지 않습니다. 먼저 다시 연결하세요."
   open_failed: "%{file} 파일을 열 수 없습니다: %{error}"
   columns_failed: "%{table}의 열 목록을 읽을 수 없습니다: %{error}"
+  sql_copied: "SQL 문을 클립보드에 복사했습니다."
   keychain_unavailable: "시스템 키체인을 사용할 수 없습니다(%{error}). 저장된 비밀번호를 읽을 수 없고, 새 비밀번호도 보관되지 않습니다."
 
 history:

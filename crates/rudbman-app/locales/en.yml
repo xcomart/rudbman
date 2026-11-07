@@ -69,6 +69,12 @@ menu:
   save_sql_file_as: Save SQL file as…
   # Opens the extraction dialog over the object selected in the explorer.
   extract_script: Extract script…
+  # Put the names of the explorer rows selected on the clipboard, one per line.
+  copy_names: Copy names
+  # Put a SELECT, or an INSERT with a placeholder per column, of each
+  # selected table on the clipboard.
+  copy_select: Copy SELECT statement
+  copy_insert: Copy INSERT statement
   # Opens the transfer dialog over the same object: its rows, into a table on
   # another connection.
   transfer_table: Transfer rows…
@@ -648,6 +654,8 @@ detail:
   # keys — as against one that could not be read.
   empty: nothing here
   no_ddl: This object has no CREATE statement to show.
+  copy_names_inline: Copy names, comma-separated
+  copy_rows: Copy rows
   # The bridge reassembled the statement from JDBC metadata because the server
   # has no way to quote its own back. JDBC metadata carries none of the things
   # listed here, so the text is for reading rather than for restoring from.
@@ -1428,6 +1436,7 @@ toast:
   open_failed: "Could not open %{file}: %{error}"
   # A table added to the query builder whose columns could not be read.
   columns_failed: "Could not read the columns of %{table}: %{error}"
+  sql_copied: "Copied the SQL to the clipboard."
   # At start-up, when the platform has no usable credential store.
   keychain_unavailable: "The system keychain is unavailable (%{error}). Saved passwords can't be read, and new ones won't be kept."
 

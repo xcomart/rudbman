@@ -329,6 +329,86 @@ fn table_expr(table: &BuilderTable, dialect: &Dialect) -> String {
     format!("{name} {}", dialect.quote_ident(&table.alias))
 }
 
+/// Where the content of a statement's clauses starts: one past `SELECT` and
+/// `VALUES`, the *river* of the layout `rudbman_sql::format_sql` writes.
+const RIVER: &str = "       ";
+
+/// The `SELECT` of every column of one table, laid out for reading.
+///
+/// What the explorer's "copy SELECT statement" hands over: one column per
+/// line, right-aligned clause keywords the way the editor's "Format SQL" lays
+/// a statement out, and a `;` so that several of them pasted together are still
+/// several statements. A table whose columns came back empty is selected with
+/// `*`, which is the same rows.
+pub fn select_statement(
+    dialect: &Dialect,
+    catalog: Option<&str>,
+    schema: Option<&str>,
+    name: &str,
+    columns: &[String],
+) -> String {
+    let table = table_ref(dialect, catalog, schema, name);
+    let list = if columns.is_empty() {
+        "*".to_string()
+    } else {
+        columns
+            .iter()
+            .map(|column| dialect.quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(&format!(",\n{RIVER}"))
+    };
+    format!("SELECT {list}\n  FROM {table};")
+}
+
+/// The `INSERT` of one row into one table, every column named and given a
+/// placeholder to fill in.
+///
+/// The column list and the value list are laid out line for line, so the
+/// value on line *n* of one is the column on line *n* of the other, and each
+/// placeholder is the column's own name after a colon: an `:id` reads as what
+/// goes there, where a row of `?`s has to be counted. A name that is not a
+/// plain word is made into one, `"Order Date"` into `:Order_Date`.
+pub fn insert_statement(
+    dialect: &Dialect,
+    catalog: Option<&str>,
+    schema: Option<&str>,
+    name: &str,
+    columns: &[String],
+) -> String {
+    let table = table_ref(dialect, catalog, schema, name);
+    if columns.is_empty() {
+        return format!("INSERT INTO {table}\nVALUES ();");
+    }
+    let separator = format!(",\n{RIVER} ");
+    let names = columns
+        .iter()
+        .map(|column| dialect.quote_ident(column))
+        .collect::<Vec<_>>()
+        .join(&separator);
+    let values = columns
+        .iter()
+        .map(|column| placeholder(column))
+        .collect::<Vec<_>>()
+        .join(&separator);
+    format!("INSERT INTO {table}\n{RIVER}({names})\nVALUES ({values});")
+}
+
+/// A named placeholder for `column`: its name after a colon, with every
+/// character that could not stand in a bind variable's name made `_`.
+fn placeholder(column: &str) -> String {
+    let word: String = column
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!(":{word}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,5 +649,41 @@ mod tests {
     #[test]
     fn a_query_with_no_tables_has_no_statement() {
         assert_eq!(generate(&BuilderQuery::default(), &Dialect::H2), "");
+    }
+
+    #[test]
+    fn a_copied_select_lists_every_column_on_a_line_of_its_own() {
+        let dialect = Dialect::from_id("postgres");
+        let columns = [
+            "id".to_string(),
+            "name".to_string(),
+            "Order Date".to_string(),
+        ];
+        assert_eq!(
+            select_statement(&dialect, None, Some("app"), "customers", &columns),
+            "SELECT id,\n       name,\n       \"Order Date\"\n  FROM app.customers;"
+        );
+        assert_eq!(
+            select_statement(&dialect, None, None, "t", &[]),
+            "SELECT *\n  FROM t;"
+        );
+    }
+
+    #[test]
+    fn a_copied_insert_lines_its_values_up_with_its_columns() {
+        let dialect = Dialect::from_id("postgres");
+        let columns = [
+            "id".to_string(),
+            "name".to_string(),
+            "Order Date".to_string(),
+        ];
+        assert_eq!(
+            insert_statement(&dialect, None, Some("app"), "customers", &columns),
+            "INSERT INTO app.customers\n       (id,\n        name,\n        \"Order Date\")\nVALUES (:id,\n        :name,\n        :Order_Date);"
+        );
+        assert_eq!(
+            insert_statement(&dialect, None, None, "t", &[]),
+            "INSERT INTO t\nVALUES ();"
+        );
     }
 }

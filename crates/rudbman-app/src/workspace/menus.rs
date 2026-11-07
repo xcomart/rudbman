@@ -84,6 +84,22 @@ impl Workspace {
             rows.push(MenuRow::separator());
         }
 
+        // The copies act on every selected row when the one pressed is among
+        // them — the tree keeps a selection of several under a right-click on
+        // one of them for exactly this — and on the pressed row alone
+        // otherwise.
+        let selection = self.explorer.read(cx).selected_nodes(cx);
+        let nodes = if selection.contains(node) {
+            selection
+        } else {
+            vec![node.clone()]
+        };
+        let copies = self.copy_rows(node, &nodes, live, cx);
+        if !copies.is_empty() {
+            rows.extend(copies);
+            rows.push(MenuRow::separator());
+        }
+
         // The places a table would appear, which is where §7.10's create path
         // is offered: a schema, a catalog on a product whose schema level was
         // skipped, and the Tables folder under either. Left out entirely on the
@@ -157,6 +173,69 @@ impl Workspace {
                     explorer.update(cx, |explorer, cx| explorer.reload(&node, cx));
                 }),
         );
+        rows
+    }
+
+    /// The explorer menu's copies: the names of `nodes`, and for a table or a
+    /// view the statements that read or fill them.
+    ///
+    /// Each row is left out where the row pressed cannot answer it — a
+    /// folder has no name of its own to copy, a view takes no `INSERT` here —
+    /// and acts on every row of `nodes` that can. The names are the tree's and
+    /// need no session; the statements need the columns, which are asked for
+    /// when the row is chosen.
+    fn copy_rows(
+        &self,
+        node: &NodeId,
+        nodes: &[NodeId],
+        live: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<MenuRow> {
+        let this = cx.entity();
+        let mut rows = Vec::new();
+        if !explorer::names_of(std::slice::from_ref(node)).is_empty() {
+            let nodes = nodes.to_vec();
+            rows.push(
+                MenuRow::new(ts!("menu.copy_names"))
+                    .shortcut(format!("{SHORTCUT_MODIFIER}+C"))
+                    .on_activate(move |_window: &mut Window, cx: &mut App| {
+                        Explorer::copy_names(&nodes, cx);
+                    }),
+            );
+        }
+        let Some(pressed) = node.as_target() else {
+            return rows;
+        };
+        let statement = |label: SharedString, kind: CopiedStatement, wanted: fn(Folder) -> bool| {
+            let targets: Vec<ObjectTarget> = nodes
+                .iter()
+                .filter_map(NodeId::as_target)
+                .filter(|target| wanted(target.folder))
+                .collect();
+            let this = this.clone();
+            MenuRow::new(label).enabled(live).on_activate(
+                move |_window: &mut Window, cx: &mut App| {
+                    let targets = targets.clone();
+                    this.update(cx, |workspace, cx| {
+                        workspace.copy_statements(targets, kind, cx);
+                    });
+                },
+            )
+        };
+        if pressed.folder.is_relation() {
+            rows.push(statement(
+                ts!("menu.copy_select"),
+                CopiedStatement::Select,
+                Folder::is_relation,
+            ));
+        }
+        if pressed.folder == Folder::Tables {
+            rows.push(statement(
+                ts!("menu.copy_insert"),
+                CopiedStatement::Insert,
+                |folder| folder == Folder::Tables,
+            ));
+        }
         rows
     }
 

@@ -28,6 +28,12 @@ menu:
   save_sql_file: Сохранить файл SQL
   save_sql_file_as: Сохранить файл SQL как…
   extract_script: Извлечь скрипт…
+  # Put the names of the explorer rows selected on the clipboard, one per line.
+  copy_names: Копировать имена
+  # Put a SELECT, or an INSERT with a placeholder per column, of each
+  # selected table on the clipboard.
+  copy_select: Копировать оператор SELECT
+  copy_insert: Копировать оператор INSERT
   transfer_table: Перенести строки…
   backup_schema: Резервная копия схемы…
   # Draws the ERD of the scope the explorer's selection sits in.
@@ -437,6 +443,8 @@ detail:
   copy: Копировать
   empty: ничего нет
   no_ddl: Для этого объекта нечего показать в виде инструкции CREATE.
+  copy_names_inline: Копировать имена через запятую
+  copy_rows: Копировать строки
   ddl_reconstructed: Восстановлено из метаданных, для справки. Ограничения CHECK, триггеры, секционирование и сортировки в текст не попадают.
   ddl_reconstructed_object: Восстановлено по каталогу, для справки. То, чего каталог не хранит, — например характеристики подпрограммы, — в текст не попадает.
 
@@ -878,6 +886,7 @@ toast:
   not_connected: "«%{name}» не подключено. Сначала переподключитесь."
   open_failed: "Не удалось открыть %{file}: %{error}"
   columns_failed: "Не удалось прочитать столбцы %{table}: %{error}"
+  sql_copied: "SQL скопирован в буфер обмена."
   keychain_unavailable: "Системное хранилище ключей недоступно (%{error}). Сохранённые пароли нельзя прочитать, а новые не будут сохранены."
 
 history:
