@@ -99,6 +99,58 @@ fn toolbar_runs_the_selection_script_and_current_statement(cx: &mut TestAppConte
     connected.close().expect("close");
 }
 
+/// A selection of several statements runs them one at a time, as a run of the
+/// script does — a driver that takes one statement per call (MySQL's, without
+/// `allowMultiQueries`) refused them sent together — and a failure among them
+/// selects the statement that failed, where it was written.
+#[gpui::test]
+fn a_selection_of_several_statements_runs_each_of_them(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("toolbar-run-selection", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let script = "select 0;\nselect 1; select 2;\nselect * from MISSING; select 3;";
+    let two = script.find("select 1").unwrap()..script.find("\nselect *").unwrap();
+    window
+        .update(&mut cx, |pane, window, cx| {
+            pane.editor.update(cx, |editor, cx| {
+                editor.set_text(script, cx);
+                editor.select_range(two, cx);
+            });
+            pane.focus_editor(window, cx);
+        })
+        .unwrap();
+
+    click("query-run-selection", &mut cx);
+    window
+        .update(&mut cx, |pane, _, _| {
+            assert!(pane.error.is_none(), "{:?}", pane.error);
+            assert_eq!(pane.results.len(), 3, "the log and a grid per statement");
+            let log = pane.log_at(0);
+            assert_eq!(log.len(), 2);
+            assert!(log.iter().all(|entry| !entry.failed));
+        })
+        .unwrap();
+    assert_eq!(column_zero(&window, 0, &mut cx), vec!["1"]);
+    assert_eq!(column_zero(&window, 1, &mut cx), vec!["2"]);
+
+    let rest = script.find("select 1").unwrap()..script.len();
+    window
+        .update(&mut cx, |pane, _, cx| {
+            pane.editor
+                .update(cx, |editor, cx| editor.select_range(rest, cx));
+        })
+        .unwrap();
+    click("query-run-selection", &mut cx);
+    window
+        .update(&mut cx, |pane, _, cx| {
+            assert!(pane.error.is_some(), "the third statement fails");
+            let selection = pane.editor.read(cx).selection();
+            assert_eq!(&script[selection], "select * from MISSING");
+        })
+        .unwrap();
+    connected.close().expect("close");
+}
+
 #[gpui::test]
 fn detached_toolbar_disables_execution_but_keeps_text_commands(cx: &mut TestAppContext) {
     let (connected, profile) = h2("toolbar-detach", &[]);

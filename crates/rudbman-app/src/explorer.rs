@@ -1313,6 +1313,22 @@ pub fn describe_failure(error: JdbcError) -> String {
     }
 }
 
+/// The names of the nodes among `nodes` that name something, one per line.
+///
+/// See [`Explorer::copy_names`].
+pub fn names_of(nodes: &[NodeId]) -> String {
+    nodes
+        .iter()
+        .filter_map(|node| match node {
+            NodeId::Catalog { name, .. }
+            | NodeId::Schema { name, .. }
+            | NodeId::Object { name, .. } => Some(name.as_str()),
+            NodeId::Connection(_) | NodeId::Folder { .. } | NodeId::Error(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// What the explorer asks the workspace for.
 pub enum ExplorerEvent {
     /// The children of `node` are wanted; the workspace has the session.
@@ -1354,6 +1370,8 @@ gpui::actions!(
         ClearFilter,
         /// Read the filter box as a regular expression, or as its own terms.
         ToggleRegex,
+        /// Put the names of the selected rows on the clipboard, one per line.
+        CopyNames,
     ]
 );
 
@@ -1391,6 +1409,9 @@ fn bind_keys(cx: &mut App) {
     };
     cx.bind_keys([
         gpui::KeyBinding::new(&format!("{modifier}-f"), FocusFilter, Some(KEY_CONTEXT)),
+        // Only reaches here from the tree: the filter box binds its own copy,
+        // on a context inside this one.
+        gpui::KeyBinding::new(&format!("{modifier}-c"), CopyNames, Some(KEY_CONTEXT)),
         gpui::KeyBinding::new("escape", ClearFilter, Some(FILTER_KEY_CONTEXT)),
         // `Alt+R`, as the find bars of most editors have it.
         gpui::KeyBinding::new("alt-r", ToggleRegex, Some(FILTER_KEY_CONTEXT)),
@@ -1558,6 +1579,9 @@ impl Explorer {
         let tree = cx.new(|cx| {
             TreeView::new(ExplorerSource::default(), cx)
                 .with_arrow_icons(icons::CHEVRON_RIGHT, icons::CHEVRON_DOWN)
+                // Several tables at once, for the commands that make sense on
+                // a list of them: copying their names or their statements.
+                .multi_select(true)
         });
         let events = cx.subscribe(&tree, |explorer, _tree, event, cx| match event {
             // The widget deduplicates these, so a node is asked for once
@@ -2278,6 +2302,27 @@ impl Explorer {
         target.folder.is_relation().then_some(target)
     }
 
+    /// Every selected node, in the order the tree draws them.
+    ///
+    /// One node, or none, unless the user picked several with `Ctrl` or
+    /// `Shift`.
+    pub fn selected_nodes(&self, cx: &App) -> Vec<NodeId> {
+        self.tree.read(cx).selection()
+    }
+
+    /// Puts the names of `nodes` on the clipboard, one per line.
+    ///
+    /// Only the nodes that name something in the database — an object, a
+    /// schema, a catalog — count: a folder's label is this program's word, not
+    /// a name anything could be looked up by. Nothing is written when none of
+    /// them does, so a copy over a folder leaves the clipboard as it was.
+    pub fn copy_names(nodes: &[NodeId], cx: &mut App) {
+        let text = names_of(nodes);
+        if !text.is_empty() {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        }
+    }
+
     /// The connection and scope the selected node sits in.
     ///
     /// What "draw the ERD of this" acts on. Anything below the connection root
@@ -2937,6 +2982,9 @@ impl Render for Explorer {
             }))
             .on_action(cx.listener(|explorer, _: &ToggleRegex, _window, cx| {
                 explorer.toggle_regex(cx);
+            }))
+            .on_action(cx.listener(|explorer, _: &CopyNames, _window, cx| {
+                Self::copy_names(&explorer.selected_nodes(cx), cx);
             }))
             // `Shift+F10` and the Menu key: the selected node's menu, the one a
             // right click on it raises.
@@ -4334,6 +4382,61 @@ pub(crate) mod tests {
             "not one of the filter's folders"
         );
         assert!(!source.may_match(&NodeId::Connection(C)));
+    }
+
+    /// A copy takes the names of the selected rows that name something in
+    /// the database, one per line, and passes over the folders between them.
+    #[test]
+    fn a_copy_names_objects_schemas_and_catalogs_and_skips_folders() {
+        let (tables, items) = folder_of(Folder::Tables, &["orders", "customer"]);
+        let mut nodes: Vec<NodeId> = items.into_iter().map(|child| child.id).collect();
+        nodes.insert(1, tables);
+        nodes.push(NodeId::Connection(C));
+        nodes.push(NodeId::Schema {
+            connection: C,
+            catalog: None,
+            name: "public".into(),
+        });
+        assert_eq!(names_of(&nodes), "orders\ncustomer\npublic");
+        assert_eq!(names_of(&[NodeId::Connection(C)]), "");
+    }
+
+    /// `Ctrl+C` in the tree copies what is selected, and the tree takes several
+    /// rows at once.
+    #[gpui::test]
+    fn ctrl_c_in_the_tree_copies_the_selected_names(cx: &mut gpui::TestAppContext) {
+        cx.update(rugpui::init);
+        let window = cx.add_window(|_window, cx| Explorer::new(cx));
+        let root = NodeId::Connection(C);
+        let (tables, items) = folder_of(Folder::Tables, &["orders", "customer"]);
+        let orders = items[0].id.clone();
+        window
+            .update(cx, |explorer, window, cx| {
+                explorer.update_source(cx, |source| {
+                    show_live_root(source);
+                    source.set_children(root.clone(), vec![Child::plain(tables.clone())]);
+                    source.set_children(tables.clone(), items);
+                });
+                explorer.tree.update(cx, |tree, cx| {
+                    tree.expand(&root, cx);
+                    tree.expand(&tables, cx);
+                    tree.set_selected(Some(orders.clone()), cx);
+                });
+                explorer.tree.read(cx).focus_handle(cx).focus(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_keystrokes("shift-down");
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        });
+        cx.update(|_, cx| {
+            let copied = cx.read_from_clipboard().and_then(|item| item.text());
+            assert_eq!(copied.as_deref(), Some("orders\ncustomer"));
+        });
     }
 
     #[gpui::test]

@@ -28,6 +28,12 @@ menu:
   save_sql_file: Guardar archivo SQL
   save_sql_file_as: Guardar archivo SQL como…
   extract_script: Extraer script…
+  # Put the names of the explorer rows selected on the clipboard, one per line.
+  copy_names: Copiar los nombres
+  # Put a SELECT, or an INSERT with a placeholder per column, of each
+  # selected table on the clipboard.
+  copy_select: Copiar la sentencia SELECT
+  copy_insert: Copiar la sentencia INSERT
   transfer_table: Transferir filas…
   backup_schema: Copia de seguridad del esquema…
   # Draws the ERD of the scope the explorer's selection sits in.
@@ -437,6 +443,8 @@ detail:
   copy: Copiar
   empty: no hay nada
   no_ddl: Este objeto no tiene ninguna sentencia CREATE que mostrar.
+  copy_names_inline: Copiar los nombres separados por comas
+  copy_rows: Copiar las filas
   ddl_reconstructed: Reconstruido a partir de los metadatos, a título orientativo. No incluye restricciones CHECK, disparadores, particiones ni intercalaciones.
   ddl_reconstructed_object: Reconstruido a partir del catálogo, a título orientativo. Lo que el catálogo no guarda —entre otras cosas, las características de una rutina— no está incluido.
 
@@ -878,6 +886,7 @@ toast:
   not_connected: "«%{name}» no está conectada. Vuelve a conectarla primero."
   open_failed: "No se pudo abrir %{file}: %{error}"
   columns_failed: "No se pudieron leer las columnas de %{table}: %{error}"
+  sql_copied: "SQL copiado al portapapeles."
   keychain_unavailable: "El llavero del sistema no está disponible (%{error}). No se pueden leer las contraseñas guardadas y las nuevas no se conservarán."
 
 history:

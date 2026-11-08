@@ -382,3 +382,26 @@ fn function_completion_preserves_arguments_and_is_undoable(cx: &mut gpui::TestAp
         })
         .unwrap();
 }
+
+/// `Shift` held over from a capital must not stop `Backspace` from deleting
+/// while the popup is open: the key was bound to nothing, and on Windows and
+/// Linux alike the first press with the list up did nothing at all.
+#[gpui::test]
+fn shift_backspace_deletes_with_the_popup_open(cx: &mut gpui::TestAppContext) {
+    let (connected, profile) = h2("completion_shift_backspace", &[]);
+    let handle = pane(&connected, &profile, 100, cx);
+    let mut cx = VisualTestContext::from_window(handle.into(), cx);
+    source(&handle, "SELECT 1; |", &mut cx);
+    cx.simulate_keystrokes("s e l");
+    handle
+        .update(&mut cx, |pane, _, _| {
+            assert!(pane.completion.popup.is_some())
+        })
+        .unwrap();
+    cx.simulate_keystrokes("shift-backspace");
+    handle
+        .update(&mut cx, |pane, _, cx| {
+            assert_eq!(pane.editor_text(cx), "SELECT 1; se");
+        })
+        .unwrap();
+}

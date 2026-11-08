@@ -202,16 +202,19 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             // A relation answers everything.
             let rows = workspace.explorer_rows(&table, cx);
             let mut expected = relation_labels();
+            expected.extend(table_copy_labels());
             expected.extend(scope_labels());
             assert_eq!(context_menu::labels(&rows), expected);
             assert!(context_menu::grayed(&rows).is_empty());
 
             // A routine is an object and not a relation: `SELECT * FROM` a
             // procedure is not a statement, so those rows are absent rather
-            // than grayed.
+            // than grayed. Its name can still be copied.
+            let mut expected = name_copy_labels();
+            expected.extend(scope_labels());
             assert_eq!(
                 context_menu::labels(&workspace.explorer_rows(&routine, cx)),
-                scope_labels(),
+                expected,
                 "a table is not made inside a procedure either"
             );
 
@@ -220,10 +223,13 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             // (§7.10).
             let mut with_create = vec![ts!("menu.new_table").to_string()];
             with_create.extend(scope_labels());
+            let mut named = name_copy_labels();
+            named.extend(with_create.clone());
             assert_eq!(
                 context_menu::labels(&workspace.explorer_rows(&schema, cx)),
-                with_create
+                named
             );
+            // A folder's label is this program's word, not a name to copy.
             assert_eq!(
                 context_menu::labels(&workspace.explorer_rows(&folder, cx)),
                 with_create
@@ -262,8 +268,12 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
                 name: "PERSON".to_string(),
             };
             let rows = workspace.explorer_rows(&node, cx);
+            // Copying the name needs no session; the statements read the
+            // columns, and do.
             let mut expected = relation_labels();
             expected.pop();
+            expected.push(ts!("menu.copy_select").to_string());
+            expected.push(ts!("menu.copy_insert").to_string());
             expected.extend(scope_labels());
             expected.retain(|label| !label.is_empty());
             assert_eq!(
@@ -718,4 +728,48 @@ fn the_menus_open_from_the_keyboard(cx: &mut gpui::TestAppContext) {
             "the editor's menu opened"
         );
     });
+}
+
+/// "Copy SELECT statement" and "Copy INSERT statement" read the columns of
+/// every table they are given and put one statement per table on the
+/// clipboard, in the order the tables came.
+#[gpui::test]
+fn the_copied_statements_name_every_column_of_every_table(cx: &mut gpui::TestAppContext) {
+    let (window, connection) = workspace_over_h2_with(
+        "copy-statements",
+        &[
+            "CREATE TABLE PERSON (ID INTEGER PRIMARY KEY, NAME VARCHAR(40))",
+            "CREATE TABLE CITY (CODE CHAR(3), \"Full Name\" VARCHAR(80))",
+        ],
+        cx,
+    );
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let table = |name: &str| ObjectTarget {
+        connection,
+        catalog: None,
+        schema: Some("PUBLIC".to_string()),
+        folder: explorer::Folder::Tables,
+        name: name.to_string(),
+    };
+    let copied = |kind, cx: &mut gpui::VisualTestContext| {
+        window
+            .update(cx, |workspace, _window, cx| {
+                workspace.copy_statements(vec![table("PERSON"), table("CITY")], kind, cx);
+            })
+            .expect("the window is open");
+        cx.run_until_parked();
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .expect("something was copied")
+    };
+
+    assert_eq!(
+        copied(CopiedStatement::Select, &mut cx),
+        "SELECT ID,\n       NAME\n  FROM PUBLIC.PERSON;\n\n\
+         SELECT CODE,\n       \"Full Name\"\n  FROM PUBLIC.CITY;"
+    );
+    assert_eq!(
+        copied(CopiedStatement::Insert, &mut cx),
+        "INSERT INTO PUBLIC.PERSON\n       (ID,\n        NAME)\nVALUES (:ID,\n        :NAME);\n\n\
+         INSERT INTO PUBLIC.CITY\n       (CODE,\n        \"Full Name\")\nVALUES (:CODE,\n        :Full_Name);"
+    );
 }

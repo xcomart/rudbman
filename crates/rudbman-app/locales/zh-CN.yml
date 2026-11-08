@@ -28,6 +28,12 @@ menu:
   save_sql_file: 保存 SQL 文件
   save_sql_file_as: SQL 文件另存为…
   extract_script: 提取脚本…
+  # Put the names of the explorer rows selected on the clipboard, one per line.
+  copy_names: 复制名称
+  # Put a SELECT, or an INSERT with a placeholder per column, of each
+  # selected table on the clipboard.
+  copy_select: 复制 SELECT 语句
+  copy_insert: 复制 INSERT 语句
   transfer_table: 传输数据行…
   backup_schema: 备份模式（Schema）…
   # Draws the ERD of the scope the explorer's selection sits in.
@@ -437,6 +443,8 @@ detail:
   copy: 复制
   empty: 无
   no_ddl: 该对象没有可显示的 CREATE 语句。
+  copy_names_inline: 复制名称（逗号分隔）
+  copy_rows: 复制行
   ddl_reconstructed: 由元数据重建，仅供参考。其中不含 CHECK 约束、触发器、分区和排序规则。
   ddl_reconstructed_object: 由目录重建，仅供参考。其中不含例程特性等目录中没有的内容。
 
@@ -878,6 +886,7 @@ toast:
   not_connected: "“%{name}”未连接。请先重新连接。"
   open_failed: "无法打开 %{file}：%{error}"
   columns_failed: "无法读取 %{table} 的列：%{error}"
+  sql_copied: "已将 SQL 复制到剪贴板。"
   keychain_unavailable: "系统钥匙串不可用（%{error}）。无法读取已保存的密码，新密码也不会被保存。"
 
 history:

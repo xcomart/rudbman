@@ -97,6 +97,15 @@ use crate::explorer::{
     ConnectionId, Explorer, ExplorerEvent, Folder, NodeId, ObjectTarget, RootInfo,
 };
 use crate::extract_dialog::{ExtractDialog, ExtractDialogEvent};
+
+/// Which statement the explorer's "copy … statement" rows write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CopiedStatement {
+    /// A `SELECT` of every column.
+    Select,
+    /// An `INSERT` of one row, every column given a placeholder.
+    Insert,
+}
 use crate::i18n::ts;
 use crate::pane_tree::{Axis, Pane, PaneId, PaneItem, PaneLookup, PaneNode, PaneTree, SplitId};
 use crate::query::{

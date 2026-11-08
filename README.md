@@ -86,6 +86,14 @@ JVM bridge.
   rebuilt from the catalog where it does not). Every kind of object shows its
   `CREATE`, laid out for reading: one column to a line, a view's query as Format
   SQL writes it, a routine's or a trigger's body indented by block.
+  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>-click and <kbd>Shift</kbd>-click (or
+  <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>) pick several rows of the tree,
+  and <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>C</kbd> copies their names, one per
+  line; a table's or a view's right-click menu also copies a laid-out
+  `SELECT` of every column — and a table's an `INSERT` with a `:column`
+  placeholder per value — for every table picked. The detail panel's column
+  list picks rows the same way and copies their names, one per line or
+  comma-separated, or the whole rows as tab-separated text.
 - **A SQL workbench**: an editor with incremental dialect-aware highlighting
   and IME support, SQL keyword/function/table/column completion (including table aliases),
   statement splitting, run-one/run-selection/run-all,
@@ -208,8 +216,10 @@ JVM bridge.
   through a user template — streamed to the file inside the JVM with progress
   and cancellation. Script execution is the same editor pipeline: open a
   `.sql` file, run it, get per-statement errors. Ctrl/Cmd+S saves a query tab to
-  its `.sql` file (asking where the first time) and "Save SQL file as…" saves
-  it under a new name; the tab then takes the file's name, and a dot marks
+  its `.sql` file (asking where the first time, over the tab's name with
+  today's date after it) and "Save SQL file as…" saves it under a new name; a
+  name typed without an extension is saved as `.sql`. The tab then takes the
+  file's name, and a dot marks
   changes not yet saved. A file changed on disk since the tab read or saved it
   is never overwritten in place; the save asks where instead.
 - **Closing never loses work silently.** A tab with staged row or structure
@@ -271,6 +281,8 @@ macOS), with its chord beside it.
 | | <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save the query tab / save as (no save-as chord on macOS) |
 | Explorer | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Query the selected object |
 | | <kbd>Ctrl</kbd>+<kbd>E</kbd> | ERD of the selection's schema |
+| | <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy the names of the selected rows (also in the detail panel's column list) |
+| | <kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Select a run of rows |
 | | <kbd>Ctrl</kbd>+<kbd>F</kbd> | Filter the tree by name; in the box <kbd>Enter</kbd> opens the folders with matches and goes back to the tree, <kbd>Esc</kbd> clears it (pressed again, goes back to the tree) |
 | | <kbd>Alt</kbd>+<kbd>R</kbd> | In the filter box: read it as a regular expression, or as names again |
 | SQL editor | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Run the statement under the caret |

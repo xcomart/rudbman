@@ -313,6 +313,21 @@ fn relation_labels() -> Vec<String> {
     ]
 }
 
+/// The copies a table's menu offers: its name, and its two statements.
+fn table_copy_labels() -> Vec<String> {
+    vec![
+        ts!("menu.copy_names").to_string(),
+        ts!("menu.copy_select").to_string(),
+        ts!("menu.copy_insert").to_string(),
+        String::new(),
+    ]
+}
+
+/// The one copy anything else with a name of its own offers.
+fn name_copy_labels() -> Vec<String> {
+    vec![ts!("menu.copy_names").to_string(), String::new()]
+}
+
 mod connections;
 mod files;
 mod guards;

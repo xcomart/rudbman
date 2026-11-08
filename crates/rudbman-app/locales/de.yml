@@ -28,6 +28,12 @@ menu:
   save_sql_file: SQL-Datei speichern
   save_sql_file_as: SQL-Datei speichern unter…
   extract_script: Skript extrahieren…
+  # Put the names of the explorer rows selected on the clipboard, one per line.
+  copy_names: Namen kopieren
+  # Put a SELECT, or an INSERT with a placeholder per column, of each
+  # selected table on the clipboard.
+  copy_select: SELECT-Anweisung kopieren
+  copy_insert: INSERT-Anweisung kopieren
   transfer_table: Zeilen übertragen…
   backup_schema: Schema sichern…
   # Draws the ERD of the scope the explorer's selection sits in.
@@ -437,6 +443,8 @@ detail:
   copy: Kopieren
   empty: nichts vorhanden
   no_ddl: Für dieses Objekt gibt es keine CREATE-Anweisung zu zeigen.
+  copy_names_inline: Namen kommagetrennt kopieren
+  copy_rows: Zeilen kopieren
   ddl_reconstructed: Aus Metadaten rekonstruiert, als Anhaltspunkt. CHECK-Constraints, Trigger, Partitionierung und Sortierungen fehlen darin.
   ddl_reconstructed_object: Aus dem Katalog rekonstruiert, als Anhaltspunkt. Was der Katalog nicht festhält – etwa die Eigenschaften einer Routine – fehlt darin.
 
@@ -878,6 +886,7 @@ toast:
   not_connected: "„%{name}“ ist nicht verbunden. Verbinden Sie sie zuerst neu."
   open_failed: "%{file} konnte nicht geöffnet werden: %{error}"
   columns_failed: "Die Spalten von %{table} konnten nicht gelesen werden: %{error}"
+  sql_copied: "SQL in die Zwischenablage kopiert."
   keychain_unavailable: "Der Schlüsselbund des Systems ist nicht verfügbar (%{error}). Gespeicherte Passwörter können nicht gelesen und neue nicht behalten werden."
 
 history:
