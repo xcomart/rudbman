@@ -30,11 +30,11 @@ pub(crate) use bootstrap::{editor_theme_for, theme_dirs};
 use crate::{
     AddToBuilder, BackupSchema, CheckUpdates, ClosePane, CloseTab, DismissDialog, ExplainQuery,
     ExtractScript, FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery,
-    NextConnection, NextRegion, NextTab, OpenErd, OpenSettings, OpenSqlFile, PrevConnection,
-    PrevRegion, PrevTab, QueryObject, Quit, ReopenClosedTab, SaveSqlFile, SaveSqlFileAs, SelectTab,
-    ShowAbout, ShowQueryHistory, SplitBelow, SplitRight, ToggleExplorer, TransferTable,
-    app_identity, app_settings, builder_pane, builder_sql, connection, context_menu, erd_pane,
-    explorer, i18n, icons, table_detail,
+    NextConnection, NextRegion, NextTab, OpenErd, OpenSettings, OpenSqlFile, OpenUserGuide,
+    PrevConnection, PrevRegion, PrevTab, QueryObject, Quit, ReopenClosedTab, SaveSqlFile,
+    SaveSqlFileAs, SelectTab, ShowAbout, ShowQueryHistory, ShowShortcuts, SplitBelow, SplitRight,
+    ToggleExplorer, TransferTable, app_identity, app_settings, builder_pane, builder_sql,
+    connection, context_menu, erd_pane, explorer, i18n, icons, table_detail,
 };
 
 mod actions;
@@ -50,6 +50,7 @@ mod menus;
 mod objects;
 mod panes;
 mod session;
+mod shortcuts;
 mod tab_name;
 mod view;
 #[cfg(test)]
@@ -788,6 +789,13 @@ struct Workspace {
     close_scroll: ScrollHandle,
     confirm_scroll: ScrollHandle,
     card_scroll: ScrollHandle,
+    /// Whether the keyboard shortcut sheet is showing.
+    shortcuts_open: bool,
+    /// The shortcut sheet's Close button, which takes the keyboard when the
+    /// sheet opens.
+    shortcuts_focus: FocusHandle,
+    /// Scroll of the shortcut sheet's list.
+    shortcuts_scroll: ScrollHandle,
     /// The connection tab that asked the dialog for a password to reconnect
     /// with, and the profile it asked about; see [`Workspace::reconnect_with`].
     pending_reconnect: Option<(ConnectionId, Uuid)>,
@@ -954,6 +962,9 @@ impl Workspace {
             close_scroll: ScrollHandle::new(),
             confirm_scroll: ScrollHandle::new(),
             card_scroll: ScrollHandle::new(),
+            shortcuts_open: false,
+            shortcuts_focus: cx.focus_handle(),
+            shortcuts_scroll: ScrollHandle::new(),
             pending_reconnect: None,
             focus_origin: FocusOrigin::Shell,
             tab_drop: TabDropState::new(),

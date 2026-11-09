@@ -48,6 +48,7 @@ impl Workspace {
         if self.close_question.is_some() {
             self.answer_close(closing::CloseAnswer::Cancel, window, cx);
         }
+        self.shortcuts_open = false;
         if self.about.read(cx).is_open() {
             self.about.update(cx, |dialog, cx| dialog.close(cx));
         }

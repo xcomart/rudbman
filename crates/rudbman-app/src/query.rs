@@ -90,7 +90,7 @@ pub use render::{error_lines, note, render_error};
 mod results;
 mod statements;
 mod toolbar;
-pub(crate) use keys::EXPLAIN_KEY;
+pub(crate) use keys::{COMMIT_KEY, EXPLAIN_KEY, ROLLBACK_KEY};
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
 use std::cell::RefCell;

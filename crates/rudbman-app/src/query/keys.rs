@@ -49,14 +49,14 @@ pub(crate) const EXPLAIN_KEY: &str = if cfg!(target_os = "macos") {
 };
 
 /// The commit chord as the toolbar's tooltip names it.
-pub(super) const COMMIT_KEY: &str = if cfg!(target_os = "macos") {
+pub(crate) const COMMIT_KEY: &str = if cfg!(target_os = "macos") {
     "Ctrl+Cmd+C"
 } else {
     "F11"
 };
 
 /// The rollback chord as the toolbar's tooltip names it.
-pub(super) const ROLLBACK_KEY: &str = if cfg!(target_os = "macos") {
+pub(crate) const ROLLBACK_KEY: &str = if cfg!(target_os = "macos") {
     "Ctrl+Cmd+R"
 } else {
     "F12"

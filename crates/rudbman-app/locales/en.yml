@@ -98,6 +98,8 @@ menu:
   # dialog it opens — so no trailing ellipsis, which would read oddly as a
   # heading.
   check_updates: Check for updates
+  shortcuts: "Keyboard shortcuts"
+  user_guide: "User guide"
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
   # act on connections.
@@ -110,6 +112,8 @@ menu:
   mac:
     new_connection: Manage Connections…
     quit: Quit rudbman
+    shortcuts: "Keyboard Shortcuts"
+    user_guide: "rudbman User Guide"
 
 # The tab strip in the title bar. One tab per open connection.
 tab:
@@ -1460,3 +1464,28 @@ history:
   canceled: Canceled
   kept_in: "Kept in %{path}"
   recording_off: Recording is turned off in Settings, so nothing new is added.
+
+# The keyboard shortcut sheet the application menu opens: the headings of
+# its groups, and the rows the menus have no words of their own for.
+shortcuts:
+  group_window: "Window"
+  group_tabs: "Tabs and panes"
+  group_explorer: "Explorer"
+  group_editor: "SQL editor"
+  group_grid: "Data grid"
+  group_erd: "ERD"
+  open_menu: "Open the ☰ menu"
+  context_menu: "Open the context menu of what has the keyboard"
+  dismiss: "Close the topmost dialog or menu"
+  next_prev_tab: "Next / previous tab of the pane"
+  select_tab: "Switch to tab n of the pane — 9 is the last"
+  next_prev_connection: "Next / previous connection tab"
+  regions: "Explorer → editor → results, and back"
+  select_range: "Select a run of rows"
+  filter_tree: "Filter the tree by name"
+  filter_regex: "In the filter box: read it as a regular expression, or as names again"
+  stop_run: "Stop the running statement"
+  mark_delete: "Mark the selected rows for deletion, or unmark them"
+  edit_cell: "Edit the cell"
+  filter_rows: "Filter the rows"
+  toggle_names: "Switch between physical and logical names"

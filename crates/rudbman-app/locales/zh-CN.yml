@@ -48,6 +48,8 @@ menu:
   prev_pane: 上一个窗格
   about: 关于 rudbman
   check_updates: 检查更新
+  shortcuts: "键盘快捷键"
+  user_guide: "用户指南"
   quit: 退出
   connection: 连接
   view: 视图
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: 管理连接…
     quit: 退出 rudbman
+    shortcuts: "键盘快捷键"
+    user_guide: "rudbman 用户指南"
 
 tab:
   close: 关闭连接
@@ -904,3 +908,26 @@ history:
   canceled: 已取消
   kept_in: "保存位置：%{path}"
   recording_off: 设置中已关闭记录，不会再添加新语句。
+
+shortcuts:
+  group_window: "窗口"
+  group_tabs: "标签页和窗格"
+  group_explorer: "资源管理器"
+  group_editor: "SQL 编辑器"
+  group_grid: "数据网格"
+  group_erd: "ERD"
+  open_menu: "打开 ☰ 菜单"
+  context_menu: "打开拥有键盘焦点的项目的上下文菜单"
+  dismiss: "关闭最上层的对话框或菜单"
+  next_prev_tab: "窗格的下一个 / 上一个标签页"
+  select_tab: "切换到窗格的第 n 个标签页 — 9 为最后一个"
+  next_prev_connection: "下一个 / 上一个连接标签页"
+  regions: "资源管理器 → 编辑器 → 结果，以及反向"
+  select_range: "选择连续的多行"
+  filter_tree: "按名称筛选树"
+  filter_regex: "在筛选框中：按正则表达式读取，或改回按名称读取"
+  stop_run: "停止正在运行的语句"
+  mark_delete: "将选中的行标记为删除，或取消标记"
+  edit_cell: "编辑单元格"
+  filter_rows: "筛选行"
+  toggle_names: "在物理名和逻辑名之间切换"

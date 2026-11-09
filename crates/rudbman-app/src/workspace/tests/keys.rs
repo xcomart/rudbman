@@ -309,3 +309,62 @@ fn opening_a_tab_without_a_session_says_why(cx: &mut gpui::TestAppContext) {
         );
     }
 }
+
+/// The shortcut sheet is written from the binding constants, and every one of
+/// its descriptions is a looked-up sentence rather than a key.
+#[test]
+fn the_shortcut_sheet_names_the_chords_the_bindings_use() {
+    let groups = crate::workspace::shortcuts::shortcut_groups();
+    assert_eq!(groups.len(), 6);
+    let rows: Vec<_> = groups.iter().flat_map(|(_, rows)| rows).collect();
+    let new_query = format!("{SHORTCUT_MODIFIER}+T");
+    assert!(
+        rows.iter().any(|(key, _)| key.as_ref() == new_query),
+        "the new-query chord is missing"
+    );
+    assert!(
+        rows.iter()
+            .any(|(key, _)| key.as_ref() == crate::query::EXPLAIN_KEY),
+        "the explain chord is missing"
+    );
+    for (key, action) in rows {
+        assert!(!key.is_empty());
+        assert!(
+            !action.contains('.') || action.contains(' '),
+            "untranslated {action}"
+        );
+    }
+}
+
+/// The sheet opens from its menu row over a query tab, `Escape` puts it away,
+/// and the keyboard goes back to the editor it was taken from.
+#[gpui::test]
+fn the_shortcut_sheet_opens_and_escape_closes_it(cx: &mut gpui::TestAppContext) {
+    let (window, _) = workspace_over_h2("keys-shortcuts", cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            workspace.open_query("select 1", window, cx);
+        })
+        .expect("the window is open");
+    cx.run_until_parked();
+    cx.dispatch_action(crate::ShowShortcuts);
+    cx.run_until_parked();
+    window
+        .update(&mut cx, |workspace, _window, cx| {
+            assert!(workspace.shortcuts_open);
+            assert!(workspace.dialog_open(cx));
+        })
+        .expect("the window is open");
+    cx.dispatch_action(DismissDialog);
+    cx.run_until_parked();
+    window
+        .update(&mut cx, |workspace, window, cx| {
+            assert!(!workspace.shortcuts_open);
+            assert!(
+                editor_focused(workspace, window, cx),
+                "the keyboard went to the shell"
+            );
+        })
+        .expect("the window is open");
+}

@@ -48,6 +48,8 @@ menu:
   prev_pane: 이전 분할 창
   about: rudbman 정보
   check_updates: 업데이트 확인
+  shortcuts: "키보드 단축키"
+  user_guide: "사용자 가이드"
   quit: 종료
   connection: 연결
   view: 보기
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: 연결 관리…
     quit: rudbman 종료
+    shortcuts: "키보드 단축키"
+    user_guide: "rudbman 사용자 가이드"
 
 tab:
   close: 연결 닫기
@@ -904,3 +908,26 @@ history:
   canceled: 취소됨
   kept_in: "저장 위치: %{path}"
   recording_off: 설정에서 기록이 꺼져 있어 새 SQL 문은 추가되지 않습니다.
+
+shortcuts:
+  group_window: "창"
+  group_tabs: "탭과 분할 창"
+  group_explorer: "탐색기"
+  group_editor: "SQL 편집기"
+  group_grid: "데이터 그리드"
+  group_erd: "ERD"
+  open_menu: "☰ 메뉴 열기"
+  context_menu: "키보드 포커스가 있는 항목의 컨텍스트 메뉴 열기"
+  dismiss: "맨 위의 대화상자나 메뉴 닫기"
+  next_prev_tab: "분할 창의 다음 / 이전 탭"
+  select_tab: "분할 창의 n번째 탭으로 전환 — 9는 마지막 탭"
+  next_prev_connection: "다음 / 이전 연결 탭"
+  regions: "탐색기 → 편집기 → 결과, 그리고 역방향"
+  select_range: "여러 행을 연속으로 선택"
+  filter_tree: "이름으로 트리 필터"
+  filter_regex: "필터 입력란에서: 정규식으로 읽기 / 다시 이름으로 읽기"
+  stop_run: "실행 중인 SQL 문 중지"
+  mark_delete: "선택한 행에 삭제 표시를 하거나 해제"
+  edit_cell: "셀 편집"
+  filter_rows: "행 필터"
+  toggle_names: "물리명과 논리명 전환"

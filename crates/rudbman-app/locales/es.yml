@@ -48,6 +48,8 @@ menu:
   prev_pane: Panel anterior
   about: Acerca de rudbman
   check_updates: Buscar actualizaciones
+  shortcuts: "Atajos de teclado"
+  user_guide: "Guía del usuario"
   quit: Salir
   connection: Conexión
   view: Ver
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: Gestionar conexiones…
     quit: Salir de rudbman
+    shortcuts: "Atajos de teclado"
+    user_guide: "Guía del usuario de rudbman"
 
 tab:
   close: Cerrar la conexión
@@ -904,3 +908,26 @@ history:
   canceled: Cancelada
   kept_in: "Guardado en %{path}"
   recording_off: El registro está desactivado en Ajustes, así que no se añade nada nuevo.
+
+shortcuts:
+  group_window: "Ventana"
+  group_tabs: "Pestañas y paneles"
+  group_explorer: "Explorador"
+  group_editor: "Editor SQL"
+  group_grid: "Cuadrícula de datos"
+  group_erd: "ERD"
+  open_menu: "Abrir el menú ☰"
+  context_menu: "Abrir el menú contextual de lo que tiene el foco del teclado"
+  dismiss: "Cerrar el diálogo o menú superior"
+  next_prev_tab: "Pestaña siguiente / anterior del panel"
+  select_tab: "Ir a la pestaña n del panel — 9 es la última"
+  next_prev_connection: "Pestaña de conexión siguiente / anterior"
+  regions: "Explorador → editor → resultados, y vuelta"
+  select_range: "Seleccionar un rango de filas"
+  filter_tree: "Filtrar el árbol por nombre"
+  filter_regex: "En el cuadro de filtro: leerlo como expresión regular, o de nuevo como nombres"
+  stop_run: "Detener la sentencia en ejecución"
+  mark_delete: "Marcar las filas seleccionadas para eliminarlas, o desmarcarlas"
+  edit_cell: "Editar la celda"
+  filter_rows: "Filtrar las filas"
+  toggle_names: "Alternar entre nombres físicos y lógicos"

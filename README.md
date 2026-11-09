@@ -257,6 +257,10 @@ row says otherwise. The pane chords use <kbd>Alt</kbd> on Linux and Windows and
 <kbd>Cmd</kbd> on macOS. Every command is also in the ☰ menu (the menu bar on
 macOS), with its chord beside it.
 
+The ☰ menu's **Keyboard shortcuts** (in the rudbman menu on macOS) shows the
+main ones in the app, with the chords the platform it runs on uses; its
+**User guide** opens this page.
+
 | Where | Keys | Does |
 |---|---|---|
 | Window | <kbd>Ctrl</kbd>+<kbd>N</kbd> | Manage connections (in the connection dialog: new profile) |

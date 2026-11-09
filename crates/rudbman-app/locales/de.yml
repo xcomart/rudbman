@@ -48,6 +48,8 @@ menu:
   prev_pane: Vorheriger Bereich
   about: Über rudbman
   check_updates: Nach Updates suchen
+  shortcuts: "Tastenkürzel"
+  user_guide: "Benutzerhandbuch"
   quit: Beenden
   connection: Verbindung
   view: Ansicht
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: Verbindungen verwalten…
     quit: rudbman beenden
+    shortcuts: "Tastenkürzel"
+    user_guide: "rudbman-Benutzerhandbuch"
 
 tab:
   close: Verbindung schließen
@@ -904,3 +908,26 @@ history:
   canceled: Abgebrochen
   kept_in: "Gespeichert in %{path}"
   recording_off: Die Aufzeichnung ist in den Einstellungen ausgeschaltet; es kommt nichts Neues hinzu.
+
+shortcuts:
+  group_window: "Fenster"
+  group_tabs: "Tabs und Bereiche"
+  group_explorer: "Explorer"
+  group_editor: "SQL-Editor"
+  group_grid: "Datenraster"
+  group_erd: "ERD"
+  open_menu: "Das ☰-Menü öffnen"
+  context_menu: "Das Kontextmenü des Elements mit Tastaturfokus öffnen"
+  dismiss: "Obersten Dialog oder oberstes Menü schließen"
+  next_prev_tab: "Nächster / vorheriger Tab des Bereichs"
+  select_tab: "Zu Tab n des Bereichs wechseln — 9 ist der letzte"
+  next_prev_connection: "Nächster / vorheriger Verbindungs-Tab"
+  regions: "Explorer → Editor → Ergebnisse und zurück"
+  select_range: "Einen Zeilenbereich auswählen"
+  filter_tree: "Den Baum nach Namen filtern"
+  filter_regex: "Im Filterfeld: als regulären Ausdruck lesen oder wieder als Namen"
+  stop_run: "Die laufende Anweisung abbrechen"
+  mark_delete: "Ausgewählte Zeilen zum Löschen markieren oder die Markierung aufheben"
+  edit_cell: "Zelle bearbeiten"
+  filter_rows: "Zeilen filtern"
+  toggle_names: "Zwischen physischen und logischen Namen wechseln"

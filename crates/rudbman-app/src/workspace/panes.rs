@@ -985,6 +985,7 @@ impl Workspace {
             || self.history.is_some()
             || self.confirm.is_some()
             || self.close_question.is_some()
+            || self.shortcuts_open
             || self.about.read(cx).is_open()
             || self.connect.read(cx).is_open()
             || self.settings.read(cx).is_open()

@@ -48,6 +48,8 @@ menu:
   prev_pane: Volet précédent
   about: À propos de rudbman
   check_updates: Rechercher les mises à jour
+  shortcuts: "Raccourcis clavier"
+  user_guide: "Guide de l’utilisateur"
   quit: Quitter
   connection: Connexion
   view: Affichage
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: Gérer les connexions…
     quit: Quitter rudbman
+    shortcuts: "Raccourcis clavier"
+    user_guide: "Guide de l’utilisateur de rudbman"
 
 tab:
   close: Fermer la connexion
@@ -904,3 +908,26 @@ history:
   canceled: Annulée
   kept_in: "Conservé dans %{path}"
   recording_off: L’enregistrement est désactivé dans les paramètres ; rien de nouveau n’est ajouté.
+
+shortcuts:
+  group_window: "Fenêtre"
+  group_tabs: "Onglets et volets"
+  group_explorer: "Explorateur"
+  group_editor: "Éditeur SQL"
+  group_grid: "Grille de données"
+  group_erd: "ERD"
+  open_menu: "Ouvrir le menu ☰"
+  context_menu: "Ouvrir le menu contextuel de l’élément qui a le clavier"
+  dismiss: "Fermer la boîte de dialogue ou le menu au premier plan"
+  next_prev_tab: "Onglet suivant / précédent du volet"
+  select_tab: "Aller à l’onglet n du volet — 9 est le dernier"
+  next_prev_connection: "Onglet de connexion suivant / précédent"
+  regions: "Explorateur → éditeur → résultats, et retour"
+  select_range: "Sélectionner une plage de lignes"
+  filter_tree: "Filtrer l’arbre par nom"
+  filter_regex: "Dans le champ de filtre : le lire comme une expression régulière, ou de nouveau comme des noms"
+  stop_run: "Arrêter l’instruction en cours"
+  mark_delete: "Marquer les lignes sélectionnées pour suppression, ou retirer la marque"
+  edit_cell: "Modifier la cellule"
+  filter_rows: "Filtrer les lignes"
+  toggle_names: "Basculer entre noms physiques et logiques"
