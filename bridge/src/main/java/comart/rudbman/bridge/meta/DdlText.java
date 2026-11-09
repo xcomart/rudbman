@@ -32,7 +32,10 @@ final class DdlText {
      * {@code DBMS_METADATA} writes storage, tablespace and segment clauses by
      * default, which are the DBA's business and not what a reader looks for.
      * The transform parameters last for the session, and only change what
-     * {@code DBMS_METADATA} itself writes.
+     * {@code DBMS_METADATA} itself writes. {@code REF_CONSTRAINTS} is set on
+     * every call, either way, because a script turns it off to lift the
+     * foreign keys out of a {@code CREATE TABLE} and the next DDL shown in the
+     * explorer must not inherit that.
      * Source: Oracle Database PL/SQL Packages and Types Reference,
      * "DBMS_METADATA.SET_TRANSFORM_PARAM".
      */
@@ -41,6 +44,8 @@ final class DdlText {
             + " 'SEGMENT_ATTRIBUTES', FALSE);"
             + " DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM,"
             + " 'SQLTERMINATOR', TRUE);"
+            + " DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM,"
+            + " 'REF_CONSTRAINTS', %s);"
             + " END;";
 
     /** A MySQL account or host part: quoted three ways, or bare. */
@@ -147,8 +152,22 @@ final class DdlText {
      *             {@code MATERIALIZED_VIEW}, {@code SEQUENCE}, {@code INDEX}
      */
     static String oracleMetadata(Connection conn, String type, String schema, String name) {
+        return oracleMetadata(conn, type, schema, name, true);
+    }
+
+    /**
+     * {@link #oracleMetadata(Connection, String, String, String)}, saying
+     * whether a table's foreign keys are written into its {@code CREATE}.
+     *
+     * @param refConstraints {@code false} to leave them out, for a script that
+     *                       adds them after every table exists
+     */
+    static String oracleMetadata(Connection conn, String type, String schema, String name,
+                                 boolean refConstraints) {
         return Attempt.<String>on(conn, "DBMS_METADATA.GET_DDL " + type, c -> {
-            try (CallableStatement cs = c.prepareCall(ORACLE_TRANSFORMS)) {
+            try (CallableStatement cs = c.prepareCall(
+                    String.format(Locale.ROOT, ORACLE_TRANSFORMS,
+                            refConstraints ? "TRUE" : "FALSE"))) {
                 cs.execute();
             }
             return oracleCall(c, "SELECT DBMS_METADATA.GET_DDL(?, ?, " + owner(schema)

@@ -700,6 +700,8 @@ backup:
   compress: Die Datei mit gzip komprimieren
   ddl: Definitionen (DDL) einschließen
   drop: DROP-Anweisungen voranstellen
+  objects: "Außerdem einschließen"
+  routines: "Prozeduren und Funktionen"
   data: Zeilen einschließen
   batch_rows: Zeilen pro INSERT
   start: Sichern
@@ -711,6 +713,8 @@ backup:
   stop_question: Sicherung stoppen? In die Datei wird nichts geschrieben.
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
+  skipped: "%{count} Objekte ließen sich nicht lesen und wurden ausgelassen:"
+  skipped_more: "…und %{count} weitere"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

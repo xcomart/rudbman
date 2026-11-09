@@ -342,8 +342,8 @@ milliseconds, a progress object. Files are written here too, on the side the dat
 is on.
 
 Three kinds: `extract` (objects → script, CSV or template file), `backup` (a
-scope's tables → one script file) and `transfer` (a query on one session →
-a table on another).
+scope's tables, and its sequences, views, routines and triggers as asked → one
+script file) and `transfer` (a query on one session → a table on another).
 
 ```json
 { "kind": "extract",
@@ -360,6 +360,7 @@ a table on another).
   "output":   { "path": "/tmp/app.sql.gz", "charset": "UTF-8", "newline": "\n" },
   "compress": "gzip",
   "ddl":      { "include": true, "include_drop": false, "constraints": "alter" },
+  "objects":  { "sequences": true, "views": true, "routines": true, "triggers": true },
   "data":     { "include": true, "insert_batch_rows": 1 } }
 ```
 
@@ -410,23 +411,39 @@ a table on another).
   either direction** — a transfer holds the target's connection lock too, and
   closing it would otherwise wait on a lock only a cancel releases.
 
-**Extract and backup** write every `DROP` in reverse order (with
-`ddl.include_drop`), then every `CREATE`, then every foreign key as
-`ALTER TABLE … ADD CONSTRAINT`, then the data. Foreign keys go last because two
-tables that reference each other cannot be created in any order at all.
-`ddl.constraints: "alter"` (the default) forces the reverse-generated DDL path,
-with the blind spots listed under `DESCRIBE`/`ddl`: lifting the keys out of a
-server's own `CREATE` text would mean parsing vendor SQL.
+**Extract and backup** keep the foreign keys out of the creation order's way,
+because two tables that reference each other cannot be created in any order at
+all. With `ddl.constraints: "alter"` (the default) the server's own `CREATE`
+text is used wherever that needs no parsing of vendor SQL: H2 writes each key as
+a statement of its own, Oracle's `DBMS_METADATA` leaves them out on request
+(`REF_CONSTRAINTS`) and writes each one (`REF_CONSTRAINT`), and MySQL, MariaDB
+and SQLite keep them inline — the script runs with `FOREIGN_KEY_CHECKS = 0`, and
+SQLite checks no reference at `CREATE`. Every other product is reconstructed
+from JDBC metadata, PostgreSQL's and SQL Server's `CHECK` constraints and
+computed columns read from their own catalogs. A computed column is left out of
+the `INSERT`s wherever the `CREATE` recreates it as computed.
 
 A backup is an extract without the object list: the scope's `TABLE` entries are
-enumerated in name order — no views, no routines. The data section is reordered
-so that a table follows the tables it references, because the keys are already in
-place by then and alphabetical order would have `CHILD` rejected before `PARENT`
-exists. A reference cycle has no such order and is left in name order. The
-catalog written into the script is the one `scope.catalog` asked for, never the
-one the driver reports, so a backup does not pin itself to the source database's
-name. `compress: "gzip"` wraps the output; `bytes` then counts the compressed
-file, matching its size.
+enumerated in name order, and `objects` adds the other kinds (all off when
+absent), each through `DESCRIBE`/`ddl`. The script is written in the order a
+replay needs: session settings (`FOREIGN_KEY_CHECKS`, PostgreSQL's
+`check_function_bodies`, SQL Server's `QUOTED_IDENTIFIER`, SQL*Plus's
+`DEFINE`), the `DROP`s with `ddl.include_drop` (dependents first, foreign keys
+taken off before the tables), PostgreSQL's extensions and enum and domain types,
+sequences, tables, routines (and Oracle packages), views in the order their texts
+name each other, the rows — a table after the tables it references, with each
+product's identity handling around them (`IDENTITY_INSERT`,
+`OVERRIDING SYSTEM VALUE`, Oracle's `START WITH LIMIT VALUE`) — then the
+foreign keys, the counters (PostgreSQL's `setval`, MariaDB's `SETVAL`, SQL
+Server's `RESTART WITH`), materialized views, and the triggers last so that
+loading the rows fires none. A routine or trigger body is written the way the
+product's client reads a script: `DELIMITER ;;` for MySQL, a `/` line for
+Oracle, `GO` batches for SQL Server, `--#SET TERMINATOR` for Db2. An object
+whose DDL cannot be read is left out and named in `errors[]`; the job still
+ends `done`. The catalog written into the script is the one `scope.catalog`
+asked for, never the one the driver reports, so a backup does not pin itself to
+the source database's name. `compress: "gzip"` wraps the output; `bytes` then
+counts the compressed file, matching its size.
 
 **Transfer** holds both connection locks for the whole stream, taken in ascending
 session-handle order so that two transfers in opposite directions cannot

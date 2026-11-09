@@ -700,6 +700,8 @@ backup:
   compress: Compresser le fichier avec gzip
   ddl: Inclure les définitions (DDL)
   drop: Faire précéder d’instructions DROP
+  objects: "Inclure aussi"
+  routines: "Procédures et fonctions"
   data: Inclure les lignes
   batch_rows: Lignes par INSERT
   start: Sauvegarder
@@ -711,6 +713,8 @@ backup:
   stop_question: Arrêter la sauvegarde ? Rien ne sera écrit dans le fichier.
   failed: "La sauvegarde a échoué : %{error}"
   failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
+  skipped: "%{count} objets n’ont pas pu être lus et ont été omis :"
+  skipped_more: "…et %{count} de plus"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

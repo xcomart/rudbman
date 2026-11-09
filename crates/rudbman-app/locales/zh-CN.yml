@@ -700,6 +700,8 @@ backup:
   compress: 用 gzip 压缩文件
   ddl: 包含定义（DDL）
   drop: 先写入 DROP 语句
+  objects: "同时包含"
+  routines: "存储过程和函数"
   data: 包含数据行
   batch_rows: 每条 INSERT 的行数
   start: 备份
@@ -711,6 +713,8 @@ backup:
   stop_question: 要停止备份吗？不会向文件写入任何内容。
   failed: "备份失败：%{error}"
   failed_unknown: 备份失败，桥接层没有给出原因。
+  skipped: "有 %{count} 个对象无法读取，已略过："
+  skipped_more: "……另有 %{count} 个"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

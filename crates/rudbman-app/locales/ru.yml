@@ -700,6 +700,8 @@ backup:
   compress: Сжать файл в gzip
   ddl: Включить определения (DDL)
   drop: Предварять инструкциями DROP
+  objects: "Также включить"
+  routines: "Процедуры и функции"
   data: Включить строки
   batch_rows: Строк на INSERT
   start: Создать резервную копию
@@ -711,6 +713,8 @@ backup:
   stop_question: Остановить резервное копирование? В файл ничего не будет записано.
   failed: "Резервное копирование не удалось: %{error}"
   failed_unknown: Резервное копирование не удалось, но мост не сообщил причину.
+  skipped: "Не удалось прочитать объекты (%{count}), они пропущены:"
+  skipped_more: "…и ещё %{count}"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

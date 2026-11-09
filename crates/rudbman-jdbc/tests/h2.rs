@@ -956,7 +956,8 @@ fn an_extract_job_writes_a_script_without_a_row_crossing_the_boundary() {
         script.len(),
         "the byte count lags while a job runs and is exact once it has ended"
     );
-    assert!(script.contains("CREATE TABLE"), "{script}");
+    // H2's own DDL, which says MEMORY TABLE.
+    assert!(script.contains("CREATE MEMORY TABLE"), "{script}");
     assert!(script.contains("INSERT INTO"), "{script}");
     assert!(
         script.contains("'it''s quoted'"),

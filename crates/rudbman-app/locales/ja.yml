@@ -700,6 +700,8 @@ backup:
   compress: gzip で圧縮する
   ddl: 定義 (DDL) を含める
   drop: 先に DROP 文を入れる
+  objects: "併せて含める"
+  routines: "プロシージャと関数"
   data: 行を含める
   batch_rows: INSERT あたりの行数
   start: バックアップ
@@ -711,6 +713,8 @@ backup:
   stop_question: バックアップを停止しますか？ファイルには何も書き込まれません。
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
+  skipped: "読み取れなかったオブジェクト %{count} 個を除いて書き出しました:"
+  skipped_more: "…ほか %{count} 個"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

@@ -700,6 +700,8 @@ backup:
   compress: gzip으로 압축하기
   ddl: 정의(DDL) 포함
   drop: 앞에 DROP 문 넣기
+  objects: "함께 넣을 객체"
+  routines: "프로시저·함수"
   data: 데이터 포함
   batch_rows: INSERT당 행 수
   start: 백업
@@ -711,6 +713,8 @@ backup:
   stop_question: 백업을 중지할까요? 파일에는 아무것도 쓰지 않습니다.
   failed: "백업에 실패했습니다: %{error}"
   failed_unknown: 브리지가 이유를 알려주지 않은 채 백업에 실패했습니다.
+  skipped: "읽을 수 없는 객체 %{count}개는 빼고 썼습니다:"
+  skipped_more: "…외 %{count}개"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:

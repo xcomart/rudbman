@@ -93,6 +93,19 @@ final class ScriptOut implements Closeable {
     }
 
     /**
+     * {@link #block}, ending its last line and leaving an empty one after it,
+     * whether or not the text ended in a line break: a server's own DDL
+     * usually does not, a reconstruction does.
+     *
+     * @param s the generated text
+     * @throws IOException if the file cannot be written
+     */
+    void paragraph(String s) throws IOException {
+        block(s.endsWith("\n") ? s : s + "\n");
+        line("");
+    }
+
+    /**
      * @throws IOException if the file cannot be written
      */
     void flush() throws IOException {

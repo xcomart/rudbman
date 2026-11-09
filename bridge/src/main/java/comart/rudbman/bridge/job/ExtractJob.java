@@ -97,6 +97,11 @@ public final class ExtractJob extends Jobs.Job {
     }
 
     private final List<Obj> objects = new ArrayList<>();
+    /**
+     * Whether each object's {@code CREATE} in this script recreates its
+     * computed columns as computed; see {@link #selectList}.
+     */
+    private final Map<Obj, Boolean> keepsGenerated = new HashMap<>();
     private final Path path;
     /** Where the worker writes; set by {@link #run()}, on the worker thread. */
     private OutputFile file;
@@ -218,11 +223,27 @@ public final class ExtractJob extends Jobs.Job {
         file = OutputFile.create(path);
         try (ScriptOut out = new ScriptOut(file.open(), charset, newline, false)) {
             try {
+                // MySQL's foreign keys stay inline in its own DDL, and its rows
+                // go in with the checks off, as mysqldump has them.
+                List<String> prologue = objects.isEmpty() ? List.of()
+                        : runLocked(() -> Ddl.scriptPrologue(session().metaData()));
+                for (String line : prologue) {
+                    out.line(line);
+                }
+                if (!prologue.isEmpty()) {
+                    out.line("");
+                }
                 if (ddlInclude) {
                     writeDdl(out);
                 }
                 if (dataInclude && !shouldStop()) {
                     writeData(out);
+                }
+                if (!shouldStop() && !objects.isEmpty()) {
+                    for (String line : runLocked(
+                            () -> Ddl.scriptEpilogue(session().metaData()))) {
+                        out.line(line);
+                    }
                 }
             } finally {
                 // A canceled or failed job still reports how much it managed to
@@ -286,8 +307,8 @@ public final class ExtractJob extends Jobs.Job {
                 }
                 Ddl.Script sc = Ddl.script(conn, dbm, o.catalog, o.schema, o.name,
                         splitForeignKeys);
-                out.block(sc.creates);
-                out.line("");
+                keepsGenerated.put(o, sc.keepsGenerated);
+                out.paragraph(sc.creates);
                 alters.addAll(sc.alters);
             }
             for (String alter : alters) {
@@ -331,7 +352,7 @@ public final class ExtractJob extends Jobs.Job {
         Dialect dialect = Dialect.of(dbm);
         Ident id = Ident.of(dbm);
         String qualified = id.qualify(o.catalog, o.schema, o.name);
-        String sql = "SELECT * FROM " + qualified
+        String sql = "SELECT " + selectList(dbm, id, o) + " FROM " + qualified
                 + (where == null || where.isEmpty() ? "" : " WHERE " + where);
 
         try (Statement st = session().connection().createStatement()) {
@@ -375,12 +396,61 @@ public final class ExtractJob extends Jobs.Job {
                         break;
                     default:
                         Scripts.writeInserts(this, out, rs, qualified, names, types, dialect, id,
-                                insertBatchRows);
+                                insertBatchRows, overridingSystemValue(dbm, dialect, o));
                 }
             } finally {
                 inFlight(null);
             }
         }
+    }
+
+    /**
+     * The columns an {@code INSERT} script reads: every one but those the
+     * server computes, where the DDL in this same script recreates them as
+     * computed - every product refuses a value for one - or where there is no
+     * DDL and the rows go into a schema that has them. A CSV or a template is
+     * a rendering of the rows, not a replay, and keeps every column.
+     */
+    private String selectList(DatabaseMetaData dbm, Ident id, Obj o) throws SQLException {
+        if (!"insert".equals(mode)) {
+            return "*";
+        }
+        boolean skip = keepsGenerated.getOrDefault(o, true);
+        if (!skip) {
+            return "*";
+        }
+        List<Ddl.DataColumn> columns = Ddl.dataColumns(dbm, o.catalog, o.schema, o.name);
+        StringBuilder sb = new StringBuilder();
+        int kept = 0;
+        for (Ddl.DataColumn c : columns) {
+            if (c.generated) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(id.q(c.name));
+            kept++;
+        }
+        return kept == 0 || kept == columns.size() ? "*" : sb.toString();
+    }
+
+    /**
+     * Whether the table has a PostgreSQL {@code GENERATED ALWAYS} identity,
+     * whose values an {@code INSERT} only takes with
+     * {@code OVERRIDING SYSTEM VALUE}.
+     */
+    private static boolean overridingSystemValue(DatabaseMetaData dbm, Dialect dialect, Obj o)
+            throws SQLException {
+        if (dialect != Dialect.POSTGRESQL) {
+            return false;
+        }
+        for (Ddl.DataColumn c : Ddl.dataColumns(dbm, o.catalog, o.schema, o.name)) {
+            if (c.identityAlways) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -88,7 +88,19 @@ final class Literals {
             }
             default: {
                 String s = rs.getString(i);
-                return s == null || rs.wasNull() ? "NULL" : Ident.literal(s);
+                if (s == null || rs.wasNull()) {
+                    return "NULL";
+                }
+                // A plain literal is in the database's code page on SQL Server,
+                // and in its character set for Oracle's national types: text
+                // outside it - Hangul in a Latin1 collation - would arrive as
+                // question marks. N'...' is Unicode on both.
+                boolean national = type == Types.NCHAR || type == Types.NVARCHAR
+                        || type == Types.LONGNVARCHAR || type == Types.NCLOB;
+                if (dialect == Dialect.SQLSERVER || (dialect == Dialect.ORACLE && national)) {
+                    return "N" + Ident.literal(s);
+                }
+                return Ident.literal(s);
             }
         }
     }

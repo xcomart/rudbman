@@ -200,7 +200,11 @@ public final class ObjectDdl {
         if (found == null) {
             throw nothing("options", t);
         }
-        StringBuilder sb = new StringBuilder("CREATE SEQUENCE ").append(t.qualified());
+        // SQL Server names a sequence by schema alone when creating it: the
+        // database prefix is refused (Msg 166), where a lookup accepts it.
+        StringBuilder sb = new StringBuilder("CREATE SEQUENCE ").append(
+                t.dialect == Dialect.SQLSERVER ? t.id.qualify(null, t.schema, t.name)
+                        : t.qualified());
         String type = Json.str(found, "data_type");
         if (type != null && t.dialect != Dialect.ORACLE) {
             sb.append(" AS ").append(type);

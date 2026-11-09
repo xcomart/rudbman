@@ -1133,6 +1133,10 @@ backup:
   # The two halves of a script, with their own sub-options below them.
   ddl: Include the definitions (DDL)
   drop: Precede it with DROP statements
+  # The kinds besides the tables that go in with the definitions; the
+  # sequence, view and trigger labels are the explorer folders' own.
+  objects: "Also include"
+  routines: "Procedures and functions"
   data: Include the rows
   # A backup writes INSERT statements and nothing else, so there is no row
   # format to choose — only how many rows one of them carries.
@@ -1151,6 +1155,10 @@ backup:
   stop_question: Stop the backup? Nothing will be written to the file.
   failed: "The backup failed: %{error}"
   failed_unknown: The backup failed for a reason the bridge did not give.
+  # The objects a finished backup left out because their DDL could not be
+  # read; each is then named on a line of its own, as the bridge wrote it.
+  skipped: "%{count} objects could not be read and were left out:"
+  skipped_more: "…and %{count} more"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 #

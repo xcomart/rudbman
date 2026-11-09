@@ -200,10 +200,13 @@ JVM bridge.
   `GROUP BY` and `ORDER BY`, the SQL preview updates as you go with
   identifiers quoted the way the dialect wants them, and one click opens the
   statement in an editor.
-- **Backup** of a schema or catalog to a replayable `.sql`: every `CREATE`
-  first, every foreign-key `ALTER` after, then `INSERT`s ordered by a
-  topological sort of the foreign keys, optionally gzipped, with progress and
-  cancellation.
+- **Backup** of a schema or catalog to a replayable `.sql`, at the level of a
+  schema dump: the server's own `CREATE TABLE` wherever it can be had (MySQL,
+  MariaDB, H2, Oracle, SQLite), sequences, views, routines and triggers as you
+  choose, `INSERT`s ordered by a topological sort of the foreign keys and the
+  keys added after them, identity and sequence counters carried over, and
+  routine bodies written the way each product's own client reads a script.
+  Optionally gzipped, with progress and cancellation.
 - **DB-to-DB transfer.** Copy tables between two open connections, by plain
   insert or by upsert — `MERGE`, `ON CONFLICT` or `ON DUPLICATE KEY` as the
   target dialect spells it. On a bad row, abort, skip it, or log it and carry
