@@ -3,6 +3,7 @@ package comart.rudbman.bridge.meta;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -126,6 +127,34 @@ public final class PgSchema {
             }
             return out;
         }, new ArrayList<>());
+    }
+
+    /**
+     * Where a column's own sequence stands - an identity's or a serial's.
+     *
+     * @param conn   the live connection
+     * @param lookup an SQL expression naming the sequence, such as a
+     *               {@code pg_get_serial_sequence} call
+     * @return the sequence's name as the server spells it, its
+     *         {@code last_value} and its {@code is_called}, or {@code null}
+     *         when the column has no sequence or it cannot be read
+     */
+    public static String[] sequenceState(Connection conn, String lookup) {
+        return Attempt.<String[]>on(conn, "sequence state", c -> {
+            String seq;
+            try (Statement st = c.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT " + lookup)) {
+                seq = rs.next() ? rs.getString(1) : null;
+            }
+            if (seq == null) {
+                return null;
+            }
+            try (Statement st = c.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT last_value, is_called FROM " + seq)) {
+                return rs.next() ? new String[]{seq, rs.getString(1),
+                        String.valueOf(rs.getBoolean(2))} : null;
+            }
+        }, null);
     }
 
     /**

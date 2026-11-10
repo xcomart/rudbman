@@ -45,8 +45,31 @@ class ScriptsTest {
 
     @Test
     void db2RoutinesChangeTheTerminator() {
-        assertEquals("--#SET TERMINATOR @\nCREATE PROCEDURE p BEGIN END\n@\n--#SET TERMINATOR ;",
+        // On the statement's last line, so that Db2 keeps no line break at the
+        // end of the routine's text.
+        assertEquals("--#SET TERMINATOR @\nCREATE PROCEDURE p BEGIN END@\n--#SET TERMINATOR ;",
                 Scripts.module(Dialect.DB2, "procedure", "CREATE PROCEDURE p BEGIN END;"));
+    }
+
+    @Test
+    void aDb2TerminatorSkipsATrailingComment() {
+        assertEquals("CREATE PROCEDURE p BEGIN END -- done\n@",
+                Scripts.db2Terminated("CREATE PROCEDURE p BEGIN END -- done\n"));
+    }
+
+    @Test
+    void mysqlStringsEscapeBackslashesAndNul() {
+        assertEquals("'a\\\\b''c\\0'", Literals.mysqlLiteral("a\\b'c\0"));
+    }
+
+    @Test
+    void db2StringsSpellTheirLineBreaks() {
+        assertEquals("'a' || CHR(10) || 'b' || CHR(13) || ''", Literals.db2Lines("a\nb\r"));
+    }
+
+    @Test
+    void db2BinaryIsABinaryString() {
+        assertEquals("BX'00FF'", Literals.hexLiteral(new byte[]{0, (byte) 0xff}, Dialect.DB2));
     }
 
     @Test

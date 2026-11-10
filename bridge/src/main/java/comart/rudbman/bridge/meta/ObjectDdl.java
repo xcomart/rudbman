@@ -13,6 +13,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -92,6 +93,14 @@ public final class ObjectDdl {
                 String text = DdlText.oracleMetadata(conn, "VIEW", t.schema, t.name);
                 if (text == null) {
                     text = DdlText.oracleMetadata(conn, "MATERIALIZED_VIEW", t.schema, t.name);
+                    if (text != null) {
+                        // A materialized view's rows sit in a table of its name,
+                        // and that table's indexes are the view's.
+                        List<String> parts = new ArrayList<>();
+                        parts.add(text);
+                        parts.addAll(Ddl.oracleIndexes(conn, t.schema, t.name));
+                        text = DdlText.joined(parts);
+                    }
                 }
                 if (text == null) {
                     return null;
@@ -99,8 +108,21 @@ public final class ObjectDdl {
                 String comments = DdlText.oracleDependent(conn, "COMMENT", t.schema, t.name);
                 return comments == null ? text : text + "\n\n" + comments;
             }
-            case SQLSERVER:
-                return DdlText.sqlServerDefinition(conn, t.qualified());
+            case SQLSERVER: {
+                String text = DdlText.sqlServerDefinition(conn, t.qualified());
+                List<String> indexes = text == null ? null : SqlServerSchema.indexes(conn, t.id,
+                        t.catalog, t.qualified(), t.qualified());
+                if (indexes == null || indexes.isEmpty()) {
+                    return text;
+                }
+                // An indexed view's indexes, each a batch of its own after the
+                // view's, which has to be alone in its batch.
+                StringBuilder sb = new StringBuilder(text.strip());
+                for (String ix : indexes) {
+                    sb.append("\nGO\n").append(ix).append(';');
+                }
+                return sb.toString();
+            }
             case SQLITE:
                 return DdlText.sqlite(conn, "view", t.name);
             case DB2:
@@ -113,11 +135,21 @@ public final class ObjectDdl {
 
     /**
      * {@code pg_get_viewdef} is the query alone; whether it is a view or a
-     * materialized view is {@code relkind}, and the comment is the class's.
+     * materialized view is {@code relkind}, the comment is the class's, and
+     * the rest pg_dump writes too: a view's options and its
+     * {@code CHECK OPTION} (both kept in {@code reloptions}), a materialized
+     * view left unpopulated, and a materialized view's indexes.
      */
     private static String postgresView(Connection c, Target t) throws SQLException {
         String sql = "SELECT c.relkind, pg_catalog.pg_get_viewdef(c.oid, true),"
-                + " pg_catalog.obj_description(c.oid, 'pg_class')"
+                + " pg_catalog.obj_description(c.oid, 'pg_class'),"
+                + " (SELECT pg_catalog.string_agg(pg_catalog.quote_ident(o.option_name) || '='"
+                + " || pg_catalog.quote_literal(o.option_value), ', ')"
+                + " FROM pg_catalog.pg_options_to_table(c.reloptions) o"
+                + " WHERE o.option_name <> 'check_option'),"
+                + " (SELECT o.option_value FROM pg_catalog.pg_options_to_table(c.reloptions) o"
+                + " WHERE o.option_name = 'check_option'),"
+                + " c.relispopulated"
                 + " FROM pg_catalog.pg_class c"
                 + " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
                 + " WHERE c.relname = ? AND c.relkind IN ('v', 'm')"
@@ -134,13 +166,37 @@ public final class ObjectDdl {
                 boolean materialized = "m".equals(rs.getString(1));
                 String query = DdlText.stripped(rs.getString(2));
                 String comment = rs.getString(3);
+                String options = rs.getString(4);
+                String checkOption = rs.getString(5);
+                boolean populated = rs.getBoolean(6);
                 if (query == null) {
                     return null;
+                }
+                while (query.endsWith(";")) {
+                    query = query.substring(0, query.length() - 1).stripTrailing();
                 }
                 String qualified = t.qualified();
                 StringBuilder sb = new StringBuilder("CREATE ")
                         .append(materialized ? "MATERIALIZED VIEW " : "VIEW ")
-                        .append(qualified).append(" AS\n").append(DdlText.terminated(query));
+                        .append(qualified);
+                if (options != null && !options.isEmpty()) {
+                    sb.append(" WITH (").append(options).append(')');
+                }
+                sb.append(" AS\n").append(query);
+                if (checkOption != null && !checkOption.isEmpty()) {
+                    sb.append("\n  WITH ").append(checkOption.toUpperCase(Locale.ROOT))
+                            .append(" CHECK OPTION");
+                }
+                if (materialized && !populated) {
+                    sb.append("\n  WITH NO DATA");
+                }
+                sb.append(';');
+                if (materialized) {
+                    List<String> indexes = Ddl.pgIndexes(c, t.schema, t.name, qualified);
+                    for (String ix : indexes == null ? List.<String>of() : indexes) {
+                        sb.append("\n\n").append(ix).append(';');
+                    }
+                }
                 if (comment != null && !comment.isEmpty()) {
                     sb.append("\n\nCOMMENT ON ").append(materialized ? "MATERIALIZED VIEW " : "VIEW ")
                             .append(qualified).append(" IS ").append(Ident.literal(comment))
@@ -214,7 +270,11 @@ public final class ObjectDdl {
         option(sb, "MINVALUE", Json.str(found, "min_value"));
         option(sb, "MAXVALUE", Json.str(found, "max_value"));
         String cache = Json.str(found, "cache");
-        if (cache != null && !"0".equals(cache)) {
+        if (t.dialect == Dialect.DB2 && cache != null && cache.matches("\\d+")
+                && Long.parseLong(cache) < 2) {
+            // Db2 keeps NO CACHE as a cache of 1, and refuses CACHE 1.
+            sb.append(" NO CACHE");
+        } else if (cache != null && !"0".equals(cache)) {
             option(sb, "CACHE", cache);
         }
         if (found.has("cycle") && !found.get("cycle").isJsonNull()) {

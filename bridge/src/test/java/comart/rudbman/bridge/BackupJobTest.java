@@ -127,6 +127,13 @@ class BackupJobTest {
                 + " 'comart.rudbman.bridge.support.H2Objects.half'");
         H2.exec(session, "create trigger fb.trg before insert on fb.parent for each row"
                 + " call 'comart.rudbman.bridge.support.H2Objects$Noop'");
+        // A domain the table is declared with, an identity that refuses a
+        // value, and the two types whose text H2 does not read back.
+        H2.exec(session, "create domain fb.posint as int check (value > 0)");
+        H2.exec(session, "create table fb.kinds (id int generated always as identity primary key,"
+                + " p fb.posint, arr int array, js json)");
+        H2.exec(session, "insert into fb.kinds (p, arr, js) values (5, array[1, null, 3],"
+                + " json '{\"a\":[1,\"x;y\"]}')");
 
         Path out = tmp.resolve("full.sql");
         JsonObject spec = spec(out, "FB", "none", true, false, true);
@@ -173,6 +180,12 @@ class BackupJobTest {
             assertEquals("9", one(fresh, "select next value for fb.seq1"));
             H2.exec(fresh, "insert into fb.child (parent_id) values (2)");
             assertEquals("4", one(fresh, "select max(id) from fb.child"));
+            assertEquals("5", one(fresh, "select p from fb.kinds where id = 1"));
+            assertEquals("3", one(fresh, "select arr[3] from fb.kinds"));
+            // A JSON object, not a JSON string holding its text.
+            assertEquals("true", one(fresh, "select js is json object from fb.kinds"));
+            assertEquals("POSINT", one(fresh, "select domain_name from information_schema.columns"
+                    + " where table_name = 'KINDS' and column_name = 'P'"));
         } finally {
             H2.close(fresh);
         }

@@ -238,8 +238,19 @@ public final class ExtractJob extends Jobs.Job {
                 if (ddlInclude) {
                     writeDdl(out);
                 }
+                boolean rows = dataInclude && "insert".equals(mode) && !objects.isEmpty();
+                if (rows) {
+                    for (String line : runLocked(() -> Ddl.dataPrologue(session().metaData()))) {
+                        out.line(line);
+                    }
+                }
                 if (dataInclude && !shouldStop()) {
                     writeData(out);
+                }
+                if (rows && !shouldStop()) {
+                    for (String line : runLocked(() -> Ddl.dataEpilogue(session().metaData()))) {
+                        out.line(line);
+                    }
                 }
                 if (!shouldStop() && !objects.isEmpty() && script) {
                     for (String line : runLocked(
@@ -461,7 +472,7 @@ public final class ExtractJob extends Jobs.Job {
      */
     private static boolean overridingSystemValue(DatabaseMetaData dbm, Dialect dialect, Obj o)
             throws SQLException {
-        if (dialect != Dialect.POSTGRESQL) {
+        if (dialect != Dialect.POSTGRESQL && dialect != Dialect.H2) {
             return false;
         }
         for (Ddl.DataColumn c : Ddl.dataColumns(dbm, o.catalog, o.schema, o.name)) {

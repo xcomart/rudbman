@@ -5,15 +5,19 @@ import com.google.gson.JsonObject;
 import comart.rudbman.bridge.BridgeException;
 import comart.rudbman.bridge.Json;
 import comart.rudbman.bridge.Session;
+import comart.rudbman.bridge.meta.Db2Schema;
 import comart.rudbman.bridge.meta.Ddl;
 import comart.rudbman.bridge.meta.Dialect;
 import comart.rudbman.bridge.meta.Ident;
 import comart.rudbman.bridge.meta.PgSchema;
 import comart.rudbman.bridge.meta.Routines;
 import comart.rudbman.bridge.meta.Sequences;
+import comart.rudbman.bridge.meta.SqlServerSchema;
 import comart.rudbman.bridge.meta.Triggers;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -132,6 +136,18 @@ public final class BackupJob extends Jobs.Job {
         String currentValue;
         /** A sequence's increment. */
         String increment;
+        /** A sequence's start. */
+        String start;
+        /**
+         * The {@code DROP}s that take the object off, where a plain one by name
+         * cannot: a Db2 routine name with overloads, dropped by signature.
+         */
+        List<String> drops;
+        /**
+         * The {@code sql_mode} a MySQL or MariaDB routine or trigger was
+         * created under, which it keeps and runs under.
+         */
+        String sqlMode;
         /** A table's own foreign keys by name, for the DROPs to take off first. */
         final List<String> foreignKeys = new ArrayList<>();
 
@@ -360,8 +376,15 @@ public final class BackupJob extends Jobs.Job {
         if (!ddlInclude) {
             return plan;
         }
-        if (dialect == Dialect.POSTGRESQL) {
-            for (String[] statement : PgSchema.preamble(conn, id, scopeSchema)) {
+        List<String[]> preamble = dialect == Dialect.POSTGRESQL
+                ? PgSchema.preamble(conn, id, scopeSchema)
+                : dialect == Dialect.SQLSERVER
+                ? SqlServerSchema.aliasTypes(conn, id, scopeCatalog, scopeSchema)
+                : dialect == Dialect.H2
+                ? Ddl.h2Domains(conn, id, scopeSchema)
+                : List.of();
+        {
+            for (String[] statement : preamble) {
                 plan.preamble.add(statement[0]);
                 if (statement[1] != null) {
                     plan.preambleDrops.add(0, statement[1]);
@@ -378,6 +401,7 @@ public final class BackupJob extends Jobs.Job {
                 Obj o = new Obj(scopeCatalog, Json.str(s, "schema"), name, "sequence");
                 o.currentValue = Json.str(s, "current_value");
                 o.increment = Json.str(s, "increment");
+                o.start = Json.str(s, "start_value");
                 plan.sequences.add(o);
             }
         }
@@ -392,12 +416,14 @@ public final class BackupJob extends Jobs.Job {
             listRoutines(conn, dbm, dialect, members, plan.routines);
         }
         if (withViews) {
+            Set<String> indexViews = dialect == Dialect.DB2
+                    ? Db2Schema.indexViews(conn, scopeSchema) : Set.of();
             try (ResultSet rs = dbm.getTables(scopeCatalog, scopeSchema, "%",
                     new String[]{"VIEW", "MATERIALIZED VIEW"})) {
                 while (rs.next()) {
                     String name = rs.getString(3);
                     String type = rs.getString(4);
-                    if (name != null && !members.contains(name)) {
+                    if (name != null && !members.contains(name) && !indexViews.contains(name)) {
                         plan.views.add(new Obj(scopeCatalog, rs.getString(2), name,
                                 "MATERIALIZED VIEW".equalsIgnoreCase(type)
                                         || oracleMviews.contains(name)
@@ -428,6 +454,7 @@ public final class BackupJob extends Jobs.Job {
         // A DDL request answers by name: an overloaded routine's every
         // overload, every PostgreSQL trigger of that name. One entry a name.
         byName(plan.sequences);
+        plan.sequences.sort(Comparator.comparing(o -> o.name));
         byName(plan.routines);
         byName(plan.views);
         byName(plan.triggers);
@@ -743,6 +770,11 @@ public final class BackupJob extends Jobs.Job {
                 writeDrops(out, plan, views, materialized, dataOrder, dialect, id);
             }
             lines(out, plan.preamble);
+            if (dialect == Dialect.SQLSERVER && !plan.preamble.isEmpty()) {
+                // A batch is compiled whole, and a column cannot be declared
+                // with a type the same batch creates.
+                out.paragraph("GO");
+            }
             for (Obj s : plan.sequences) {
                 module(out, dialect, s);
             }
@@ -761,8 +793,12 @@ public final class BackupJob extends Jobs.Job {
         }
 
         if (dataInclude && !shouldStop()) {
+            List<String> before = runLocked(() -> Ddl.dataPrologue(dbm));
+            lines(out, before);
             writeData(out, dataOrder, dialect);
             out.line("");
+            List<String> after = runLocked(() -> Ddl.dataEpilogue(dbm));
+            lines(out, after);
             // After the rows, as pg_dump adds them: the rows of two tables that
             // reference each other load in no order while the keys are in
             // place, and a key checked once over a loaded table is cheaper
@@ -786,6 +822,16 @@ public final class BackupJob extends Jobs.Job {
         if (dialect == Dialect.POSTGRESQL && ddlInclude && !plan.routines.isEmpty()) {
             epilogue.add("RESET check_function_bodies;");
         }
+        if (dialect == Dialect.ORACLE && ddlInclude && (!plan.views.isEmpty()
+                || !plan.routines.isEmpty() || !plan.triggers.isEmpty())) {
+            // An identity switched for the rows and back, like any DDL on a
+            // table, leaves the views and code over it invalid until their next
+            // use; compiled here they are as valid as in the source.
+            epilogue.add("BEGIN DBMS_UTILITY.COMPILE_SCHEMA(" + (scopeSchema == null
+                    || scopeSchema.isEmpty() ? "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
+                    : Ident.literal(scopeSchema)) + ", FALSE); END;");
+            epilogue.add("/");
+        }
         lines(out, epilogue);
         addBytes(out.unreported());
     }
@@ -802,6 +848,15 @@ public final class BackupJob extends Jobs.Job {
                 return;
             }
             o.script = Ddl.script(conn, dbm, o.catalog, o.schema, o.name, splitForeignKeys);
+            if (Dialect.of(dbm) == Dialect.DB2 && o.schema != null && dataInclude) {
+                String next = Db2Schema.identityNext(conn, Ident.of(dbm), o.schema, o.name,
+                        Ident.of(dbm).qualify(o.catalog, o.schema, o.name));
+                if (next != null) {
+                    // Db2 allows one identity a table.
+                    o.script = o.script.withCreates(o.script.creates.replaceFirst(
+                            "AS IDENTITY \\(START WITH -?\\d+", "AS IDENTITY (START WITH " + next));
+                }
+            }
         }
         for (List<Obj> kind : List.of(plan.sequences, plan.routines, plan.views, plan.triggers)) {
             kind.removeIf(o -> !shouldStop() && !readObject(conn, dbm, o));
@@ -829,6 +884,33 @@ public final class BackupJob extends Jobs.Job {
             if ("sequence".equals(o.kind) && Dialect.of(dbm) == Dialect.MARIADB) {
                 o.currentValue = mariadbNext(conn, Ident.of(dbm).qualify(o.catalog, null, o.name));
             }
+            if (Dialect.of(dbm).isMySqlFamily()) {
+                o.sqlMode = mysqlSqlMode(conn, o);
+            }
+            if (Dialect.of(dbm) == Dialect.DB2 && o.schema != null) {
+                if ("sequence".equals(o.kind)) {
+                    // Created where the source resumes, for the reason
+                    // Db2Schema.identityNext gives.
+                    String next = Db2Schema.sequenceNext(conn, o.schema, o.name);
+                    if (next != null) {
+                        o.ddl = o.ddl.replaceFirst(" START WITH -?\\d+", " START WITH " + next);
+                    }
+                } else if ("function".equals(o.kind) || "procedure".equals(o.kind)) {
+                    // Each overload its own statement, ended by the CLP's
+                    // terminator, which Scripts.module sets around them.
+                    List<String> texts = Db2Schema.routineTexts(conn, o.schema, o.name);
+                    if (!texts.isEmpty()) {
+                        StringBuilder sb = new StringBuilder();
+                        for (int k = 0; k < texts.size(); k++) {
+                            sb.append(k == texts.size() - 1 ? texts.get(k)
+                                    : Scripts.db2Terminated(texts.get(k)) + "\n\n");
+                        }
+                        o.ddl = sb.toString();
+                    }
+                    o.drops = Db2Schema.routineDrops(conn, Ident.of(dbm), o.schema, o.name,
+                            "procedure".equals(o.kind));
+                }
+            }
             if ("sequence".equals(o.kind) && Dialect.of(dbm) == Dialect.SQLSERVER) {
                 // current_value is the start of a sequence never used, too;
                 // last_used_value (2017 and newer) tells the two apart.
@@ -841,6 +923,40 @@ public final class BackupJob extends Jobs.Job {
             addError(new BridgeException("sql",
                     o.kind + " " + o.display() + ": " + e.getMessage(), e));
             return false;
+        }
+    }
+
+    /**
+     * The {@code sql_mode} a MySQL or MariaDB routine or trigger keeps, or
+     * {@code null} for any other object or when it cannot be read.
+     */
+    private static String mysqlSqlMode(Connection conn, Obj o) {
+        String sql;
+        switch (o.kind) {
+            case "function":
+            case "procedure":
+                sql = "SELECT SQL_MODE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ?"
+                        + " AND ROUTINE_NAME = ? AND ROUTINE_TYPE = ?";
+                break;
+            case "trigger":
+                sql = "SELECT SQL_MODE FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ?"
+                        + " AND TRIGGER_NAME = ?";
+                break;
+            default:
+                return null;
+        }
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, o.catalog);
+            ps.setString(2, o.name);
+            if (!"trigger".equals(o.kind)) {
+                ps.setString(3, o.kind.toUpperCase(Locale.ROOT));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (SQLException e) {
+            LOG.log(Level.FINE, "no sql_mode for " + o.display(), e);
+            return null;
         }
     }
 
@@ -891,6 +1007,12 @@ public final class BackupJob extends Jobs.Job {
         // every other DROP (Msg 166).
         String catalog = dialect == Dialect.SQLSERVER ? null : scopeCatalog;
         for (Obj o : drops) {
+            if (o.drops != null && !o.drops.isEmpty()) {
+                for (String drop : o.drops) {
+                    out.line(drop);
+                }
+                continue;
+            }
             String keyword = dropKeyword(o);
             if (keyword != null) {
                 out.line(Scripts.dropStatement(dialect, keyword,
@@ -969,7 +1091,15 @@ public final class BackupJob extends Jobs.Job {
         if (o.ddl == null) {
             return;
         }
-        out.paragraph(Scripts.module(dialect, o.kind, o.ddl));
+        String text = Scripts.module(dialect, o.kind, o.ddl);
+        if (o.sqlMode != null) {
+            // Created under its own mode, as mysqldump has it: the object keeps
+            // the mode it was created under, and its text may only parse there.
+            text = "SET @saved_sql_mode = @@SESSION.SQL_MODE;\n"
+                    + "SET SESSION SQL_MODE = " + Ident.literal(o.sqlMode) + ";\n"
+                    + text + "\nSET SESSION SQL_MODE = @saved_sql_mode;";
+        }
+        out.paragraph(text);
     }
 
     private static void lines(ScriptOut out, List<String> statements) throws IOException {
@@ -992,18 +1122,37 @@ public final class BackupJob extends Jobs.Job {
     private List<String> counters(Plan plan, List<Obj> tables, Dialect dialect, Ident id)
             throws SQLException {
         List<String> out = new ArrayList<>();
+        int ranges = 0;
         DatabaseMetaData dbm = session().metaData();
         if (dialect == Dialect.POSTGRESQL && dataInclude) {
+            Set<String> written = new HashSet<>();
+            for (Obj s : plan.sequences) {
+                written.add(id.qualify(null, s.schema, s.name));
+            }
+            Connection conn = dbm.getConnection();
             for (Obj t : tables) {
                 String qualified = id.qualify(null, t.schema, t.name);
                 for (Ddl.DataColumn c : Ddl.dataColumns(dbm, t.catalog, t.schema, t.name)) {
-                    if (c.autoIncrement) {
-                        String col = id.q(c.name);
-                        out.add("SELECT pg_catalog.setval(pg_catalog.pg_get_serial_sequence("
-                                + Ident.literal(qualified) + ", " + Ident.literal(c.name)
-                                + "), MAX(" + col + ")) FROM " + qualified
-                                + " HAVING MAX(" + col + ") IS NOT NULL;");
+                    if (!c.autoIncrement) {
+                        continue;
                     }
+                    String serial = "pg_catalog.pg_get_serial_sequence(" + Ident.literal(qualified)
+                            + ", " + Ident.literal(c.name) + ")";
+                    // The counter as the source has it, as pg_dump carries it: a
+                    // key handed out and rolled back or deleted is not handed out
+                    // again. A serial's own sequence is in the script already.
+                    String[] state = PgSchema.sequenceState(conn, serial);
+                    if (state != null && written.contains(state[0])) {
+                        continue;
+                    }
+                    if (state != null && state[1] != null && state[1].matches("-?\\d+")) {
+                        out.add("SELECT pg_catalog.setval(" + serial + ", " + state[1] + ", "
+                                + state[2] + ");");
+                        continue;
+                    }
+                    String col = id.q(c.name);
+                    out.add("SELECT pg_catalog.setval(" + serial + ", MAX(" + col + ")) FROM "
+                            + qualified + " HAVING MAX(" + col + ") IS NOT NULL;");
                 }
             }
         }
@@ -1019,11 +1168,60 @@ public final class BackupJob extends Jobs.Job {
             } else if (dialect == Dialect.MARIADB) {
                 out.add("SELECT SETVAL(" + id.qualify(s.catalog, null, s.name) + ", " + value
                         + ", 0);");
+
             } else if (dialect == Dialect.SQLSERVER && s.increment != null
                     && s.increment.matches("-?\\d+")) {
-                out.add("ALTER SEQUENCE " + id.qualify(null, s.schema, s.name)
-                        + " RESTART WITH " + new java.math.BigInteger(value)
-                        .add(new java.math.BigInteger(s.increment)) + ";");
+                BigInteger last = new BigInteger(value);
+                BigInteger step = new BigInteger(s.increment);
+                BigInteger taken = s.start != null && s.start.matches("-?\\d+")
+                        && step.signum() != 0 ? last.subtract(new BigInteger(s.start)) : null;
+                if (taken != null && taken.signum() * step.signum() >= 0
+                        && taken.mod(step.abs()).signum() == 0) {
+                    // Draw the values the source has handed out: RESTART WITH
+                    // would move the sequence's start along with it.
+                    String variable = "@range_first" + (++ranges);
+                    out.add("DECLARE " + variable + " sql_variant;"
+                            + " EXEC sys.sp_sequence_get_range @sequence_name = N"
+                            + Ident.literal(id.qualify(s.catalog, s.schema, s.name))
+                            + ", @range_size = " + taken.divide(step).add(BigInteger.ONE)
+                            + ", @range_first_value = " + variable + " OUTPUT;");
+                } else {
+                    out.add("ALTER SEQUENCE " + id.qualify(null, s.schema, s.name)
+                            + " RESTART WITH " + last.add(step) + ";");
+                }
+            }
+        }
+        if (dialect == Dialect.SQLITE && dataInclude) {
+            // An AUTOINCREMENT table's high-water mark, which the rows alone
+            // put back no higher than the largest key left, as .dump has it.
+            Set<String> names = new HashSet<>();
+            for (Obj t : tables) {
+                names.add(t.name);
+            }
+            try (Statement st = dbm.getConnection().createStatement();
+                 ResultSet rs = st.executeQuery("SELECT name, seq FROM sqlite_sequence")) {
+                while (rs.next()) {
+                    String name = rs.getString(1);
+                    if (names.contains(name)) {
+                        out.add("DELETE FROM sqlite_sequence WHERE name = " + Ident.literal(name)
+                                + ";");
+                        out.add("INSERT INTO sqlite_sequence (name, seq) VALUES ("
+                                + Ident.literal(name) + ", " + rs.getLong(2) + ");");
+                    }
+                }
+            } catch (SQLException e) {
+                // No AUTOINCREMENT table in the file: no sqlite_sequence either.
+                LOG.log(Level.FINE, "no sqlite_sequence", e);
+            }
+        }
+        if (dialect == Dialect.SQLSERVER && dataInclude) {
+            Connection conn = dbm.getConnection();
+            for (Obj t : tables) {
+                String reseed = SqlServerSchema.identityReseed(conn, id, t.catalog,
+                        id.qualify(t.catalog, t.schema, t.name));
+                if (reseed != null) {
+                    out.add(reseed);
+                }
             }
         }
         return out;
@@ -1069,8 +1267,13 @@ public final class BackupJob extends Jobs.Job {
             }
             overriding |= c.identityAlways;
         }
+        // JDBC carries nine digits of a second; a Db2 TIMESTAMP(12) holds
+        // twelve, which come over as Db2's own text.
+        Set<String> asText = dialect == Dialect.DB2 && o.schema != null
+                ? Db2Schema.fineTimestamps(session().connection(), o.schema, o.name)
+                : Set.of();
         String select;
-        if (selected.isEmpty() || selected.size() == columns.size()) {
+        if (selected.isEmpty() || (selected.size() == columns.size() && asText.isEmpty())) {
             select = "*";
         } else {
             StringBuilder sb = new StringBuilder();
@@ -1078,7 +1281,8 @@ public final class BackupJob extends Jobs.Job {
                 if (sb.length() > 0) {
                     sb.append(", ");
                 }
-                sb.append(id.q(name));
+                sb.append(asText.contains(name) ? "VARCHAR(" + id.q(name) + ") AS " + id.q(name)
+                        : id.q(name));
             }
             select = sb.toString();
         }
@@ -1087,6 +1291,14 @@ public final class BackupJob extends Jobs.Job {
         // auto-increment: not every ojdbc release says so of an identity.
         List<String[]> oracleIdentities = dialect == Dialect.ORACLE
                 ? oracleIdentities(o) : new ArrayList<>();
+        // Db2's ALWAYS identities likewise, switched for the rows and back.
+        List<String> db2Always = dialect == Dialect.DB2 && o.schema != null
+                ? Db2Schema.alwaysIdentities(session().connection(), o.schema, o.name)
+                : List.of();
+        for (String col : db2Always) {
+            out.line("ALTER TABLE " + qualified + " ALTER COLUMN " + id.q(col)
+                    + " SET GENERATED BY DEFAULT;");
+        }
         if (dialect == Dialect.SQLSERVER && !identities.isEmpty()) {
             out.line("SET IDENTITY_INSERT " + qualified + " ON;");
         }
@@ -1130,13 +1342,48 @@ public final class BackupJob extends Jobs.Job {
         if (dialect == Dialect.SQLSERVER && !identities.isEmpty()) {
             out.line("SET IDENTITY_INSERT " + qualified + " OFF;");
         }
+        for (String col : db2Always) {
+            out.line("ALTER TABLE " + qualified + " ALTER COLUMN " + id.q(col)
+                    + " SET GENERATED ALWAYS;");
+        }
         for (String[] ident : oracleIdentities) {
-            // START WITH LIMIT VALUE moves the generator past the highest value
-            // in the column, which the explicit values have just raised.
             out.line("ALTER TABLE " + qualified + " MODIFY (" + id.q(ident[0]) + " GENERATED "
                     + ("ALWAYS".equals(ident[1]) ? "ALWAYS"
                     : "YES".equals(ident[2]) ? "BY DEFAULT ON NULL" : "BY DEFAULT")
-                    + " AS IDENTITY (START WITH LIMIT VALUE));");
+                    + " AS IDENTITY (START WITH " + oracleIdentityStart(qualified, ident, id)
+                    + "));");
+        }
+    }
+
+    /**
+     * Where a restored Oracle identity has to continue: past every value its
+     * source has handed out, which Oracle knows only up to its cache -
+     * {@code LAST_NUMBER}, where a sequence of the source's resumes after a
+     * restart too, as Data Pump carries a sequence - and past every value in
+     * the column, explicit ones included. {@code LIMIT VALUE}, the second
+     * alone, would hand out a deleted row's key again.
+     */
+    private String oracleIdentityStart(String qualified, String[] ident, Ident id) {
+        if (ident[3] == null || ident[4] == null) {
+            return "LIMIT VALUE";
+        }
+        try (Statement st = session().connection().createStatement();
+             ResultSet rs = st.executeQuery("SELECT MAX(" + id.q(ident[0]) + ") FROM "
+                     + qualified)) {
+            BigDecimal last = new BigDecimal(ident[3]);
+            BigDecimal step = new BigDecimal(ident[4]);
+            BigDecimal max = rs.next() ? rs.getBigDecimal(1) : null;
+            if (step.signum() == 0) {
+                return "LIMIT VALUE";
+            }
+            if (max == null) {
+                return last.toPlainString();
+            }
+            BigDecimal past = max.add(step);
+            return (step.signum() > 0 ? last.max(past) : last.min(past)).toPlainString();
+        } catch (SQLException | NumberFormatException e) {
+            LOG.log(Level.FINE, "no identity state for " + qualified, e);
+            return "LIMIT VALUE";
         }
     }
 
@@ -1149,10 +1396,13 @@ public final class BackupJob extends Jobs.Job {
         List<String[]> out = new ArrayList<>();
         boolean scoped = o.schema != null && !o.schema.isEmpty();
         String owner = scoped ? "?" : "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')";
-        String sql = "SELECT i.COLUMN_NAME, i.GENERATION_TYPE, c.DEFAULT_ON_NULL"
+        String sql = "SELECT i.COLUMN_NAME, i.GENERATION_TYPE, c.DEFAULT_ON_NULL,"
+                + " TO_CHAR(s.LAST_NUMBER), TO_CHAR(s.INCREMENT_BY)"
                 + " FROM ALL_TAB_IDENTITY_COLS i JOIN ALL_TAB_COLUMNS c"
                 + " ON c.OWNER = i.OWNER AND c.TABLE_NAME = i.TABLE_NAME"
                 + " AND c.COLUMN_NAME = i.COLUMN_NAME"
+                + " LEFT JOIN ALL_SEQUENCES s ON s.SEQUENCE_OWNER = i.OWNER"
+                + " AND s.SEQUENCE_NAME = i.SEQUENCE_NAME"
                 + " WHERE i.OWNER = " + owner + " AND i.TABLE_NAME = ?";
         try (PreparedStatement ps = session().connection().prepareStatement(sql)) {
             int i = 1;
@@ -1162,7 +1412,8 @@ public final class BackupJob extends Jobs.Job {
             ps.setString(i, o.name);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    out.add(new String[]{rs.getString(1), rs.getString(2), rs.getString(3)});
+                    out.add(new String[]{rs.getString(1), rs.getString(2), rs.getString(3),
+                            rs.getString(4), rs.getString(5)});
                 }
             }
         } catch (SQLException e) {

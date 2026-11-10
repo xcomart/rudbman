@@ -147,13 +147,25 @@ final class Scripts {
                 return terminated(body);
             case DB2:
                 if (procedural) {
-                    return "--#SET TERMINATOR @\n" + withoutTerminator(body)
-                            + "\n@\n--#SET TERMINATOR ;";
+                    return "--#SET TERMINATOR @\n" + db2Terminated(withoutTerminator(body))
+                            + "\n--#SET TERMINATOR ;";
                 }
                 return terminated(body);
             default:
                 return terminated(body);
         }
+    }
+
+    /**
+     * A Db2 statement ended by the CLP terminator {@code @} on its last line:
+     * on a line of its own it would leave a line break at the end of the text
+     * Db2 keeps for the routine. A last line that ends in a comment gets it on
+     * the next.
+     */
+    static String db2Terminated(String text) {
+        String body = text.stripTrailing();
+        int lastLine = body.lastIndexOf('\n');
+        return body + (body.substring(lastLine + 1).contains("--") ? "\n@" : "@");
     }
 
     private static String terminated(String text) {
