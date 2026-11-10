@@ -679,6 +679,8 @@ transfer:
   canceling: 취소하는 중…
   done: "%{rows}행을 %{table}에 전송했습니다."
   done_skipped: "%{skipped}행은 들어가지 못해 건너뛰었습니다."
+  skipped_reasons: "들어가지 못한 이유:"
+  skipped_more: "…외 %{count}행"
   canceled: "취소했습니다. 이미 커밋된 %{rows}행은 %{table}에 남아 있습니다."
   stop_question: 전송을 중지할까요? 이미 커밋된 행은 대상 테이블에 남습니다.
   failed: "전송에 실패했습니다: %{error}"

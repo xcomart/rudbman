@@ -1098,6 +1098,11 @@ transfer:
   # it stopped, so the message says how much that was.
   done: "Transferred %{rows} rows into %{table}."
   done_skipped: "%{skipped} rows would not go in and were skipped."
+  # Under the card of a finished transfer whose policy recorded why rows
+  # would not go in: the first reasons, as the target's driver gave them, and
+  # how many skipped rows are not listed.
+  skipped_reasons: "Why they would not go in:"
+  skipped_more: "…and %{count} more"
   canceled: "Canceled. %{rows} rows had already been committed to %{table} and are still there."
   # Asked when Escape is pressed while the job runs.
   stop_question: Stop the transfer? Rows already committed stay in the target table.

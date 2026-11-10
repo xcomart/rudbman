@@ -679,6 +679,8 @@ transfer:
   canceling: Annulation…
   done: "%{rows} lignes transférées dans %{table}."
   done_skipped: "%{skipped} lignes ont été rejetées et ignorées."
+  skipped_reasons: "Pourquoi elles ont été rejetées :"
+  skipped_more: "…et %{count} de plus"
   canceled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
   stop_question: Arrêter le transfert ? Les lignes déjà validées restent dans la table cible.
   failed: "Le transfert a échoué : %{error}"

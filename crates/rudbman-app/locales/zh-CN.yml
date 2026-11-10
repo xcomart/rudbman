@@ -679,6 +679,8 @@ transfer:
   canceling: 正在取消…
   done: "已将 %{rows} 行传输到 %{table}。"
   done_skipped: "有 %{skipped} 行无法写入，已跳过。"
+  skipped_reasons: "无法写入的原因："
+  skipped_more: "……另有 %{count} 行"
   canceled: "已取消。已经提交的 %{rows} 行仍留在 %{table} 中。"
   stop_question: 要停止传输吗？已经提交的行会留在目标表中。
   failed: "传输失败：%{error}"

@@ -679,6 +679,8 @@ transfer:
   canceling: キャンセルしています…
   done: "%{rows} 行を %{table} に転送しました。"
   done_skipped: "%{skipped} 行は挿入できなかったためスキップしました。"
+  skipped_reasons: "挿入できなかった理由:"
+  skipped_more: "…ほか %{count} 行"
   canceled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
   stop_question: 転送を停止しますか？すでにコミットされた行は転送先テーブルに残ります。
   failed: "転送に失敗しました: %{error}"

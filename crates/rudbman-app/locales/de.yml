@@ -679,6 +679,8 @@ transfer:
   canceling: Wird abgebrochen…
   done: "%{rows} Zeilen nach %{table} übertragen."
   done_skipped: "%{skipped} Zeilen konnten nicht eingefügt werden und wurden übersprungen."
+  skipped_reasons: "Warum sie nicht eingefügt werden konnten:"
+  skipped_more: "…und %{count} weitere"
   canceled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
   stop_question: Übertragung stoppen? Bereits festgeschriebene Zeilen bleiben in der Zieltabelle.
   failed: "Die Übertragung schlug fehl: %{error}"
