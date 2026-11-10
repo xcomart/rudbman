@@ -818,21 +818,30 @@ against):
   `DBMS_METADATA` omits them on request (`REF_CONSTRAINTS`) and scripts each
   one, and MySQL/MariaDB/SQLite keep them inline under `FOREIGN_KEY_CHECKS = 0`
   (SQLite checks no reference at `CREATE`). Other products are reconstructed,
-  with PostgreSQL's and SQL Server's CHECK constraints and computed columns read
-  from their catalogs. `"inline"` prefers native with keys inline, like display
-  DDL does.
+  with each one's catalog filling in what JDBC metadata cannot carry — declared
+  types, CHECK/UNIQUE constraints, computed columns and indexes on PostgreSQL,
+  SQL Server and Db2, plus SQL Server's alias types, clustering, filtered
+  indexes and extended properties (see `bridge/README.md`). `"inline"` prefers
+  native with keys inline, like display DDL does.
 - **CSV**: NULL is an empty unquoted field, the empty string is `""`
   (PostgreSQL's `COPY … CSV` convention — the two are distinguishable). A
   column-name header row is written. Newlines inside values pass through, and
   `output.newline` applies only to the record terminator.
 - **Literals**: dates and times are quoted strings (the `DATE '…'` form is
-  rejected by SQL Server). Booleans are `1/0` on
-  Oracle/SQL Server/SQLite/MySQL/MariaDB and `TRUE/FALSE` elsewhere. Binaries
-  use per-dialect hex (`0x…`/`'\x…'`/`HEXTORAW`/`X'…'`). Oracle has no
-  multi-VALUES, so `insert_batch_rows` is forced to 1 there.
+  rejected by SQL Server), except on Oracle, where they are `TO_DATE`,
+  `TIMESTAMP '…'` and `INTERVAL '…'` literals that no NLS setting reads
+  differently. Booleans are `1/0` on Oracle/SQL Server/SQLite/MySQL/MariaDB and
+  `TRUE/FALSE` elsewhere; a MySQL `BIT(n)` wider than one bit is `b'…'`.
+  Binaries use per-dialect hex (`0x…`/`'\x…'`/`HEXTORAW`/`BX'…'`/`X'…'`). MySQL
+  and MariaDB strings escape backslashes, and a `YEAR` is its four digits. Db2
+  strings spell a line break as `CHR(10)`, because the CLP folds a statement's
+  lines into one. SQLite values are written by their storage class, not the
+  column's declared type. H2 arrays and JSON are `ARRAY[…]` and `JSON '…'`.
+  Oracle has no multi-VALUES, so `insert_batch_rows` is forced to 1 there.
 - **`include_drop`**: all DROPs come first, in reverse order, with `IF EXISTS`
-  only on dialects that support it (Oracle and DB2 excluded). Constraints are
-  not dropped, so re-dropping a circular schema is a manual job.
+  only on dialects that support it (Oracle and DB2 excluded, so a first run
+  onto an empty target reports each missing object). Foreign keys come off
+  before the tables, so a circular schema drops in any order.
 - **The template model (per row)**: `table`/`schema`/`catalog`/`qualified`/
   `row_no`/`columns[]` (`name`/`value`/`literal`/`type_name`/`jdbc_type`), plus
   each column directly under its own name. `${a.b}` is not a nested path but a

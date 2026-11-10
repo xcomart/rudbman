@@ -419,9 +419,16 @@ a statement of its own, Oracle's `DBMS_METADATA` leaves them out on request
 (`REF_CONSTRAINTS`) and writes each one (`REF_CONSTRAINT`), and MySQL, MariaDB
 and SQLite keep them inline — the script runs with `FOREIGN_KEY_CHECKS = 0`, and
 SQLite checks no reference at `CREATE`. Every other product is reconstructed
-from JDBC metadata, PostgreSQL's and SQL Server's `CHECK` constraints and
-computed columns read from their own catalogs. A computed column is left out of
-the `INSERT`s wherever the `CREATE` recreates it as computed.
+from JDBC metadata, with its own catalog filling in what that cannot carry:
+PostgreSQL's declared types (`format_type`), `CHECK`/`UNIQUE`/`EXCLUDE`
+constraints, computed columns, deferrable keys and indexes (`pg_get_indexdef`,
+so expression and partial indexes survive); SQL Server's declared and alias
+types, collations, named defaults, `UNIQUE` constraints, clustering,
+`INCLUDE`/filtered indexes and extended properties; Db2's declared types,
+computed columns, identity attributes, `CHECK`/`UNIQUE` constraints and
+indexes (expression keys, `INCLUDE`, `CLUSTER`, each in its own schema). A
+computed column is left out of the `INSERT`s wherever the `CREATE` recreates it
+as computed.
 
 A backup is an extract without the object list: the scope's `TABLE` entries are
 enumerated in name order, and `objects` adds the other kinds (all off when
@@ -429,16 +436,28 @@ absent), each through `DESCRIBE`/`ddl`. The script is written in the order a
 replay needs: session settings (`FOREIGN_KEY_CHECKS`, PostgreSQL's
 `check_function_bodies`, SQL Server's `QUOTED_IDENTIFIER`, SQL*Plus's
 `DEFINE`), the `DROP`s with `ddl.include_drop` (dependents first, foreign keys
-taken off before the tables), PostgreSQL's extensions and enum and domain types,
-sequences, tables, routines (and Oracle packages), views in the order their texts
-name each other, the rows — a table after the tables it references, with each
+taken off before the tables, a Db2 routine by its signature), the types the
+columns are declared with (PostgreSQL's extensions, enums and domains, SQL
+Server's alias types, H2's domains), sequences, tables, routines (and Oracle
+packages), views in the order their texts name each other, the rows — a table
+after the tables it references, MySQL's and MariaDB's under
+`sql_mode = 'NO_AUTO_VALUE_ON_ZERO'` as mysqldump has them, with each
 product's identity handling around them (`IDENTITY_INSERT`,
-`OVERRIDING SYSTEM VALUE`, Oracle's `START WITH LIMIT VALUE`) — then the
-foreign keys, the counters (PostgreSQL's `setval`, MariaDB's `SETVAL`, SQL
-Server's `RESTART WITH`), materialized views, and the triggers last so that
-loading the rows fires none. A routine or trigger body is written the way the
-product's client reads a script: `DELIMITER ;;` for MySQL, a `/` line for
-Oracle, `GO` batches for SQL Server, `--#SET TERMINATOR` for Db2. An object
+`OVERRIDING SYSTEM VALUE`, an `ALWAYS` identity switched to `BY DEFAULT` and
+back on Oracle and Db2) — then the foreign keys, the counters, materialized
+views (with their indexes), and the triggers last so that loading the rows fires
+none. The counters continue where the source would: PostgreSQL's `setval` from
+each sequence's own state, MariaDB's `SETVAL`, SQL Server's
+`sp_sequence_get_range` and `DBCC CHECKIDENT`, SQLite's `sqlite_sequence`; Oracle
+and Db2 start an identity or sequence past both the source's cache (`LAST_NUMBER`,
+`NEXTCACHEFIRSTVALUE`) and the column's highest value, so a key handed out is
+never handed out again. MySQL and MariaDB routines and triggers are created
+under the `sql_mode` they were created under, and a view keeps its
+`SQL SECURITY` and `ALGORITHM` — only `DEFINER` is left out. Oracle ends with
+`DBMS_UTILITY.COMPILE_SCHEMA` for what the identity switches invalidated. A
+routine or trigger body is written the way the product's client reads a script:
+`DELIMITER ;;` for MySQL, a `/` line for Oracle, `GO` batches for SQL Server,
+`--#SET TERMINATOR` for Db2. An object
 whose DDL cannot be read is left out and named in `errors[]`; the job still
 ends `done`. The catalog written into the script is the one `scope.catalog`
 asked for, never the one the driver reports, so a backup does not pin itself to
