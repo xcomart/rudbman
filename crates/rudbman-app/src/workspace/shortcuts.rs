@@ -11,7 +11,7 @@ use crate::query::{COMMIT_KEY, EXPLAIN_KEY, ROLLBACK_KEY};
 use rugpui::TextSize;
 
 /// Where *User guide* goes: the manual, as the repository publishes it.
-const USER_GUIDE_URL: &str = "https://github.com/xcomart/rudbman#readme";
+const USER_GUIDE_URL: &str = "https://github.com/xcomart/rudbman/blob/main/docs/user-guide.md";
 
 /// Width of the sheet.
 const SHEET_WIDTH: f32 = 600.;
