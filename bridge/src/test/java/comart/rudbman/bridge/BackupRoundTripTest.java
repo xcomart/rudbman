@@ -243,30 +243,45 @@ class BackupRoundTripTest {
         Product p = new Product("db2", at) {
             @Override
             void reset() throws SQLException {
-                quietly(at, "drop table errschema.errtab");
-                try (Connection c = at.connect()) {
-                    boolean exists;
-                    try (Statement st = c.createStatement();
-                         java.sql.ResultSet rs = st.executeQuery("select 1 from syscat.schemata"
-                                 + " where schemaname = 'BK'")) {
-                        exists = rs.next();
-                    }
-                    if (exists) {
-                        // The error table's schema and name are INOUT: set,
-                        // and handed back only when the drop failed.
-                        try (java.sql.CallableStatement cs = c.prepareCall(
-                                "call sysproc.admin_drop_schema('BK', null, ?, ?)")) {
-                            cs.registerOutParameter(1, java.sql.Types.VARCHAR);
-                            cs.registerOutParameter(2, java.sql.Types.VARCHAR);
-                            cs.setString(1, "ERRSCHEMA");
-                            cs.setString(2, "ERRTAB");
-                            cs.execute();
-                            assertTrue(cs.getString(1) == null,
-                                    "the schema BK was not dropped; see ERRSCHEMA.ERRTAB");
+                // By hand rather than with SYSPROC.ADMIN_DROP_SCHEMA, which
+                // needs a SYSTOOLSPACE a new database does not have.
+                try (Connection c = at.connect(); Statement st = c.createStatement()) {
+                    List<String> drops = new ArrayList<>();
+                    try (java.sql.ResultSet rs = st.executeQuery("select 'drop trigger BK.\"'"
+                            + " || trigname || '\"' from syscat.triggers where trigschema = 'BK'"
+                            + " union all select 'drop view BK.\"' || viewname || '\"'"
+                            + " from syscat.views v where viewschema = 'BK' and not exists"
+                            + " (select 1 from syscat.indexes i where i.viewschema = v.viewschema"
+                            + " and i.viewname = v.viewname)"
+                            + " union all select 'drop specific ' || case routinetype when 'P'"
+                            + " then 'procedure' else 'function' end || ' BK.\"' || specificname"
+                            + " || '\"' from syscat.routines where routineschema = 'BK'"
+                            + " union all select 'drop table BK.\"' || tabname || '\"'"
+                            + " from syscat.tables where tabschema = 'BK' and type = 'T'"
+                            + " union all select 'drop sequence BK.\"' || seqname || '\"'"
+                            + " from syscat.sequences where seqschema = 'BK' and seqtype = 'S'")) {
+                        while (rs.next()) {
+                            drops.add(rs.getString(1));
                         }
                     }
-                    try (Statement st = c.createStatement()) {
-                        st.execute("create schema BK");
+                    // In passes: what a later object depends on goes once its
+                    // dependents have.
+                    for (int pass = 0; pass < 5 && !drops.isEmpty(); pass++) {
+                        drops.removeIf(d -> {
+                            try {
+                                st.execute(d);
+                                return true;
+                            } catch (SQLException e) {
+                                return false;
+                            }
+                        });
+                    }
+                    assertTrue(drops.isEmpty(), "could not empty the schema BK: " + drops);
+                    try (java.sql.ResultSet rs = st.executeQuery("select 1 from syscat.schemata"
+                            + " where schemaname = 'BK'")) {
+                        if (!rs.next()) {
+                            st.execute("create schema BK");
+                        }
                     }
                 }
             }
@@ -612,14 +627,6 @@ class BackupRoundTripTest {
             for (String s : statements) {
                 st.execute(s);
             }
-        }
-    }
-
-    private static void quietly(Location at, String statement) {
-        try {
-            sql(at, statement);
-        } catch (SQLException ignored) {
-            // Nothing there to drop.
         }
     }
 
