@@ -451,8 +451,15 @@ pub struct ReadPage {
 /// connection between the statement and its fetch, and a command from another
 /// pane landing in that gap is exactly what makes MariaDB's Connector/J read
 /// the rest of it into the heap (`fetchRemaining`).
-pub fn read_page(session: &Session, sql: &str, limit: u32) -> Result<Option<ReadPage>, JdbcError> {
-    let cursor = session.execute(&StatementSpec::new(sql.to_string()))?;
+///
+/// `timeout_s` is the statement's query timeout in seconds, `0` for none.
+pub fn read_page(
+    session: &Session,
+    sql: &str,
+    limit: u32,
+    timeout_s: u32,
+) -> Result<Option<ReadPage>, JdbcError> {
+    let cursor = session.execute(&StatementSpec::new(sql.to_string()).with_timeout_s(timeout_s))?;
     if !cursor.result().has_result_set {
         return Ok(None);
     }
