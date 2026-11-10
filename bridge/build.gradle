@@ -28,11 +28,11 @@ tasks.withType(Javadoc).configureEach {
 // `crates/rudbman-jdbc/tests/containers.rs` looks for a driver jar the way
 // `tests/h2.rs` looks for H2's: in the Gradle cache, under
 // `<gradle home>/caches/modules-2/files-2.1/<group>/<artifact>/**`. H2 lands
-// there because the bridge's own Java suite really does use it. These two do
-// not — no Java test in this project ever loads a PostgreSQL or a MySQL
-// driver — so declaring them `testImplementation` would put them on a class
-// path with no use for them and say something untrue about this suite. This
-// configuration fills the cache without claiming they are part of any build.
+// there because the bridge's own Java suite really does use it. The others are
+// not `testImplementation`: the unit suite never loads them, and on its class
+// path they would say something untrue about it. This configuration fills the
+// cache for the Rust tests, and is the class path of `backupRoundTrip` below,
+// the one Java test that talks to the servers.
 configurations {
     drivers
 }
@@ -104,8 +104,33 @@ jar {
 
 test {
     useJUnitPlatform()
+    // The round trip against real servers is a task of its own, below.
+    exclude 'comart/rudbman/bridge/BackupRoundTripTest*'
     testLogging {
         events 'passed', 'skipped', 'failed'
         exceptionFormat 'full'
+    }
+}
+
+// A backup of each product, replayed with the product's own client inside its
+// container, has to give the schema back (BackupRoundTripTest). Opt-in like the
+// Rust container tests: a product whose RUDBMAN_TEST_*_URL is unset is skipped,
+// and H2 and SQLite, which need no server, always run.
+tasks.register('backupRoundTrip', Test) {
+    group = 'verification'
+    description = 'Backs up each test database, restores it with the product\'s own client ' +
+        'and compares the two (needs the servers of docker/compose.yml).'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath + configurations.drivers
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching 'comart.rudbman.bridge.BackupRoundTripTest'
+    }
+    // The servers, not the inputs, are what a run checks.
+    outputs.upToDateWhen { false }
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+        showStandardStreams = false
     }
 }
