@@ -708,6 +708,27 @@ tripping rather than by asserting on strings:
   own session, which is the only evidence a transfer leaves — no file, and no row
   ever crossed JNI.
 
+`BackupRoundTripTest` is the backup's check against the real products, and a
+task of its own:
+
+```
+docker compose -f ../docker/compose.yml up -d     # wait for "healthy"
+export RUDBMAN_TEST_PG_URL=...                     # the URLs in compose.yml's header
+./gradlew backupRoundTrip
+```
+
+For each product it backs up a fixture holding every kind of object
+(`src/test/resources/roundtrip/<product>-setup.sql`), restores it with the
+product's own client inside its container — psql, mysql, mariadb, sqlcmd,
+SQL*Plus, the Db2 CLP, H2's `RunScript`, the `sqlite3` shell — and compares
+the two schemas: JDBC metadata, the product's catalog
+(`<product>-catalog.sql`), every row, and the next value of every sequence and
+identity. It also replays the backup with its `DROP`s twice, and checks that a
+backup of the restore is the backup it came from. A product with no
+`RUDBMAN_TEST_*_URL` is skipped; `RUDBMAN_TEST_*_CONTAINER` names its
+container when it is not the one compose starts. H2 and SQLite always run.
+CI runs it in the two container jobs.
+
 ## Known gaps
 
 - The `upsert` statements for Oracle and SQL Server are written from the
