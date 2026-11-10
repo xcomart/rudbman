@@ -1007,7 +1007,11 @@ writes it out to a file. The form starts from its defaults each time.
 
 The file is UTF-8 with `\n` line endings. **CSV** is comma-separated with a
 header row of column names; a field is quoted when it holds a comma, a quote
-or a line break, `NULL` is an empty field and an empty string is `""`.
+or a line break, `NULL` is an empty field and an empty string is `""`. A SQL
+script — one with DDL or `INSERT`s — opens with the session settings the
+product's client needs (`SET FOREIGN_KEY_CHECKS = 0` on MySQL and MariaDB,
+`SET QUOTED_IDENTIFIER ON` on SQL Server); rows alone as CSV or through a
+template get none.
 
 **Extract** streams the rows to the file from inside the Java runtime, so a
 large table does not pass through the window, with a progress card counting
@@ -1134,6 +1138,9 @@ table on the same one. Open the target connection first.
 - Progress counts the rows copied and, once any are, the rows skipped.
   <kbd>Esc</kbd> asks whether to stop; a canceled transfer keeps the rows
   already committed, and says how many.
+- With **Skip the row and record why**, the finished card lists why rows
+  would not go in, in the target driver's words — the first five, and how many
+  more were skipped. **Skip the row** only counts them.
 - The target, the write mode and the policy are remembered until rudbman
   quits — except **Empty the target table first**, which has to be chosen
   again each time.
@@ -1180,7 +1187,7 @@ starts.
 | Setting | Values | Notes |
 | --- | --- | --- |
 | **Rows per batch** | 1–100,000 | 500 by default. How many rows a grid fetches at a time as it is scrolled. Applies to tabs opened afterwards. |
-| **Statement timeout** | seconds | Saved, but not yet passed to statements: a statement runs until it ends or is stopped with <kbd>Esc</kbd>. |
+| **Statement timeout** | seconds | 0 by default: no limit. How long a statement a query tab runs may take — each page of a result read a page at a time included — before the driver stops it as canceled. Applies from the next run, in tabs already open too. |
 | **Connection timeout** | 0–600 seconds | 30 by default; 0 leaves it to the driver. Applies to the next connect. |
 | **Ask before running a write statement on a new connection** | on/off | On by default. The starting value of the profile switch for profiles made afterwards. |
 | **Keep a history of the statements query tabs run** | on/off | On by default. See [Query history](#query-history). |
@@ -1415,9 +1422,6 @@ RUST_LOG=info rudbman
 
 ### Known limitations
 
-- **Statement timeout** in Settings is saved but not yet applied.
-- **Skip the row and record why** in a transfer collects the reasons but does
-  not show them yet, so it behaves like **Skip the row**.
 - A backup is replayed with the product's own client, not in a query tab.
 - A query result can be updated and deleted from, never inserted into.
 - The structure editor cannot add a constraint or an index to an existing
