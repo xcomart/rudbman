@@ -224,8 +224,10 @@ public final class ExtractJob extends Jobs.Job {
         try (ScriptOut out = new ScriptOut(file.open(), charset, newline, false)) {
             try {
                 // MySQL's foreign keys stay inline in its own DDL, and its rows
-                // go in with the checks off, as mysqldump has them.
-                List<String> prologue = objects.isEmpty() ? List.of()
+                // go in with the checks off, as mysqldump has them. Only a SQL
+                // script takes them: see isScript.
+                boolean script = isScript(ddlInclude, dataInclude, mode);
+                List<String> prologue = objects.isEmpty() || !script ? List.of()
                         : runLocked(() -> Ddl.scriptPrologue(session().metaData()));
                 for (String line : prologue) {
                     out.line(line);
@@ -239,7 +241,7 @@ public final class ExtractJob extends Jobs.Job {
                 if (dataInclude && !shouldStop()) {
                     writeData(out);
                 }
-                if (!shouldStop() && !objects.isEmpty()) {
+                if (!shouldStop() && !objects.isEmpty() && script) {
                     for (String line : runLocked(
                             () -> Ddl.scriptEpilogue(session().metaData()))) {
                         out.line(line);
@@ -320,6 +322,23 @@ public final class ExtractJob extends Jobs.Job {
             return null;
         });
         syncBytes(out);
+    }
+
+    /**
+     * Whether the file is a SQL script, and so takes the product's session
+     * settings ({@link Ddl#scriptPrologue} and {@link Ddl#scriptEpilogue})
+     * around it: it carries DDL, or its rows are {@code INSERT} statements. A
+     * CSV or a templated file is a rendering of the rows rather than a replay,
+     * and a {@code SET FOREIGN_KEY_CHECKS = 0;} at its head would be read as a
+     * line of data by whatever opens it.
+     *
+     * @param ddlInclude whether the definitions are written
+     * @param dataInclude whether the rows are written
+     * @param mode the row format: {@code insert}, {@code csv} or {@code template}
+     * @return whether the session settings belong in the file
+     */
+    static boolean isScript(boolean ddlInclude, boolean dataInclude, String mode) {
+        return ddlInclude || (dataInclude && "insert".equals(mode));
     }
 
     // ------------------------------------------------------------------ data
