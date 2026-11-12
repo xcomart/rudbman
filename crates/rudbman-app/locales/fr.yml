@@ -48,6 +48,8 @@ menu:
   prev_pane: Volet précédent
   about: À propos de rudbman
   check_updates: Rechercher les mises à jour
+  shortcuts: "Raccourcis clavier"
+  user_guide: "Guide de l’utilisateur"
   quit: Quitter
   connection: Connexion
   view: Affichage
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: Gérer les connexions…
     quit: Quitter rudbman
+    shortcuts: "Raccourcis clavier"
+    user_guide: "Guide de l’utilisateur de rudbman"
 
 tab:
   close: Fermer la connexion
@@ -675,6 +679,8 @@ transfer:
   canceling: Annulation…
   done: "%{rows} lignes transférées dans %{table}."
   done_skipped: "%{skipped} lignes ont été rejetées et ignorées."
+  skipped_reasons: "Pourquoi elles ont été rejetées :"
+  skipped_more: "…et %{count} de plus"
   canceled: "Annulé. %{rows} lignes étaient déjà validées dans %{table} et y restent."
   stop_question: Arrêter le transfert ? Les lignes déjà validées restent dans la table cible.
   failed: "Le transfert a échoué : %{error}"
@@ -696,6 +702,8 @@ backup:
   compress: Compresser le fichier avec gzip
   ddl: Inclure les définitions (DDL)
   drop: Faire précéder d’instructions DROP
+  objects: "Inclure aussi"
+  routines: "Procédures et fonctions"
   data: Inclure les lignes
   batch_rows: Lignes par INSERT
   start: Sauvegarder
@@ -707,6 +715,8 @@ backup:
   stop_question: Arrêter la sauvegarde ? Rien ne sera écrit dans le fichier.
   failed: "La sauvegarde a échoué : %{error}"
   failed_unknown: La sauvegarde a échoué sans que le pont en donne la raison.
+  skipped: "%{count} objets n’ont pas pu être lus et ont été omis :"
+  skipped_more: "…et %{count} de plus"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
@@ -904,3 +914,26 @@ history:
   canceled: Annulée
   kept_in: "Conservé dans %{path}"
   recording_off: L’enregistrement est désactivé dans les paramètres ; rien de nouveau n’est ajouté.
+
+shortcuts:
+  group_window: "Fenêtre"
+  group_tabs: "Onglets et volets"
+  group_explorer: "Explorateur"
+  group_editor: "Éditeur SQL"
+  group_grid: "Grille de données"
+  group_erd: "ERD"
+  open_menu: "Ouvrir le menu ☰"
+  context_menu: "Ouvrir le menu contextuel de l’élément qui a le clavier"
+  dismiss: "Fermer la boîte de dialogue ou le menu au premier plan"
+  next_prev_tab: "Onglet suivant / précédent du volet"
+  select_tab: "Aller à l’onglet n du volet — 9 est le dernier"
+  next_prev_connection: "Onglet de connexion suivant / précédent"
+  regions: "Explorateur → éditeur → résultats, et retour"
+  select_range: "Sélectionner une plage de lignes"
+  filter_tree: "Filtrer l’arbre par nom"
+  filter_regex: "Dans le champ de filtre : le lire comme une expression régulière, ou de nouveau comme des noms"
+  stop_run: "Arrêter l’instruction en cours"
+  mark_delete: "Marquer les lignes sélectionnées pour suppression, ou retirer la marque"
+  edit_cell: "Modifier la cellule"
+  filter_rows: "Filtrer les lignes"
+  toggle_names: "Basculer entre noms physiques et logiques"

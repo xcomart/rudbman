@@ -273,6 +273,31 @@ jobs:
         # missing would otherwise be a green job that tested nothing.
         run: cargo test -p rudbman-jdbc --test containers --test sqlite --locked -- --nocapture
 
+      # A backup of each server, replayed with that server's own client inside
+      # its container, has to give the schema back: catalog, rows and the next
+      # value of every counter (bridge/.../BackupRoundTripTest.java). The tests
+      # above check the SQL rudbman-sql writes; this checks the script the
+      # bridge's backup writes, against psql, mysql, mariadb, sqlcmd and
+      # SQL*Plus. H2 and SQLite ride along, needing no server; Db2 skips here
+      # and runs in its own job. Run even when the step above failed, so one
+      # red job reports both.
+      - name: backup round trip
+        if: ${{ !cancelled() }}
+        working-directory: bridge
+        shell: bash
+        env:
+          RUDBMAN_TEST_PG_URL: jdbc:postgresql://127.0.0.1:55432/rudbman
+          RUDBMAN_TEST_PG_CONTAINER: ${{ job.services.postgres.id }}
+          RUDBMAN_TEST_MYSQL_URL: jdbc:mysql://127.0.0.1:33306/rudbman?allowPublicKeyRetrieval=true&useSSL=false
+          RUDBMAN_TEST_MYSQL_CONTAINER: ${{ job.services.mysql.id }}
+          RUDBMAN_TEST_MARIADB_URL: jdbc:mariadb://127.0.0.1:53306/rudbman
+          RUDBMAN_TEST_MARIADB_CONTAINER: ${{ job.services.mariadb.id }}
+          RUDBMAN_TEST_MSSQL_URL: jdbc:sqlserver://127.0.0.1:51433;encrypt=false
+          RUDBMAN_TEST_MSSQL_CONTAINER: ${{ job.services.mssql.id }}
+          RUDBMAN_TEST_ORACLE_URL: jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1
+          RUDBMAN_TEST_ORACLE_CONTAINER: ${{ job.services.oracle.id }}
+        run: ./gradlew backupRoundTrip --no-daemon
+
   # Db2 runs the same file on a runner of its own. Its image unpacks to almost
   # seven gigabytes, which beside Oracle's and SQL Server's would leave the
   # runner's disk too short for the Rust build, and its first start creates
@@ -337,6 +362,17 @@ jobs:
         env:
           RUDBMAN_TEST_DB2_URL: jdbc:db2://127.0.0.1:55000/RUDBMAN
         run: cargo test -p rudbman-jdbc --test containers --locked db2 -- --nocapture
+
+      # The job above's backup round trip, for Db2 and its CLP; the filter
+      # leaves H2 and SQLite to that job.
+      - name: backup round trip
+        if: ${{ !cancelled() }}
+        working-directory: bridge
+        shell: bash
+        env:
+          RUDBMAN_TEST_DB2_URL: jdbc:db2://127.0.0.1:55000/RUDBMAN
+          RUDBMAN_TEST_DB2_CONTAINER: ${{ job.services.db2.id }}
+        run: ./gradlew backupRoundTrip --no-daemon --tests '*db2*'
 
   # What the next toolchain bump will bring, ahead of time: the same lints on
   # whatever `stable` is today. Non-blocking, because a lint added upstream is

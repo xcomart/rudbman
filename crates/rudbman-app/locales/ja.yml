@@ -48,6 +48,8 @@ menu:
   prev_pane: 前のペイン
   about: rudbman について
   check_updates: 更新を確認
+  shortcuts: "キーボードショートカット"
+  user_guide: "ユーザーガイド"
   quit: 終了
   connection: 接続
   view: 表示
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: 接続の管理…
     quit: rudbman を終了
+    shortcuts: "キーボードショートカット"
+    user_guide: "rudbman ユーザーガイド"
 
 tab:
   close: 接続を閉じる
@@ -675,6 +679,8 @@ transfer:
   canceling: キャンセルしています…
   done: "%{rows} 行を %{table} に転送しました。"
   done_skipped: "%{skipped} 行は挿入できなかったためスキップしました。"
+  skipped_reasons: "挿入できなかった理由:"
+  skipped_more: "…ほか %{count} 行"
   canceled: "キャンセルしました。すでにコミットされた %{rows} 行は %{table} に残っています。"
   stop_question: 転送を停止しますか？すでにコミットされた行は転送先テーブルに残ります。
   failed: "転送に失敗しました: %{error}"
@@ -696,6 +702,8 @@ backup:
   compress: gzip で圧縮する
   ddl: 定義 (DDL) を含める
   drop: 先に DROP 文を入れる
+  objects: "併せて含める"
+  routines: "プロシージャと関数"
   data: 行を含める
   batch_rows: INSERT あたりの行数
   start: バックアップ
@@ -707,6 +715,8 @@ backup:
   stop_question: バックアップを停止しますか？ファイルには何も書き込まれません。
   failed: "バックアップに失敗しました: %{error}"
   failed_unknown: ブリッジが理由を示さないままバックアップに失敗しました。
+  skipped: "読み取れなかったオブジェクト %{count} 個を除いて書き出しました:"
+  skipped_more: "…ほか %{count} 個"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
@@ -904,3 +914,26 @@ history:
   canceled: キャンセル
   kept_in: "保存場所: %{path}"
   recording_off: 設定で記録がオフになっているため、新しい文は追加されません。
+
+shortcuts:
+  group_window: "ウィンドウ"
+  group_tabs: "タブとペイン"
+  group_explorer: "エクスプローラー"
+  group_editor: "SQL エディター"
+  group_grid: "データグリッド"
+  group_erd: "ER図"
+  open_menu: "☰ メニューを開く"
+  context_menu: "キーボードフォーカスのある要素のコンテキストメニューを開く"
+  dismiss: "最前面のダイアログやメニューを閉じる"
+  next_prev_tab: "ペインの次 / 前のタブ"
+  select_tab: "ペインの n 番目のタブに切り替え — 9 は最後のタブ"
+  next_prev_connection: "次 / 前の接続タブ"
+  regions: "エクスプローラー → エディター → 結果、その逆順"
+  select_range: "行を範囲選択"
+  filter_tree: "名前でツリーを絞り込む"
+  filter_regex: "絞り込み欄で: 正規表現として読む / 名前に戻す"
+  stop_run: "実行中の文を停止"
+  mark_delete: "選択した行に削除の印を付ける / 外す"
+  edit_cell: "セルを編集"
+  filter_rows: "行を絞り込む"
+  toggle_names: "物理名と論理名を切り替え"

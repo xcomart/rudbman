@@ -793,24 +793,27 @@ impl DdlOptions {
     }
 }
 
-/// Where an extraction puts foreign keys — and, as a consequence, which DDL
-/// layer it uses.
+/// Where an extraction puts foreign keys.
 ///
-/// The two are one decision, not two, and that is worth knowing before
-/// choosing: pulling a foreign key out of a server's own `CREATE` text (MySQL's
-/// `SHOW CREATE TABLE`) would mean parsing vendor SQL, so
-/// [`Constraints::Alter`] forces the reconstructed path
-/// ([`DdlSource::Metadata`]) instead.
+/// The server's own `CREATE` text is used either way wherever the bridge can
+/// keep the keys out of the creation order's way without parsing vendor SQL:
+/// H2 writes each key as a statement of its own, Oracle's `DBMS_METADATA`
+/// leaves them out on request, and MySQL, MariaDB and SQLite keep them inline
+/// where they do no harm — the script runs with `FOREIGN_KEY_CHECKS` off, and
+/// SQLite checks no reference at `CREATE`. The other products are
+/// reconstructed from JDBC metadata ([`DdlSource::Metadata`]), with the
+/// keys lifted out as `ALTER`s.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Constraints {
     /// Every `CREATE` first, then every foreign key as `ALTER TABLE … ADD
-    /// CONSTRAINT`. The default, because two tables that reference each other
+    /// CONSTRAINT` (or inline, where the product checks no reference while the
+    /// script runs). The default, because two tables that reference each other
     /// cannot be created in any order at all and such schemas exist.
     ///
-    /// The price is the reconstructed DDL's known blind spots — `CHECK`
-    /// constraints, storage clauses, triggers, partitioning — which is the
-    /// trade a replayable script makes.
+    /// Where the DDL has to be reconstructed, it carries that layer's known
+    /// blind spots — storage clauses, partitioning, and on most products
+    /// `CHECK` constraints — which is the trade a replayable script makes.
     #[default]
     Alter,
     /// Keys inline, native DDL first, like the DDL an explorer pane shows.
@@ -1135,10 +1138,13 @@ pub enum OnError {
 ///
 /// A backup is **an extraction with no object list**: the bridge enumerates the
 /// `TABLE`-typed tables of [`scope`](BackupSpec::scope), sorted by name, and
-/// writes them through the same core — every `CREATE`, then every foreign-key
-/// `ALTER`, then the rows. Views and routines are not written; the goal is a
-/// replayable data backup, and a scope of one schema is the unit a user
-/// actually restores.
+/// writes them through the same core — the server's own `CREATE TABLE` where it
+/// can be split from the foreign keys, then the rows, then the keys. The other
+/// kinds a schema holds — sequences, views, routines, triggers — go in as
+/// [`objects`](BackupSpec::objects) asks, each where a replay needs it: the
+/// sequences first, the routines and views after the tables, the triggers after
+/// the rows so that loading them fires none. A scope of one schema is the unit a
+/// user actually restores.
 ///
 /// The row format is `INSERT` only, with no choice to make. Several tables share
 /// one file: CSV has no table boundary in it, and a template means something
@@ -1151,10 +1157,13 @@ pub enum OnError {
 /// ```
 /// use rudbman_jdbc::{BackupDataOptions, BackupSpec, Compression, DdlOptions};
 ///
+/// use rudbman_jdbc::BackupObjects;
+///
 /// let spec = BackupSpec::new("/tmp/app-backup.sql.gz")
 ///     .with_schema("APP")
 ///     .with_compress(Compression::Gzip)
 ///     .with_ddl(DdlOptions::included())
+///     .with_objects(BackupObjects::all())
 ///     .with_data(BackupDataOptions::included());
 /// ```
 #[derive(Clone, Debug, Serialize)]
@@ -1172,6 +1181,10 @@ pub struct BackupSpec {
     pub compress: Compression,
     /// Whether and how the schema is written.
     pub ddl: DdlOptions,
+    /// Which kinds besides the tables go in with the schema. Nothing without
+    /// [`ddl`](BackupSpec::ddl): they are definitions, and there is nothing
+    /// else to write them as.
+    pub objects: BackupObjects,
     /// Whether and how the rows are written.
     pub data: BackupDataOptions,
 }
@@ -1190,6 +1203,7 @@ impl BackupSpec {
             output: OutputSpec::new(path),
             compress: Compression::default(),
             ddl: DdlOptions::default(),
+            objects: BackupObjects::default(),
             data: BackupDataOptions::default(),
         }
     }
@@ -1230,10 +1244,49 @@ impl BackupSpec {
         self
     }
 
+    /// Sets which kinds besides the tables are written.
+    pub fn with_objects(mut self, objects: BackupObjects) -> Self {
+        self.objects = objects;
+        self
+    }
+
     /// Sets the data options.
     pub fn with_data(mut self, data: BackupDataOptions) -> Self {
         self.data = data;
         self
+    }
+}
+
+/// The kinds of object a backup writes besides the tables.
+///
+/// Each is written through the same `DESCRIBE kind: "ddl"` the explorer shows,
+/// so a backup says of an object what its DDL tab says. One the server keeps no
+/// readable text for is left out and reported in
+/// [`JobProgress::errors`](crate::JobProgress::errors), without failing the
+/// backup. All off by default, which is a backup of the tables alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct BackupObjects {
+    /// Sequences, created before the tables whose defaults draw on them and
+    /// set, after the rows, to where the source has them.
+    pub sequences: bool,
+    /// Views and materialized views. A materialized view is created after the
+    /// rows, since it fills itself when created.
+    pub views: bool,
+    /// Functions and procedures, and Oracle packages.
+    pub routines: bool,
+    /// Triggers, created last so that loading the rows fires none of them.
+    pub triggers: bool,
+}
+
+impl BackupObjects {
+    /// Every kind.
+    pub fn all() -> Self {
+        BackupObjects {
+            sequences: true,
+            views: true,
+            routines: true,
+            triggers: true,
+        }
     }
 }
 
@@ -1650,6 +1703,8 @@ mod tests {
                 + r#""output":{"path":"/tmp/backup.sql","charset":"UTF-8","newline":"\n"},"#
                 + r#""compress":"none","#
                 + r#""ddl":{"include":false,"include_drop":false,"constraints":"alter"},"#
+                + r#""objects":{"sequences":false,"views":false,"routines":false,"#
+                + r#""triggers":false},"#
                 // No `mode` and no `where`: a backup writes many tables to one
                 // file and INSERT is the only format that survives that.
                 + r#""data":{"include":false,"insert_batch_rows":1}}"#
@@ -1667,6 +1722,11 @@ mod tests {
                     .with_newline(Newline::Crlf),
             )
             .with_ddl(DdlOptions::included().with_drop(true))
+            .with_objects(BackupObjects {
+                views: true,
+                triggers: true,
+                ..BackupObjects::default()
+            })
             .with_data(BackupDataOptions::included().with_insert_batch_rows(100));
         assert_eq!(
             serde_json::to_string(&spec).expect("serializes"),
@@ -1674,6 +1734,8 @@ mod tests {
                 + r#""output":{"path":"/tmp/app.sql.gz","charset":"EUC-KR","newline":"\r\n"},"#
                 + r#""compress":"gzip","#
                 + r#""ddl":{"include":true,"include_drop":true,"constraints":"alter"},"#
+                + r#""objects":{"sequences":false,"views":true,"routines":false,"#
+                + r#""triggers":true},"#
                 + r#""data":{"include":true,"insert_batch_rows":100}}"#
         );
 

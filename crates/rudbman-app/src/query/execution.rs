@@ -99,6 +99,9 @@ impl QueryPane {
         };
 
         let fetch_rows = self.fetch_rows;
+        // Read now rather than when the pane opened, so a timeout changed in
+        // Settings holds for the next run of every tab already open.
+        let timeout_s = crate::app_settings::current(cx).query_timeout_s;
         let writer = self.tab_label().map(|label| label.to_string());
         // What each statement does to the books [`SessionHandle::has_uncommitted`]
         // keeps, worked out here because the dialect stays with the pane. Only a
@@ -123,7 +126,7 @@ impl QueryPane {
                 // whether a statement is read a page at a time or through its
                 // own cursor is settled for the life of its result (see
                 // [`More`]).
-                let pager = Pager::new(&sql, &self.dialect, fetch_rows);
+                let pager = Pager::new(&sql, &self.dialect, fetch_rows, timeout_s);
                 let server_cursor = statements::server_cursor_read(&sql, &self.dialect);
                 (sql, effect, pager, server_cursor)
             })
@@ -155,6 +158,7 @@ impl QueryPane {
                                     writer: writer.as_deref(),
                                 },
                                 fetch_rows,
+                                timeout_s,
                             );
                             (outcome, started.elapsed())
                         }
@@ -555,12 +559,14 @@ fn history_outcome(executed: &Executed) -> HistoryOutcome {
 /// that still has rows, whose cursor stays open for the grid to page — through
 /// a server cursor when `server_cursor` says it is one
 /// ([`statements::server_cursor_read`]), since that cursor shares the session
-/// with everything else.
+/// with everything else. Either way the statement runs under `timeout_s`,
+/// Settings → *Statement timeout*, `0` for none.
 fn execute(
     session: &SessionHandle,
     sql: String,
     statement: Statement<'_>,
     fetch_rows: u32,
+    timeout_s: u32,
 ) -> Result<Executed, JdbcError> {
     let Statement {
         effect,
@@ -584,6 +590,7 @@ fn execute(
         None => {
             let spec = StatementSpec::new(sql.clone())
                 .with_fetch_size(fetch_rows)
+                .with_timeout_s(timeout_s)
                 .with_server_cursor(server_cursor);
             let mut cursor = session.session().execute(&spec)?;
             if effect == Effect::Ends {

@@ -48,6 +48,8 @@ menu:
   prev_pane: 上一个窗格
   about: 关于 rudbman
   check_updates: 检查更新
+  shortcuts: "键盘快捷键"
+  user_guide: "用户指南"
   quit: 退出
   connection: 连接
   view: 视图
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: 管理连接…
     quit: 退出 rudbman
+    shortcuts: "键盘快捷键"
+    user_guide: "rudbman 用户指南"
 
 tab:
   close: 关闭连接
@@ -675,6 +679,8 @@ transfer:
   canceling: 正在取消…
   done: "已将 %{rows} 行传输到 %{table}。"
   done_skipped: "有 %{skipped} 行无法写入，已跳过。"
+  skipped_reasons: "无法写入的原因："
+  skipped_more: "……另有 %{count} 行"
   canceled: "已取消。已经提交的 %{rows} 行仍留在 %{table} 中。"
   stop_question: 要停止传输吗？已经提交的行会留在目标表中。
   failed: "传输失败：%{error}"
@@ -696,6 +702,8 @@ backup:
   compress: 用 gzip 压缩文件
   ddl: 包含定义（DDL）
   drop: 先写入 DROP 语句
+  objects: "同时包含"
+  routines: "存储过程和函数"
   data: 包含数据行
   batch_rows: 每条 INSERT 的行数
   start: 备份
@@ -707,6 +715,8 @@ backup:
   stop_question: 要停止备份吗？不会向文件写入任何内容。
   failed: "备份失败：%{error}"
   failed_unknown: 备份失败，桥接层没有给出原因。
+  skipped: "有 %{count} 个对象无法读取，已略过："
+  skipped_more: "……另有 %{count} 个"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
@@ -904,3 +914,26 @@ history:
   canceled: 已取消
   kept_in: "保存位置：%{path}"
   recording_off: 设置中已关闭记录，不会再添加新语句。
+
+shortcuts:
+  group_window: "窗口"
+  group_tabs: "标签页和窗格"
+  group_explorer: "资源管理器"
+  group_editor: "SQL 编辑器"
+  group_grid: "数据网格"
+  group_erd: "ERD"
+  open_menu: "打开 ☰ 菜单"
+  context_menu: "打开拥有键盘焦点的项目的上下文菜单"
+  dismiss: "关闭最上层的对话框或菜单"
+  next_prev_tab: "窗格的下一个 / 上一个标签页"
+  select_tab: "切换到窗格的第 n 个标签页 — 9 为最后一个"
+  next_prev_connection: "下一个 / 上一个连接标签页"
+  regions: "资源管理器 → 编辑器 → 结果，以及反向"
+  select_range: "选择连续的多行"
+  filter_tree: "按名称筛选树"
+  filter_regex: "在筛选框中：按正则表达式读取，或改回按名称读取"
+  stop_run: "停止正在运行的语句"
+  mark_delete: "将选中的行标记为删除，或取消标记"
+  edit_cell: "编辑单元格"
+  filter_rows: "筛选行"
+  toggle_names: "在物理名和逻辑名之间切换"

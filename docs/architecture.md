@@ -730,17 +730,26 @@ JOB_START { kind: "backup",
             output:   {path, charset, newline},
             compress: "none|gzip",
             ddl:      {include, include_drop, constraints},
+            objects:  {sequences, views, routines, triggers},
             data:     {include, insert_batch_rows} }
 ```
 
 - A backup is **an extraction without object enumeration**: the `TABLE`-type
   tables in the scope are enumerated in name order and written by the same core
-  as extraction (all CREATEs → all FK ALTERs, then INSERT scripts). Views and
-  procedures are not written — the point is a replayable data backup.
-- **The INSERT section alone is topologically sorted by FK** (cycles fall back
-  to name order). Unlike DDL, data cannot be deferred with an ALTER — if name
-  order puts `CHILD` before `PARENT`, the keys are already in place and the
-  replay is rejected. Enumeration and DDL order stay alphabetical.
+  as extraction. `objects: {sequences, views, routines, triggers}` (all off when
+  absent) adds the other kinds, each through `DESCRIBE`/`ddl`, so the file is a
+  schema dump: session settings → DROPs (with `include_drop`; FKs taken off
+  first) → PostgreSQL extensions and enum/domain types → sequences → tables →
+  routines and Oracle packages → views (ordered by the names their texts
+  mention) → rows → FK ALTERs → counters (identity and sequence values) →
+  materialized views → triggers. Routine and trigger bodies carry each client's
+  statement delimiter (`DELIMITER ;;`, Oracle's `/`, SQL Server's `GO`, Db2's
+  `--#SET TERMINATOR`). An object whose DDL cannot be read is left out and named
+  in `errors[]`, and the job still ends `done`.
+- **The INSERT section is topologically sorted by FK** (cycles fall back to name
+  order), and the FKs are added after it, as pg_dump does: two tables that
+  reference each other load at all only then. Enumeration and DDL order stay
+  alphabetical.
 - The catalog written into the script is not the one the driver reported but
   **the request's `scope.catalog`.** H2 answers with the live database name,
   and using it nails the script to a database of that name and gets in the way
@@ -803,24 +812,36 @@ against):
   `"data:<schema>.<table>"` → `"done"`. `rows_total` and `eta_s` are `null`
   (there is no COUNT). `bytes` lags by up to a buffer (≤64KB) while running and
   is exact at the end. Elements of `errors[]` are §4.5 error envelope objects.
-- **`ddl.constraints`**: `"alter"` (the default) **forces the metadata
-  reconstruction path** — pulling FKs out of native DDL (MySQL's
-  `SHOW CREATE`) would require parsing vendor SQL, which is not done.
-  `"inline"` prefers native, like display DDL does. In other words a replayable
-  script accepts the known blind spots of reconstructed DDL (check constraints,
-  storage clauses).
+- **`ddl.constraints`**: `"alter"` (the default) keeps the FKs out of the
+  creation order's way and **uses native DDL wherever that needs no parsing of
+  vendor SQL**: H2 writes each FK as a statement of its own, Oracle's
+  `DBMS_METADATA` omits them on request (`REF_CONSTRAINTS`) and scripts each
+  one, and MySQL/MariaDB/SQLite keep them inline under `FOREIGN_KEY_CHECKS = 0`
+  (SQLite checks no reference at `CREATE`). Other products are reconstructed,
+  with each one's catalog filling in what JDBC metadata cannot carry — declared
+  types, CHECK/UNIQUE constraints, computed columns and indexes on PostgreSQL,
+  SQL Server and Db2, plus SQL Server's alias types, clustering, filtered
+  indexes and extended properties (see `bridge/README.md`). `"inline"` prefers
+  native with keys inline, like display DDL does.
 - **CSV**: NULL is an empty unquoted field, the empty string is `""`
   (PostgreSQL's `COPY … CSV` convention — the two are distinguishable). A
   column-name header row is written. Newlines inside values pass through, and
   `output.newline` applies only to the record terminator.
 - **Literals**: dates and times are quoted strings (the `DATE '…'` form is
-  rejected by SQL Server). Booleans are `1/0` on
-  Oracle/SQL Server/SQLite/MySQL/MariaDB and `TRUE/FALSE` elsewhere. Binaries
-  use per-dialect hex (`0x…`/`'\x…'`/`HEXTORAW`/`X'…'`). Oracle has no
-  multi-VALUES, so `insert_batch_rows` is forced to 1 there.
+  rejected by SQL Server), except on Oracle, where they are `TO_DATE`,
+  `TIMESTAMP '…'` and `INTERVAL '…'` literals that no NLS setting reads
+  differently. Booleans are `1/0` on Oracle/SQL Server/SQLite/MySQL/MariaDB and
+  `TRUE/FALSE` elsewhere; a MySQL `BIT(n)` wider than one bit is `b'…'`.
+  Binaries use per-dialect hex (`0x…`/`'\x…'`/`HEXTORAW`/`BX'…'`/`X'…'`). MySQL
+  and MariaDB strings escape backslashes, and a `YEAR` is its four digits. Db2
+  strings spell a line break as `CHR(10)`, because the CLP folds a statement's
+  lines into one. SQLite values are written by their storage class, not the
+  column's declared type. H2 arrays and JSON are `ARRAY[…]` and `JSON '…'`.
+  Oracle has no multi-VALUES, so `insert_batch_rows` is forced to 1 there.
 - **`include_drop`**: all DROPs come first, in reverse order, with `IF EXISTS`
-  only on dialects that support it (Oracle and DB2 excluded). Constraints are
-  not dropped, so re-dropping a circular schema is a manual job.
+  only on dialects that support it (Oracle and DB2 excluded, so a first run
+  onto an empty target reports each missing object). Foreign keys come off
+  before the tables, so a circular schema drops in any order.
 - **The template model (per row)**: `table`/`schema`/`catalog`/`qualified`/
   `row_no`/`columns[]` (`name`/`value`/`literal`/`type_name`/`jdbc_type`), plus
   each column directly under its own name. `${a.b}` is not a nested path but a

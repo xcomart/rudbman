@@ -48,6 +48,8 @@ menu:
   prev_pane: Vorheriger Bereich
   about: Über rudbman
   check_updates: Nach Updates suchen
+  shortcuts: "Tastenkürzel"
+  user_guide: "Benutzerhandbuch"
   quit: Beenden
   connection: Verbindung
   view: Ansicht
@@ -55,6 +57,8 @@ menu:
   mac:
     new_connection: Verbindungen verwalten…
     quit: rudbman beenden
+    shortcuts: "Tastenkürzel"
+    user_guide: "rudbman-Benutzerhandbuch"
 
 tab:
   close: Verbindung schließen
@@ -675,6 +679,8 @@ transfer:
   canceling: Wird abgebrochen…
   done: "%{rows} Zeilen nach %{table} übertragen."
   done_skipped: "%{skipped} Zeilen konnten nicht eingefügt werden und wurden übersprungen."
+  skipped_reasons: "Warum sie nicht eingefügt werden konnten:"
+  skipped_more: "…und %{count} weitere"
   canceled: "Abgebrochen. %{rows} Zeilen waren bereits in %{table} festgeschrieben und bleiben dort."
   stop_question: Übertragung stoppen? Bereits festgeschriebene Zeilen bleiben in der Zieltabelle.
   failed: "Die Übertragung schlug fehl: %{error}"
@@ -696,6 +702,8 @@ backup:
   compress: Die Datei mit gzip komprimieren
   ddl: Definitionen (DDL) einschließen
   drop: DROP-Anweisungen voranstellen
+  objects: "Außerdem einschließen"
+  routines: "Prozeduren und Funktionen"
   data: Zeilen einschließen
   batch_rows: Zeilen pro INSERT
   start: Sichern
@@ -707,6 +715,8 @@ backup:
   stop_question: Sicherung stoppen? In die Datei wird nichts geschrieben.
   failed: "Die Sicherung schlug fehl: %{error}"
   failed_unknown: Die Sicherung schlug fehl; die Bridge nannte keinen Grund.
+  skipped: "%{count} Objekte ließen sich nicht lesen und wurden ausgelassen:"
+  skipped_more: "…und %{count} weitere"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
@@ -904,3 +914,26 @@ history:
   canceled: Abgebrochen
   kept_in: "Gespeichert in %{path}"
   recording_off: Die Aufzeichnung ist in den Einstellungen ausgeschaltet; es kommt nichts Neues hinzu.
+
+shortcuts:
+  group_window: "Fenster"
+  group_tabs: "Tabs und Bereiche"
+  group_explorer: "Explorer"
+  group_editor: "SQL-Editor"
+  group_grid: "Datenraster"
+  group_erd: "ERD"
+  open_menu: "Das ☰-Menü öffnen"
+  context_menu: "Das Kontextmenü des Elements mit Tastaturfokus öffnen"
+  dismiss: "Obersten Dialog oder oberstes Menü schließen"
+  next_prev_tab: "Nächster / vorheriger Tab des Bereichs"
+  select_tab: "Zu Tab n des Bereichs wechseln — 9 ist der letzte"
+  next_prev_connection: "Nächster / vorheriger Verbindungs-Tab"
+  regions: "Explorer → Editor → Ergebnisse und zurück"
+  select_range: "Einen Zeilenbereich auswählen"
+  filter_tree: "Den Baum nach Namen filtern"
+  filter_regex: "Im Filterfeld: als regulären Ausdruck lesen oder wieder als Namen"
+  stop_run: "Die laufende Anweisung abbrechen"
+  mark_delete: "Ausgewählte Zeilen zum Löschen markieren oder die Markierung aufheben"
+  edit_cell: "Zelle bearbeiten"
+  filter_rows: "Zeilen filtern"
+  toggle_names: "Zwischen physischen und logischen Namen wechseln"

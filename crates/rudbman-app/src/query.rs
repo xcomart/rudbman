@@ -90,7 +90,7 @@ pub use render::{error_lines, note, render_error};
 mod results;
 mod statements;
 mod toolbar;
-pub(crate) use keys::EXPLAIN_KEY;
+pub(crate) use keys::{COMMIT_KEY, EXPLAIN_KEY, ROLLBACK_KEY};
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
 use std::cell::RefCell;
@@ -329,16 +329,21 @@ struct Pager {
     /// Rows per page. Never zero: `LIMIT 0` would page forever and never get
     /// anywhere.
     limit: u32,
+    /// Seconds each page's statement may run, `0` for no limit: Settings →
+    /// *Statement timeout* as it was when the run started, so every page of
+    /// one result is held to the same limit.
+    timeout_s: u32,
 }
 
 impl Pager {
     /// A pager for `sql`, when it is a statement that can be read a page at a
     /// time.
-    fn new(sql: &str, dialect: &Dialect, fetch_rows: u32) -> Option<Self> {
+    fn new(sql: &str, dialect: &Dialect, fetch_rows: u32, timeout_s: u32) -> Option<Self> {
         Some(Self {
             body: statements::pageable_body(sql, dialect)?.to_string(),
             dialect: *dialect,
             limit: fetch_rows.max(1),
+            timeout_s,
         })
     }
 
@@ -360,7 +365,8 @@ impl Pager {
         session: &rudbman_jdbc::Session,
         offset: u64,
     ) -> Result<Option<(Step, Option<More>)>, JdbcError> {
-        let Some(page) = read_page(session, &self.statement(offset), self.limit)? else {
+        let Some(page) = read_page(session, &self.statement(offset), self.limit, self.timeout_s)?
+        else {
             return Ok(None);
         };
         let complete = page.rows < self.limit as usize;

@@ -8,11 +8,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DdlTextTest {
 
     @Test
-    void aViewLosesItsAlgorithmDefinerAndSecurity() {
+    void aViewLosesItsDefinerAndKeepsWhatIsNotTheDefault() {
+        // UNDEFINED and DEFINER are what a view gets without them.
         assertEquals("CREATE VIEW `v` AS select 1 AS `a`",
                 DdlText.withoutDefiner("CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` "
                         + "SQL SECURITY DEFINER VIEW `v` AS select 1 AS `a`"));
-        assertEquals("CREATE OR REPLACE VIEW v AS select 1",
+        // An INVOKER view reads with its caller's rights, a MERGE one can be
+        // updated: both are the view's own.
+        assertEquals("CREATE OR REPLACE ALGORITHM = MERGE SQL SECURITY INVOKER VIEW v AS select 1",
                 DdlText.withoutDefiner("CREATE OR REPLACE ALGORITHM = MERGE "
                         + "DEFINER = 'app'@'10.0.%' SQL SECURITY INVOKER VIEW v AS select 1"));
     }

@@ -98,6 +98,8 @@ menu:
   # dialog it opens — so no trailing ellipsis, which would read oddly as a
   # heading.
   check_updates: Check for updates
+  shortcuts: "Keyboard shortcuts"
+  user_guide: "User guide"
   quit: Quit
   # Name of the macOS menu bar's second menu, the one holding the commands that
   # act on connections.
@@ -110,6 +112,8 @@ menu:
   mac:
     new_connection: Manage Connections…
     quit: Quit rudbman
+    shortcuts: "Keyboard Shortcuts"
+    user_guide: "rudbman User Guide"
 
 # The tab strip in the title bar. One tab per open connection.
 tab:
@@ -1094,6 +1098,11 @@ transfer:
   # it stopped, so the message says how much that was.
   done: "Transferred %{rows} rows into %{table}."
   done_skipped: "%{skipped} rows would not go in and were skipped."
+  # Under the card of a finished transfer whose policy recorded why rows
+  # would not go in: the first reasons, as the target's driver gave them, and
+  # how many skipped rows are not listed.
+  skipped_reasons: "Why they would not go in:"
+  skipped_more: "…and %{count} more"
   canceled: "Canceled. %{rows} rows had already been committed to %{table} and are still there."
   # Asked when Escape is pressed while the job runs.
   stop_question: Stop the transfer? Rows already committed stay in the target table.
@@ -1129,6 +1138,10 @@ backup:
   # The two halves of a script, with their own sub-options below them.
   ddl: Include the definitions (DDL)
   drop: Precede it with DROP statements
+  # The kinds besides the tables that go in with the definitions; the
+  # sequence, view and trigger labels are the explorer folders' own.
+  objects: "Also include"
+  routines: "Procedures and functions"
   data: Include the rows
   # A backup writes INSERT statements and nothing else, so there is no row
   # format to choose — only how many rows one of them carries.
@@ -1147,6 +1160,10 @@ backup:
   stop_question: Stop the backup? Nothing will be written to the file.
   failed: "The backup failed: %{error}"
   failed_unknown: The backup failed for a reason the bridge did not give.
+  # The objects a finished backup left out because their DDL could not be
+  # read; each is then named on a line of its own, as the bridge wrote it.
+  skipped: "%{count} objects could not be read and were left out:"
+  skipped_more: "…and %{count} more"
 
 # The ERD panel: one schema's tables and the foreign keys between them.
 #
@@ -1460,3 +1477,28 @@ history:
   canceled: Canceled
   kept_in: "Kept in %{path}"
   recording_off: Recording is turned off in Settings, so nothing new is added.
+
+# The keyboard shortcut sheet the application menu opens: the headings of
+# its groups, and the rows the menus have no words of their own for.
+shortcuts:
+  group_window: "Window"
+  group_tabs: "Tabs and panes"
+  group_explorer: "Explorer"
+  group_editor: "SQL editor"
+  group_grid: "Data grid"
+  group_erd: "ERD"
+  open_menu: "Open the ☰ menu"
+  context_menu: "Open the context menu of what has the keyboard"
+  dismiss: "Close the topmost dialog or menu"
+  next_prev_tab: "Next / previous tab of the pane"
+  select_tab: "Switch to tab n of the pane — 9 is the last"
+  next_prev_connection: "Next / previous connection tab"
+  regions: "Explorer → editor → results, and back"
+  select_range: "Select a run of rows"
+  filter_tree: "Filter the tree by name"
+  filter_regex: "In the filter box: read it as a regular expression, or as names again"
+  stop_run: "Stop the running statement"
+  mark_delete: "Mark the selected rows for deletion, or unmark them"
+  edit_cell: "Edit the cell"
+  filter_rows: "Filter the rows"
+  toggle_names: "Switch between physical and logical names"

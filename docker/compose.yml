@@ -20,6 +20,11 @@
 #     export RUDBMAN_TEST_ORACLE_URL='jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1'
 #     export RUDBMAN_TEST_DB2_URL='jdbc:db2://127.0.0.1:55000/RUDBMAN'
 #     cargo test -p rudbman-jdbc --test containers
+#     (cd bridge && ./gradlew backupRoundTrip)
+#
+# The second command backs each server's fixture up and restores it with the
+# server's own client inside the container named here (`docker exec`), then
+# compares the two - see BackupRoundTripTest.
 #
 # The user and the password default to `rudbman`/`rudbman`, matching this
 # file, for every service except SQL Server; RUDBMAN_TEST_PG_USER,

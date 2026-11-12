@@ -7,11 +7,8 @@
 A multi-platform GUI database workbench written in Rust, built on
 [gpui](https://gpui.rs) — the GPU-accelerated UI framework behind the Zed
 editor — that talks to any database with a JDBC driver through an embedded
-JVM bridge.
-
-> **Status: early releases.** Everything below works today. Expect the rough
-> edges of a first release; see [docs/status.md](docs/status.md) for what is
-> known to be missing.
+JVM bridge. The [user guide](docs/user-guide.md) walks through everything it
+does; this page is the short version.
 
 ![The SQL workbench: explorer, editor and a result grid](docs/screenshots/workbench.png)
 
@@ -200,10 +197,13 @@ JVM bridge.
   `GROUP BY` and `ORDER BY`, the SQL preview updates as you go with
   identifiers quoted the way the dialect wants them, and one click opens the
   statement in an editor.
-- **Backup** of a schema or catalog to a replayable `.sql`: every `CREATE`
-  first, every foreign-key `ALTER` after, then `INSERT`s ordered by a
-  topological sort of the foreign keys, optionally gzipped, with progress and
-  cancellation.
+- **Backup** of a schema or catalog to a replayable `.sql`, at the level of a
+  schema dump: the server's own `CREATE TABLE` wherever it can be had (MySQL,
+  MariaDB, H2, Oracle, SQLite), sequences, views, routines and triggers as you
+  choose, `INSERT`s ordered by a topological sort of the foreign keys and the
+  keys added after them, identity and sequence counters carried over, and
+  routine bodies written the way each product's own client reads a script.
+  Optionally gzipped, with progress and cancellation.
 - **DB-to-DB transfer.** Copy tables between two open connections, by plain
   insert or by upsert — `MERGE`, `ON CONFLICT` or `ON DUPLICATE KEY` as the
   target dialect spells it. On a bad row, abort, skip it, or log it and carry
@@ -256,6 +256,10 @@ On macOS read <kbd>Cmd</kbd> for <kbd>Ctrl</kbd> in the table, except where a
 row says otherwise. The pane chords use <kbd>Alt</kbd> on Linux and Windows and
 <kbd>Cmd</kbd> on macOS. Every command is also in the ☰ menu (the menu bar on
 macOS), with its chord beside it.
+
+The ☰ menu's **Keyboard shortcuts** (in the rudbman menu on macOS) shows the
+main ones in the app, with the chords the platform it runs on uses; its
+**User guide** opens the [user guide](docs/user-guide.md).
 
 | Where | Keys | Does |
 |---|---|---|
@@ -372,8 +376,9 @@ one next to its executable.
   libraries rudbman needs — libxcb, xkbcommon with its X11 half and an EGL or
   Vulkan loader — and prints the command that installs any that are missing.
 
-To use a JDK of your own instead of the bundled runtime, point
-`RUDBMAN_JAVA_HOME` at it (Java 17 or newer).
+The bundled runtime is always used when it is there. A copy without one, such
+as a build from source, takes the runtime `RUDBMAN_JAVA_HOME` points at, then
+`JAVA_HOME` (Java 17 or newer).
 
 ## Building
 

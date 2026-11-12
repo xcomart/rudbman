@@ -327,6 +327,10 @@ enum Ended {
         rows: u64,
         /// Rows dropped, which is zero unless the policy allowed any.
         skipped: u64,
+        /// Why rows were dropped, in the target driver's words: one per row,
+        /// the first ones only (the bridge keeps a hundred), and only under
+        /// [`OnError::Log`] — [`OnError::Skip`] counts without keeping any.
+        reasons: Vec<SharedString>,
     },
     /// The job failed. The message is the first error's, as the bridge wrote it.
     Failed(SharedString),
@@ -873,6 +877,13 @@ impl TransferDialog {
             JobState::Done => Ended::Done {
                 rows: progress.rows_done,
                 skipped: progress.rows_skipped,
+                // A job that finished stopped at no error of its own, so every
+                // error it reports is a row the policy logged and dropped.
+                reasons: progress
+                    .errors
+                    .iter()
+                    .map(|error| SharedString::from(error.message.clone()))
+                    .collect(),
             },
             JobState::Canceled => Ended::Canceled {
                 rows: progress.rows_done,
@@ -1111,8 +1122,14 @@ impl TransferDialog {
         let chrome = theme(cx);
         let table = self.target_name(cx);
 
+        let reasons = match ended {
+            Ended::Done {
+                skipped, reasons, ..
+            } if !reasons.is_empty() => Some((*skipped, reasons.clone())),
+            _ => None,
+        };
         let (message, color) = match ended {
-            Ended::Done { rows, skipped } => {
+            Ended::Done { rows, skipped, .. } => {
                 let mut message = ts!("transfer.done", rows = rows, table = table).to_string();
                 if *skipped > 0 {
                     message.push(' ');
@@ -1144,6 +1161,38 @@ impl TransferDialog {
                     .text_color(color)
                     .child(message),
             )
+            .children(reasons.map(|(skipped, reasons)| {
+                // What "record why" recorded: the first few, one line each,
+                // and a count of the rest — of the rows skipped rather than of
+                // the reasons kept, since the bridge stops keeping them at a
+                // hundred.
+                const SHOWN: usize = 5;
+                let shown = reasons.len().min(SHOWN);
+                let more = skipped.saturating_sub(shown as u64);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
+                    .child(
+                        div()
+                            .text_color(chrome.text)
+                            .child(ts!("transfer.skipped_reasons")),
+                    )
+                    .children(reasons.into_iter().take(SHOWN).map(|reason| {
+                        div()
+                            .text_color(chrome.text_muted)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(reason)
+                    }))
+                    .children((more > 0).then(|| {
+                        div()
+                            .text_color(chrome.text_muted)
+                            .child(ts!("transfer.skipped_more", count = more))
+                    }))
+            }))
     }
 
     /// The button row, which is a different pair in each stage.
@@ -1931,10 +1980,19 @@ mod tests {
             Ended::Done {
                 rows: 120,
                 skipped: 0,
+                reasons: Vec::new(),
             },
             Ended::Done {
                 rows: 118,
                 skipped: 2,
+                reasons: Vec::new(),
+            },
+            Ended::Done {
+                rows: 110,
+                skipped: 10,
+                reasons: (1..=10)
+                    .map(|n| SharedString::from(format!("duplicate key {n}")))
+                    .collect(),
             },
             Ended::Canceled { rows: 40 },
             Ended::Failed(SharedString::from("the target table went away")),
@@ -1973,7 +2031,7 @@ mod tests {
 
         window
             .update(cx, |dialog, _window, _cx| {
-                let Stage::Ended(Ended::Done { rows, skipped }) = &dialog.stage else {
+                let Stage::Ended(Ended::Done { rows, skipped, .. }) = &dialog.stage else {
                     // The bridge's own words, because a CI log has nothing else
                     // to diagnose a one-off failure by.
                     match &dialog.stage {
@@ -2102,7 +2160,7 @@ mod tests {
 
         window
             .update(cx, |dialog, _window, _cx| {
-                let Stage::Ended(Ended::Done { rows, skipped }) = &dialog.stage else {
+                let Stage::Ended(Ended::Done { rows, skipped, .. }) = &dialog.stage else {
                     panic!("`skip` means the job survives its bad rows");
                 };
                 assert_eq!(*rows, 1, "the one row that fitted");
@@ -2112,6 +2170,55 @@ mod tests {
 
         // The rows already there were left alone, and the one that fitted went
         // in beside them.
+        assert_eq!(count(&target, "ORDERS"), 3);
+    }
+
+    /// `log` skips as `skip` does, and keeps why for the card to show: one
+    /// reason per skipped row, while `skip` keeps none.
+    #[gpui::test]
+    fn logged_rows_keep_the_reason_they_were_skipped(cx: &mut TestAppContext) {
+        let source = h2(
+            "transfer-log-source",
+            &[
+                "CREATE TABLE ORDERS (ID INT PRIMARY KEY, STATE VARCHAR(16))",
+                "INSERT INTO ORDERS VALUES (1, 'open'), (2, 'shipped'), (3, 'open')",
+            ],
+        );
+        let target = h2(
+            "transfer-log-target",
+            &[
+                "CREATE TABLE ORDERS (ID INT PRIMARY KEY, STATE VARCHAR(16))",
+                "INSERT INTO ORDERS VALUES (1, 'sitting'), (3, 'sitting')",
+            ],
+        );
+        let window = dialog(&source, &target, "ORDERS", cx);
+
+        window
+            .update(cx, |dialog, _window, cx| {
+                dialog.on_error = OnError::Log;
+                dialog.start(cx);
+            })
+            .expect("the window is open");
+        drive(&window, cx);
+
+        window
+            .update(cx, |dialog, _window, _cx| {
+                let Stage::Ended(Ended::Done {
+                    rows,
+                    skipped,
+                    reasons,
+                }) = &dialog.stage
+                else {
+                    panic!("`log` means the job survives its bad rows");
+                };
+                assert_eq!((*rows, *skipped), (1, 2));
+                assert_eq!(reasons.len(), 2, "{reasons:?}");
+                assert!(
+                    reasons.iter().all(|reason| !reason.is_empty()),
+                    "{reasons:?}"
+                );
+            })
+            .expect("the window is open");
         assert_eq!(count(&target, "ORDERS"), 3);
     }
 

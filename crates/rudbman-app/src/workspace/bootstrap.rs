@@ -185,6 +185,8 @@ pub(super) fn app_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action(ts!("menu.about"), ShowAbout),
                 MenuItem::action(ts!("menu.check_updates"), CheckUpdates),
+                MenuItem::action(ts!("menu.mac.shortcuts"), ShowShortcuts),
+                MenuItem::action(ts!("menu.mac.user_guide"), OpenUserGuide),
                 MenuItem::separator(),
                 MenuItem::action(ts!("menu.settings"), OpenSettings),
                 MenuItem::separator(),

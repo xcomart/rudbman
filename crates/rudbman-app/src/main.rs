@@ -66,6 +66,10 @@ actions!(
         /// way. Unlike the start-up check, this one is not silent and does not
         /// respect the ignored-version tag.
         CheckUpdates,
+        /// Show the sheet of keyboard shortcuts.
+        ShowShortcuts,
+        /// Open the user guide in the browser.
+        OpenUserGuide,
         /// Close the active pane, unless it is the last one.
         ClosePane,
         /// Move keyboard focus to the next pane.

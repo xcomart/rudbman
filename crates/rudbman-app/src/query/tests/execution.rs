@@ -498,6 +498,51 @@ fn a_canceled_statement_says_so_and_leaves_the_session_working(cx: &mut TestAppC
     assert_eq!(column_zero(&window, 0, cx), ["42"]);
 }
 
+/// Settings → *Statement timeout* reaches the driver on both ways a statement
+/// is sent: a plain read goes a page at a time, and one with its own `LIMIT`
+/// keeps its cursor. Before the setting was wired up, both would have run
+/// until the cross join was done.
+#[gpui::test]
+fn the_statement_timeout_stops_a_statement_that_runs_too_long(cx: &mut TestAppContext) {
+    let (connected, profile) = h2("timeout", &[]);
+    let window = pane(&connected, &profile, 500, cx);
+    cx.update(|cx| {
+        let settings = AppSettings {
+            query_timeout_s: 1,
+            ..app_settings::current(cx)
+        };
+        app_settings::replace(settings, cx);
+    });
+
+    let slow = "select count(*) from system_range(1, 200000) a, system_range(1, 200000) b \
+                where a.X <> b.X";
+    for sql in [slow.to_string(), format!("{slow} limit 1")] {
+        let started = Instant::now();
+        run(&window, &sql, cx);
+        window
+            .update(cx, |pane, _window, _cx| {
+                let error = pane.error.as_ref().expect("the timeout ends the statement");
+                assert!(
+                    error.is_canceled(),
+                    "{sql}: kind {:?}, sqlstate {:?}: {}",
+                    error.kind,
+                    error.sql_state,
+                    error.message
+                );
+                assert!(!pane.is_running(), "{sql}: the run ended");
+            })
+            .expect("the window is open");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{sql}: took {:?}",
+            started.elapsed()
+        );
+    }
+
+    run(&window, "select 42", cx);
+    assert_eq!(column_zero(&window, 0, cx), ["42"]);
+}
+
 /// The sort round trip really reorders, because the server does it.
 #[gpui::test]
 fn sorting_comes_back_in_the_new_order(cx: &mut TestAppContext) {

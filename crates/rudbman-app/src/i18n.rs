@@ -130,7 +130,7 @@ mod tests {
 
     /// One key per top-level namespace of `en.yml`, chosen so that no
     /// translation of it legitimately coincides with the English wording.
-    const PROBES: [&str; 11] = [
+    const PROBES: [&str; 12] = [
         "language.name",
         "common.close",
         "menu.new_connection",
@@ -142,6 +142,7 @@ mod tests {
         "driver.class",
         "context.select_all",
         "update.ignore",
+        "shortcuts.group_tabs",
     ];
 
     /// The directory `i18n!` compiles the translations out of.

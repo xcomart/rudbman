@@ -2425,7 +2425,7 @@ fn open(session: &Session, target: &ObjectTarget, select: Select) -> Result<Open
 
     if select.pages_by_offset() {
         let limit = select.limit();
-        return Ok(match read_page(session, &sql, limit)? {
+        return Ok(match read_page(session, &sql, limit, 0)? {
             Some(ReadPage {
                 columns,
                 batch,
@@ -2513,7 +2513,7 @@ fn next_page(
 ) -> Result<Page, JdbcError> {
     let limit = select.limit();
     let sql = select.statement(keys, offset);
-    Ok(match read_page(session, &sql, limit)? {
+    Ok(match read_page(session, &sql, limit, 0)? {
         Some(ReadPage { batch, rows, .. }) => {
             let complete = rows < limit as usize;
             Page {

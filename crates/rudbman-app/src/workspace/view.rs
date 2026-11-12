@@ -461,6 +461,7 @@ impl Render for Workspace {
         let close_question = self.render_close_question(cx);
         let rename_tab = self.render_rename_tab(cx);
         let history = self.render_history(cx);
+        let shortcuts = self.render_shortcuts(cx);
         let context_menu = self.render_context_menu(cx);
 
         // With client-side decorations the compositor stops drawing the drop
@@ -523,6 +524,8 @@ impl Render for Workspace {
             .on_action(cx.listener(actions::unless_held(Self::open_settings_action)))
             .on_action(cx.listener(actions::unless_held(Self::show_about_action)))
             .on_action(cx.listener(actions::unless_held(Self::check_updates_action)))
+            .on_action(cx.listener(actions::unless_held(Self::show_shortcuts_action)))
+            .on_action(cx.listener(Self::open_user_guide_action))
             .on_action(cx.listener(actions::unless_held(Self::toggle_explorer_action)))
             .on_action(cx.listener(actions::unless_held(Self::new_query_action)))
             .on_action(cx.listener(actions::unless_held(Self::query_object_action)))
@@ -565,6 +568,7 @@ impl Render for Workspace {
             .children(confirm)
             .children(rename_tab)
             .children(history)
+            .children(shortcuts)
             .children(close_question)
             // Over every other dialog: a quit, or a close of the window, can
             // be asked for with one up.
@@ -897,6 +901,8 @@ impl Workspace {
             // Next to About, where a Help menu would put it and where users of
             // every other desktop application look for it.
             row(ts!("menu.check_updates"), Box::new(CheckUpdates)),
+            row(ts!("menu.shortcuts"), Box::new(ShowShortcuts)),
+            row(ts!("menu.user_guide"), Box::new(OpenUserGuide)),
             row(ts!("menu.about"), Box::new(ShowAbout)),
             MenuEntry::separator(),
             row(ts!("menu.quit"), Box::new(Quit)).shortcut(chord("Q")),

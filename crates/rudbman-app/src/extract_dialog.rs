@@ -1731,8 +1731,9 @@ mod tests {
             .expect("the window is open");
 
         let script = std::fs::read_to_string(&path).expect("the job wrote the file");
+        // H2's own DDL, which says MEMORY TABLE.
         assert!(
-            script.to_uppercase().contains("CREATE TABLE"),
+            script.to_uppercase().contains("CREATE MEMORY TABLE"),
             "the schema is missing from {script}"
         );
         assert!(

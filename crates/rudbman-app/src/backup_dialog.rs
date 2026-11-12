@@ -9,11 +9,13 @@
 //! # A backup is an extraction with no object list
 //!
 //! The bridge enumerates the scope's `TABLE`-typed tables itself, writes every
-//! `CREATE`, then every foreign-key `ALTER`, then the rows in dependency order
-//! (architecture document, §6). So the form is the extraction's minus the parts
-//! that only make sense for a single object: no row format — several tables
-//! share one file and only `INSERT` survives that — and no `WHERE`, for the
-//! same reason.
+//! `CREATE` — the server's own text wherever it can — then the rows in
+//! dependency order, then the foreign keys (architecture document, §6). The
+//! sequences, views, routines and triggers the form asks for go in around them,
+//! each where a replay needs it. So the form is the extraction's minus the
+//! parts that only make sense for a single object: no row format — several
+//! tables share one file and only `INSERT` survives that — and no `WHERE`, for
+//! the same reason.
 //!
 //! The parts it does share — the two halves in [`Stage`], the job behind an
 //! `Arc<Mutex<Job>>`, closing as a cancel, `Escape` over a running job being
@@ -29,8 +31,8 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use rudbman_jdbc::{
-    BackupDataOptions, BackupSpec, Compression, Constraints, DdlOptions, Job, JobProgress,
-    JobState, ScopeRef,
+    BackupDataOptions, BackupObjects, BackupSpec, Compression, Constraints, DdlOptions, Job,
+    JobProgress, JobState, ScopeRef,
 };
 use rugpui::{Button, ButtonVariant, Checkbox, TextInput, form_row, modal, theme};
 
@@ -59,6 +61,11 @@ mod tab {
     pub const DDL: isize = 20;
     /// "Precede it with DROP statements".
     pub const DROP: isize = 21;
+    /// The kinds written besides the tables, in the order they are drawn.
+    pub const SEQUENCES: isize = 22;
+    pub const VIEWS: isize = 23;
+    pub const ROUTINES: isize = 24;
+    pub const TRIGGERS: isize = 25;
     /// "Include the rows".
     pub const DATA: isize = 30;
     /// Rows per `INSERT`.
@@ -68,6 +75,16 @@ mod tab {
     /// "Cancel" / "Close".
     pub const DISMISS: isize = 51;
 }
+
+/// One of the "also include" checkboxes: its element id, its label, whether it
+/// is ticked, its tab index, and what ticking it sets.
+type ObjectToggle = (
+    &'static str,
+    SharedString,
+    bool,
+    isize,
+    fn(&mut BackupDialog, bool),
+);
 
 /// Emitted by [`BackupDialog`] when the user closes it.
 pub enum BackupDialogEvent {
@@ -89,6 +106,8 @@ pub struct BackupForm {
     pub ddl: bool,
     /// Whether `DROP` statements precede the `CREATE`s.
     pub include_drop: bool,
+    /// Which kinds besides the tables go in with the schema.
+    pub objects: BackupObjects,
     /// Whether the rows are written.
     pub data: bool,
     /// How many rows one `INSERT` carries.
@@ -96,14 +115,16 @@ pub struct BackupForm {
 }
 
 impl Default for BackupForm {
-    /// What the dialog opens with: an uncompressed script with the schema and
-    /// the rows in it, one `INSERT` per row, and no file chosen yet.
+    /// What the dialog opens with: an uncompressed script with the whole schema
+    /// — every kind of object — and the rows in it, one `INSERT` per row, and
+    /// no file chosen yet.
     fn default() -> Self {
         BackupForm {
             output: None,
             compress: false,
             ddl: true,
             include_drop: false,
+            objects: BackupObjects::all(),
             data: true,
             batch_rows: DEFAULT_BATCH_ROWS,
         }
@@ -145,14 +166,16 @@ pub fn build_spec(scope: &Scope, form: &BackupForm) -> Option<BackupSpec> {
         });
 
     if form.ddl {
-        spec = spec.with_ddl(
-            DdlOptions::included()
-                .with_drop(form.include_drop)
-                // Always `Alter`, and deliberately not offered: a backup is a
-                // whole schema, and two tables that reference each other cannot
-                // be created in any order with their keys inline.
-                .with_constraints(Constraints::Alter),
-        );
+        spec = spec
+            .with_ddl(
+                DdlOptions::included()
+                    .with_drop(form.include_drop)
+                    // Always `Alter`, and deliberately not offered: a backup is
+                    // a whole schema, and two tables that reference each other
+                    // cannot be created in any order with their keys inline.
+                    .with_constraints(Constraints::Alter),
+            )
+            .with_objects(form.objects);
     }
 
     if form.data {
@@ -205,12 +228,15 @@ struct Running {
 
 /// How a job ended.
 enum Ended {
-    /// Everything asked for was written.
+    /// Everything asked for was written, but for the objects in `skipped`.
     Done {
         /// Rows written.
         rows: u64,
         /// Bytes written.
         bytes: u64,
+        /// The objects the bridge could not read the DDL of and left out, as
+        /// it named them: "view APP.V: …".
+        skipped: Vec<SharedString>,
     },
     /// The job failed. The message is the first error's, as the bridge wrote it.
     Failed(SharedString),
@@ -247,6 +273,8 @@ pub struct BackupDialog {
     ddl: bool,
     /// Whether `DROP` statements precede the `CREATE`s.
     include_drop: bool,
+    /// Which kinds besides the tables are written.
+    objects: BackupObjects,
     /// Whether the rows are written.
     data: bool,
     /// Rows per `INSERT`.
@@ -289,6 +317,7 @@ impl BackupDialog {
             compress: false,
             ddl: true,
             include_drop: false,
+            objects: BackupObjects::all(),
             data: true,
             batch_input,
             stage: Stage::Form,
@@ -312,6 +341,7 @@ impl BackupDialog {
         self.compress = defaults.compress;
         self.ddl = defaults.ddl;
         self.include_drop = defaults.include_drop;
+        self.objects = defaults.objects;
         self.data = defaults.data;
         self.batch_input
             .update(cx, |input, cx| input.set_content("1", cx));
@@ -405,6 +435,7 @@ impl BackupDialog {
             compress: self.compress,
             ddl: self.ddl,
             include_drop: self.include_drop,
+            objects: self.objects,
             data: self.data,
             batch_rows: self
                 .batch_input
@@ -589,6 +620,13 @@ impl BackupDialog {
             JobState::Done => Ended::Done {
                 rows: progress.rows_done,
                 bytes: progress.bytes,
+                // A backup cannot skip a row, so every error a finished one
+                // reports is an object it left out.
+                skipped: progress
+                    .errors
+                    .iter()
+                    .map(|error| SharedString::from(error.message.clone()))
+                    .collect(),
             },
             JobState::Canceled => Ended::Canceled,
             // `Running` cannot reach here — `is_terminal` excluded it — and a
@@ -727,6 +765,56 @@ impl BackupDialog {
             ))
         });
 
+        // The kinds besides the tables, only while the schema is going in:
+        // they are definitions, and there is nothing else to write them as.
+        let objects_row = self.ddl.then(|| {
+            let kinds: [ObjectToggle; 4] = [
+                (
+                    "backup-sequences",
+                    ts!("explorer.sequences"),
+                    self.objects.sequences,
+                    tab::SEQUENCES,
+                    |dialog, value| dialog.objects.sequences = value,
+                ),
+                (
+                    "backup-views",
+                    ts!("explorer.views"),
+                    self.objects.views,
+                    tab::VIEWS,
+                    |dialog, value| dialog.objects.views = value,
+                ),
+                (
+                    "backup-routines",
+                    ts!("backup.routines"),
+                    self.objects.routines,
+                    tab::ROUTINES,
+                    |dialog, value| dialog.objects.routines = value,
+                ),
+                (
+                    "backup-triggers",
+                    ts!("explorer.triggers"),
+                    self.objects.triggers,
+                    tab::TRIGGERS,
+                    |dialog, value| dialog.objects.triggers = value,
+                ),
+            ];
+            div().pl(px(22.)).child(
+                form_row(
+                    ts!("backup.objects"),
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_x(px(14.))
+                        .gap_y(px(6.))
+                        .children(kinds.into_iter().map(|(id, label, checked, index, set)| {
+                            toggle(id, label, checked, index, set)
+                        })),
+                )
+                .label_width(self.label_width),
+            )
+        });
+
         // Always shown while the rows are going in, and only then: a backup
         // writes `INSERT`s and nothing else, so there is no format to choose
         // and the batch size is the whole of the row half's settings.
@@ -764,6 +852,7 @@ impl BackupDialog {
                 |dialog, value| dialog.ddl = value,
             ))
             .children(drop_row)
+            .children(objects_row)
             .child(toggle(
                 "backup-data",
                 ts!("backup.data"),
@@ -818,8 +907,12 @@ impl BackupDialog {
             .map(|path| path.display().to_string())
             .unwrap_or_default();
 
+        let skipped = match ended {
+            Ended::Done { skipped, .. } if !skipped.is_empty() => Some(skipped.clone()),
+            _ => None,
+        };
         let (message, color) = match ended {
-            Ended::Done { rows, bytes } => (
+            Ended::Done { rows, bytes, .. } => (
                 ts!(
                     "backup.done",
                     path = path,
@@ -846,6 +939,34 @@ impl BackupDialog {
                     .text_color(color)
                     .child(message),
             )
+            .children(skipped.map(|skipped| {
+                // Named one by one, so the reader knows what to script by
+                // hand; a long list is cut short rather than pushing the
+                // button off the card.
+                const SHOWN: usize = 5;
+                let more = skipped.len().saturating_sub(SHOWN);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .text_size(rugpui::TextSize::Xs.size(cx))
+                    .child(
+                        div()
+                            .text_color(chrome.text)
+                            .child(ts!("backup.skipped", count = skipped.len())),
+                    )
+                    .children(skipped.into_iter().take(SHOWN).map(|line| {
+                        div()
+                            .text_color(chrome.text_muted)
+                            .overflow_hidden()
+                            .child(line)
+                    }))
+                    .children((more > 0).then(|| {
+                        div()
+                            .text_color(chrome.text_muted)
+                            .child(ts!("backup.skipped_more", count = more))
+                    }))
+            }))
     }
 
     /// The button row, which is a different pair in each stage.
@@ -961,6 +1082,7 @@ impl BackupDialog {
         vec![
             ts!("backup.scope"),
             ts!("backup.output"),
+            ts!("backup.objects"),
             ts!("backup.batch_rows"),
         ]
     }
@@ -1120,7 +1242,8 @@ mod tests {
         let scope = scope("PUBLIC");
 
         // Schema only: no data member is switched on at all, so the bridge
-        // writes nothing but the CREATEs and the ALTERs.
+        // writes nothing but the CREATEs and the ALTERs - and, by default,
+        // every other kind of object the schema holds.
         let ddl_only = BackupForm {
             output: Some(PathBuf::from("/tmp/app.sql")),
             ddl: true,
@@ -1138,7 +1261,20 @@ mod tests {
         // Never offered in the form, and never anything else: a whole schema
         // needs its foreign keys out of the CREATEs.
         assert_eq!(spec.ddl.constraints, Constraints::Alter);
+        assert_eq!(spec.objects, BackupObjects::all());
         assert!(!spec.data.include);
+
+        // A kind switched off stays off, and the others go in.
+        let no_triggers = BackupForm {
+            objects: BackupObjects {
+                triggers: false,
+                ..BackupObjects::all()
+            },
+            ..ddl_only.clone()
+        };
+        let spec = build_spec(&scope, &no_triggers).expect("a path and the schema are enough");
+        assert!(spec.objects.views && spec.objects.routines && spec.objects.sequences);
+        assert!(!spec.objects.triggers);
 
         // Rows only, compressed, in batches.
         let rows = BackupForm {
@@ -1152,6 +1288,8 @@ mod tests {
         let spec = build_spec(&scope, &rows).expect("a path and the rows are enough");
         assert_eq!(spec.compress, Compression::Gzip);
         assert!(!spec.ddl.include);
+        // Without the schema there is nothing to write the other kinds as.
+        assert_eq!(spec.objects, BackupObjects::default());
         assert!(spec.data.include);
         assert_eq!(spec.data.insert_batch_rows, 100);
 
@@ -1301,6 +1439,14 @@ mod tests {
             Ended::Done {
                 rows: 12,
                 bytes: 3_400,
+                skipped: Vec::new(),
+            },
+            Ended::Done {
+                rows: 12,
+                bytes: 3_400,
+                skipped: (1..=7)
+                    .map(|n| SharedString::from(format!("view APP.V{n}: no privilege")))
+                    .collect(),
             },
             Ended::Canceled,
             Ended::Failed(SharedString::from("the schema went away")),
@@ -1330,6 +1476,8 @@ mod tests {
                      REFERENCES APP.PARENT(ID))",
                 "INSERT INTO APP.PARENT VALUES (1, 'a'), (2, 'b')",
                 "INSERT INTO APP.CHILD VALUES (10, 1), (11, 2), (12, 1)",
+                "CREATE SEQUENCE APP.ORDER_NO START WITH 100",
+                "CREATE VIEW APP.NAMES AS SELECT NAME FROM APP.PARENT",
             ],
         );
         let dir = tempfile::tempdir().expect("a temporary directory");
@@ -1343,7 +1491,7 @@ mod tests {
 
         window
             .update(cx, |dialog, _window, _cx| {
-                let Stage::Ended(Ended::Done { rows, bytes }) = &dialog.stage else {
+                let Stage::Ended(Ended::Done { rows, bytes, .. }) = &dialog.stage else {
                     // The bridge's own words, because a CI log has nothing else
                     // to diagnose a one-off failure by.
                     match &dialog.stage {
@@ -1366,13 +1514,25 @@ mod tests {
 
         let script = std::fs::read_to_string(&path).expect("the job wrote the file");
         let upper = script.to_uppercase();
-        assert!(upper.contains("CREATE TABLE"), "no schema in {script}");
+        // H2's own DDL, which says MEMORY TABLE.
+        assert!(
+            upper.contains("CREATE MEMORY TABLE"),
+            "no schema in {script}"
+        );
         assert!(upper.contains("PARENT"), "a table is missing from {script}");
         assert!(upper.contains("CHILD"), "a table is missing from {script}");
-        // The foreign key comes after the CREATEs as an ALTER, which is what
-        // makes the script replayable whatever order the tables are in.
-        assert!(upper.contains("ALTER TABLE"), "no foreign key in {script}");
-        assert!(upper.contains("INSERT INTO"), "no rows in {script}");
+        // The foreign key comes after the rows as an ALTER, which is what makes
+        // the script replayable whatever order the tables are in.
+        assert!(
+            upper.find("FOREIGN KEY") > upper.find("INSERT INTO"),
+            "the foreign key belongs after the rows in {script}"
+        );
+        // The form's defaults back the whole schema up, not the tables alone.
+        assert!(upper.contains("CREATE SEQUENCE"), "no sequence in {script}");
+        assert!(
+            upper.contains("VIEW \"APP\".\"NAMES\""),
+            "no view in {script}"
+        );
     }
 
     /// Compression is the file's, not the counter's: the bytes on disk start
@@ -1402,7 +1562,7 @@ mod tests {
 
         let written = window
             .update(cx, |dialog, _window, _cx| {
-                let Stage::Ended(Ended::Done { rows, bytes }) = &dialog.stage else {
+                let Stage::Ended(Ended::Done { rows, bytes, .. }) = &dialog.stage else {
                     match &dialog.stage {
                         Stage::Ended(Ended::Failed(message)) => {
                             panic!("the job failed: {message}")

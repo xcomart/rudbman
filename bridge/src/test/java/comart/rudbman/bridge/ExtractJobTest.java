@@ -122,9 +122,12 @@ class ExtractJobTest {
         assertEquals("done", await(job).get("state").getAsString());
 
         String script = read(out);
-        // Both CREATEs come before either ALTER; that is the whole contract.
-        int lastCreate = script.lastIndexOf("CREATE TABLE");
-        int firstAlter = script.indexOf("ALTER TABLE");
+        // Both CREATEs come before either foreign key; that is the whole
+        // contract. H2's own DDL adds the primary keys as ALTERs of their own,
+        // so it is the foreign keys that are looked for.
+        int lastCreate = script.lastIndexOf("CREATE MEMORY TABLE");
+        int firstAlter = script.indexOf("FOREIGN KEY");
+        assertTrue(lastCreate >= 0, "no CREATE in:\n" + script);
         assertTrue(firstAlter > lastCreate,
                 "foreign keys must follow every CREATE:\n" + script);
 
@@ -148,7 +151,7 @@ class ExtractJobTest {
         assertEquals("done", await(job).get("state").getAsString());
         String script = read(out);
         assertTrue(script.indexOf("DROP TABLE IF EXISTS PUBLIC.T;")
-                        < script.indexOf("CREATE TABLE"), script);
+                        < script.indexOf("CREATE MEMORY TABLE"), script);
     }
 
     // -------------------------------------------------------- cancel, progress
@@ -191,7 +194,7 @@ class ExtractJobTest {
                 ddl(true, false, "alter"), null)));
         assertEquals("done", end.get("state").getAsString(), end.toString());
         String script = read(out);
-        assertTrue(script.contains("CREATE TABLE"), script);
+        assertTrue(script.contains("CREATE MEMORY TABLE \"PUBLIC\".\"T\""), script);
         assertFalse(script.contains("previous"), script);
         assertEquals(List.of(out), listing(tmp));
     }
