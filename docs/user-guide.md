@@ -1069,7 +1069,7 @@ its defaults each time.
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| **Output file** | — | **Browse…** picks it, suggesting `<schema>-backup.sql` (`.sql.gz` with gzip). |
+| **Output file** | — | **Browse…** picks it, suggesting `<schema>_backup_<yyyyMMdd>.sql` (`.sql.gz` with gzip), dated with today's date. |
 | **Compress the file with gzip** | off | |
 | **Include the definitions (DDL)** | on | The tables, with **Precede it with DROP statements** (off) under it. |
 | **Also include** | all on | **Sequences**, **Views**, **Procedures and functions**, **Triggers**. |

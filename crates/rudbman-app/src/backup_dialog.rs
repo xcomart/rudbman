@@ -452,13 +452,14 @@ impl BackupDialog {
         build_spec(self.scope.as_ref()?, &self.form(cx))
     }
 
-    /// The file name suggested by the save dialog.
+    /// The file name suggested by the save dialog, for a backup taken on `date`.
     ///
-    /// The schema's own name with `-backup` after it, and the extension the
-    /// chosen compression actually writes: being handed `APP-backup.sql` for a
-    /// file that turns out to be gzip is the kind of small lie that ends with a
-    /// file nothing will open.
-    fn suggested_name(&self) -> String {
+    /// The schema's own name with `_backup_` and the date after it, so that a
+    /// second day's backup does not offer to replace the first's, and the
+    /// extension the chosen compression actually writes: being handed
+    /// `APP_backup_20261112.sql` for a file that turns out to be gzip is the
+    /// kind of small lie that ends with a file nothing will open.
+    fn suggested_name(&self, date: &str) -> String {
         let name = self
             .scope
             .as_ref()
@@ -466,7 +467,7 @@ impl BackupDialog {
             .filter(|scope| !scope.is_empty())
             .unwrap_or_else(|| "database".to_string());
         let extension = if self.compress { "sql.gz" } else { "sql" };
-        format!("{name}-backup.{extension}")
+        format!("{name}_backup_{date}.{extension}")
     }
 
     /// Asks the platform where to write, and records the answer.
@@ -475,7 +476,7 @@ impl BackupDialog {
     /// had to be patched around, so the click returns immediately and the
     /// answer is picked up on a task of its own.
     fn pick_output(&mut self, cx: &mut Context<Self>) {
-        let suggested = self.suggested_name();
+        let suggested = self.suggested_name(&chrono::Local::now().format("%Y%m%d").to_string());
         let directory = self
             .output
             .as_ref()
@@ -1395,9 +1396,15 @@ mod tests {
         // will open it by double-click.
         window
             .update(&mut cx, |dialog, _window, _cx| {
-                assert_eq!(dialog.suggested_name(), "PUBLIC-backup.sql");
+                assert_eq!(
+                    dialog.suggested_name("20261112"),
+                    "PUBLIC_backup_20261112.sql"
+                );
                 dialog.compress = true;
-                assert_eq!(dialog.suggested_name(), "PUBLIC-backup.sql.gz");
+                assert_eq!(
+                    dialog.suggested_name("20261112"),
+                    "PUBLIC_backup_20261112.sql.gz"
+                );
                 dialog.compress = false;
             })
             .expect("the window is open");
