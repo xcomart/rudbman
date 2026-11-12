@@ -27,7 +27,7 @@ use crate::connection::SessionHandle;
 use crate::explorer::Scope;
 use crate::extract_dialog::{POLL_INTERVAL, format_bytes};
 use crate::i18n::ts;
-use crate::restore::{Failure, Outcome, Phase, Progress, Refusal, Restore, RestoreRequest};
+use crate::restore::{Failure, Outcome, Phase, Progress, Refusal, Restore, RestoreRequest, Scan};
 
 /// Width of the dialog panel, matching the backup's.
 const DIALOG_WIDTH: f32 = 520.;
@@ -39,6 +39,8 @@ const SHOWN_FAILURES: usize = 5;
 mod tab {
     /// "Browse…" beside the file.
     pub const INPUT: isize = 10;
+    /// "Restore … into …".
+    pub const MOVE: isize = 15;
     /// "Continue past failed statements".
     pub const CONTINUE: isize = 20;
     /// "Restore".
@@ -61,6 +63,18 @@ enum Stage {
     Running(Running),
     /// The restore ended, and the card says how.
     Ended(Outcome),
+}
+
+/// Where reading the chosen script through has got.
+enum ScanState {
+    /// No file chosen.
+    None,
+    /// Reading it.
+    Reading,
+    /// Read: it can run.
+    Read(Scan),
+    /// Read: it cannot, and nothing would run.
+    Refused(Refusal),
 }
 
 /// A restore in flight, and the last reading taken of it.
@@ -95,6 +109,13 @@ pub struct RestoreDialog {
     input: Option<PathBuf>,
     /// Whether a failed statement is passed rather than the end of the run.
     continue_on_error: bool,
+    /// What reading the chosen script through found.
+    scan: ScanState,
+    /// Whether the objects of the scope the script names go into the scope
+    /// the dialog was opened over instead.
+    move_into_target: bool,
+    /// The task reading the chosen script. Dropping it forgets the answer.
+    _scan: Option<Task<()>>,
     stage: Stage,
     /// Whether `Escape` over a running restore asked "stop it?".
     asking_stop: bool,
@@ -117,6 +138,9 @@ impl RestoreDialog {
             read_only: false,
             input: None,
             continue_on_error: false,
+            scan: ScanState::None,
+            move_into_target: true,
+            _scan: None,
             stage: Stage::Form,
             asking_stop: false,
             _poll: None,
@@ -143,6 +167,9 @@ impl RestoreDialog {
         self.read_only = read_only;
         self.input = None;
         self.continue_on_error = false;
+        self.scan = ScanState::None;
+        self.move_into_target = true;
+        self._scan = None;
         self.stage = Stage::Form;
         self.asking_stop = false;
         self._poll = None;
@@ -184,6 +211,7 @@ impl RestoreDialog {
         self.stage = Stage::Form;
         self.asking_stop = false;
         self._poll = None;
+        self._scan = None;
         self.session = None;
         self.scope = None;
         cx.notify();
@@ -210,10 +238,48 @@ impl RestoreDialog {
         self.dismiss(cx);
     }
 
-    /// Whether the form can start: a file chosen, on a connection that
-    /// writes.
+    /// Whether the form can start: a file chosen and read through without a
+    /// refusal, on a connection that writes.
     fn ready(&self) -> bool {
-        self.input.is_some() && !self.read_only && self.session.is_some()
+        self.input.is_some()
+            && matches!(self.scan, ScanState::Read(_))
+            && !self.read_only
+            && self.session.is_some()
+    }
+
+    /// The move the restore makes, when the script names a scope other than
+    /// the target and the box is ticked.
+    fn moving(&self) -> Option<rudbman_sql::ScopeMove> {
+        let ScanState::Read(scan) = &self.scan else {
+            return None;
+        };
+        let target = self.scope.as_ref()?;
+        self.move_into_target
+            .then(|| scan.move_into(target, &self.dialect))
+            .flatten()
+    }
+
+    /// Takes `path` as the script, and reads it through on a background
+    /// task: what it names decides what the form offers.
+    fn choose_input(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.input = Some(path.clone());
+        self.scan = ScanState::Reading;
+        self.move_into_target = true;
+        let dialect = self.dialect;
+        let reading = cx.background_spawn(async move { crate::restore::scan(&path, &dialect) });
+        self._scan = Some(cx.spawn(async move |dialog, cx| {
+            let read = reading.await;
+            dialog
+                .update(cx, |dialog, cx| {
+                    dialog.scan = match read {
+                        Ok(scan) => ScanState::Read(scan),
+                        Err(refusal) => ScanState::Refused(refusal),
+                    };
+                    cx.notify();
+                })
+                .ok();
+        }));
+        cx.notify();
     }
 
     /// Asks the platform for the script, and records the answer.
@@ -237,10 +303,7 @@ impl RestoreDialog {
                 return;
             };
             dialog
-                .update(cx, |dialog, cx| {
-                    dialog.input = Some(path);
-                    cx.notify();
-                })
+                .update(cx, |dialog, cx| dialog.choose_input(path, cx))
                 .ok();
         })
         .detach();
@@ -262,6 +325,8 @@ impl RestoreDialog {
                 .scope
                 .as_ref()
                 .and_then(|scope| crate::restore::enter_scope(&self.dialect, scope)),
+            moving: self.moving(),
+            into: self.scope.clone().unwrap_or_default(),
         };
         let restore = Restore::start(session, request);
         self.stage = Stage::Running(Running {
@@ -408,6 +473,7 @@ impl RestoreDialog {
             .gap(px(10.))
             .child(self.render_target(cx))
             .child(self.render_input(cx))
+            .children(self.render_scan(cx))
             .child(
                 Checkbox::new("restore-continue", ts!("restore.continue_on_error"))
                     .checked(self.continue_on_error)
@@ -425,6 +491,89 @@ impl RestoreDialog {
                     .text_color(note.1)
                     .child(note.0),
             )
+    }
+
+    /// What reading the script through found, and the move it offers.
+    fn render_scan(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let chrome = theme(cx);
+        let small = |text: SharedString, color| {
+            div()
+                .text_size(rugpui::TextSize::Xs.size(cx))
+                .text_color(color)
+                .child(text)
+        };
+        let element = match &self.scan {
+            ScanState::None => return None,
+            ScanState::Reading => {
+                small(ts!("restore.scanning"), chrome.text_muted).into_any_element()
+            }
+            ScanState::Refused(refusal) => {
+                small(refusal_message(refusal), chrome.danger).into_any_element()
+            }
+            ScanState::Read(scan) => {
+                let count = small(
+                    ts!("restore.scanned", count = scan.statements),
+                    chrome.text_muted,
+                );
+                let target = self.scope.as_ref();
+                let offered = target.and_then(|target| scan.move_into(target, &self.dialect));
+                let detail = if scan.names_several() {
+                    Some(
+                        small(
+                            ts!("restore.several", names = scan.all_names().as_str()),
+                            chrome.text_muted,
+                        )
+                        .into_any_element(),
+                    )
+                } else if let (Some(_), Some(source)) = (offered, scan.source_name()) {
+                    let this = cx.entity();
+                    let target = self.target_name();
+                    Some(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                Checkbox::new(
+                                    "restore-move",
+                                    ts!(
+                                        "restore.move",
+                                        source = source.as_str(),
+                                        target = target.as_ref()
+                                    ),
+                                )
+                                .checked(self.move_into_target)
+                                .tab_index(tab::MOVE)
+                                .on_toggle(
+                                    move |checked, _window, cx| {
+                                        this.update(cx, |dialog, cx| {
+                                            dialog.move_into_target = checked;
+                                            cx.notify();
+                                        });
+                                    },
+                                ),
+                            )
+                            .when(!self.move_into_target, |column| {
+                                column.child(small(
+                                    ts!("restore.move_off", source = source.as_str()),
+                                    chrome.danger,
+                                ))
+                            })
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(count)
+                    .children(detail)
+                    .into_any_element()
+            }
+        };
+        Some(element)
     }
 
     /// The progress half.
@@ -767,9 +916,24 @@ mod tests {
         window
             .update(cx, |dialog, _window, cx| {
                 dialog.open(scope, session, Dialect::H2, false, cx);
-                dialog.input = input;
+                if let Some(input) = input {
+                    dialog.choose_input(input, cx);
+                }
             })
             .expect("the window is open");
+        // The read through runs on the background executor.
+        for _ in 0..1000 {
+            cx.run_until_parked();
+            let read = window
+                .update(cx, |dialog, _window, _cx| {
+                    !matches!(dialog.scan, ScanState::Reading)
+                })
+                .expect("the window is open");
+            if read {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         window
     }
 
@@ -869,6 +1033,111 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_backup_restored_over_another_schema_goes_into_that_schema(cx: &mut TestAppContext) {
+        // The report: a schema's backup, restored from the menu of another
+        // schema of the same database, tried to create its objects in the
+        // schema it came from, which already had them.
+        let connected = crate::restore::tests::h2(
+            "restore-dialog-move",
+            &[
+                "CREATE SCHEMA APP",
+                "CREATE SCHEMA TARGET",
+                "CREATE TABLE APP.PARENT (ID INT PRIMARY KEY, NAME VARCHAR(20))",
+                "CREATE TABLE APP.CHILD (ID INT PRIMARY KEY, PARENT_ID INT NOT NULL, \
+                     CONSTRAINT FK_CHILD_PARENT FOREIGN KEY (PARENT_ID) \
+                     REFERENCES APP.PARENT(ID))",
+                "INSERT INTO APP.PARENT VALUES (1, 'APP.PARENT'), (2, 'b')",
+                "INSERT INTO APP.CHILD VALUES (10, 1), (11, 2)",
+                "CREATE SEQUENCE APP.ORDER_NO START WITH 100",
+                "CREATE VIEW APP.NAMES AS SELECT NAME FROM APP.PARENT",
+            ],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.sql");
+        let mut job = connected
+            .session()
+            .start_backup(
+                &rudbman_jdbc::BackupSpec::new(&path)
+                    .with_scope(rudbman_jdbc::ScopeRef::new().with_schema("APP"))
+                    .with_ddl(rudbman_jdbc::DdlOptions::included())
+                    .with_objects(rudbman_jdbc::BackupObjects::all())
+                    .with_data(rudbman_jdbc::BackupDataOptions::included()),
+            )
+            .expect("the backup starts");
+        while !job.poll().expect("the backup reports").is_terminal() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let window = dialog(&connected, "TARGET", Some(&path), cx);
+        window
+            .update(cx, |dialog, _window, _cx| {
+                let ScanState::Read(scan) = &dialog.scan else {
+                    panic!("the script was not read through");
+                };
+                assert_eq!(scan.schemas, ["APP"], "{scan:?}");
+                assert!(scan.declared, "the backup says where it came from");
+                assert!(dialog.move_into_target, "the move is offered ticked");
+                assert!(dialog.moving().is_some());
+            })
+            .expect("the window is open");
+        window
+            .update(cx, |dialog, _window, cx| dialog.start(cx))
+            .expect("the window is open");
+        drive(&window, cx);
+        window
+            .update(cx, |dialog, _window, _cx| {
+                assert!(
+                    matches!(dialog.stage, Stage::Ended(Outcome::Done { failed: 0, .. })),
+                    "{:?}",
+                    match &dialog.stage {
+                        Stage::Ended(outcome) => format!("{outcome:?}"),
+                        _ => "still running".to_string(),
+                    }
+                );
+            })
+            .expect("the window is open");
+
+        let rows = |sql: &str| {
+            let cursor = connected
+                .session()
+                .execute(&StatementSpec::new(sql))
+                .unwrap_or_else(|error| panic!("{sql}: {error}"));
+            match cursor.fetch(1).unwrap().value(0, 0) {
+                Some(rudbman_jdbc::Value::I64(count)) => count,
+                other => panic!("{sql}: {other:?}"),
+            }
+        };
+        assert_eq!(rows("SELECT COUNT(*) FROM TARGET.PARENT"), 2);
+        assert_eq!(rows("SELECT COUNT(*) FROM TARGET.CHILD"), 2);
+        // Data that reads like a name stays as written.
+        assert_eq!(
+            rows("SELECT COUNT(*) FROM TARGET.NAMES WHERE NAME = 'APP.PARENT'"),
+            1
+        );
+        assert_eq!(rows("SELECT NEXT VALUE FOR TARGET.ORDER_NO"), 100);
+        // The view and the key point at the new schema's tables.
+        connected
+            .session()
+            .execute(&StatementSpec::new(
+                "INSERT INTO TARGET.PARENT VALUES (3, 'c')",
+            ))
+            .unwrap();
+        assert_eq!(rows("SELECT COUNT(*) FROM TARGET.NAMES"), 3);
+        assert_eq!(rows("SELECT COUNT(*) FROM APP.NAMES"), 2);
+        assert!(
+            connected
+                .session()
+                .execute(&StatementSpec::new(
+                    "INSERT INTO TARGET.CHILD VALUES (12, 99)"
+                ))
+                .is_err(),
+            "the foreign key holds in the new schema"
+        );
+        // The schema the backup came from is as it was.
+        assert_eq!(rows("SELECT COUNT(*) FROM APP.PARENT"), 2);
+    }
+
+    #[gpui::test]
     fn every_shape_of_the_dialog_lays_out(cx: &mut TestAppContext) {
         let connected = crate::restore::tests::h2("restore-dialog-shapes", &[]);
         let window = dialog(&connected, "PUBLIC", None, cx);
@@ -915,6 +1184,34 @@ mod tests {
             window
                 .update(cx, |dialog, _window, cx| {
                     dialog.stage = Stage::Ended(outcome);
+                    cx.notify();
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+        let scans = [
+            ScanState::Reading,
+            ScanState::Refused(Refusal::PgArchive),
+            ScanState::Read(Scan {
+                statements: 4,
+                catalogs: Vec::new(),
+                schemas: vec!["APP".into()],
+                declared: true,
+            }),
+            ScanState::Read(Scan {
+                statements: 4,
+                catalogs: Vec::new(),
+                schemas: vec!["A".into(), "B".into()],
+                declared: false,
+            }),
+        ];
+        for (n, scan) in scans.into_iter().enumerate() {
+            window
+                .update(cx, |dialog, _window, cx| {
+                    dialog.stage = Stage::Form;
+                    dialog.input = Some(PathBuf::from("/tmp/app.sql"));
+                    dialog.scan = scan;
+                    dialog.move_into_target = n % 2 == 0;
                     cx.notify();
                 })
                 .unwrap();

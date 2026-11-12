@@ -36,12 +36,30 @@ use rudbman_jdbc::{
     StatementSpec, Value,
 };
 
+use rudbman_sql::move_scope;
+
 use super::*;
 use crate::connection::{self, Connected};
 
 /// A tool's script, the counts that prove it ran, and whether it is saved as
 /// UTF-16.
 type ToolScript = (&'static str, &'static [(&'static str, i64)], bool);
+
+/// A second scope beside the first, which a backup of the first is restored
+/// into while the first still holds what it was backed up from.
+struct Second {
+    scope: Scope,
+    /// What empties it, on the admin session when there is one.
+    reset: Vec<String>,
+    /// What empties it when no fixed list can.
+    reset_by: Option<fn(&Connected, &str)>,
+    /// The user that owns it, when it is not the first scope's.
+    login: Option<(String, String)>,
+    /// Where it is, when it is not where the first scope is: PostgreSQL's,
+    /// in a database of its own, since an extension the first scope holds
+    /// exists once per database and cannot be in two schemas of one.
+    url: Option<String>,
+}
 
 /// Where one of the products is, and how it is reset.
 struct Product {
@@ -63,6 +81,8 @@ struct Product {
     reset_by: Option<fn(&Connected)>,
     /// What runs on the scope's own session after the reset.
     after_reset: Vec<String>,
+    /// The scope a backup is moved into.
+    second: Option<Second>,
     scope: Scope,
     /// The container and the command that dumps the scope to stdout.
     dump: Option<(String, Vec<String>)>,
@@ -154,6 +174,7 @@ fn products() -> Vec<Product> {
     if let Ok(url) = std::env::var("RUDBMAN_TEST_PG_URL") {
         let user = env("RUDBMAN_TEST_PG_USER", "rudbman");
         let database = env("RUDBMAN_TEST_PG_DATABASE", "rudbman");
+        let second_url = url.replacen(&format!("/{database}"), "/rudbman_bk2", 1);
         let container = env("RUDBMAN_TEST_PG_CONTAINER", "rudbman-test-postgres");
         out.push(Product {
             name: "pg",
@@ -172,6 +193,21 @@ fn products() -> Vec<Product> {
                 "drop schema if exists bk cascade".into(),
                 "create schema bk".into(),
             ],
+            second: Some(Second {
+                scope: Scope {
+                    catalog: None,
+                    schema: Some("bk2".into()),
+                },
+                reset: vec![
+                    "drop database if exists rudbman_bk2".into(),
+                    "create database rudbman_bk2".into(),
+                ],
+                reset_by: Some(|connected, _| {
+                    execute(connected.session(), "create schema bk2").expect("bk2 is created");
+                }),
+                login: None,
+                url: Some(second_url),
+            }),
             reset_by: None,
             after_reset: Vec::new(),
             scope: Scope {
@@ -264,6 +300,19 @@ fn products() -> Vec<Product> {
                 "drop database if exists bk".into(),
                 format!("create database bk character set utf8mb4 collate {collation}"),
             ],
+            second: Some(Second {
+                scope: Scope {
+                    catalog: Some("bk2".into()),
+                    schema: None,
+                },
+                reset: vec![
+                    "drop database if exists bk2".into(),
+                    format!("create database bk2 character set utf8mb4 collate {collation}"),
+                ],
+                reset_by: None,
+                login: None,
+                url: None,
+            }),
             reset_by: None,
             after_reset: Vec::new(),
             scope: Scope {
@@ -325,6 +374,18 @@ fn products() -> Vec<Product> {
                     .into(),
                 "create database bkdb".into(),
             ],
+            second: Some(Second {
+                scope: Scope {
+                    catalog: Some("bkdb".into()),
+                    schema: Some("bk2".into()),
+                },
+                reset: Vec::new(),
+                reset_by: Some(|connected, _| {
+                    execute(connected.session(), "create schema bk2").expect("bk2 is created");
+                }),
+                login: None,
+                url: None,
+            }),
             reset_by: None,
             after_reset: vec!["create schema bk".into()],
             scope: Scope {
@@ -343,7 +404,8 @@ fn products() -> Vec<Product> {
                         1,
                     ),
                     (
-                        "select count(*) from sys.procedures where name = 'ssms_p'",
+                        "select count(*) from sys.procedures where name = 'ssms_p' \
+                         and schema_name(schema_id) = 'bk'",
                         1,
                     ),
                 ],
@@ -377,6 +439,24 @@ fn products() -> Vec<Product> {
                  trigger, create sequence, create materialized view to bk"
                     .into(),
             ],
+            second: Some(Second {
+                scope: Scope {
+                    catalog: None,
+                    schema: Some("BK2".into()),
+                },
+                reset: vec![
+                    "begin execute immediate 'drop user bk2 cascade'; exception when others then \
+                     if sqlcode != -1918 then raise; end if; end;"
+                        .into(),
+                    "create user bk2 identified by bk2 quota unlimited on users".into(),
+                    "grant create session, create table, create view, create procedure, create \
+                     trigger, create sequence, create materialized view to bk2"
+                        .into(),
+                ],
+                reset_by: None,
+                login: Some(("bk2".into(), "bk2".into())),
+                url: None,
+            }),
             reset_by: None,
             after_reset: Vec::new(),
             scope: Scope {
@@ -439,6 +519,7 @@ fn products() -> Vec<Product> {
             admin: None,
             reset: Vec::new(),
             reset_by: Some(empty_sqlite),
+            second: None,
             after_reset: Vec::new(),
             scope: Scope::default(),
             dump: Some((
@@ -475,7 +556,17 @@ fn products() -> Vec<Product> {
             password: env("RUDBMAN_TEST_DB2_PASSWORD", "rudbman"),
             admin: None,
             reset: Vec::new(),
-            reset_by: Some(empty_db2_schema),
+            reset_by: Some(|connected| empty_db2_schema(connected, "BK")),
+            second: Some(Second {
+                scope: Scope {
+                    catalog: None,
+                    schema: Some("BK2".into()),
+                },
+                reset: Vec::new(),
+                reset_by: Some(empty_db2_schema),
+                login: None,
+                url: None,
+            }),
             after_reset: Vec::new(),
             scope: Scope {
                 catalog: None,
@@ -530,7 +621,7 @@ fn empty_sqlite(connected: &Connected) {
 /// Empties the schema `BK` the way `BackupRoundTripTest` does: by hand, in
 /// passes, because `SYSPROC.ADMIN_DROP_SCHEMA` needs a table space a new
 /// database does not have.
-fn empty_db2_schema(connected: &Connected) {
+fn empty_db2_schema(connected: &Connected, schema: &str) {
     let cursor = connected
         .session()
         .execute(&StatementSpec::new(
@@ -540,7 +631,7 @@ fn empty_db2_schema(connected: &Connected) {
              union all select 'drop specific ' || case routinetype when 'P' then 'procedure' else 'function' end \
              || ' BK.\"' || specificname || '\"' from syscat.routines where routineschema = 'BK' \
              union all select 'drop table BK.\"' || tabname || '\"' from syscat.tables where tabschema = 'BK' and type = 'T' \
-             union all select 'drop sequence BK.\"' || seqname || '\"' from syscat.sequences where seqschema = 'BK' and seqtype = 'S'",
+             union all select 'drop sequence BK.\"' || seqname || '\"' from syscat.sequences where seqschema = 'BK' and seqtype = 'S'".replace("BK", schema),
         ))
         .expect("the catalog reads");
     let mut drops = Vec::new();
@@ -562,8 +653,11 @@ fn empty_db2_schema(connected: &Connected) {
             break;
         }
     }
-    assert!(drops.is_empty(), "could not empty the schema BK: {drops:?}");
-    let _ = execute(connected.session(), "create schema BK");
+    assert!(
+        drops.is_empty(),
+        "could not empty the schema {schema}: {drops:?}"
+    );
+    let _ = execute(connected.session(), &format!("create schema {schema}"));
 }
 
 fn connect(
@@ -715,11 +809,15 @@ fn catalog(product: &Product, connected: &Connected) -> Vec<String> {
 
 /// A backup of the scope, as the bridge writes it.
 fn backup(product: &Product, connected: &Connected, path: &Path) -> Vec<String> {
+    backup_of(product, &product.scope, connected, path)
+}
+
+fn backup_of(product: &Product, of: &Scope, connected: &Connected, path: &Path) -> Vec<String> {
     let mut scope = ScopeRef::new();
-    if let Some(catalog) = &product.scope.catalog {
+    if let Some(catalog) = &of.catalog {
         scope = scope.with_catalog(catalog);
     }
-    if let Some(schema) = &product.scope.schema {
+    if let Some(schema) = &of.schema {
         scope = scope.with_schema(schema);
     }
     let spec = BackupSpec::new(path)
@@ -752,18 +850,36 @@ fn backup(product: &Product, connected: &Connected, path: &Path) -> Vec<String> 
 }
 
 fn lines(product: &Product, text: &str) -> Vec<String> {
-    text.lines().filter_map(product.normalize).collect()
+    // The scope a backup names on its first line is the one it was taken of,
+    // which differs between a scope and its copy by design.
+    text.lines()
+        .filter(|line| !line.starts_with("-- rudbman backup: "))
+        .filter_map(product.normalize)
+        .collect()
 }
 
 /// Runs `path` through the restore on `connected`, and insists it ran clean.
 fn restore_file(product: &Product, connected: &Connected, path: &Path) -> u64 {
+    restore_into(product, &product.scope, None, connected, path)
+}
+
+/// [`restore_file`] into `into`, moving names as `moving` says.
+fn restore_into(
+    product: &Product,
+    into: &Scope,
+    moving: Option<rudbman_sql::ScopeMove>,
+    connected: &Connected,
+    path: &Path,
+) -> u64 {
     let restore = Restore::start(
         connected.handle(),
         RestoreRequest {
             path: path.to_path_buf(),
             dialect: product.dialect,
             continue_on_error: false,
-            enter: enter_scope(&product.dialect, &product.scope),
+            enter: enter_scope(&product.dialect, into),
+            moving,
+            into: into.clone(),
         },
     );
     let outcome = loop {
@@ -834,6 +950,117 @@ fn same(expected: &[String], actual: &[String], what: &str) {
     panic!("{what}\n- {only:#?}\n+ {extra:#?}");
 }
 
+/// The second scope's own session, after the scope has been emptied on
+/// `first` or the admin session.
+fn open_second(product: &Product, second: &Second, first: &Connected) -> Connected {
+    let admin = product.admin.as_ref().map(|(url, user, password)| {
+        connect(&product.driver, &product.dialect, url, user, password)
+    });
+    run_all(admin.as_ref().unwrap_or(first), &second.reset);
+    if let Some(admin) = admin {
+        admin.close().ok();
+    }
+    let (user, password) = second
+        .login
+        .clone()
+        .unwrap_or_else(|| (product.user.clone(), product.password.clone()));
+    let target = connect(
+        &product.driver,
+        &product.dialect,
+        second.url.as_deref().unwrap_or(&product.url),
+        &user,
+        &password,
+    );
+    if let Some(reset_by) = second.reset_by {
+        reset_by(&target, second.scope.schema.as_deref().unwrap_or_default());
+    }
+    target
+}
+
+/// One number `sql` answers.
+fn number(connected: &Connected, sql: &str) -> i64 {
+    let cursor = connected
+        .session()
+        .execute(&StatementSpec::new(sql))
+        .unwrap_or_else(|error| panic!("{sql}: {error}"));
+    match cursor.fetch(1).unwrap().value(0, 0) {
+        Some(Value::I64(count)) => count,
+        Some(Value::Str(text)) => text.trim().parse().unwrap(),
+        other => panic!("{sql}: {other:?}"),
+    }
+}
+
+/// `sql` asked of the second scope: its names of the first scope moved.
+fn of_second(sql: &str) -> String {
+    sql.replace("bk.", "bk2.")
+        .replace("'bk'", "'bk2'")
+        .replace("'BK'", "'BK2'")
+}
+
+/// Restores the backup at `path` into `second` and checks that what landed
+/// there is the backup with its scope's names moved, that nothing of it
+/// still names the first scope, and that the first scope is as it was.
+fn moved(product: &Product, second: &Second, source: &Connected, snapshot: &[String], path: &Path) {
+    let target = open_second(product, second, source);
+
+    let scan = crate::restore::scan(path, &product.dialect).expect("the backup reads");
+    assert!(
+        scan.declared,
+        "{}: the backup does not say its scope",
+        product.name
+    );
+    let moving = scan
+        .move_into(&second.scope, &product.dialect)
+        .unwrap_or_else(|| panic!("{}: no move offered for {scan:?}", product.name));
+    let ran = restore_into(product, &second.scope, Some(moving.clone()), &target, path);
+
+    let text = std::fs::read_to_string(path).unwrap();
+    let expected = lines(product, &move_scope(&text, &product.dialect, &moving));
+    let again = backup_of(
+        product,
+        &second.scope,
+        &target,
+        &path.with_extension("moved.sql"),
+    );
+    same(
+        &expected,
+        &again,
+        &format!("{}: the backup moved into the second scope", product.name),
+    );
+    // Nothing that landed names the first scope any more.
+    let first = product
+        .scope
+        .schema
+        .as_deref()
+        .or(product.scope.catalog.as_deref())
+        .unwrap();
+    let names_first = regex::Regex::new(&format!(
+        r#"(?i)(^|[^a-z0-9_$#])["`\[]?{first}["`\]]?\s*\.|'{first}'"#
+    ))
+    .unwrap();
+    // A comment is text, and is restored as written: Oracle's own on a
+    // materialized view's table reads "snapshot table for snapshot BK.MV".
+    let left: Vec<&String> = again
+        .iter()
+        .filter(|line| !line.trim_start().starts_with("COMMENT ON") && names_first.is_match(line))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "{}: the moved restore still names {first}: {left:#?}",
+        product.name
+    );
+    target.close().ok();
+    same(
+        snapshot,
+        &catalog(product, source),
+        &format!("{}: the first scope after the move", product.name),
+    );
+    println!(
+        "{}: the backup moved into a second scope, {ran} statements",
+        product.name
+    );
+}
+
 fn round_trip(product: &Product) {
     let dir = tempfile::tempdir().unwrap();
     let loading = reset(product);
@@ -872,6 +1099,17 @@ fn round_trip(product: &Product) {
             std::fs::write(&raw, &output.stdout).expect("the dump is written");
         })
     });
+    // 0. The backup, moved into a second scope while the first still holds
+    //    everything: the report this stage was written for.
+    if let Some(second) = &product.second {
+        moved(
+            product,
+            second,
+            &source,
+            &snapshot,
+            &dir.path().join("backup.sql"),
+        );
+    }
     source.close().ok();
 
     // 1. The backup, restored and backed up again.
@@ -908,16 +1146,25 @@ fn round_trip(product: &Product) {
         let target = reset(product);
         let ran = restore_file(product, &target, &path);
         for (sql, expected) in counts {
-            let cursor = target
-                .session()
-                .execute(&StatementSpec::new(*sql))
-                .unwrap_or_else(|error| panic!("{sql}: {error}"));
-            let count = match cursor.fetch(1).unwrap().value(0, 0) {
-                Some(Value::I64(count)) => count,
-                Some(Value::Str(text)) => text.trim().parse().unwrap(),
-                other => panic!("{sql}: {other:?}"),
-            };
-            assert_eq!(count, *expected, "{}: {sql}", product.name);
+            assert_eq!(number(&target, sql), *expected, "{}: {sql}", product.name);
+        }
+        // And into the second scope, the first still holding it.
+        if let Some(second) = &product.second {
+            let into = open_second(product, second, &target);
+            let moving = crate::restore::scan(&path, &product.dialect)
+                .expect("the script reads")
+                .move_into(&second.scope, &product.dialect);
+            assert!(
+                moving.is_some(),
+                "{}: no move offered for the tool's script",
+                product.name
+            );
+            restore_into(product, &second.scope, moving, &into, &path);
+            for (sql, expected) in counts {
+                let sql = of_second(sql);
+                assert_eq!(number(&into, &sql), *expected, "{}: {sql}", product.name);
+            }
+            into.close().ok();
         }
         target.close().ok();
         println!(
@@ -933,7 +1180,9 @@ fn round_trip(product: &Product) {
     let Some(dumped) = dumped else {
         return;
     };
-    let target = reset_with(product, &product.reset[..product.dump_reset]);
+    // Over the scope as the dialog finds it, already there: a dump that
+    // creates it (`pg_dump -n`) has that statement passed over.
+    let target = reset(product);
     let ran = restore_file(product, &target, &dir.path().join("dump.sql"));
     let restored = catalog(product, &target);
     target.close().ok();
@@ -979,6 +1228,46 @@ fn round_trip(product: &Product) {
         product.name
     );
 
+    // The dump into the second scope, the first holding what the client
+    // restored.
+    if let Some(second) = &product.second {
+        let tables = |connected: &Connected, name: &str| {
+            number(
+                connected,
+                &format!(
+                    "select count(*) from information_schema.tables where table_schema = '{name}'"
+                ),
+            )
+        };
+        let first = connect(
+            &product.driver,
+            &product.dialect,
+            &product.url,
+            &product.user,
+            &product.password,
+        );
+        let in_first = tables(&first, "bk");
+        let into = open_second(product, second, &first);
+        first.close().ok();
+        let path = dir.path().join("dump.sql");
+        let moving = crate::restore::scan(&path, &product.dialect)
+            .expect("the dump reads")
+            .move_into(&second.scope, &product.dialect);
+        let ran = restore_into(product, &second.scope, moving.clone(), &into, &path);
+        assert_eq!(
+            tables(&into, "bk2"),
+            in_first,
+            "{}: the dump in the second scope",
+            product.name
+        );
+        into.close().ok();
+        println!(
+            "{}: the dump restored into a second scope{}, {ran} statements",
+            product.name,
+            if moving.is_some() { ", moved" } else { "" }
+        );
+    }
+
     if raw_dumped.is_some() {
         let target = reset_with(product, &product.reset[..product.dump_reset]);
         let restore = Restore::start(
@@ -988,6 +1277,8 @@ fn round_trip(product: &Product) {
                 dialect: product.dialect,
                 continue_on_error: false,
                 enter: enter_scope(&product.dialect, &product.scope),
+                moving: None,
+                into: product.scope.clone(),
             },
         );
         let outcome = loop {

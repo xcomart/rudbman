@@ -1086,6 +1086,11 @@ its defaults each time.
 | **Include the rows** | on | As `INSERT` statements. |
 | **Rows per INSERT** | 1 | How many rows one `INSERT` carries. |
 
+The file's first line is a comment naming the scope it was taken of —
+`-- rudbman backup: {"schema":"APP"}` — which every product's client passes
+over, and which a restore into another schema reads to know which names to
+move.
+
 The script runs in this order: the product's session settings, the drops,
 PostgreSQL's extensions, enums and domains, sequences, tables, routines (and
 Oracle packages), views, the rows, the foreign keys, the identity and sequence
@@ -1136,11 +1141,33 @@ so these all restore as they would from their client:
 | Option | Default | Notes |
 | --- | --- | --- |
 | **Script file** | — | **Browse…** picks it. Gzip is told by the file's contents, not its name. |
+| **Restore the objects of … into …** | on | Shown when the script names its objects in a scope other than the selected one. |
 | **Continue past failed statements** | off | Off, the first failure ends the run; on, failures are counted and the first of them listed at the end. |
 
-The file is read through once before anything runs: a line the restore cannot
-carry out, or text that is not UTF-8 or UTF-16, stops it there with nothing
-changed. Then every statement runs on a session of its own, opened beside the
+**Into another schema.** Choosing the file reads it through, and the dialog
+says how many statements it holds and which schema (or database) its objects
+are named in: a backup says so on its first line, and any other script is read
+for where its statements create and fill things. A backup names them in full — `"APP"."PARENT"`, `USE shop` — so
+when that is not the selected scope (a backup of `APP` restored from the menu
+of `ARCHIVE`), **Restore the objects of APP into ARCHIVE** is offered, ticked.
+It rewrites the script's qualified names, its `USE` and `CREATE SCHEMA`, and
+the names it passes to a function as a string — `nextval('app.seq')`,
+`COMPILE_SCHEMA('APP')`, `DBCC CHECKIDENT`, `sp_addextendedproperty` — into
+the selected scope, routine bodies and MySQL's `/*! … */` included; every
+other string, comments among them, is data and stays as written. Untick it to
+restore where the script names them. A script that names several schemas is
+restored as written. The selected scope exists, so the script's
+`CREATE SCHEMA` or `CREATE DATABASE` of it — `pg_dump -n` writes one — is
+passed over.
+
+> A PostgreSQL extension exists once per database. A schema whose functions
+> come from an extension installed in it (`CREATE EXTENSION … WITH SCHEMA
+> app`) cannot be copied to another schema of the same database: the copy
+> still needs those functions in its own schema.
+
+The file is read through once more before anything runs: a line the restore
+cannot carry out, or text that is not UTF-8 or UTF-16, stops it there with
+nothing changed. Then every statement runs on a session of its own, opened beside the
 connection's with the same login, under auto-commit — so the `SET`s, `USE`s
 and `search_path` a dump changes do not reach the query tabs, and the
 explorer stays usable while it runs. Progress counts statements and bytes;

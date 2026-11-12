@@ -43,7 +43,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use rudbman_jdbc::{Canceller, Error as JdbcError, Session, StatementSpec};
-use rudbman_sql::{Dialect, DialectId, ScriptError, ScriptSplitter, ScriptStatement};
+use rudbman_sql::{
+    Dialect, DialectId, ScopeMove, ScriptError, ScriptSplitter, ScriptStatement, creates_scope,
+    move_scope, same_name, statement_scope,
+};
 
 use crate::connection::{SessionHandle, SiblingSession};
 use crate::explorer::Scope;
@@ -71,6 +74,13 @@ pub struct RestoreRequest {
     /// What the session runs before the script, so that a name the script
     /// does not qualify lands in the scope the dialog was opened over.
     pub enter: Option<String>,
+    /// The scope the script names, and the one to put its objects in
+    /// instead; see [`Scan::move_into`].
+    pub moving: Option<ScopeMove>,
+    /// The scope restored into: the one the dialog was opened over, which
+    /// exists, so the script's `CREATE SCHEMA` or `CREATE DATABASE` of it —
+    /// `pg_dump -n` writes one — is passed over rather than failed.
+    pub into: Scope,
 }
 
 /// Where the restore is.
@@ -282,25 +292,47 @@ fn run(
 /// The first pass: the script split without running it. Answers its size as
 /// text and its statement count, or `None` when the restore was canceled.
 fn check(restore: &Restore, request: &RestoreRequest) -> Result<Option<(u64, u64)>, Refusal> {
-    let mut reader = ScriptReader::open(&request.path)?;
-    let mut splitter = ScriptSplitter::new(&request.dialect);
+    read_through(
+        &request.path,
+        &request.dialect,
+        |bytes, statements| {
+            if restore.canceled() {
+                return false;
+            }
+            restore.update(|progress| {
+                progress.bytes_done = bytes;
+                progress.statements_done = statements;
+            });
+            true
+        },
+        |_| {},
+    )
+}
+
+/// Splits the whole script without running it, handing every statement to
+/// `each` and the running totals to `going` now and then; `going` answering
+/// `false` stops the read and makes it answer `None`. Answers the script's
+/// size as text and its statement count.
+fn read_through(
+    path: &Path,
+    dialect: &Dialect,
+    mut going: impl FnMut(u64, u64) -> bool,
+    mut each: impl FnMut(&ScriptStatement),
+) -> Result<Option<(u64, u64)>, Refusal> {
+    let mut reader = ScriptReader::open(path)?;
+    let mut splitter = ScriptSplitter::new(dialect);
     let mut out = Vec::new();
     let (mut bytes, mut statements) = (0u64, 0u64);
     while let Some(line) = reader.next_line()? {
-        if restore.canceled() {
-            return Ok(None);
-        }
         splitter
             .push_line(&line, &mut out)
             .map_err(Refusal::Script)?;
         bytes += line.len() as u64;
         statements += out.len() as u64;
+        out.iter().for_each(&mut each);
         out.clear();
-        if reader.line % 1024 == 0 {
-            restore.update(|progress| {
-                progress.bytes_done = bytes;
-                progress.statements_done = statements;
-            });
+        if reader.line % 1024 == 0 && !going(bytes, statements) {
+            return Ok(None);
         }
         if splitter.has_ended() {
             break;
@@ -308,7 +340,146 @@ fn check(restore: &Restore, request: &RestoreRequest) -> Result<Option<(u64, u64
     }
     splitter.finish(&mut out).map_err(Refusal::Script)?;
     statements += out.len() as u64;
+    out.iter().for_each(&mut each);
     Ok(Some((bytes, statements)))
+}
+
+/// What a read through a script found, before anything runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Scan {
+    /// The statements it holds.
+    pub statements: u64,
+    /// The catalogs its statements create and fill things in, by name, each
+    /// once.
+    pub catalogs: Vec<String>,
+    /// The schemas, likewise.
+    pub schemas: Vec<String>,
+    /// Whether the two lists come from the line a rudbman backup starts
+    /// with, rather than from reading the statements.
+    pub declared: bool,
+}
+
+impl Scan {
+    /// Whether the script names more than one catalog or schema, which a
+    /// restore leaves where the script puts them.
+    pub fn names_several(&self) -> bool {
+        self.catalogs.len() > 1 || self.schemas.len() > 1
+    }
+
+    /// The scope the script names, as a title reads it, when it names one.
+    pub fn source_name(&self) -> Option<String> {
+        if self.names_several() {
+            return None;
+        }
+        let parts: Vec<&str> = self
+            .catalogs
+            .iter()
+            .chain(&self.schemas)
+            .map(String::as_str)
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("."))
+    }
+
+    /// Every name the script puts things in, for the note that says it names
+    /// several.
+    pub fn all_names(&self) -> String {
+        self.catalogs
+            .iter()
+            .chain(&self.schemas)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The move that puts what the script names into `target`, when the
+    /// script names one scope and it is not `target`.
+    ///
+    /// A level the script names but `target` does not keeps its name, and is
+    /// still part of the move: that is how `"shop"."dbo"."t"` is recognized
+    /// when only the schema changes.
+    pub fn move_into(&self, target: &Scope, dialect: &Dialect) -> Option<ScopeMove> {
+        if self.names_several() {
+            return None;
+        }
+        let level = |found: &[String], to: &Option<String>| {
+            found.first().map(|from| {
+                let to = to
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|to| !to.is_empty())
+                    .unwrap_or(from);
+                (from.clone(), to.to_string())
+            })
+        };
+        let moving = ScopeMove {
+            catalog: level(&self.catalogs, &target.catalog),
+            schema: level(&self.schemas, &target.schema),
+        };
+        moving.moves(dialect).then_some(moving)
+    }
+}
+
+/// What the first line of a rudbman backup starts with: a comment naming the
+/// scope the backup was taken of, as one line of JSON.
+const BACKUP_HEADER: &str = "-- rudbman backup: ";
+
+/// The scope a rudbman backup's first line names, when `line` is that line.
+fn declared_scope(line: &str) -> Option<Scope> {
+    let json = line.trim_end().strip_prefix(BACKUP_HEADER)?;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let name = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| !name.is_empty())
+            .map(String::from)
+    };
+    Some(Scope {
+        catalog: name("catalog"),
+        schema: name("schema"),
+    })
+}
+
+/// Reads `path` through as [`Restore::start`] would before running it:
+/// whether it can run at all, how many statements it holds, and which scope
+/// its statements name. **Blocks** for as long as the read takes.
+///
+/// A rudbman backup says which scope it was taken of on its first line, and
+/// that is the answer whatever the statements look like; any other script
+/// is answered from where its statements create and fill things.
+pub fn scan(path: &Path, dialect: &Dialect) -> Result<Scan, Refusal> {
+    let mut found = Scan::default();
+    let declared = ScriptReader::open(path)?
+        .next_line()?
+        .and_then(|line| declared_scope(&line));
+    let add = |names: &mut Vec<String>, name: Option<String>| {
+        if let Some(name) = name
+            && !names.iter().any(|known| same_name(known, &name, dialect))
+        {
+            names.push(name);
+        }
+    };
+    let totals = read_through(
+        path,
+        dialect,
+        |_, _| true,
+        |statement| {
+            if declared.is_some() {
+                return;
+            }
+            if let Some(scope) = statement_scope(&statement.sql, dialect) {
+                add(&mut found.catalogs, scope.catalog);
+                add(&mut found.schemas, scope.schema);
+            }
+        },
+    )?;
+    found.statements = totals.map_or(0, |(_, statements)| statements);
+    if let Some(scope) = declared {
+        found.catalogs = scope.catalog.into_iter().collect();
+        found.schemas = scope.schema.into_iter().collect();
+        found.declared = true;
+    }
+    Ok(found)
 }
 
 /// The second pass: the script run, a statement at a time.
@@ -343,7 +514,16 @@ fn execute_script(restore: &Restore, request: &RestoreRequest, session: &Session
             if restore.canceled() {
                 return Outcome::Canceled { statements: ran };
             }
-            match execute(session, &statement.sql) {
+            let sql = match &request.moving {
+                Some(moving) => move_scope(&statement.sql, &request.dialect, moving),
+                None => std::borrow::Cow::Borrowed(statement.sql.as_str()),
+            };
+            if creates(&sql, &request.dialect, &request.into) {
+                ran += 1;
+                restore.update(|progress| progress.statements_done = ran + failed);
+                continue;
+            }
+            match execute(session, &sql) {
                 Ok(()) => ran += 1,
                 Err(_) if restore.canceled() => return Outcome::Canceled { statements: ran },
                 Err(message) => {
@@ -379,6 +559,18 @@ fn execute_script(restore: &Restore, request: &RestoreRequest, session: &Session
         failures,
         failed,
     }
+}
+
+/// Whether `sql` creates `into` itself.
+fn creates(sql: &str, dialect: &Dialect, into: &Scope) -> bool {
+    let Some(created) = creates_scope(sql, dialect) else {
+        return false;
+    };
+    let is = |made: &Option<String>, target: &Option<String>| match (made, target) {
+        (Some(made), Some(target)) => same_name(made, target, dialect),
+        _ => false,
+    };
+    is(&created.catalog, &into.catalog) || is(&created.schema, &into.schema)
 }
 
 /// Runs one statement and walks every result it produced, so that an error
@@ -633,6 +825,8 @@ pub(crate) mod tests {
             dialect: Dialect::H2,
             continue_on_error: false,
             enter: None,
+            moving: None,
+            into: Scope::default(),
         }
     }
 
@@ -831,6 +1025,35 @@ pub(crate) mod tests {
             count(&connected, "SELECT COUNT(*) FROM E"),
             statements as i64
         );
+    }
+
+    #[test]
+    fn a_backup_says_which_scope_it_was_taken_of() {
+        assert_eq!(
+            declared_scope("-- rudbman backup: {\"catalog\":\"shop\",\"schema\":\"d\\\"bo\"}\n"),
+            Some(Scope {
+                catalog: Some("shop".into()),
+                schema: Some("d\"bo".into()),
+            })
+        );
+        assert_eq!(
+            declared_scope("-- rudbman backup: {}"),
+            Some(Scope::default())
+        );
+        assert_eq!(declared_scope("-- a comment"), None);
+        assert_eq!(declared_scope("-- rudbman backup: not json"), None);
+
+        // The line wins over what the statements name.
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(
+            dir.path(),
+            "declared.sql",
+            b"-- rudbman backup: {\"schema\":\"APP\"}\nCREATE TABLE OTHER.T (ID INT);\n",
+        );
+        let scan = scan(&path, &Dialect::H2).unwrap();
+        assert!(scan.declared);
+        assert_eq!(scan.schemas, ["APP"]);
+        assert_eq!(scan.statements, 1);
     }
 
     #[test]

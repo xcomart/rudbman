@@ -142,6 +142,10 @@
 //!   again.
 //! * [`mod@statement`] — [`StatementSpan`], [`split_statements`],
 //!   [`statement_at`], [`holds_procedural_block`].
+//! * [`mod@scope`] — [`statement_scope`], [`move_scope`], [`ScopeMove`]:
+//!   which schema a statement names, and the same statement with that
+//!   schema's names rewritten into another, for a restore into a schema
+//!   other than the one a script was written for.
 //! * [`mod@script`] — [`ScriptSplitter`], [`split_script`],
 //!   [`has_client_directives`]: a script cut the way each product's own
 //!   command-line client cuts it, `DELIMITER`, `GO` and SQL\*Plus's `/`
@@ -159,6 +163,7 @@ pub mod explain;
 pub mod format;
 pub mod ident;
 pub mod lexer;
+pub mod scope;
 pub mod script;
 pub mod state;
 pub mod statement;
@@ -177,6 +182,7 @@ pub use dml::{
 pub use explain::{Explain, explain};
 pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
+pub use scope::{ScopeMove, ScopeName, creates_scope, move_scope, same_name, statement_scope};
 pub use script::{
     ScriptError, ScriptErrorKind, ScriptSplitter, ScriptStatement, has_client_directives,
     split_script,

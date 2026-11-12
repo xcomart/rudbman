@@ -1183,6 +1183,15 @@ restore:
   warning: "Every statement in the file runs on a session of its own, as it is written; its DROP statements remove what they name."
   read_only: "This connection is read-only, so nothing can be restored into it."
   start: "Restore"
+  # Under the file, once it has been read through: how many statements it
+  # holds, and where the script puts its objects when that is not the
+  # target. `source` and `target` are a catalog and schema as the database
+  # names them.
+  scanning: "Reading the script…"
+  scanned: "%{count} statements"
+  several: "The script names objects in several scopes (%{names}); they are restored where it names them."
+  move: "Restore the objects of %{source} into %{target}"
+  move_off: "They will be restored into %{source}, where the script names them."
   # The progress card. The script is read through once before anything
   # runs, so a line it cannot carry out stops it before anything changes.
   checking: "Checking the script…"
