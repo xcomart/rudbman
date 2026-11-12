@@ -474,16 +474,16 @@ with the tree focused. A row an object has no use for is left out.
 
 | Node | Menu |
 | --- | --- |
-| Table | **View data**, **Edit structure**, **Query the selected object** (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>), **Add to query builder**, **Extract script…**, **Transfer rows…** · **Copy names**, **Copy SELECT statement**, **Copy INSERT statement** · **ERD diagram** (<kbd>Ctrl</kbd>+<kbd>E</kbd>), **Back up schema…** · **Refresh** |
+| Table | **View data**, **Edit structure**, **Query the selected object** (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>), **Add to query builder**, **Extract script…**, **Transfer rows…** · **Copy names**, **Copy SELECT statement**, **Copy INSERT statement** · **ERD diagram** (<kbd>Ctrl</kbd>+<kbd>E</kbd>), **Back up schema…**, **Restore from script…** · **Refresh** |
 | View | The same, without **Copy INSERT statement** |
-| Procedure, function, sequence, trigger | **Copy names** · **ERD diagram**, **Back up schema…** · **Refresh** |
-| Schema or catalog | **Copy names** · **New table**, **ERD diagram**, **Back up schema…** · **Refresh** |
-| Tables folder | **New table**, **ERD diagram**, **Back up schema…** · **Refresh** |
-| Other folders | **ERD diagram**, **Back up schema…** · **Refresh** |
+| Procedure, function, sequence, trigger | **Copy names** · **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
+| Schema or catalog | **Copy names** · **New table**, **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
+| Tables folder | **New table**, **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
+| Other folders | **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
 
 **Query the selected object** opens a query tab with `SELECT * FROM` the
-object in it. **ERD diagram** and **Back up schema…** act on the schema (or
-catalog) the selection sits in.
+object in it. **ERD diagram**, **Back up schema…** and **Restore from
+script…** act on the schema (or catalog) the selection sits in.
 
 ### The detail panel
 
@@ -546,14 +546,24 @@ The statement under the caret is drawn with a band behind it; with the caret
 between two statements, the one before it is the one that runs. The `;` itself
 is not sent.
 
-- **Run selection** splits the selection the same way — except that a
-  selection holding a procedural block (`DECLARE`, `BEGIN … END`,
-  `CREATE PROCEDURE` and the like) is sent whole, so select a routine's whole
-  definition to create it.
-- **Run all** always splits on `;`, and gives each result set its own tab.
-- Client-side delimiters — Oracle's `/` after a PL/SQL block, MySQL's
-  `DELIMITER`, SQL Server's `GO` — are not understood: they belong to the
-  products' command-line clients, not to SQL.
+- **Run all** reads the editor the way the product's own command-line client
+  reads a script, and gives each result set its own tab: MySQL's and
+  MariaDB's `DELIMITER`, SQL Server's `GO` (a batch holding a routine or a
+  `DECLARE` is sent whole, as `sqlcmd` sends it), Oracle's `/` after a
+  PL/SQL unit (a `CREATE PROCEDURE`, a `BEGIN … END` block, a package runs to
+  its `/`, or to the end of the editor), Db2's `--#SET TERMINATOR` and
+  SQLite's `CREATE TRIGGER … END;`. Commands that only change what the client
+  prints — SQL\*Plus's `SET DEFINE OFF`, `PROMPT`, `REM`, psql's `\echo` — are
+  skipped, `EXEC` runs as a block, and `EXIT`, `QUIT` or `\q` end the run
+  there. A command that cannot be carried out here (`\connect`, `SOURCE`,
+  `@file`, `:setvar`, `DEFINE x = …`, `COPY … FROM stdin`) stops the run before
+  anything is sent, with its line selected.
+- **Run selection** splits the selection on `;` — except that a selection
+  holding a procedural block (`DECLARE`, `BEGIN … END`, `CREATE PROCEDURE`
+  and the like) is sent whole, so select a routine's whole definition to
+  create it, no `DELIMITER` needed. A selection with one of those client lines
+  in it (`DELIMITER`, `GO`, `/`, …) is read the way **Run all** reads the
+  editor.
 - There is no prompt for bind parameters: `?`, `:name` and the like are sent
   as typed.
 
@@ -1099,13 +1109,43 @@ compression — and can be stopped with <kbd>Esc</kbd>, which leaves nothing
 behind. Objects whose definition could not be read are left out and named when
 it finishes.
 
-> **Replaying a backup.** Run the script with the product's own command-line
-> client — `psql`, `mysql` or `mariadb`, `sqlplus`, `sqlcmd`, `sqlite3` — which
-> understands the delimiters around routine bodies. A query tab does not: its
-> **Run all** splits on `;` and knows no `DELIMITER`, `/` or `GO`, and it cannot
-> open a `.gz`. Stop the client at the first error (`psql -v ON_ERROR_STOP=1`,
-> `sqlcmd -b -I`, `WHENEVER SQLERROR EXIT` in SQL\*Plus) so a failure does not
-> go unnoticed.
+## Restoring from a script
+
+**Restore from script…** — on any node inside a schema, or from the ☰ menu —
+runs a `.sql` or `.sql.gz` file against the schema (or catalog) the selection
+sits in. Names the script leaves unqualified land there: the restore starts
+with `USE` on MySQL, MariaDB and SQL Server, and sets the current schema on
+the others.
+
+The script is read the way the product's own command-line client reads one,
+by the rules **Run all** follows (see [Running statements](#running-statements)),
+so these all restore as they would from their client:
+
+- a backup written by **Back up schema…**;
+- `pg_dump` in plain format with `--inserts` (its default `COPY … FROM stdin`
+  is refused; a custom-format archive is recognized and refused too — restore
+  that one with `pg_restore`);
+- `mysqldump` and `mariadb-dump`, with routines and triggers between their
+  `DELIMITER ;;` lines — with `--hex-blob` when a table has binary columns,
+  which otherwise go into the dump as raw bytes;
+- an SSMS "Generate Scripts" script, `GO` batches and all, saved as UTF-8 or
+  as Unicode (UTF-16);
+- a SQL Developer export, with its `SET DEFINE OFF`, `REM` lines and slashes;
+- `sqlite3`'s `.dump` and H2's `SCRIPT`.
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| **Script file** | — | **Browse…** picks it. Gzip is told by the file's contents, not its name. |
+| **Continue past failed statements** | off | Off, the first failure ends the run; on, failures are counted and the first of them listed at the end. |
+
+The file is read through once before anything runs: a line the restore cannot
+carry out, or text that is not UTF-8 or UTF-16, stops it there with nothing
+changed. Then every statement runs on a session of its own, opened beside the
+connection's with the same login, under auto-commit — so the `SET`s, `USE`s
+and `search_path` a dump changes do not reach the query tabs, and the
+explorer stays usable while it runs. Progress counts statements and bytes;
+<kbd>Esc</kbd> asks whether to stop, and what already ran stays. A read-only
+connection does not restore.
 
 ## Transferring rows
 

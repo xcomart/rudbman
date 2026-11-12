@@ -36,6 +36,7 @@ menu:
   copy_insert: Копировать оператор INSERT
   transfer_table: Перенести строки…
   backup_schema: Резервная копия схемы…
+  restore_schema: "Восстановить из скрипта…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD-диаграмма
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -718,6 +719,41 @@ backup:
   skipped: "Не удалось прочитать объекты (%{count}), они пропущены:"
   skipped_more: "…и ещё %{count}"
 
+restore:
+  title: "Восстановление из скрипта"
+  target: "Куда"
+  input: "Файл скрипта"
+  input_none: "Файл не выбран"
+  browse: "Выберите скрипт для восстановления"
+  continue_on_error: "Продолжать после ошибочных инструкций"
+  warning: "Каждая инструкция файла выполняется как есть в отдельном сеансе; его инструкции DROP удаляют то, что в них названо."
+  read_only: "Это подключение только для чтения, восстановить в него ничего нельзя."
+  start: "Восстановить"
+  checking: "Проверка скрипта…"
+  connecting: "Открытие сеанса…"
+  running: "Выполнение скрипта…"
+  canceling: "Остановка…"
+  counted: "Пока инструкций: %{statements}, %{bytes}"
+  counters: "%{done} из %{total} инструкций, %{bytes} из %{size}"
+  failed_so_far: "С ошибкой и пропущено инструкций: %{count}"
+  done: "Выполнено инструкций из %{path}: %{count}."
+  done_with_failures: "Выполнено инструкций из %{path}: %{count}; с ошибкой и пропущено: %{failed}:"
+  failure_line: "Строка %{line}: %{error}"
+  failed: "Ошибка в строке %{line} после выполнения инструкций (%{count}): %{error}"
+  enter_failed: "Не удалось перейти к цели: %{error}"
+  refused: "Ничего не выполнено. %{reason}"
+  not_text: "Строка %{line} не является текстом UTF-8 или UTF-16. Сохраните скрипт в UTF-8; для mysqldump с двоичными столбцами нужен --hex-blob."
+  pg_archive: "Это архив pg_dump, а не скрипт; восстановите его через pg_restore или создайте дамп с --format=plain --inserts."
+  unreadable: "Не удалось прочитать файл: %{error}"
+  no_session: "Не удалось открыть сеанс для выполнения скрипта: %{error}"
+  canceled: "Остановлено после выполнения инструкций (%{count}). Сделанное ими сохраняется."
+  stop_question: "Остановить восстановление? Уже выполненное сохранится."
+
+script:
+  unsupported: "Строка %{line}: клиентская команда %{command} здесь не поддерживается."
+  copy_stdin: "Строка %{line}: COPY … FROM stdin не поддерживается; создайте дамп с --inserts."
+  missing_delimiter: "Строка %{line}: в команде не указан разделитель."
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ERD — %{scope}"
@@ -878,6 +914,7 @@ closing:
   work_extract: Ещё выполняемое извлечение
   work_transfer: Ещё выполняемый перенос
   work_backup: Ещё выполняемое резервное копирование
+  work_restore: "Ещё выполняемое восстановление"
 
 close_guard:
   title_window: "Закрыть окно с несохранённой работой?"

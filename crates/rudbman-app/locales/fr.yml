@@ -36,6 +36,7 @@ menu:
   copy_insert: Copier l’instruction INSERT
   transfer_table: Transférer les lignes…
   backup_schema: Sauvegarder le schéma…
+  restore_schema: "Restaurer depuis un script…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagramme ERD
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -718,6 +719,41 @@ backup:
   skipped: "%{count} objets n’ont pas pu être lus et ont été omis :"
   skipped_more: "…et %{count} de plus"
 
+restore:
+  title: "Restaurer depuis un script"
+  target: "Destination"
+  input: "Fichier script"
+  input_none: "Aucun fichier choisi"
+  browse: "Choisir le script à restaurer"
+  continue_on_error: "Poursuivre après les instructions en échec"
+  warning: "Chaque instruction du fichier s’exécute telle quelle dans une session dédiée ; ses instructions DROP suppriment ce qu’elles nomment."
+  read_only: "Cette connexion est en lecture seule ; rien ne peut y être restauré."
+  start: "Restaurer"
+  checking: "Vérification du script…"
+  connecting: "Ouverture d’une session…"
+  running: "Exécution du script…"
+  canceling: "Arrêt en cours…"
+  counted: "%{statements} instructions jusqu’ici, %{bytes}"
+  counters: "%{done} instructions sur %{total}, %{bytes} sur %{size}"
+  failed_so_far: "%{count} instructions en échec, ignorées"
+  done: "%{count} instructions de %{path} exécutées."
+  done_with_failures: "%{count} instructions de %{path} exécutées ; %{failed} ont échoué et ont été ignorées :"
+  failure_line: "Ligne %{line} : %{error}"
+  failed: "La ligne %{line} a échoué après l’exécution de %{count} instructions : %{error}"
+  enter_failed: "Impossible de passer à la destination : %{error}"
+  refused: "Rien n’a été exécuté. %{reason}"
+  not_text: "La ligne %{line} n’est pas du texte UTF-8 ou UTF-16. Enregistrez le script en UTF-8 ; un mysqldump avec des colonnes binaires nécessite --hex-blob."
+  pg_archive: "Il s’agit d’une archive pg_dump, pas d’un script ; restaurez-la avec pg_restore ou refaites le dump avec --format=plain --inserts."
+  unreadable: "Impossible de lire le fichier : %{error}"
+  no_session: "Impossible d’ouvrir une session pour exécuter le script : %{error}"
+  canceled: "Arrêté après %{count} instructions. Leurs effets restent."
+  stop_question: "Arrêter la restauration ? Ce qui a déjà été exécuté reste."
+
+script:
+  unsupported: "Ligne %{line} : la commande client %{command} n’est pas prise en charge ici."
+  copy_stdin: "Ligne %{line} : COPY … FROM stdin n’est pas pris en charge ; faites le dump avec --inserts."
+  missing_delimiter: "Ligne %{line} : la commande ne précise aucun délimiteur."
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ERD — %{scope}"
@@ -878,6 +914,7 @@ closing:
   work_extract: Une extraction encore en cours
   work_transfer: Un transfert encore en cours
   work_backup: Une sauvegarde encore en cours
+  work_restore: "Une restauration encore en cours"
 
 close_guard:
   title_window: "Fermer la fenêtre malgré le travail non enregistré ?"

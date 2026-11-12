@@ -210,6 +210,7 @@ pub(super) fn app_menus() -> Vec<Menu> {
                 MenuItem::action(ts!("menu.extract_script"), ExtractScript),
                 MenuItem::action(ts!("menu.transfer_table"), TransferTable),
                 MenuItem::action(ts!("menu.backup_schema"), BackupSchema),
+                MenuItem::action(ts!("menu.restore_schema"), RestoreSchema),
                 MenuItem::action(ts!("menu.erd"), OpenErd),
                 MenuItem::action(ts!("menu.new_builder"), NewBuilder),
                 MenuItem::action(ts!("menu.add_to_builder"), AddToBuilder),

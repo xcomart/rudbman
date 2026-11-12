@@ -71,17 +71,21 @@ impl Workspace {
         if self.backup.read(cx).is_open() && !self.backup.read(cx).is_running() {
             self.backup.update(cx, |dialog, cx| dialog.close(cx));
         }
+        if self.restore.read(cx).is_open() && !self.restore.read(cx).is_running() {
+            self.restore.update(cx, |dialog, cx| dialog.close(cx));
+        }
         if self.update.read(cx).is_open() {
             self.update.update(cx, |dialog, cx| dialog.close(cx));
         }
         !self.job_running(cx) && !self.update.read(cx).is_open()
     }
 
-    /// Whether one of the three job dialogs has a job running under it.
+    /// Whether one of the job dialogs has a job running under it.
     pub(super) fn job_running(&self, cx: &App) -> bool {
         self.extract.read(cx).is_running()
             || self.transfer.read(cx).is_running()
             || self.backup.read(cx).is_running()
+            || self.restore.read(cx).is_running()
     }
 
     /// Shows or hides the application dropdown menu.
@@ -328,6 +332,41 @@ impl Workspace {
         }
         self.backup
             .update(cx, |dialog, cx| dialog.open(scope, session, cx));
+        cx.notify();
+    }
+
+    /// Opens the restore dialog over `scope`, closing whatever else was
+    /// showing.
+    ///
+    /// Gated on the session the same way as the backup, and handed the
+    /// connection's dialect — the script is read the way that product's own
+    /// client reads one — and whether its profile is read-only, which the
+    /// form refuses.
+    pub(super) fn open_restore(
+        &mut self,
+        connection: ConnectionId,
+        scope: explorer::Scope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session_of(connection) else {
+            return;
+        };
+        let Some(profile) = self
+            .connections
+            .iter()
+            .find(|open| open.id == connection)
+            .map(|open| open.profile.clone())
+        else {
+            return;
+        };
+        if !self.close_overlays(window, cx) {
+            return;
+        }
+        let dialect = rudbman_sql::Dialect::from_id(&Self::dialect_of(&profile));
+        self.restore.update(cx, |dialog, cx| {
+            dialog.open(scope, session, dialect, profile.read_only, cx)
+        });
         cx.notify();
     }
 

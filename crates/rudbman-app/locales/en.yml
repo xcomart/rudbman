@@ -80,6 +80,8 @@ menu:
   transfer_table: Transfer rows…
   # Opens the backup dialog over the scope the explorer's selection sits in.
   backup_schema: Back up schema…
+  # Opens the restore dialog over the scope the explorer's selection sits in.
+  restore_schema: "Restore from script…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD diagram
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -1165,6 +1167,55 @@ backup:
   skipped: "%{count} objects could not be read and were left out:"
   skipped_more: "…and %{count} more"
 
+# The restore dialog: a script file run against the scope the explorer's
+# selection sits in, read the way the product's own command-line client
+# reads one.
+restore:
+  title: "Restore from a script"
+  # The scope the dialog was opened over: the names a script leaves
+  # unqualified land there.
+  target: "Into"
+  input: "Script file"
+  input_none: "No file chosen"
+  # The title of the file picker.
+  browse: "Choose the script to restore"
+  continue_on_error: "Continue past failed statements"
+  warning: "Every statement in the file runs on a session of its own, as it is written; its DROP statements remove what they name."
+  read_only: "This connection is read-only, so nothing can be restored into it."
+  start: "Restore"
+  # The progress card. The script is read through once before anything
+  # runs, so a line it cannot carry out stops it before anything changes.
+  checking: "Checking the script…"
+  connecting: "Opening a session…"
+  running: "Running the script…"
+  canceling: "Stopping…"
+  # `bytes` and `size` arrive already formatted with their unit symbols.
+  counted: "%{statements} statements so far, %{bytes}"
+  counters: "%{done} of %{total} statements, %{bytes} of %{size}"
+  failed_so_far: "%{count} statements failed and were passed"
+  done: "Ran %{count} statements from %{path}."
+  done_with_failures: "Ran %{count} statements from %{path}; %{failed} failed and were passed:"
+  failure_line: "Line %{line}: %{error}"
+  failed: "Line %{line} failed, after %{count} statements had run: %{error}"
+  enter_failed: "The target could not be entered: %{error}"
+  # `reason` is one of the four sentences below, or a script line the run
+  # cannot carry out (the `script` namespace).
+  refused: "Nothing was run. %{reason}"
+  not_text: "Line %{line} is not UTF-8 or UTF-16 text. Save the script as UTF-8; a mysqldump with binary columns needs --hex-blob."
+  pg_archive: "This is a pg_dump archive, not a script; restore it with pg_restore, or dump with --format=plain --inserts."
+  unreadable: "The file could not be read: %{error}"
+  no_session: "No session could be opened to run the script on: %{error}"
+  canceled: "Stopped after %{count} statements. What they did stays."
+  stop_question: "Stop the restore? What already ran stays."
+
+# A script line "Run all", "Run selection" and a restore will not send: a
+# command of the product's own command-line client that cannot be carried
+# out here. `command` is the command as the script spells it.
+script:
+  unsupported: "Line %{line}: the client command %{command} is not supported here."
+  copy_stdin: "Line %{line}: COPY … FROM stdin is not supported; dump with --inserts instead."
+  missing_delimiter: "Line %{line}: the command names no delimiter."
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 #
 # Never translated: table and column names, type names, and the "SVG" and
@@ -1426,6 +1477,7 @@ closing:
   work_extract: An extraction still running
   work_transfer: A transfer still running
   work_backup: A backup still running
+  work_restore: "A restore still running"
 
 # The window's close guard: asked before a quit, a close of the window or the
 # restart an update ends in would lose what is listed under the message.

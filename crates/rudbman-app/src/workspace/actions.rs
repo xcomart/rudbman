@@ -244,6 +244,21 @@ impl Workspace {
         self.open_backup(connection, scope, window, cx);
     }
 
+    /// Opens the restore dialog over the scope the explorer's selection sits
+    /// in, gated as [`Workspace::backup_schema_action`] is.
+    pub(super) fn restore_schema_action(
+        &mut self,
+        _: &RestoreSchema,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_menu_open(false, cx);
+        let Some((connection, scope)) = self.explorer.read(cx).selected_scope(cx) else {
+            return;
+        };
+        self.open_restore(connection, scope, window, cx);
+    }
+
     /// Draws the ERD of the scope the explorer's selection sits in.
     ///
     /// Wired exactly as [`Workspace::extract_script_action`] is, and gated one
@@ -535,6 +550,11 @@ impl Workspace {
             // No dropdown of its own, but a running job still has to take
             // `Escape` as its question rather than as a close.
             self.backup.update(cx, |dialog, cx| dialog.escape(cx));
+            return;
+        }
+        if self.restore.read(cx).is_open() {
+            // As the backup: a running restore takes `Escape` as its question.
+            self.restore.update(cx, |dialog, cx| dialog.escape(cx));
             return;
         }
         cx.propagate();

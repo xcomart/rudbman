@@ -98,7 +98,8 @@
 //! Written down rather than half-implemented:
 //!
 //! * **Oracle PL/SQL blocks and MySQL `DELIMITER`** are not understood by
-//!   [`split_statements`]. A `BEGIN ... END;` block splits into pieces, the `/`
+//!   [`split_statements`] ([`split_script`] reads both the way SQL\*Plus and
+//!   the `mysql` client do). A `BEGIN ... END;` block splits into pieces, the `/`
 //!   terminator means nothing, and `DELIMITER //` is not honored. See the
 //!   [`mod@statement`] module documentation for why a half-working version would
 //!   be worse, and when the question gets answered.
@@ -141,6 +142,10 @@
 //!   again.
 //! * [`mod@statement`] — [`StatementSpan`], [`split_statements`],
 //!   [`statement_at`], [`holds_procedural_block`].
+//! * [`mod@script`] — [`ScriptSplitter`], [`split_script`],
+//!   [`has_client_directives`]: a script cut the way each product's own
+//!   command-line client cuts it, `DELIMITER`, `GO` and SQL\*Plus's `/`
+//!   included, a line at a time.
 //! * `keywords` — the reserved-word tables, private.
 
 #![warn(missing_docs)]
@@ -154,6 +159,7 @@ pub mod explain;
 pub mod format;
 pub mod ident;
 pub mod lexer;
+pub mod script;
 pub mod state;
 pub mod statement;
 
@@ -171,5 +177,9 @@ pub use dml::{
 pub use explain::{Explain, explain};
 pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
+pub use script::{
+    ScriptError, ScriptErrorKind, ScriptSplitter, ScriptStatement, has_client_directives,
+    split_script,
+};
 pub use state::LineStateCodec;
 pub use statement::{StatementSpan, holds_procedural_block, split_statements, statement_at};

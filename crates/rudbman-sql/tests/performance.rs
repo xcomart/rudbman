@@ -8,7 +8,9 @@
 
 use std::time::Instant;
 
-use rudbman_sql::{Dialect, LineState, TokenKind, lex_line, split_statements, statement_at};
+use rudbman_sql::{
+    Dialect, LineState, ScriptSplitter, TokenKind, lex_line, split_statements, statement_at,
+};
 
 /// About ten megabytes of plausible SQL: every construct the scanner has a
 /// branch for, so no branch is optimized away by the shape of the input.
@@ -110,4 +112,39 @@ fn ten_megabytes_split_in_seconds() {
         "split: {} statements in {split:?}; statement_at in {lookup:?}",
         spans.len()
     );
+}
+
+/// The client-aware splitter over the same ten megabytes, a line at a time
+/// the way a restore streams a file, under every client's rules.
+#[test]
+fn ten_megabytes_stream_through_every_client() {
+    let source = generate(10 * 1024 * 1024);
+    let expected = split_statements(&source, &Dialect::GENERIC).len();
+
+    for dialect in [Dialect::POSTGRES, Dialect::MYSQL, Dialect::ORACLE] {
+        let started = Instant::now();
+        let mut splitter = ScriptSplitter::new(&dialect);
+        let mut out = Vec::new();
+        let mut statements = 0usize;
+        for line in source.split_inclusive('\n') {
+            splitter.push_line(line, &mut out).unwrap();
+            statements += out.len();
+            out.clear();
+        }
+        splitter.finish(&mut out).unwrap();
+        statements += out.len();
+        let elapsed = started.elapsed();
+
+        // The unit is plain SQL, so every client cuts it where the semicolon
+        // splitter does: `#not a comment` is in a string even for MySQL.
+        assert_eq!(statements, expected, "{:?}", dialect.id());
+        // The lexer's pass and a copy of each statement: about a second,
+        // unoptimized.
+        assert!(
+            elapsed.as_secs_f64() < 8.0,
+            "{:?}: streaming 10MB took {elapsed:?}",
+            dialect.id()
+        );
+        println!("{:?}: {statements} statements in {elapsed:?}", dialect.id());
+    }
 }

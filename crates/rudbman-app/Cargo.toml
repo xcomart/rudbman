@@ -68,6 +68,8 @@ uuid.workspace = true
 chrono.workspace = true
 # The explorer filter's regular-expression condition.
 regex.workspace = true
+# The restore reads `.sql.gz` backups as a stream.
+flate2.workspace = true
 # One caller: the driver downloader in `src/maven.rs`. gpui's own
 # `cx.http_client()` is a `NullHttpClient` unless the application installs one,
 # and installing a real one to serve one background request would be a much

@@ -91,6 +91,7 @@ mod results;
 mod statements;
 mod toolbar;
 pub(crate) use keys::{COMMIT_KEY, EXPLAIN_KEY, ROLLBACK_KEY};
+pub(crate) use statements::script_refusal;
 use statements::source_table;
 pub use statements::{is_write_statement, order_by};
 use std::cell::RefCell;
@@ -874,24 +875,23 @@ impl QueryPane {
                     EditorEvent::RunSelection { span } => {
                         let text = editor.read(cx).text();
                         let selected = text.get(span.clone()).unwrap_or_default();
-                        let statements =
-                            statements::selection_statements(selected, span.start, &pane.dialect);
-                        pane.request_from_editor(statements, window, cx);
+                        match statements::selection_statements(selected, span.start, &pane.dialect)
+                        {
+                            Ok(statements) => pane.request_from_editor(statements, window, cx),
+                            Err(error) => pane.refuse_script(&error, cx),
+                        }
                     }
                     EditorEvent::RunAll => {
                         let text = editor.read(cx).text();
                         // Split rather than sent whole: one cursor per statement is
                         // what makes two `SELECT`s two independently pageable grids.
                         // Each keeps where it was cut from, so a failure can point
-                        // at its statement in the editor.
-                        let statements: Vec<(String, Option<std::ops::Range<usize>>)> =
-                            split_statements(&text, &pane.dialect)
-                                .into_iter()
-                                .map(|span| {
-                                    (span.sql(&text).to_string(), Some(span.start..span.sql_end))
-                                })
-                                .collect();
-                        pane.request_from_editor(statements, window, cx);
+                        // at its statement in the editor. Cut as the product's own
+                        // client cuts a script, so a `DELIMITER` or a `GO` works.
+                        match statements::script_statements(&text, 0, &pane.dialect) {
+                            Ok(statements) => pane.request_from_editor(statements, window, cx),
+                            Err(error) => pane.refuse_script(&error, cx),
+                        }
                     }
                     // The editor holds no strings, so its menu is drawn here
                     // (architecture document, §7.8).
@@ -1290,6 +1290,19 @@ impl QueryPane {
     /// Runs `statements`, once the profile's guards allow it, each with the
     /// range of the editor it was cut from when it was: what a failure selects
     /// in the editor ([`QueryPane::deliver`]).
+    /// Refuses a run over a script line it cannot send, selecting that line
+    /// so the reader sees which one.
+    fn refuse_script(&mut self, error: &rudbman_sql::ScriptError, cx: &mut Context<Self>) {
+        self.notice = Some(Notice::warn(statements::script_refusal(error)));
+        let range = error.range.clone();
+        self.editor.update(cx, |editor, cx| {
+            if editor.text().get(range.clone()).is_some() {
+                editor.select_range(range, cx);
+            }
+        });
+        cx.notify();
+    }
+
     fn request_from_editor(
         &mut self,
         statements: Vec<(String, Option<std::ops::Range<usize>>)>,

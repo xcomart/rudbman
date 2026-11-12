@@ -87,6 +87,9 @@ futures = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 async-trait = "0.1"
 tempfile = "3"
+# Already in the build through gpui's image decoders; named here for the
+# restore, which reads a gzipped backup without unpacking it to disk first.
+flate2 = "1"
 
 # --- HTTP: the driver downloader, and the shell's update check ---
 # Maven Central and the GitHub releases API are the only hosts rudbman ever

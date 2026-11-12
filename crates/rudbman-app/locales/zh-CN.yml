@@ -36,6 +36,7 @@ menu:
   copy_insert: 复制 INSERT 语句
   transfer_table: 传输数据行…
   backup_schema: 备份模式（Schema）…
+  restore_schema: "从脚本恢复…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER 图
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -718,6 +719,41 @@ backup:
   skipped: "有 %{count} 个对象无法读取，已略过："
   skipped_more: "……另有 %{count} 个"
 
+restore:
+  title: "从脚本恢复"
+  target: "恢复到"
+  input: "脚本文件"
+  input_none: "未选择文件"
+  browse: "选择要恢复的脚本"
+  continue_on_error: "跳过失败的语句并继续"
+  warning: "文件中的每条语句都会在单独的会话中按原样执行；其中的 DROP 语句会删除所指的对象。"
+  read_only: "此连接为只读，无法恢复。"
+  start: "恢复"
+  checking: "正在检查脚本…"
+  connecting: "正在打开会话…"
+  running: "正在执行脚本…"
+  canceling: "正在停止…"
+  counted: "已找到 %{statements} 条语句，%{bytes}"
+  counters: "%{total} 条语句中的 %{done} 条，%{size} 中的 %{bytes}"
+  failed_so_far: "%{count} 条语句失败并已跳过"
+  done: "已执行 %{path} 中的 %{count} 条语句。"
+  done_with_failures: "已执行 %{path} 中的 %{count} 条语句；%{failed} 条失败并已跳过："
+  failure_line: "第 %{line} 行：%{error}"
+  failed: "执行 %{count} 条语句后，第 %{line} 行失败：%{error}"
+  enter_failed: "无法切换到恢复目标：%{error}"
+  refused: "未执行任何内容。%{reason}"
+  not_text: "第 %{line} 行不是 UTF-8 或 UTF-16 文本。请将脚本保存为 UTF-8；包含二进制列的 mysqldump 需要使用 --hex-blob。"
+  pg_archive: "这是 pg_dump 归档而不是脚本；请用 pg_restore 恢复，或以 --format=plain --inserts 重新导出。"
+  unreadable: "无法读取文件：%{error}"
+  no_session: "无法打开执行脚本的会话：%{error}"
+  canceled: "执行 %{count} 条语句后已停止。已执行的内容会保留。"
+  stop_question: "停止恢复？已执行的内容会保留。"
+
+script:
+  unsupported: "第 %{line} 行：此处不支持客户端命令 %{command}。"
+  copy_stdin: "第 %{line} 行：不支持 COPY … FROM stdin；请改用 --inserts 导出。"
+  missing_delimiter: "第 %{line} 行：命令未指定分隔符。"
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ER 图 — %{scope}"
@@ -878,6 +914,7 @@ closing:
   work_extract: 仍在运行的提取
   work_transfer: 仍在运行的传输
   work_backup: 仍在运行的备份
+  work_restore: "仍在运行的恢复"
 
 close_guard:
   title_window: "有未保存的工作，要关闭窗口吗？"

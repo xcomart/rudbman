@@ -163,6 +163,11 @@ impl Workspace {
                 .enabled(live && scope.is_some())
                 .on_activate(scoped(Workspace::open_backup)),
         );
+        rows.push(
+            MenuRow::new(ts!("menu.restore_schema"))
+                .enabled(live && scope.is_some())
+                .on_activate(scoped(Workspace::open_restore)),
+        );
         rows.push(MenuRow::separator());
         let explorer = self.explorer.clone();
         let node = node.clone();

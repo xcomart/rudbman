@@ -204,6 +204,13 @@ does; this page is the short version.
   keys added after them, identity and sequence counters carried over, and
   routine bodies written the way each product's own client reads a script.
   Optionally gzipped, with progress and cancellation.
+- **Restore from a script** into a schema or catalog: a backup, `pg_dump
+  --inserts`, `mysqldump`, `mariadb-dump`, an SSMS or SQL Developer script,
+  plain or gzipped, read the way the product's own client reads it —
+  `DELIMITER`, `GO`, SQL\*Plus's `/` and `SET DEFINE OFF`, psql's
+  `\restrict` — on a session of its own, checked through before anything runs,
+  with progress and cancellation. "Run all" in the editor reads a script by the
+  same rules.
 - **DB-to-DB transfer.** Copy tables between two open connections, by plain
   insert or by upsert — `MERGE`, `ON CONFLICT` or `ON DUPLICATE KEY` as the
   target dialect spells it. On a bad row, abort, skip it, or log it and carry

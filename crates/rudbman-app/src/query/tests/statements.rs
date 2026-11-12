@@ -181,7 +181,10 @@ fn sql_server_reads_plain_selects_through_a_server_cursor() {
 
 #[test]
 fn a_selection_is_cut_into_its_statements_where_it_sits_in_the_editor() {
-    use crate::query::statements::selection_statements;
+    use crate::query::statements;
+    let selection_statements = |selected: &str, offset: usize, dialect: &Dialect| {
+        statements::selection_statements(selected, offset, dialect).unwrap()
+    };
     let sql = |cut: &[(String, Option<std::ops::Range<usize>>)]| {
         cut.iter().map(|(sql, _)| sql.clone()).collect::<Vec<_>>()
     };
@@ -234,5 +237,73 @@ fn a_selection_is_cut_into_its_statements_where_it_sits_in_the_editor() {
             &Dialect::MYSQL
         )),
         ["/*!40101 SET @x = 1 */ select 1", "select 2"]
+    );
+}
+
+#[test]
+fn run_all_cuts_the_script_the_way_its_client_does() {
+    use crate::query::statements::{script_statements, selection_statements};
+    let sql = |cut: Vec<(String, Option<std::ops::Range<usize>>)>| {
+        cut.into_iter().map(|(sql, _)| sql).collect::<Vec<_>>()
+    };
+
+    // A MySQL script with its routine between DELIMITER lines, which the
+    // semicolon splitter cut into fragments.
+    let mysql = "DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END//\n\
+                 DELIMITER ;\nCALL p();";
+    assert_eq!(
+        sql(script_statements(mysql, 0, &Dialect::MYSQL).unwrap()),
+        [
+            "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
+            "CALL p()"
+        ]
+    );
+
+    // SQL Server batches, and a routine whose body runs to its GO.
+    let mssql = "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;\nGO\nEXEC p;\nselect 3";
+    assert_eq!(
+        sql(script_statements(mssql, 0, &Dialect::MSSQL).unwrap()),
+        [
+            "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;",
+            "EXEC p",
+            "select 3"
+        ]
+    );
+
+    // An Oracle unit runs to its slash, and the rest is cut as before.
+    let oracle = "create or replace procedure p as\nbegin\n  null;\nend;\n/\nselect 1 from dual;";
+    let cut = script_statements(oracle, 0, &Dialect::ORACLE).unwrap();
+    assert_eq!(
+        sql(cut.clone()),
+        [
+            "create or replace procedure p as\nbegin\n  null;\nend;",
+            "select 1 from dual"
+        ]
+    );
+    let range = cut[1].1.clone().unwrap();
+    assert_eq!(&oracle[range], "select 1 from dual");
+
+    // A command the run cannot carry out stops it before anything is sent,
+    // pointing at its line.
+    let error = script_statements("select 1;\n\\connect other\n", 0, &Dialect::POSTGRES)
+        .expect_err("\\connect cannot be run");
+    assert_eq!(error.line, 2);
+
+    // A selection with a client line in it is cut the same way, at its place
+    // in the editor.
+    let cut = selection_statements("select 1\nGO\nselect 2", 10, &Dialect::MSSQL).unwrap();
+    assert_eq!(
+        cut,
+        [
+            ("select 1".to_string(), Some(10..18)),
+            ("select 2".to_string(), Some(22..30)),
+        ]
+    );
+    // One without keeps the old fallback: a routine typed without DELIMITER
+    // lines goes whole.
+    let routine = "create procedure p() begin select 1; select 2; end";
+    assert_eq!(
+        sql(selection_statements(routine, 0, &Dialect::MYSQL).unwrap()),
+        [routine]
     );
 }

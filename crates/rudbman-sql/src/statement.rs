@@ -46,10 +46,13 @@
 //! Both would need block-structure tracking, which is a parser, and a
 //! half-working version of either is worse than none: a script runner that
 //! believes it has found a statement boundary in the middle of a trigger body
-//! will send a fragment to the server. Where these need to work is script
-//! execution (M4), and the decision belongs there, with a whole feature to
-//! design against. Until then [`holds_procedural_block`] tells a caller when
-//! the pieces would be fragments, so it can send the text whole instead.
+//! will send a fragment to the server. A script runs through
+//! [`crate::script`] instead, which needs no parser for either because it
+//! reads a script the way the product's own client does: the `DELIMITER`
+//! line, and the `/` SQL\*Plus waits for after the first words of a unit.
+//! Where there is no such line — a selection holding a routine typed as it
+//! is — [`holds_procedural_block`] tells a caller the pieces would be
+//! fragments, so it can send the text whole instead.
 //!
 //! SQL Server's `GO` is not a terminator either, but for a different reason: it
 //! is a batch separator understood by `sqlcmd` and not by the server, and

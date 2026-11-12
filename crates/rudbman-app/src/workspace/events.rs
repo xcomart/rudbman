@@ -184,6 +184,21 @@ impl Workspace {
         }
     }
 
+    pub(super) fn on_restore_event(
+        &mut self,
+        dialog: &Entity<RestoreDialog>,
+        event: &RestoreDialogEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            RestoreDialogEvent::Dismissed => {
+                dialog.update(cx, |dialog, cx| dialog.close(cx));
+                self.restore_focus(window, cx);
+            }
+        }
+    }
+
     pub(super) fn on_update_event(
         &mut self,
         dialog: &Entity<UpdateDialog>,

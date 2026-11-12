@@ -429,6 +429,9 @@ impl Workspace {
         if self.backup.read(cx).is_running() {
             lines.push(ts!("closing.work_backup"));
         }
+        if self.restore.read(cx).is_running() {
+            lines.push(ts!("closing.work_restore"));
+        }
         lines
     }
 

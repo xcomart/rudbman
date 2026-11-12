@@ -36,6 +36,7 @@ menu:
   copy_insert: INSERT 文をコピー
   transfer_table: 行を転送…
   backup_schema: スキーマをバックアップ…
+  restore_schema: "スクリプトから復元…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER図
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -718,6 +719,41 @@ backup:
   skipped: "読み取れなかったオブジェクト %{count} 個を除いて書き出しました:"
   skipped_more: "…ほか %{count} 個"
 
+restore:
+  title: "スクリプトから復元"
+  target: "復元先"
+  input: "スクリプトファイル"
+  input_none: "ファイルが選択されていません"
+  browse: "復元するスクリプトを選択"
+  continue_on_error: "失敗した文を飛ばして続行する"
+  warning: "ファイル内のすべての文を、専用のセッションで書かれたとおりに実行します。DROP 文は対象のオブジェクトを削除します。"
+  read_only: "この接続は読み取り専用のため、復元できません。"
+  start: "復元"
+  checking: "スクリプトを確認しています…"
+  connecting: "セッションを開いています…"
+  running: "スクリプトを実行しています…"
+  canceling: "停止しています…"
+  counted: "これまでに %{statements} 文、%{bytes}"
+  counters: "%{total} 文中 %{done} 文、%{size} 中 %{bytes}"
+  failed_so_far: "%{count} 文が失敗し、飛ばしました"
+  done: "%{path} の %{count} 文を実行しました。"
+  done_with_failures: "%{path} の %{count} 文を実行しました。%{failed} 文は失敗し、飛ばしました:"
+  failure_line: "%{line} 行目: %{error}"
+  failed: "%{count} 文を実行した後、%{line} 行目で失敗しました: %{error}"
+  enter_failed: "復元先に切り替えられませんでした: %{error}"
+  refused: "何も実行していません。%{reason}"
+  not_text: "%{line} 行目が UTF-8 または UTF-16 のテキストではありません。スクリプトを UTF-8 で保存してください。バイナリ列を含む mysqldump には --hex-blob が必要です。"
+  pg_archive: "これはスクリプトではなく pg_dump のアーカイブです。pg_restore で復元するか、--format=plain --inserts でダンプし直してください。"
+  unreadable: "ファイルを読み込めませんでした: %{error}"
+  no_session: "スクリプトを実行するセッションを開けませんでした: %{error}"
+  canceled: "%{count} 文を実行した後に停止しました。実行済みの内容は残ります。"
+  stop_question: "復元を停止しますか？実行済みの内容は残ります。"
+
+script:
+  unsupported: "%{line} 行目: クライアントコマンド %{command} はここではサポートされていません。"
+  copy_stdin: "%{line} 行目: COPY … FROM stdin はサポートされていません。--inserts でダンプしてください。"
+  missing_delimiter: "%{line} 行目: コマンドに区切り文字がありません。"
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ER図 — %{scope}"
@@ -878,6 +914,7 @@ closing:
   work_extract: 実行中の抽出
   work_transfer: 実行中の転送
   work_backup: 実行中のバックアップ
+  work_restore: "実行中の復元"
 
 close_guard:
   title_window: "未保存の作業があります。ウィンドウを閉じますか？"
