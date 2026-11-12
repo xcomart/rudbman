@@ -57,9 +57,9 @@ repository = "https://github.com/xcomart/rudbman"
 
 [workspace.dependencies]
 # Shared database infrastructure; keep all three crates on the same revision.
-rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "98570125053e93291b4d46cb6f24320c003f0b18" }
-rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "98570125053e93291b4d46cb6f24320c003f0b18" }
-rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "98570125053e93291b4d46cb6f24320c003f0b18" }
+rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "1efa30ae86bc3db1e47f958942ea72f5da834a33" }
+rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "1efa30ae86bc3db1e47f958942ea72f5da834a33" }
+rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "1efa30ae86bc3db1e47f958942ea72f5da834a33" }
 
 # --- shared utilities ---
 anyhow = "1"
@@ -166,7 +166,7 @@ tokio = { version = "1", features = [
 
 # --- SSH.  NOTE: default features pull in `aws-lc-rs`, whose build requires
 # NASM on Windows.  The `ring` backend builds everywhere with no extra tooling. ---
-russh = { version = "0.62", default-features = false, features = [
+russh = { version = "0.65", default-features = false, features = [
     "ring",
     "flate2",
     "rsa",
