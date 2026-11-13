@@ -1324,10 +1324,10 @@ impl<'a> Layout<'a> {
     /// The bracket closing the one at `open`, or the last token.
     fn matching(&self, open: usize) -> usize {
         let mut depth = 0usize;
-        for k in open..self.items.len() {
-            if self.items[k].is_punct("(") {
+        for (k, item) in self.items.iter().enumerate().skip(open) {
+            if item.is_punct("(") {
                 depth += 1;
-            } else if self.items[k].is_punct(")") {
+            } else if item.is_punct(")") {
                 depth -= 1;
                 if depth == 0 {
                     return k;
@@ -1342,8 +1342,7 @@ impl<'a> Layout<'a> {
         let mut parts = Vec::new();
         let mut depth = 0usize;
         let mut start = from;
-        for k in from..to {
-            let item = &self.items[k];
+        for (k, item) in self.items.iter().enumerate().take(to).skip(from) {
             if item.is_punct("(") {
                 depth += 1;
             } else if item.is_punct(")") {
