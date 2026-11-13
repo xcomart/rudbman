@@ -19,309 +19,29 @@ does; this page is the short version.
 
 ## What works today
 
-- **Any JDBC driver.** Drivers are downloaded from Maven Central by
-  coordinate or picked from disk, the driver class is auto-detected from the
-  JAR, and each connection gets its own isolated class loader. H2,
-  PostgreSQL, MySQL, MariaDB, SQLite, Oracle, SQL Server and IBM Db2 come
-  predefined, with their SQL dialects. Row data
-  crosses the JNI boundary in a compact columnar batch format — not as one
-  JSON string per row.
-- **Connections as tabs**, each with its own work area: split panes, tabbed
-  editors and table details, per-connection query numbering. Switching the
-  connection tab switches the explorer and the whole work area with it. With
-  nothing open, a welcome screen lists the saved connections and opens one in
-  a click. Reopening a connection restores its tabs, split layout, SQL drafts,
-  and query builders. Right-click a work tab to rename it; leave its name blank
-  to return to the default. Workspaces save automatically and on close. SQL is
-  restored without running it; result rows and unapplied database edits are not
-  saved. Splitting copies the selected tab into the new pane. Drag a work tab to
-  reorder it or move it to another pane, and drag a connection tab to reorder
-  the connections. A pane disappears when its last tab closes, with the final
-  pane kept open.
-- **Connection folders.** Group saved connections by folder in the connection
-  dialog. Click a folder heading to collapse or expand it, or focus it with
-  <kbd>Tab</kbd> and press <kbd>Space</kbd> or <kbd>Enter</kbd>. Folded folders
-  stay folded when you reopen the dialog during the same app session.
-- **Connections that say why they failed.** A tab that could not connect, or
-  whose session ended, shows the whole error and a hint in its work area, with
-  **Reconnect** (in the same tab), **Edit connection…** and **Copy message**;
-  a bastion's unknown host key can be trusted right there. While connecting
-  the tab can be canceled, and an attempt gives up after the connection
-  timeout in Settings (30 seconds unless changed).
-- **SSH tunnels** with password or private-key auth, loopback binds only,
-  and no PTY on the bastion — `nologin` jump hosts work. Secrets live in the
-  OS keychain, never on disk, and credentials are masked out of logs and
-  JDBC URLs; turn off **Remember password in the system keychain** on a
-  profile to keep nothing and be asked on every connect.
-- **The connection dialog keeps what you type.** Closing it with unsaved
-  edits — Esc, Cancel or a click beside it — asks Save / Discard / Keep
-  editing, and inside it <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>N</kbd> makes a
-  new profile and <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>S</kbd> saves. A new
-  profile starts with no driver chosen; a driver without its JAR offers
-  **Download** right under the picker (from its Maven coordinate, with
-  progress and cancel), and **Drivers…** opens on the driver the form names.
-  The welcome list's right-click menu offers Connect, Edit…, Duplicate… and
-  Delete….
-- **A schema explorer** — catalogs, schemas, tables, views (materialized ones
-  too), procedures, functions, sequences and triggers, opened on connect onto
-  the database and schema the connection landed in, with a filter over the
-  tree: names (`cust`, `*_seq`, `orders, items`, `!tmp*`) or a regular
-  expression, plus a panel of conditions on the name, the comment or the
-  schema (contains, starts with, wildcard, regex, empty…) taken all together
-  or any one of them. It narrows the folders you pick, in the database the
-  connection landed in or in all of them, keeps its own state for each
-  connection tab — and is back as you left it when the profile connects
-  again — and remembers the filters you used for each profile — one
-  click resets the whole filter, and an entry of the remembered list goes with
-  its × or <kbd>Delete</kbd>. Each profile can also hide catalogs, schemas and objects for good, by regular
-  expression (or show only the ones a list matches), as SQL Workbench/J's
-  schema and catalog filters do; a level left with one member is skipped as if
-  the rest were never there — and a
-  detail panel with
-  columns, keys, references in both directions, and DDL in a read-only,
-  highlighted editor (the server's own text where the dialect offers it,
-  rebuilt from the catalog where it does not). Every kind of object shows its
-  `CREATE`, laid out for reading: one column to a line, a view's query as Format
-  SQL writes it, a routine's or a trigger's body indented by block.
-  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>-click and <kbd>Shift</kbd>-click (or
-  <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>) pick several rows of the tree,
-  and <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>C</kbd> copies their names, one per
-  line; a table's or a view's right-click menu also copies a laid-out
-  `SELECT` of every column — and a table's an `INSERT` with a `:column`
-  placeholder per value — for every table picked. The detail panel's column
-  list picks rows the same way and copies their names, one per line or
-  comma-separated, or the whole rows as tab-separated text.
-- **A SQL workbench**: an editor with incremental dialect-aware highlighting
-  and IME support, SQL keyword/function/table/column completion (including table aliases),
-  statement splitting, run-one/run-selection/run-all,
-  cancellation, multiple result sets, and a virtualized grid that fetches rows
-  as you scroll instead of loading the whole result — up to 200,000 rows per
-  grid, with a note when the result has more.
-  **Format SQL** (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>)
-  lays out the selection, or the whole editor, in the sqlstyle.guide river
-  layout. On a connection that does not commit each statement as it runs, the
-  editor's **Commit** and **Rollback** buttons (<kbd>F11</kbd> /
-  <kbd>F12</kbd>) end the transaction; while it is open the status bar says
-  so, the connection tab wears a dot, the two buttons are lit, and grid
-  applies, structure changes and transfers on that connection are refused —
-  naming the query tab to commit from — rather than committing or discarding
-  it. <kbd>Esc</kbd> in the editor or the results stops a running statement.
-  A script that fails part way logs which statement of how many failed, with
-  its SQL and the error, keeps the results of the statements before it, and
-  selects the failed statement in the editor; error messages and log rows can
-  be copied. The row count reads "500+ rows" while more remain to be fetched,
-  and a run of writes reports the rows they affected.
-  Completion opens while typing or with <kbd>Ctrl</kbd>+<kbd>Space</kbd>:
-  use ↑/↓ to choose, Enter/Tab to insert, and Esc to dismiss. Names come from
-  the current connection, with columns loaded on demand; comments and string
-  literals do not trigger suggestions.
-  Built-in function suggestions include `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
-  and common scalar functions for the connection's dialect. Completing a
-  function replaces its name while preserving any existing arguments.
-- **Query history.** Every statement a query tab runs because you asked it
-  to is written down per connection profile — when it ran, how long it took,
-  and the rows it returned, the rows it changed or the error it stopped at.
-  **Query history…** (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>,
-  the ☰ menu or a connection tab's right-click menu) lists them newest first
-  with the whole statement under the list: type to search, <kbd>↑</kbd>/<kbd>↓</kbd>
-  to move, and <kbd>Enter</kbd> or a double-click opens the statement in a
-  **new query tab**, without running it. **Copy SQL**, **Delete** and
-  **Clear history…** are beside it, and on a row's right-click menu. A sort's
-  re-run, a grid apply, a plan and a write the profile refused are not
-  recorded. The history is kept, as plain JSON, in `history/<profile-id>.json`
-  under the configuration directory (`~/.config/rudbman` on Linux,
-  `~/Library/Application Support/rudbman` on macOS,
-  `%APPDATA%\rudbman\config` on Windows), up to 1,000 statements and 4 MiB of
-  SQL per profile, oldest dropped first; a statement over 256 KiB is not
-  recorded. Statements can carry secrets: **Keep a history of the statements
-  query tabs run** in Settings turns recording off (what was recorded stays
-  until it is deleted).
-- **Execution plans without running anything.** **Explain plan**
-  (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>, the editor's
-  right-click menu, the toolbar, or the ☰ menu) shows the plan of the
-  selection, or of the statement under the caret, as a read-only "Plan" grid
-  in the result area; the log says the statement was not run, and it is not.
-  PostgreSQL, MySQL, MariaDB and H2 are asked with `EXPLAIN`, SQLite with
-  `EXPLAIN QUERY PLAN`, Oracle with `EXPLAIN PLAN FOR` and then
-  `DBMS_XPLAN.DISPLAY()`, and SQL Server with `SET SHOWPLAN_TEXT ON`, the
-  statement, and `SET SHOWPLAN_TEXT OFF` — sent even when the plan fails, and
-  a failure to send it is said in red, since the connection would otherwise
-  answer every later statement with a plan. Db2 needs explain tables of its
-  own and is not asked; any other driver gets `EXPLAIN` and the database's own
-  answer. A plan is not a write, so a read-only profile and "ask before
-  writes" let it through. Two cautions: Oracle's `EXPLAIN PLAN` writes the
-  plan into the session's temporary `PLAN_TABLE`, which under manual commit
-  joins the open transaction (and which a read-only connection may refuse);
-  and while SQL Server's option is on, anything else sent on the same
-  connection in that moment — another tab's statement, the explorer — is
-  planned rather than run.
-- **BLOB/CLOB viewing and editing.** Double-click a LOB cell (including NULL)
-  or choose **Open LOB** from its context menu. CLOBs use a text editor and
-  UTF-8 files; BLOBs use editable hexadecimal byte pairs and binary files.
-  **Save to file** exports the complete value. **Replace from file** snapshots
-  a replacement without changing the database. **Add to changes** (Ctrl/Cmd+Enter)
-  stages the value; the grid's existing **Apply** preview and transaction perform
-  the database update. Empty values and NULL remain distinct. Read-only results
-  can still be viewed and saved. The first 1 MiB is shown for larger values;
-  these stay fully exportable and can be replaced from a file without loading
-  the whole value into the editor. Result snapshots use temporary disk space
-  and are removed when the result and its edits are released.
-- **A table's rows, filtered.** The data tab has a `WHERE` strip under its
-  toolbar: type a condition such as `status = 'open'` and press
-  <kbd>Enter</kbd> (or **Filter**), and the rows are read again under it, in
-  the order the grid is sorted by; <kbd>Esc</kbd> or **Clear** brings every
-  row back, and <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>F</kbd> puts the keyboard
-  in the field. A leading `WHERE` and a trailing `;` are taken off, a second
-  statement after the condition is refused, and a condition the database
-  rejects is reported like any failed load and stays in the field to be
-  corrected. "Filtered" beside the row count says the rows are not all of
-  them; editing and **Apply** work as usual, and the filter is kept with the
-  workspace and copied by a split. Like a sort or a refresh, changing it waits
-  for staged edits to be applied or discarded.
-- **Multiline text cells** show the first line followed by visible `\n`
-  separators. Double-click or choose **Open text editor** to edit the actual
-  lines in the same viewer, then stage and Apply as usual. Copying and database
-  writes keep the original line breaks; ordinary text remains a string value.
-- **ERD diagrams** of a whole schema or catalog, from the explorer with
-  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>E</kbd>. A large schema says how many
-  tables' keys have been read and can be canceled; so can a table's rows
-  while they load or re-sort. Tables are placed by a
-  hierarchical (Sugiyama) layout of rudbman's own and joined by orthogonal
-  routed edges; drag a table and the new position is saved per connection and
-  restored next time. Export the diagram as SVG.
-- **A visual query builder.** Drag tables out of the explorer onto a canvas,
-  click columns to toggle them into the `SELECT` list, and drag column to
-  column to join (`INNER`, `LEFT`, `RIGHT`, `FULL`) — or pick the two columns
-  in the Joins form, which appears once two tables are on the canvas. The
-  canvas and the form say which of these gestures to use until each is used. Forms cover `WHERE`,
-  `GROUP BY` and `ORDER BY`, the SQL preview updates as you go with
-  identifiers quoted the way the dialect wants them, and one click opens the
-  statement in an editor.
-- **Backup** of a schema or catalog to a replayable `.sql`, at the level of a
-  schema dump: the server's own `CREATE TABLE` wherever it can be had (MySQL,
-  MariaDB, H2, Oracle, SQLite), sequences, views, routines and triggers as you
-  choose, `INSERT`s ordered by a topological sort of the foreign keys and the
-  keys added after them, identity and sequence counters carried over, and
-  routine bodies written the way each product's own client reads a script.
-  Optionally gzipped, with progress and cancellation.
-- **Restore from a script** into a schema or catalog: a backup, `pg_dump
-  --inserts`, `mysqldump`, `mariadb-dump`, an SSMS or SQL Developer script,
-  plain or gzipped, read the way the product's own client reads it —
-  `DELIMITER`, `GO`, SQL\*Plus's `/` and `SET DEFINE OFF`, psql's
-  `\restrict` — on a session of its own, checked through before anything runs,
-  with progress and cancellation. "Run all" in the editor reads a script by the
-  same rules.
-- **DB-to-DB transfer.** Copy tables between two open connections, by plain
-  insert or by upsert — `MERGE`, `ON CONFLICT` or `ON DUPLICATE KEY` as the
-  target dialect spells it. On a bad row, abort, skip it, or log it and carry
-  on (batches are isolated with savepoints so one bad row does not cost the
-  batch), with per-row progress for both copied and skipped rows. The target
-  starts on another open connection rather than the source's, a transfer of a
-  table into itself is refused, and "Empty the target table first" asks before
-  it deletes, saying how many rows will go.
-- **Script extraction**: any table to a replayable `.sql`, to CSV, or
-  through a user template — streamed to the file inside the JVM with progress
-  and cancellation. Script execution is the same editor pipeline: open a
-  `.sql` file, run it, get per-statement errors. Ctrl/Cmd+S saves a query tab to
-  its `.sql` file (asking where the first time, over the tab's name with
-  today's date after it) and "Save SQL file as…" saves it under a new name; a
-  name typed without an extension is saved as `.sql`. The tab then takes the
-  file's name, and a dot marks
-  changes not yet saved. A file changed on disk since the tab read or saved it
-  is never overwritten in place; the save asks where instead.
-- **Closing never loses work silently.** A tab with staged row or structure
-  changes refuses to close — and so do the pane and the connection tab
-  holding it — until the changes are applied or discarded. A query tab bound
-  to a `.sql` file with unsaved changes asks Save / Don't save / Cancel
-  wherever it is closed from; a tab bound to no file is a draft and closes
-  without asking. Closing a connection with an uncommitted transaction or a
-  running statement asks first. Quitting, closing the window and the restart
-  after an update list everything they would lose and offer **Save all** for
-  the files.
-  <kbd>Ctrl</kbd>+<kbd>W</kbd> closes the tab on top (on macOS
-  <kbd>Cmd</kbd>+<kbd>W</kbd> still closes the pane), and
-  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens the
-  query or builder tab closed most recently.
-- **Context menus** on every surface that has actions worth reaching for —
-  the explorer tree, the result grid, the editor, the ERD and builder
-  canvases, and the tab strips. <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu
-  key opens the one where the keyboard is, and <kbd>F10</kbd> opens the ☰
-  menu (Linux and Windows).
-- **Short notices in the corner** for what belongs to no tab: a shortcut that
-  needs a live connection, a file that could not be read, a builder table
-  whose columns could not be read, a keychain that is not available.
-- **Themes and languages**: UI and editor theme registries with live
-  preview, import/export, and a user theme directory; eight UI languages
-  (en, ko, ja, zh-CN, de, es, fr, ru). **Interface size** in Settings scales
-  the whole chrome — text, buttons, icons, checkboxes, rows, tab strips, the
-  toolbar, the status bar and the dialogs — from the default 14 pt, with a live
-  preview. The SQL editor and the ERD keep their own font size and zoom.
-
-## Keyboard shortcuts
-
-On macOS read <kbd>Cmd</kbd> for <kbd>Ctrl</kbd> in the table, except where a
-row says otherwise. The pane chords use <kbd>Alt</kbd> on Linux and Windows and
-<kbd>Cmd</kbd> on macOS. Every command is also in the ☰ menu (the menu bar on
-macOS), with its chord beside it.
-
-The ☰ menu's **Keyboard shortcuts** (in the rudbman menu on macOS) shows the
-main ones in the app, with the chords the platform it runs on uses; its
-**User guide** opens the [user guide](docs/user-guide.md).
-
-| Where | Keys | Does |
-|---|---|---|
-| Window | <kbd>Ctrl</kbd>+<kbd>N</kbd> | Manage connections (in the connection dialog: new profile) |
-| | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
-| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> | Query history of the connection on screen; in it <kbd>↑</kbd>/<kbd>↓</kbd> move, <kbd>Enter</kbd> opens the statement in a new query tab |
-| | <kbd>Ctrl</kbd>+<kbd>B</kbd> | Show or hide the explorer |
-| | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit (asks first when something would be lost, as closing the window does) |
-| | <kbd>F10</kbd> | Open the ☰ menu on its first row (Linux and Windows; on macOS the commands are in the menu bar) |
-| | <kbd>Shift</kbd>+<kbd>F10</kbd>, <kbd>Menu</kbd> | Open the context menu of what has the keyboard: the explorer's selection, the SQL editor at the caret, the grid's cell, a saved connection on the welcome screen |
-| Tabs | <kbd>Ctrl</kbd>+<kbd>T</kbd> | New query tab |
-| | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the tab on top (Linux and Windows) |
-| | Middle-click a tab | Close it, asking first as <kbd>Ctrl</kbd>+<kbd>W</kbd> does (also on connection tabs) |
-| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | Reopen the query or builder tab closed last |
-| | <kbd>Ctrl</kbd>+<kbd>PgDn</kbd> / <kbd>PgUp</kbd>, <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab of the pane (macOS: <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd> / <kbd>←</kbd>) |
-| | <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>8</kbd>, <kbd>Ctrl</kbd>+<kbd>9</kbd> | That tab, the last tab |
-| | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PgDn</kbd> / <kbd>PgUp</kbd> | Next / previous connection tab (Linux and Windows) |
-| Panes | <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> / <kbd>S</kbd> | Split right / below |
-| | <kbd>Alt</kbd>+<kbd>W</kbd> | Close the pane |
-| | <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>[</kbd> | Next / previous pane, keyboard included |
-| | <kbd>F6</kbd> / <kbd>Shift</kbd>+<kbd>F6</kbd> | Explorer → editor → results, and back |
-| Files | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Open a `.sql` file |
-| | <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save the query tab / save as (no save-as chord on macOS) |
-| Explorer | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Query the selected object |
-| | <kbd>Ctrl</kbd>+<kbd>E</kbd> | ERD of the selection's schema |
-| | <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy the names of the selected rows (also in the detail panel's column list) |
-| | <kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd> | Select a run of rows |
-| | <kbd>Ctrl</kbd>+<kbd>F</kbd> | Filter the tree by name; in the box <kbd>Enter</kbd> opens the folders with matches and goes back to the tree, <kbd>Esc</kbd> clears it (pressed again, goes back to the tree) |
-| | <kbd>Alt</kbd>+<kbd>R</kbd> | In the filter box: read it as a regular expression, or as names again |
-| SQL editor | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Run the statement under the caret |
-| | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd> | Run the selection |
-| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Run everything |
-| | <kbd>Esc</kbd> | Stop the running statement (also in the results) |
-| | <kbd>F11</kbd> / <kbd>F12</kbd> | Commit / roll back (manual-commit connections; macOS: <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>C</kbd> / <kbd>R</kbd>, since F11 is Show Desktop there) |
-| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> | Format SQL |
-| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> | Show the plan of the statement under the caret, or of the selection, without running it (also from the explorer, for the query tab on screen) |
-| | <kbd>Ctrl</kbd>+<kbd>Space</kbd> | Completion |
-| | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>H</kbd> | Find / replace |
-| | <kbd>Ctrl</kbd>+<kbd>/</kbd> | Toggle comment |
-| Data grid | <kbd>Delete</kbd> (macOS: also <kbd>Backspace</kbd>) | Mark the selected rows for deletion, or unmark them |
-| | <kbd>F2</kbd>, or start typing | Edit the cell (LOB and multiline values open the viewer) |
-| | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste tab-separated cells from the cursor on, or one value into every selected cell |
-| | <kbd>Ctrl</kbd>+<kbd>0</kbd>, <kbd>Shift</kbd>+<kbd>Delete</kbd> | Set the cell to NULL |
-| | <kbd>Alt</kbd>+<kbd>Insert</kbd> | Add a row |
-| | <kbd>Ctrl</kbd>+<kbd>S</kbd>, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Apply (shows the statements first) |
-| | <kbd>F5</kbd> | Read the rows again |
-| | <kbd>Ctrl</kbd>+<kbd>F</kbd> | Put the keyboard in the data tab's filter field; there <kbd>Enter</kbd> applies the condition and <kbd>Esc</kbd> clears it |
-| | <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy the selected cells |
-| ERD | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> | Zoom in / out / actual size |
-| | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>L</kbd> | Auto-arrange / switch to comment names |
-| Dialogs | <kbd>Esc</kbd> | Close; over a running extraction, transfer or backup, ask whether to stop it; over unsaved connection edits, ask first |
-| | <kbd>Enter</kbd> | In a field: Connect, Start, or Close a finished job. On a focused button: that button — a write or discard question opens with Cancel focused |
-
-`Delete`, `F2`, typing and `Ctrl+V` work the same in a query result that can be
-written back to its table.
+- **Any JDBC driver** — downloaded from Maven Central or picked from disk; eight popular databases come predefined.
+- **Connection tabs** — each connection keeps its own panes and tabs, restored when it reopens.
+- **Connection folders** — saved connections grouped into folders that fold away.
+- **Clear connection errors** — a failed tab shows the whole error with Reconnect and Edit connection.
+- **SSH tunnels** — password or key auth through a bastion; secrets stay in the OS keychain.
+- **Connection dialog** — asks before dropping unsaved edits and downloads a missing driver in place.
+- **Schema explorer** — every object type, name and regex filters, and a detail panel with columns, keys and DDL.
+- **SQL workbench** — dialect-aware highlighting, completion, Format SQL, transactions and a virtualized result grid.
+- **Query history** — the statements each connection ran, searchable and reopened in a new tab.
+- **Execution plans** — a statement's plan without running it.
+- **BLOB/CLOB editing** — view, edit, save and replace large values, applied with the grid's changes.
+- **Table filters** — a `WHERE` strip narrows a table's rows.
+- **Multiline text cells** — edited as real lines in a text viewer.
+- **ERD diagrams** — schema diagrams laid out automatically, with saved positions and SVG export.
+- **Visual query builder** — drag tables, tick columns and drag joins, with a live SQL preview.
+- **Backup** — a schema or catalog to a replayable, optionally gzipped `.sql`.
+- **Restore** — a backup or another tool's dump script run into a schema the way that product's client reads it.
+- **DB-to-DB transfer** — tables copied between connections by insert or upsert, with bad-row handling.
+- **Script extraction** — tables to SQL, CSV or a template; `.sql` files opened, run and saved.
+- **Safe closing** — staged edits, unsaved files and open transactions are never dropped silently.
+- **Context menus** — on every surface, and reachable from the keyboard.
+- **Corner notices** — short messages for what belongs to no tab.
+- **Themes and languages** — UI and editor themes, eight interface languages and a scalable interface size.
 
 ## Installing
 
@@ -433,13 +153,6 @@ Git revision in the root Cargo manifest. Cargo fetches it automatically. The
 application keeps its own settings, keychain, Java bridge protocol and dialog
 layout; its SSH crate is a compatibility facade over the shared transport.
 
-
-The design document — the JNI wire protocol, the columnar batch codec, the
-data-plane rule that row data never crosses the JNI boundary, the SSH tunnel
-lifecycle, and the milestone plan — lives in
-[docs/architecture.md](docs/architecture.md). Current progress and
-open items are tracked in [docs/status.md](docs/status.md).
-
 The widget kit, the virtualized result grid and the code editor are not in this
 repository. They are [rugpui](https://github.com/xcomart/rugpui), extracted so that
 the three desktop applications built on them stop carrying byte-identical
@@ -470,6 +183,48 @@ that copy, which is what keeps one gpui in the binary — two would make the
 single origin of those trees:
 [rulogman](https://github.com/xcomart/rulogman) points its patch table at the
 same copy, so a fix made there reaches both projects.
+
+### Third-party libraries
+
+The heavy lifting is done by these projects:
+
+| Library | Role |
+| --- | --- |
+| [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) | GPU-accelerated UI framework, from the Zed editor (a pinned git revision, partly vendored and patched in rugpui) |
+| [jni](https://github.com/jni-rs/jni-rs) | Starts the embedded JVM and calls into the JDBC bridge |
+| [Gson](https://github.com/google/gson) | The bridge's one Java dependency: JSON for metadata and requests |
+| [russh](https://github.com/warp-tech/russh) | Pure-Rust SSH client behind the tunnels, through rudbkit |
+| [tokio](https://github.com/tokio-rs/tokio) | Async runtime for the SSH tunnel |
+| [keyring](https://github.com/open-source-cooperative/keyring-rs) | OS credential store: Windows Credential Manager, macOS Keychain, Secret Service |
+| [directories](https://github.com/soc/directories-rs) | Per-platform configuration paths, and the home directory the file dialogs fall back to |
+| [ureq](https://github.com/algesten/ureq) | The one HTTPS client: driver downloads from Maven Central, and the update check |
+
+Supporting crates:
+[serde](https://github.com/serde-rs/serde) /
+[serde_json](https://github.com/serde-rs/json) (profiles, settings, workspaces
+and the bridge's metadata),
+[uuid](https://github.com/uuid-rs/uuid) (profile and driver identity),
+[anyhow](https://github.com/dtolnay/anyhow) /
+[thiserror](https://github.com/dtolnay/thiserror) (errors),
+[log](https://github.com/rust-lang/log) /
+[env_logger](https://github.com/rust-cli/env_logger) (logging),
+[futures](https://github.com/rust-lang/futures-rs) /
+[async-trait](https://github.com/dtolnay/async-trait) (async glue),
+[parking_lot](https://github.com/Amanieu/parking_lot),
+[tempfile](https://github.com/Stebalien/tempfile) (LOB snapshots),
+[flate2](https://github.com/rust-lang/flate2-rs) (reading a gzipped backup),
+[chrono](https://github.com/chronotope/chrono) (query history timestamps),
+[regex](https://github.com/rust-lang/regex) (the explorer filter),
+[unicode-width](https://github.com/unicode-rs/unicode-width) (ERD box widths),
+[rust-i18n](https://github.com/longbridge/rust-i18n) /
+[sys-locale](https://github.com/1Password/sys-locale) (localization).
+
+Linux only: [secret-service](https://github.com/hwchen/secret-service-rs)
+(creating a default keyring when there is none). Windows only:
+[windows-rs](https://github.com/microsoft/windows-rs) (the parent console for
+`--version`), [winresource](https://github.com/BenjaminRi/winresource) (icon
+embedding). Tests additionally use [H2](https://github.com/h2database/h2database)
+and [JUnit](https://github.com/junit-team/junit5) on the bridge side.
 
 ## AI-assisted development
 
