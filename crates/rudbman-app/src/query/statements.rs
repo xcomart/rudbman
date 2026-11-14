@@ -2,7 +2,10 @@
 
 use super::*;
 use rudbman_sql::lexer::TokenKind;
-use rudbman_sql::{ScriptError, ScriptErrorKind, has_client_directives, split_script};
+use rudbman_sql::{
+    ScriptError, ScriptErrorKind, has_client_directives, script_units, split_script,
+};
+use rugpui_editor::StatementSpan;
 
 /// Whether `sql` is a statement `confirm_writes` should ask about.
 ///
@@ -44,6 +47,40 @@ pub(super) fn script_statements(
             )
         })
         .collect())
+}
+
+/// What "Run statement" sends for the editor's `span` of `text`, and the
+/// range of the editor it was cut from.
+///
+/// The editor cuts its statements with [`rudbman_sql::script_units`] (see
+/// [`crate::sql_highlight`]), so `span` is one of those units, and it is sent
+/// the way "Run all" sends that statement: a SQL\*Plus `EXEC` as the block it
+/// stands for, a body whole, a line the client would refuse refused. A
+/// document too long for the editor to cut that way
+/// ([`rugpui_editor::syntax::MAX_SPLIT`]) was cut by its semicolons, and its
+/// span is sent as it reads, so that what runs is what was highlighted.
+///
+/// # Errors
+///
+/// The unit's refusal: a `\connect`, a `COPY … FROM stdin`.
+pub(super) fn editor_statement(
+    text: &str,
+    span: StatementSpan,
+    dialect: &Dialect,
+) -> Result<EditorStatement, ScriptError> {
+    let as_written = || (span.sql(text).to_string(), Some(span.sql_range()));
+    if text.len() > rugpui_editor::syntax::MAX_SPLIT {
+        return Ok(as_written());
+    }
+    match script_units(text, dialect)
+        .into_iter()
+        .find(|unit| unit.range.start == span.start)
+    {
+        Some(unit) => unit
+            .run
+            .map(|statement| (statement.sql, Some(statement.range))),
+        None => Ok(as_written()),
+    }
 }
 
 /// The statements a run of the selection sends, each with the range of the

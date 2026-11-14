@@ -867,10 +867,14 @@ impl QueryPane {
                 &editor,
                 window,
                 |pane, editor, event, window, cx| match event {
+                    // The statement under the caret, sent as "Run all" would
+                    // send that statement.
                     EditorEvent::RunStatement { span } => {
                         let text = editor.read(cx).text();
-                        let sql = span.sql(&text).to_string();
-                        pane.request_from_editor(vec![(sql, Some(span.sql_range()))], window, cx);
+                        match statements::editor_statement(&text, *span, &pane.dialect) {
+                            Ok(statement) => pane.request_from_editor(vec![statement], window, cx),
+                            Err(error) => pane.refuse_script(&error, cx),
+                        }
                     }
                     EditorEvent::RunSelection { span } => {
                         let text = editor.read(cx).text();

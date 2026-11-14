@@ -30,34 +30,37 @@
 //! after it. A statement without a closing semicolon — the usual last line of a
 //! script, and the usual case in a scratch buffer — is a statement.
 //!
+//! # Bodies
+//!
+//! A statement with a body — `CREATE PROCEDURE … BEGIN …; …; END`, a PL/SQL
+//! block or package, a SQLite trigger, PostgreSQL's `BEGIN ATOMIC` — is one
+//! statement, its inner semicolons included: which `;` ends it is read off
+//! its first words and the `BEGIN`, `CASE` and `END` in it, as the `block`
+//! module describes. The `;` that ends a PL/SQL unit is part of its
+//! [`StatementSpan::sql`], because Oracle rejects `BEGIN NULL; END` without
+//! it. A T-SQL routine has no end a semicolon could mark — its body is the
+//! rest of the batch — and so runs to the end of `source`.
+//!
 //! # Known limitations
 //!
-//! Two constructs are **not supported**, deliberately and rather than badly:
+//! What this splitter does not read is the client's own lines, because they
+//! are not SQL:
 //!
-//! * **Oracle PL/SQL blocks.** In `BEGIN ... END;` the inner statements end in
-//!   semicolons too, so this splitter sees several statements where there is
-//!   one, and the `/` on its own line that actually terminates the block is not
-//!   a terminator here at all. The same goes for `CREATE PROCEDURE`,
-//!   `DECLARE ... BEGIN`, and package bodies.
 //! * **MySQL's `DELIMITER`.** The client-side directive that changes the
 //!   terminator (`DELIMITER //`) is not a MySQL statement — it is a feature of
 //!   the `mysql` command-line tool — and it is not honored here.
+//! * **SQL\*Plus's `/`** on a line of its own is not a terminator here.
+//! * **SQL Server's `GO`** is a batch separator understood by `sqlcmd` and not
+//!   by the server, and sending it over JDBC is an error however it is split.
 //!
-//! Both would need block-structure tracking, which is a parser, and a
-//! half-working version of either is worse than none: a script runner that
-//! believes it has found a statement boundary in the middle of a trigger body
-//! will send a fragment to the server. A script runs through
-//! [`crate::script`] instead, which needs no parser for either because it
-//! reads a script the way the product's own client does: the `DELIMITER`
-//! line, and the `/` SQL\*Plus waits for after the first words of a unit.
-//! Where there is no such line — a selection holding a routine typed as it
-//! is — [`holds_procedural_block`] tells a caller the pieces would be
-//! fragments, so it can send the text whole instead.
-//!
-//! SQL Server's `GO` is not a terminator either, but for a different reason: it
-//! is a batch separator understood by `sqlcmd` and not by the server, and
-//! sending it over JDBC is an error however it is split.
+//! A script runs through [`crate::script`] instead, which reads a script the
+//! way the product's own client does: the `DELIMITER` line, the `GO`, and the
+//! `/` SQL\*Plus waits for. Where there is no such line and a body is cut
+//! anyway — a construct the `block` module does not count —
+//! [`holds_procedural_block`] tells a caller the pieces would be fragments,
+//! so it can send the text whole instead.
 
+use crate::block::{Blocks, Semicolon, TRANSACTION_WORDS};
 use crate::dialect::{Dialect, DialectId};
 use crate::lexer::{Lexer, TokenKind};
 
@@ -127,6 +130,8 @@ struct Statements<'a> {
     src: &'a str,
     /// The token stream, whose position carries from call to call.
     lexer: Lexer<'a>,
+    /// Which `;` ends the statement being read.
+    blocks: Blocks,
 }
 
 impl<'a> Statements<'a> {
@@ -135,6 +140,7 @@ impl<'a> Statements<'a> {
         Self {
             src: source,
             lexer: Lexer::new(source, dialect),
+            blocks: Blocks::new(dialect),
         }
     }
 }
@@ -160,10 +166,19 @@ impl Iterator for Statements<'_> {
                 && token.len() == 1
             {
                 if has_code {
+                    let sql_end = match self.blocks.semicolon() {
+                        // A `;` inside a body is part of the statement.
+                        Semicolon::Inside => {
+                            last_end = token.end;
+                            continue;
+                        }
+                        Semicolon::Ends => last_end,
+                        Semicolon::EndsWithin => token.end,
+                    };
                     return Some(StatementSpan {
                         start: start.unwrap_or(token.start),
                         end: token.end,
-                        sql_end: last_end,
+                        sql_end,
                     });
                 }
                 // `;;` or a comment with no statement under it: forget what came
@@ -178,11 +193,13 @@ impl Iterator for Statements<'_> {
             last_end = token.end;
             if token.kind != TokenKind::Comment {
                 has_code = true;
+                self.blocks.token(token.kind, token.text(self.src));
             }
         }
 
         // End of the script with no semicolon: still a statement, if it had any
         // SQL in it.
+        self.blocks.reset();
         has_code.then(|| StatementSpan {
             start: start.unwrap_or(last_end),
             end: last_end,
@@ -249,32 +266,14 @@ pub fn statement_at(source: &str, offset: usize, dialect: &Dialect) -> Option<St
     previous
 }
 
-/// What may follow a leading `BEGIN` that starts a transaction rather than a
-/// block: `BEGIN TRANSACTION`, `BEGIN WORK`, SQLite's `BEGIN IMMEDIATE`,
-/// PostgreSQL's `BEGIN ISOLATION LEVEL ...` and `BEGIN NOT DEFERRABLE`, SQL
-/// Server's `BEGIN DISTRIBUTED TRAN`.
-const TRANSACTION_WORDS: &[&str] = &[
-    "TRANSACTION",
-    "TRAN",
-    "WORK",
-    "DEFERRED",
-    "IMMEDIATE",
-    "EXCLUSIVE",
-    "DISTRIBUTED",
-    "ISOLATION",
-    "READ",
-    "NOT",
-    "DEFERRABLE",
-];
-
 /// Whether [`split_statements`] would cut `source` inside a procedural block.
 ///
-/// The splitter does not understand `BEGIN ... END` (see the module
-/// documentation), so a script holding a PL/SQL block, a stored-program body
-/// or an Oracle package specification has to reach the server whole rather
-/// than in the pieces this module would cut it into. This is the test for it:
-/// a conservative heuristic over the words of each piece, not a parser. A
-/// piece is taken for part of a block when
+/// The splitter keeps a body it can count whole (see the module
+/// documentation), but a selection holding a construct it cannot — or one it
+/// cuts where the product would not — still has to reach the server whole
+/// rather than in pieces. This is the test for it: a conservative heuristic
+/// over the words of each piece, not a parser. A piece is taken for part of
+/// a block, or for a block itself, when
 ///
 /// * it starts with `DECLARE`;
 /// * it starts with `BEGIN` and something follows that is not a transaction

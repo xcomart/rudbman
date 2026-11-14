@@ -307,3 +307,60 @@ fn run_all_cuts_the_script_the_way_its_client_does() {
         [routine]
     );
 }
+
+#[test]
+fn run_statement_sends_the_unit_the_editor_highlighted() {
+    use crate::query::statements::editor_statement;
+    use crate::sql_highlight::DialectHighlighter;
+    use rugpui_editor::{Buffer, SyntaxCache, syntax};
+
+    // What the editor highlights at `needle`, and what "Run statement" sends
+    // for it.
+    let run = |script: &str, needle: &str, dialect: Dialect| {
+        let buffer = Buffer::new(script);
+        let cache = SyntaxCache::new(&buffer, Some(DialectHighlighter::shared(dialect)));
+        let at = script.find(needle).expect("the needle is in the script");
+        let span = syntax::statement_at(&buffer, &cache, at).expect("a statement");
+        editor_statement(script, span, &dialect)
+    };
+
+    // A body is sent whole, and without the terminator a driver would refuse.
+    let mysql = "CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND;\nCALL p();";
+    let (sql, range) = run(mysql, "SELECT 2", Dialect::MYSQL).unwrap();
+    assert_eq!(
+        sql,
+        "CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND"
+    );
+    assert_eq!(&mysql[range.unwrap()], sql);
+    let delimited = "DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; END//\nDELIMITER ;";
+    assert_eq!(
+        run(delimited, "SELECT 1", Dialect::MYSQL).unwrap().0,
+        "CREATE PROCEDURE p() BEGIN SELECT 1; END"
+    );
+    // PL/SQL keeps its `END;`, and SQL*Plus's `EXEC` is the block it stands for.
+    let oracle = "begin\n  null;\nend;\n/\nexec dbms_lock.sleep(1)\n";
+    assert_eq!(
+        run(oracle, "null", Dialect::ORACLE).unwrap().0,
+        "begin\n  null;\nend;"
+    );
+    assert_eq!(
+        run(oracle, "exec", Dialect::ORACLE).unwrap().0,
+        "BEGIN dbms_lock.sleep(1); END;"
+    );
+    // A T-SQL routine runs to its GO.
+    let mssql = "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;\nGO\nEXEC p";
+    assert_eq!(
+        run(mssql, "SELECT 2", Dialect::MSSQL).unwrap().0,
+        "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;"
+    );
+    // A line the client would refuse is refused here too, with its line.
+    let error = run("select 1;\n\\connect other\n", "connect", Dialect::POSTGRES)
+        .expect_err("\\connect cannot be run");
+    assert_eq!(error.line, 2);
+    // Plain statements go as they always went.
+    let plain = "select 1;\nselect 2;";
+    assert_eq!(
+        run(plain, "2", Dialect::POSTGRES).unwrap(),
+        ("select 2".to_string(), Some(10..18))
+    );
+}

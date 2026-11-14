@@ -97,12 +97,12 @@
 //!
 //! Written down rather than half-implemented:
 //!
-//! * **Oracle PL/SQL blocks and MySQL `DELIMITER`** are not understood by
-//!   [`split_statements`] ([`split_script`] reads both the way SQL\*Plus and
-//!   the `mysql` client do). A `BEGIN ... END;` block splits into pieces, the `/`
-//!   terminator means nothing, and `DELIMITER //` is not honored. See the
-//!   [`mod@statement`] module documentation for why a half-working version would
-//!   be worse, and when the question gets answered.
+//! * **MySQL `DELIMITER`, SQL\*Plus's `/` and `sqlcmd`'s `GO`** are not
+//!   understood by [`split_statements`], which reads SQL and not a client's
+//!   lines ([`split_script`] reads them the way each client does). A body —
+//!   `BEGIN … END`, a PL/SQL unit, a trigger — is kept whole by both, by
+//!   counting its `BEGIN`, `CASE` and `END` rather than by parsing it; see the
+//!   [`mod@statement`] module documentation for what that misses.
 //! * **Oracle's `q'[...]'` quote operator** is lexed as the identifier `q`
 //!   followed by an ordinary string, so a `'` inside the body ends it early.
 //! * **Server modes that change the lexer** are assumed to be at their defaults:
@@ -146,7 +146,7 @@
 //!   which schema a statement names, and the same statement with that
 //!   schema's names rewritten into another, for a restore into a schema
 //!   other than the one a script was written for.
-//! * [`mod@script`] — [`ScriptSplitter`], [`split_script`],
+//! * [`mod@script`] — [`ScriptSplitter`], [`split_script`], [`script_units`],
 //!   [`has_client_directives`]: a script cut the way each product's own
 //!   command-line client cuts it, `DELIMITER`, `GO` and SQL\*Plus's `/`
 //!   included, a line at a time.
@@ -155,6 +155,7 @@
 #![warn(missing_docs)]
 
 pub mod access;
+mod block;
 pub mod completion;
 pub mod ddl;
 pub mod dialect;
@@ -184,8 +185,8 @@ pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
 pub use scope::{ScopeMove, ScopeName, creates_scope, move_scope, same_name, statement_scope};
 pub use script::{
-    ScriptError, ScriptErrorKind, ScriptSplitter, ScriptStatement, has_client_directives,
-    split_script,
+    ScriptError, ScriptErrorKind, ScriptSplitter, ScriptStatement, ScriptUnit,
+    has_client_directives, script_units, split_script,
 };
 pub use state::LineStateCodec;
 pub use statement::{StatementSpan, holds_procedural_block, split_statements, statement_at};

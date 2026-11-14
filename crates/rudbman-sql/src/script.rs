@@ -17,18 +17,18 @@
 //! | PostgreSQL          | `psql`     | `\` meta-commands at the start of a line              |
 //! | MySQL, MariaDB      | `mysql`    | `DELIMITER`, the client's own commands, `/*! … */`    |
 //! | SQL Server          | `sqlcmd`   | `GO` ends a batch, `:` commands, `EXIT`/`QUIT`        |
-//! | Oracle              | SQL\*Plus  | PL/SQL runs to `/`, SQL\*Plus commands, `EXEC`        |
+//! | Oracle              | SQL\*Plus  | `/` ends PL/SQL, SQL\*Plus commands, `EXEC`           |
 //! | Db2                 | the CLP    | `--#SET TERMINATOR`                                   |
 //! | SQLite              | `sqlite3`  | `CREATE TRIGGER … END;`, `.` commands                  |
 //! | H2, anything else   | none       | plain semicolons                                      |
 //!
 //! None of these needs a parser. Every rule is either a line of its own (a
 //! directive, read only where the lexer says no string or comment is open) or
-//! a decision taken from the first few words of a statement, the same few
-//! words the client itself looks at. That is the difference from the
-//! block-structure tracking [`crate::statement`] declines to half-implement:
-//! SQL\*Plus does not count `BEGIN` and `END` either. It sees
-//! `CREATE PROCEDURE` and waits for the slash.
+//! a decision taken from the words of a statement: its first few, the same
+//! ones the client itself looks at, and the `BEGIN`, `CASE` and `END` of a
+//! body, which are counted as [`split_statements`] counts them so that a
+//! procedure typed without a `DELIMITER` around it — or a PL/SQL block typed
+//! without its slash — is still one statement.
 //!
 //! # What is refused
 //!
@@ -46,9 +46,13 @@
 //!
 //! # Where the readers part from their clients
 //!
+//! * A PL/SQL unit ends at the `;` after the `END` that closes it, slash or
+//!   no slash. SQL\*Plus waits for the slash, and without one takes the
+//!   statements under the unit into it.
 //! * A `/` on a line of its own after a statement that already ran is ignored.
 //!   SQL\*Plus would run that statement a second time, which a hand-written
-//!   script almost never means.
+//!   script almost never means. The `/` still ends whatever is open, which is
+//!   what keeps a body the counting gets wrong from running past it.
 //! * Blank lines never end a SQL\*Plus statement, as with
 //!   `SET SQLBLANKLINES ON`, which is what rudbman's own Oracle backups set.
 //! * A semicolon in the middle of a line ends a SQL\*Plus statement too, as
@@ -57,6 +61,17 @@
 //!   two `SELECT`s keep their two grids, unless the batch holds a procedural
 //!   block ([`holds_procedural_block`]), in which case the batch is sent whole,
 //!   as `sqlcmd` sends every batch.
+//!
+//! # What an editor sees
+//!
+//! [`script_units`] reads a script the same way for an editor, which wants
+//! every statement and where its terminator is rather than a run that stops
+//! at the first line it cannot carry out: a refused line is a unit of its
+//! own, carrying its [`ScriptError`], and the reading goes on past it,
+//! past an `EXIT`, and past the rows of a `COPY … FROM stdin`. A `sqlcmd`
+//! batch is cut into its statements, a body kept whole, rather than sent as
+//! one: the batch is what "Run all" sends, the statement what the cursor is
+//! in.
 //!
 //! ```
 //! use rudbman_sql::{Dialect, split_script};
@@ -75,8 +90,9 @@
 use std::fmt;
 use std::ops::Range;
 
+use crate::block::{Blocks, Semicolon};
 use crate::dialect::{Dialect, DialectId};
-use crate::lexer::{Lexer, LineState, TokenKind};
+use crate::lexer::{Lexer, LineState, Token, TokenKind};
 use crate::statement::{holds_procedural_block, split_statements};
 
 /// One statement of a script, ready to send.
@@ -92,6 +108,79 @@ pub struct ScriptStatement {
     pub range: Range<usize>,
     /// The line `range` starts on, counting from one.
     pub line: usize,
+}
+
+/// One statement of a script as an editor shows it: where it is, and what
+/// running it sends. See [`script_units`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptUnit {
+    /// The bytes it covers as written: from its first byte that is not
+    /// whitespace — a comment above it included — to one past the `;`, the
+    /// delimiter or the `/` that ends it, or past its last byte when nothing
+    /// does. For a refused line, the line.
+    pub range: Range<usize>,
+    /// What running it sends, or why it cannot be run.
+    pub run: Result<ScriptStatement, ScriptError>,
+}
+
+impl ScriptUnit {
+    /// One past the last byte it sends: the end of [`ScriptStatement::range`],
+    /// or of the refused line.
+    pub fn sql_end(&self) -> usize {
+        match &self.run {
+            Ok(statement) => statement.range.end,
+            Err(error) => error.range.end,
+        }
+    }
+}
+
+/// Where the splitter's output goes: a run's statements, which stop at the
+/// first refusal, or an editor's units, which do not.
+trait Out {
+    /// Whether this is an editor's reading ([`script_units`]).
+    const UNITS: bool;
+
+    /// A statement that is ready, and one past whatever ended it.
+    fn statement(&mut self, statement: ScriptStatement, end: usize);
+
+    /// A line or a statement that cannot be run, and one past whatever ended
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// The error itself, for a run, which stops there.
+    fn refuse(&mut self, error: ScriptError, end: usize) -> Result<(), ScriptError>;
+}
+
+impl Out for Vec<ScriptStatement> {
+    const UNITS: bool = false;
+
+    fn statement(&mut self, statement: ScriptStatement, _end: usize) {
+        self.push(statement);
+    }
+
+    fn refuse(&mut self, error: ScriptError, _end: usize) -> Result<(), ScriptError> {
+        Err(error)
+    }
+}
+
+impl Out for Vec<ScriptUnit> {
+    const UNITS: bool = true;
+
+    fn statement(&mut self, statement: ScriptStatement, end: usize) {
+        self.push(ScriptUnit {
+            range: statement.range.start..end.max(statement.range.end),
+            run: Ok(statement),
+        });
+    }
+
+    fn refuse(&mut self, error: ScriptError, end: usize) -> Result<(), ScriptError> {
+        self.push(ScriptUnit {
+            range: error.range.start..end.max(error.range.end),
+            run: Err(error),
+        });
+        Ok(())
+    }
 }
 
 /// A line the splitter would not get past.
@@ -206,9 +295,14 @@ pub struct ScriptSplitter {
     code: bool,
     /// The terminator, where the client lets a script change it.
     delimiter: String,
-    /// Whether the statement is a PL/SQL unit (Oracle) or a trigger (SQLite),
-    /// once its first terminator has made the question come up.
-    block: Option<bool>,
+    /// Which `;` ends the statement being read, while the terminator is one.
+    blocks: Blocks,
+    /// One past the terminator that ended the statement about to be handed
+    /// out, which is where an editor's unit of it ends.
+    closed: Option<usize>,
+    /// Whether the lines are the rows of a `COPY … FROM stdin`, which an
+    /// editor's reading steps over to the `\.` that ends them.
+    copy_rows: bool,
     /// Whether the previous line was a skipped SQL\*Plus command continued
     /// with a trailing `-`.
     continued: bool,
@@ -233,7 +327,9 @@ impl ScriptSplitter {
             end: 0,
             code: false,
             delimiter: ";".to_string(),
-            block: None,
+            blocks: Blocks::new(dialect),
+            closed: None,
+            copy_rows: false,
             continued: false,
             ended: false,
             directives: false,
@@ -263,10 +359,19 @@ impl ScriptSplitter {
         line: &str,
         out: &mut Vec<ScriptStatement>,
     ) -> Result<(), ScriptError> {
+        self.read_line(line, out)
+    }
+
+    /// [`Self::push_line`], into either kind of output.
+    fn read_line<O: Out>(&mut self, line: &str, out: &mut O) -> Result<(), ScriptError> {
         let at = self.offset;
         self.offset += line.len();
         self.line += 1;
         if self.ended {
+            return Ok(());
+        }
+        if self.copy_rows {
+            self.copy_rows = line.trim_end() != "\\.";
             return Ok(());
         }
         if self.continued {
@@ -308,6 +413,11 @@ impl ScriptSplitter {
     /// The last statement's [`ScriptError`], as [`Self::push_line`] would
     /// have raised it.
     pub fn finish(&mut self, out: &mut Vec<ScriptStatement>) -> Result<(), ScriptError> {
+        self.end_script(out)
+    }
+
+    /// [`Self::finish`], into either kind of output.
+    fn end_script<O: Out>(&mut self, out: &mut O) -> Result<(), ScriptError> {
         if self.ended {
             return Ok(());
         }
@@ -319,11 +429,11 @@ impl ScriptSplitter {
 
     /// Handles `line` when it is one of the client's own. Answers whether it
     /// was.
-    fn directive(
+    fn directive<O: Out>(
         &mut self,
         line: &str,
         at: usize,
-        out: &mut Vec<ScriptStatement>,
+        out: &mut O,
     ) -> Result<bool, ScriptError> {
         let text = line.trim();
         if text.is_empty() {
@@ -345,11 +455,14 @@ impl ScriptSplitter {
                     || starts_with_ignore_case(text, "EXIT(")
                 {
                     self.flush_batch(1, out)?;
-                    self.ended = true;
+                    // An editor reads on: the statements under an `EXIT` are
+                    // still statements, run one at a time.
+                    self.ended = !O::UNITS;
                     return Ok(true);
                 }
             }
             Client::SqlPlus if text == "/" => {
+                self.closed = Some(range.end);
                 self.emit(out)?;
                 return Ok(true);
             }
@@ -369,35 +482,45 @@ impl ScriptSplitter {
             Client::Sqlite => sqlite_command(text),
             Client::Plain => Ok(None),
         };
-        let directive = directive.map_err(|kind| ScriptError {
-            line: self.line,
-            range: range.clone(),
-            kind,
-        })?;
-        let Some(directive) = directive else {
-            return Ok(false);
+        let directive = match directive {
+            Ok(Some(directive)) => directive,
+            Ok(None) => return Ok(false),
+            Err(kind) => {
+                self.discard();
+                let end = range.end;
+                out.refuse(
+                    ScriptError {
+                        line: self.line,
+                        range,
+                        kind,
+                    },
+                    end,
+                )?;
+                return Ok(true);
+            }
         };
         // A comment above a command belongs to nothing that runs.
         self.discard();
         match directive {
             Directive::Skip => {}
-            Directive::End => self.ended = true,
-            Directive::Run(sql) => out.push(ScriptStatement {
-                sql,
-                range,
-                line: self.line,
-            }),
+            Directive::End => self.ended = !O::UNITS,
+            Directive::Run(sql) => {
+                let end = range.end;
+                out.statement(
+                    ScriptStatement {
+                        sql,
+                        range,
+                        line: self.line,
+                    },
+                    end,
+                );
+            }
         }
         Ok(true)
     }
 
     /// Walks `line`'s tokens, emitting each statement that ends on it.
-    fn scan(
-        &mut self,
-        line: &str,
-        at: usize,
-        out: &mut Vec<ScriptStatement>,
-    ) -> Result<(), ScriptError> {
+    fn scan<O: Out>(&mut self, line: &str, at: usize, out: &mut O) -> Result<(), ScriptError> {
         let mut lexer = Lexer::with_state(line, self.lex, &self.dialect);
         let tokens: Vec<_> = lexer.by_ref().collect();
         self.lex = lexer.state();
@@ -418,12 +541,14 @@ impl ScriptSplitter {
                 }
                 TokenKind::String | TokenKind::QuotedIdentifier => {
                     self.mark(at + token.start, at + token.end, true);
+                    self.blocks.token(token.kind, &line[token.start..token.end]);
                     i += 1;
                 }
                 _ => {
                     // A run of code with nothing between its tokens: a
                     // delimiter has no whitespace in it and never starts in a
                     // string or a comment, so it lies inside one of these.
+                    let first = i;
                     let run_start = token.start;
                     let mut run_end = token.end;
                     i += 1;
@@ -445,7 +570,7 @@ impl ScriptSplitter {
                     if batch {
                         self.mark(at + run_start, at + run_end, true);
                     } else {
-                        self.run(&line[run_start..run_end], at + run_start, out)?;
+                        self.run(line, &tokens[first..i], at, out)?;
                     }
                 }
             }
@@ -453,13 +578,35 @@ impl ScriptSplitter {
         Ok(())
     }
 
-    /// Reads a run of code that starts at `at`, cutting at each terminator.
-    fn run(
+    /// Reads a run of code — `tokens`, of `line`, which starts at `at` — cutting
+    /// at each terminator.
+    fn run<O: Out>(
         &mut self,
-        text: &str,
+        line: &str,
+        tokens: &[Token],
         at: usize,
-        out: &mut Vec<ScriptStatement>,
+        out: &mut O,
     ) -> Result<(), ScriptError> {
+        if self.delimiter == ";" {
+            for token in tokens {
+                let text = &line[token.start..token.end];
+                if token.kind == TokenKind::Punctuation && text == ";" {
+                    self.semicolon(at + token.start, at + token.end, out)?;
+                } else {
+                    self.mark(at + token.start, at + token.end, true);
+                    self.blocks.token(token.kind, text);
+                }
+            }
+            return Ok(());
+        }
+
+        // A delimiter the script chose ends a statement wherever it appears,
+        // whatever the lexer made of it: `END$$` is one word to MySQL's lexer.
+        let (Some(first), Some(last)) = (tokens.first(), tokens.last()) else {
+            return Ok(());
+        };
+        let text = &line[first.start..last.end];
+        let at = at + first.start;
         let mut cursor = 0;
         while let Some(found) = text[cursor..].find(self.delimiter.as_str()) {
             let p = cursor + found;
@@ -467,11 +614,8 @@ impl ScriptSplitter {
                 self.mark(at + cursor, at + p, true);
             }
             let after = p + self.delimiter.len();
-            if self.terminates(at + p) {
-                self.emit(out)?;
-            } else {
-                self.mark(at + p, at + after, true);
-            }
+            self.closed = Some(at + after);
+            self.emit(out)?;
             cursor = after;
         }
         if cursor < text.len() {
@@ -480,30 +624,32 @@ impl ScriptSplitter {
         Ok(())
     }
 
-    /// Whether the terminator at `p` ends the statement being read.
-    fn terminates(&mut self, p: usize) -> bool {
-        let Some((start, _)) = self.start else {
-            return true;
-        };
-        if !self.code {
-            return true;
+    /// Reads the `;` at `start..end`: the end of the statement, or a part of
+    /// its body.
+    fn semicolon<O: Out>(
+        &mut self,
+        start: usize,
+        end: usize,
+        out: &mut O,
+    ) -> Result<(), ScriptError> {
+        if self.start.is_none() || !self.code {
+            // `;;`, or a comment with nothing under it.
+            return self.emit(out);
         }
-        let so_far = &self.buf[start - self.origin..p - self.origin];
-        match self.client {
-            Client::SqlPlus => {
-                let dialect = self.dialect;
-                !*self
-                    .block
-                    .get_or_insert_with(|| plsql_unit(so_far, &dialect))
+        match self.blocks.semicolon() {
+            Semicolon::Inside => {
+                self.mark(start, end, true);
+                Ok(())
             }
-            Client::Sqlite => {
-                let dialect = self.dialect;
-                let trigger = *self
-                    .block
-                    .get_or_insert_with(|| sqlite_trigger(so_far, &dialect));
-                !trigger || ends_with_word(so_far, "END")
+            Semicolon::Ends => {
+                self.closed = Some(end);
+                self.emit(out)
             }
-            _ => true,
+            Semicolon::EndsWithin => {
+                self.mark(start, end, true);
+                self.closed = Some(end);
+                self.emit(out)
+            }
         }
     }
 
@@ -521,41 +667,61 @@ impl ScriptSplitter {
     fn discard(&mut self) {
         self.start = None;
         self.code = false;
-        self.block = None;
+        self.closed = None;
+        self.blocks.reset();
     }
 
     /// Hands out the statement being read, if it holds any SQL, and starts
     /// the next.
-    fn emit(&mut self, out: &mut Vec<ScriptStatement>) -> Result<(), ScriptError> {
+    fn emit<O: Out>(&mut self, out: &mut O) -> Result<(), ScriptError> {
+        let closed = self.closed;
         let (Some((start, line)), true) = (self.start, self.code) else {
             self.discard();
             return Ok(());
         };
         let sql = self.buf[start - self.origin..self.end - self.origin].to_string();
         let range = start..self.end;
+        let end = closed.unwrap_or(range.end);
         self.discard();
         if self.client == Client::Psql && copies_from_stdin(&sql, &self.dialect) {
-            return Err(ScriptError {
-                line,
-                range,
-                kind: ScriptErrorKind::CopyFromStdin,
-            });
+            // Its rows follow it; an editor steps over them to their `\.`.
+            self.copy_rows = O::UNITS;
+            return out.refuse(
+                ScriptError {
+                    line,
+                    range,
+                    kind: ScriptErrorKind::CopyFromStdin,
+                },
+                end,
+            );
         }
-        out.push(ScriptStatement { sql, range, line });
+        out.statement(ScriptStatement { sql, range, line }, end);
         Ok(())
     }
 
     /// Hands out the `sqlcmd` batch being read, `count` times over.
-    fn flush_batch(
-        &mut self,
-        count: u32,
-        out: &mut Vec<ScriptStatement>,
-    ) -> Result<(), ScriptError> {
+    fn flush_batch<O: Out>(&mut self, count: u32, out: &mut O) -> Result<(), ScriptError> {
         let (Some((start, line)), true) = (self.start, self.code) else {
             self.discard();
             return Ok(());
         };
         let text = &self.buf[start - self.origin..self.end - self.origin];
+        if O::UNITS {
+            // An editor's statements, not the batch a run sends: a body is
+            // still kept whole, and a routine still runs to the `GO`.
+            for span in split_statements(text, &self.dialect) {
+                out.statement(
+                    ScriptStatement {
+                        sql: span.sql(text).to_string(),
+                        range: start + span.start..start + span.sql_end,
+                        line: line + text[..span.start].matches('\n').count(),
+                    },
+                    start + span.end,
+                );
+            }
+            self.discard();
+            return Ok(());
+        }
         let pieces: Vec<ScriptStatement> = if holds_procedural_block(text, &self.dialect) {
             vec![ScriptStatement {
                 sql: text.to_string(),
@@ -573,7 +739,10 @@ impl ScriptSplitter {
                 .collect()
         };
         for _ in 0..count {
-            out.extend(pieces.iter().cloned());
+            for piece in &pieces {
+                let end = piece.range.end;
+                out.statement(piece.clone(), end);
+            }
         }
         self.discard();
         Ok(())
@@ -740,6 +909,38 @@ pub fn split_script(source: &str, dialect: &Dialect) -> Result<Vec<ScriptStateme
     Ok(out)
 }
 
+/// The statements of `source` as an editor shows them, in order: what a
+/// cursor can sit in, and what running each one alone sends.
+///
+/// Cut by the same rules as [`split_script`], with three differences for a
+/// reader that wants every statement rather than a run: a line the run would
+/// refuse is a unit of its own, its [`ScriptError`] in [`ScriptUnit::run`],
+/// and the reading goes on past it; an `EXIT` ends nothing; and a `sqlcmd`
+/// batch is cut into statements rather than sent whole. A client's own lines
+/// that run nothing — a `DELIMITER`, a `GO`, a `SET DEFINE OFF` — belong to no
+/// unit.
+///
+/// ```
+/// use rudbman_sql::{Dialect, script_units};
+///
+/// let script = "DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; END//\nDELIMITER ;\nCALL p();";
+/// let units = script_units(script, &Dialect::MYSQL);
+/// assert_eq!(units.len(), 2);
+/// assert_eq!(&script[units[0].range.clone()], "CREATE PROCEDURE p() BEGIN SELECT 1; END//");
+/// assert_eq!(units[0].run.as_ref().unwrap().sql, "CREATE PROCEDURE p() BEGIN SELECT 1; END");
+/// assert_eq!(&script[units[1].range.clone()], "CALL p();");
+/// ```
+pub fn script_units(source: &str, dialect: &Dialect) -> Vec<ScriptUnit> {
+    let mut splitter = ScriptSplitter::new(dialect);
+    let mut out = Vec::new();
+    for line in source.split_inclusive('\n') {
+        // Never an error: refusals are units.
+        let _ = splitter.read_line(line, &mut out);
+    }
+    let _ = splitter.end_script(&mut out);
+    out
+}
+
 /// Whether `source` holds a line its client would read as a command of its
 /// own: a `DELIMITER`, a `GO`, a `/`, a skipped command, or one it would
 /// refuse.
@@ -850,20 +1051,6 @@ fn continues(line: &str) -> bool {
     line == "-" || line.ends_with(" -") || line.ends_with("\t-")
 }
 
-/// Whether `text`, trimmed, ends in the word `word`.
-fn ends_with_word(text: &str, word: &str) -> bool {
-    let text = text.trim_end();
-    if text.len() < word.len() || !text.is_char_boundary(text.len() - word.len()) {
-        return false;
-    }
-    let (head, tail) = text.split_at(text.len() - word.len());
-    tail.eq_ignore_ascii_case(word)
-        && !head
-            .chars()
-            .next_back()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '#')
-}
-
 /// The first `n` words of `sql`, upper-cased, comments and strings stepped
 /// over.
 fn leading_words(sql: &str, dialect: &Dialect, n: usize) -> Vec<String> {
@@ -881,46 +1068,6 @@ fn leading_words(sql: &str, dialect: &Dialect, n: usize) -> Vec<String> {
             }
         })
         .collect()
-}
-
-/// Whether a statement starting `so_far` is a PL/SQL unit, which SQL\*Plus
-/// reads to its `/`: an anonymous block, or the `CREATE` of a stored unit.
-fn plsql_unit(so_far: &str, dialect: &Dialect) -> bool {
-    let words = leading_words(so_far, dialect, 8);
-    let word = |i: usize| words.get(i).map_or("", String::as_str);
-    match word(0) {
-        "DECLARE" | "BEGIN" => true,
-        "CREATE" => {
-            let mut i = 1;
-            while matches!(
-                word(i),
-                "OR" | "REPLACE"
-                    | "EDITIONABLE"
-                    | "NONEDITIONABLE"
-                    | "AND"
-                    | "COMPILE"
-                    | "RESOLVE"
-                    | "NOFORCE"
-            ) {
-                i += 1;
-            }
-            matches!(
-                word(i),
-                "FUNCTION" | "PROCEDURE" | "PACKAGE" | "TRIGGER" | "TYPE" | "LIBRARY" | "JAVA"
-            )
-        }
-        _ => false,
-    }
-}
-
-/// Whether a statement starting `so_far` is SQLite's `CREATE TRIGGER`, whose
-/// body ends at `END;`.
-fn sqlite_trigger(so_far: &str, dialect: &Dialect) -> bool {
-    let words = leading_words(so_far, dialect, 3);
-    let word = |i: usize| words.get(i).map_or("", String::as_str);
-    word(0) == "CREATE"
-        && (word(1) == "TRIGGER"
-            || (matches!(word(1), "TEMP" | "TEMPORARY") && word(2) == "TRIGGER"))
 }
 
 /// Whether `sql` is `COPY … FROM stdin`.
@@ -1240,6 +1387,238 @@ mod tests {
             refusal(".read other.sql\n", &Dialect::SQLITE).kind,
             ScriptErrorKind::Unsupported(".read".into())
         );
+    }
+
+    #[test]
+    fn mysql_routines_typed_without_a_delimiter_stay_whole() {
+        // What a person types in the editor: no `DELIMITER`, which only the
+        // `mysql` client understands, around a routine JDBC sends whole.
+        let script = "CREATE PROCEDURE p(IN n INT)\nBEGIN\n  IF n > 0 THEN\n    SELECT 1;\n  \
+                      END IF;\n  SELECT CASE WHEN n > 1 THEN 2 END;\nEND;\nCALL p(1);\n";
+        assert_eq!(
+            sqls(script, &Dialect::MYSQL),
+            [
+                "CREATE PROCEDURE p(IN n INT)\nBEGIN\n  IF n > 0 THEN\n    SELECT 1;\n  END IF;\n  \
+                 SELECT CASE WHEN n > 1 THEN 2 END;\nEND",
+                "CALL p(1)",
+            ]
+        );
+        let trigger = "CREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW\nBEGIN\n  \
+                       SET NEW.a = 1;\n  SET NEW.b = 2;\nEND;\nINSERT INTO x VALUES (1);";
+        assert_eq!(sqls(trigger, &Dialect::MARIADB).len(), 2);
+        let compound = "BEGIN NOT ATOMIC\n  SELECT 1;\n  SELECT 2;\nEND;\nSELECT 3;";
+        assert_eq!(sqls(compound, &Dialect::MARIADB).len(), 2);
+    }
+
+    #[test]
+    fn postgres_atomic_bodies_stay_whole() {
+        let script = "CREATE FUNCTION one() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  \
+                      SELECT 1;\nEND;\nBEGIN;\nSELECT one();\nCOMMIT;\n";
+        assert_eq!(
+            sqls(script, &Dialect::POSTGRES),
+            [
+                "CREATE FUNCTION one() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1;\nEND",
+                "BEGIN",
+                "SELECT one()",
+                "COMMIT",
+            ]
+        );
+    }
+
+    #[test]
+    fn plsql_typed_without_its_slash_ends_at_its_end() {
+        // SQL*Plus would wait for a `/` and take the `SELECT` into the block.
+        let script = "CREATE OR REPLACE PROCEDURE p AS\n  n NUMBER;\nBEGIN\n  \
+                      SELECT COUNT(*) INTO n FROM t;\n  IF n > 0 THEN\n    NULL;\n  END IF;\n\
+                      END p;\nSELECT 1 FROM dual;\n\
+                      DECLARE\n  v NUMBER;\nBEGIN\n  v := 1;\nEND;\n\
+                      CREATE OR REPLACE PACKAGE BODY pkg AS\n  PROCEDURE q IS\n  BEGIN\n    \
+                      NULL;\n  END q;\nEND pkg;\n";
+        assert_eq!(
+            sqls(script, &Dialect::ORACLE),
+            [
+                "CREATE OR REPLACE PROCEDURE p AS\n  n NUMBER;\nBEGIN\n  SELECT COUNT(*) INTO n FROM t;\n  \
+                 IF n > 0 THEN\n    NULL;\n  END IF;\nEND p;",
+                "SELECT 1 FROM dual",
+                "DECLARE\n  v NUMBER;\nBEGIN\n  v := 1;\nEND;",
+                "CREATE OR REPLACE PACKAGE BODY pkg AS\n  PROCEDURE q IS\n  BEGIN\n    NULL;\n  END q;\nEND pkg;",
+            ]
+        );
+        // The slash still ends what is open, so a body that never closes runs
+        // no further than SQL*Plus would run it.
+        assert_eq!(
+            sqls(
+                "CREATE JAVA SOURCE NAMED x AS class X { void f() { a(); } };\n/\nSELECT 1 FROM dual;",
+                &Dialect::ORACLE
+            ),
+            [
+                "CREATE JAVA SOURCE NAMED x AS class X { void f() { a(); } };",
+                "SELECT 1 FROM dual",
+            ]
+        );
+    }
+
+    #[test]
+    fn sqlite_trigger_bodies_count_their_case() {
+        let script = "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  \
+                      UPDATE t SET a = CASE WHEN new.a > 0 THEN 1 END;\n  DELETE FROM t;\nEND;\n\
+                      SELECT 1;\n";
+        assert_eq!(
+            sqls(script, &Dialect::SQLITE),
+            [
+                "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = CASE WHEN new.a > 0 THEN 1 END;\n  \
+                 DELETE FROM t;\nEND",
+                "SELECT 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn db2_and_h2_bodies_stay_whole() {
+        assert_eq!(
+            sqls(
+                "CREATE PROCEDURE p() BEGIN INSERT INTO t VALUES (1); INSERT INTO t VALUES (2); END;\n\
+                 CALL p();",
+                &Dialect::DB2
+            ),
+            [
+                "CREATE PROCEDURE p() BEGIN INSERT INTO t VALUES (1); INSERT INTO t VALUES (2); END",
+                "CALL p()",
+            ]
+        );
+        assert_eq!(
+            sqls(
+                "CREATE ALIAS twice AS $$ int twice(int x) { int y = x; return y * 2; } $$;\n\
+                 CALL twice(2);",
+                &Dialect::H2
+            ),
+            [
+                "CREATE ALIAS twice AS $$ int twice(int x) { int y = x; return y * 2; } $$",
+                "CALL twice(2)",
+            ]
+        );
+    }
+
+    /// The text of each unit of `script`, terminator included, and what
+    /// running it sends — or the error, as `Err`.
+    fn units(script: &str, dialect: &Dialect) -> Vec<(String, Result<String, ScriptErrorKind>)> {
+        script_units(script, dialect)
+            .into_iter()
+            .map(|unit| {
+                (
+                    script[unit.range.clone()].to_string(),
+                    unit.run.map(|run| run.sql).map_err(|error| error.kind),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn units_reach_their_terminator_and_skip_the_client_lines() {
+        let script = "DELIMITER //\nCREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\nEND//\n\
+                      DELIMITER ;\nCALL p();\n";
+        assert_eq!(
+            units(script, &Dialect::MYSQL),
+            [
+                (
+                    "CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\nEND//".to_string(),
+                    Ok("CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\nEND".to_string())
+                ),
+                ("CALL p();".to_string(), Ok("CALL p()".to_string())),
+            ]
+        );
+
+        let oracle = "SET DEFINE OFF\nBEGIN\n  NULL;\nEND;\n/\nselect 1 from dual\n/\nexec p\n";
+        assert_eq!(
+            units(oracle, &Dialect::ORACLE),
+            [
+                (
+                    "BEGIN\n  NULL;\nEND;".to_string(),
+                    Ok("BEGIN\n  NULL;\nEND;".to_string())
+                ),
+                (
+                    "select 1 from dual\n/".to_string(),
+                    Ok("select 1 from dual".to_string())
+                ),
+                ("exec p".to_string(), Ok("BEGIN p; END;".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn units_carry_on_past_what_a_run_refuses() {
+        let script = "select 1;\n\\connect other\nselect 2;\n\\q\nselect 3;\n\
+                      COPY t FROM stdin;\n1\t'x\n\\.\nselect 4;\n";
+        assert_eq!(
+            units(script, &Dialect::POSTGRES),
+            [
+                ("select 1;".to_string(), Ok("select 1".to_string())),
+                (
+                    "\\connect other".to_string(),
+                    Err(ScriptErrorKind::Unsupported("\\connect".into()))
+                ),
+                ("select 2;".to_string(), Ok("select 2".to_string())),
+                ("select 3;".to_string(), Ok("select 3".to_string())),
+                (
+                    "COPY t FROM stdin;".to_string(),
+                    Err(ScriptErrorKind::CopyFromStdin)
+                ),
+                ("select 4;".to_string(), Ok("select 4".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn units_cut_a_sqlcmd_batch_into_its_statements() {
+        let script = "select 1;\nif @a = 1\nbegin\n  select 2;\n  select 3;\nend;\nselect 4\nGO\n\
+                      create procedure p as\n  select 5;\n  select 6;\nGO\n";
+        assert_eq!(
+            units(script, &Dialect::MSSQL),
+            [
+                ("select 1;".to_string(), Ok("select 1".to_string())),
+                (
+                    "if @a = 1\nbegin\n  select 2;\n  select 3;\nend;".to_string(),
+                    Ok("if @a = 1\nbegin\n  select 2;\n  select 3;\nend".to_string())
+                ),
+                ("select 4".to_string(), Ok("select 4".to_string())),
+                (
+                    "create procedure p as\n  select 5;\n  select 6;".to_string(),
+                    Ok("create procedure p as\n  select 5;\n  select 6;".to_string())
+                ),
+            ]
+        );
+        // "Run all" still sends the batch that holds a block whole, as sqlcmd
+        // does, so that the variables declared in it stay in scope.
+        assert_eq!(sqls(script, &Dialect::MSSQL).len(), 2);
+    }
+
+    #[test]
+    fn units_and_a_run_cut_alike_where_nothing_is_refused() {
+        for (script, dialect) in [
+            (
+                "-- first\nselect 1; select 2;\n\nselect ';' from t\n",
+                Dialect::H2,
+            ),
+            (
+                "DELIMITER ;;\nCREATE PROCEDURE p() BEGIN SELECT 1; END;;\nDELIMITER ;\nCALL p();",
+                Dialect::MYSQL,
+            ),
+            (
+                "CREATE OR REPLACE PROCEDURE p AS\nBEGIN\n  NULL;\nEND;\n/\nSELECT 1 FROM dual;",
+                Dialect::ORACLE,
+            ),
+            (
+                "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  DELETE FROM t;\nEND;\nSELECT 1;",
+                Dialect::SQLITE,
+            ),
+        ] {
+            let run = split_script(script, &dialect).unwrap();
+            let units: Vec<_> = script_units(script, &dialect)
+                .into_iter()
+                .map(|unit| unit.run.unwrap())
+                .collect();
+            assert_eq!(units, run, "{script:?}");
+        }
     }
 
     #[test]

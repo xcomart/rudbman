@@ -26,17 +26,22 @@
 //!   rather than a replacement, so [`Highlighter::line_comment`] answers `--`
 //!   flat.
 //! * **The statement under the caret** was cut by [`rudbman_sql::statement_at`]
-//!   over a window of the buffer. The widget now cuts it itself, from the
-//!   colors it is drawing anyway: a `;` terminates a statement unless the
-//!   highlighter called it part of a string or a comment. `statement_boundaries`
-//!   in this module's tests is what holds the two answers together across the
-//!   dialects where they could drift — MySQL's `#`, PostgreSQL's `$$`, SQL
-//!   Server's `[..]`.
+//!   over a window of the buffer. The widget's own rule — a `;` terminates a
+//!   statement unless the highlighter called it part of a string or a
+//!   comment — cannot see a body, so [`Highlighter::split_statements`] hands
+//!   the cut back to this module: the whole buffer goes through
+//!   [`rudbman_sql::script_units`], the same reading "Run all" sends, and the
+//!   statement under the caret, the one "Run statement" sends and the
+//!   gutter's run buttons are its units. A `BEGIN … END` body, a
+//!   `DELIMITER`, a `GO` and SQL\*Plus's `/` mean in the highlight what they
+//!   mean to a run. The tests below hold the editor to that reading in every
+//!   dialect, and to the semicolon splitter where a script has neither a
+//!   body nor a client's line in it.
 
 use std::sync::Arc;
 
-use rudbman_sql::{Dialect, LineStateCodec, TokenKind, lex_line};
-use rugpui_editor::{Highlighter, LineState, Span, Token};
+use rudbman_sql::{Dialect, LineStateCodec, TokenKind, lex_line, script_units};
+use rugpui_editor::{Highlighter, LineState, Span, StatementSpan, Token};
 
 /// A [`Highlighter`] that lexes one SQL dialect.
 ///
@@ -85,6 +90,19 @@ impl Highlighter for DialectHighlighter {
 
     fn statements(&self) -> bool {
         true
+    }
+
+    fn split_statements(&self, text: &str) -> Option<Vec<StatementSpan>> {
+        Some(
+            script_units(text, &self.dialect)
+                .into_iter()
+                .map(|unit| StatementSpan {
+                    start: unit.range.start,
+                    end: unit.range.end,
+                    sql_end: unit.sql_end(),
+                })
+                .collect(),
+        )
     }
 }
 
@@ -282,10 +300,9 @@ mod tests {
 
     #[test]
     fn statement_boundaries_agree_with_the_splitter() {
-        // The editor no longer calls `rudbman_sql::statement_at`; it cuts
-        // statements out of the highlighter's spans. The two have to answer
-        // alike, at every offset of every script above, or a `Run statement`
-        // would send different SQL than `Run all`.
+        // The editor cuts statements with `script_units`, the reading "Run
+        // all" sends; where a script holds no client line, that is the
+        // semicolon splitter's cut, at every offset of every script above.
         for (script, dialect) in SCRIPTS {
             let (buffer, cache) = open(script, *dialect);
             for offset in 0..=script.len() {
@@ -320,6 +337,127 @@ mod tests {
                     "at {inside} of {script:?} ({dialect:?})"
                 );
             }
+        }
+    }
+
+    /// A statement with a body in every dialect, a caret inside the body —
+    /// at the first byte of `needle` — and the statement the editor has to
+    /// highlight there: the whole of it, terminator included.
+    const BODIES: &[(Dialect, &str, &str, &str)] = &[
+        (
+            Dialect::POSTGRES,
+            "create function f() returns int as $$\nbegin\n  return 1;\nend;\n$$ language plpgsql;\nselect f();\n",
+            "return 1",
+            "create function f() returns int as $$\nbegin\n  return 1;\nend;\n$$ language plpgsql;",
+        ),
+        (
+            Dialect::POSTGRES,
+            "create procedure p() language sql\nbegin atomic\n  insert into t values (1);\n  insert into t values (2);\nend;\ncall p();\n",
+            "values (2)",
+            "create procedure p() language sql\nbegin atomic\n  insert into t values (1);\n  insert into t values (2);\nend;",
+        ),
+        (
+            Dialect::MYSQL,
+            "CREATE PROCEDURE p()\nBEGIN\n  IF 1 THEN\n    SELECT 1;\n  END IF;\n  SELECT 2;\nEND;\nCALL p();\n",
+            "SELECT 2",
+            "CREATE PROCEDURE p()\nBEGIN\n  IF 1 THEN\n    SELECT 1;\n  END IF;\n  SELECT 2;\nEND;",
+        ),
+        (
+            Dialect::MYSQL,
+            "DELIMITER //\nCREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW\nBEGIN\n  SET NEW.a = 1;\n  SET NEW.b = 2;\nEND//\nDELIMITER ;\nINSERT INTO x VALUES (1);\n",
+            "NEW.b",
+            "CREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW\nBEGIN\n  SET NEW.a = 1;\n  SET NEW.b = 2;\nEND//",
+        ),
+        (
+            Dialect::MARIADB,
+            "BEGIN NOT ATOMIC\n  SELECT 1;\n  SELECT 2;\nEND;\nSELECT 3;\n",
+            "SELECT 2",
+            "BEGIN NOT ATOMIC\n  SELECT 1;\n  SELECT 2;\nEND;",
+        ),
+        (
+            Dialect::ORACLE,
+            "DECLARE\n  n NUMBER;\nBEGIN\n  SELECT COUNT(*) INTO n FROM t;\n  COMMIT;\nEND;\n/\nSELECT 1 FROM dual;\n",
+            "COMMIT",
+            "DECLARE\n  n NUMBER;\nBEGIN\n  SELECT COUNT(*) INTO n FROM t;\n  COMMIT;\nEND;",
+        ),
+        (
+            Dialect::ORACLE,
+            "CREATE OR REPLACE PACKAGE BODY pkg AS\n  PROCEDURE p IS\n  BEGIN\n    NULL;\n  END p;\n  FUNCTION f RETURN NUMBER IS\n  BEGIN\n    RETURN 1;\n  END f;\nEND pkg;\nSELECT pkg.f FROM dual;\n",
+            "RETURN 1",
+            "CREATE OR REPLACE PACKAGE BODY pkg AS\n  PROCEDURE p IS\n  BEGIN\n    NULL;\n  END p;\n  FUNCTION f RETURN NUMBER IS\n  BEGIN\n    RETURN 1;\n  END f;\nEND pkg;",
+        ),
+        (
+            Dialect::MSSQL,
+            "SET NOCOUNT ON\nGO\nCREATE PROCEDURE dbo.p AS\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND\nGO\nEXEC dbo.p\n",
+            "SELECT 2",
+            "CREATE PROCEDURE dbo.p AS\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND",
+        ),
+        (
+            Dialect::MSSQL,
+            "select 1;\nif @a = 1\nbegin\n  update t set a = 1;\n  delete from t;\nend;\nselect 2;\n",
+            "delete",
+            "if @a = 1\nbegin\n  update t set a = 1;\n  delete from t;\nend;",
+        ),
+        (
+            Dialect::SQLITE,
+            "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = CASE WHEN new.a THEN 1 END;\n  DELETE FROM t;\nEND;\nSELECT 1;\n",
+            "DELETE",
+            "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = CASE WHEN new.a THEN 1 END;\n  DELETE FROM t;\nEND;",
+        ),
+        (
+            Dialect::H2,
+            "CREATE ALIAS twice AS $$\nint twice(int x) {\n  int y = x;\n  return y * 2;\n}\n$$;\nCALL twice(2);\n",
+            "return y",
+            "CREATE ALIAS twice AS $$\nint twice(int x) {\n  int y = x;\n  return y * 2;\n}\n$$;",
+        ),
+        (
+            Dialect::DB2,
+            "CREATE PROCEDURE p()\nBEGIN\n  INSERT INTO t VALUES (1);\n  INSERT INTO t VALUES (2);\nEND;\nCALL p();\n",
+            "VALUES (2)",
+            "CREATE PROCEDURE p()\nBEGIN\n  INSERT INTO t VALUES (1);\n  INSERT INTO t VALUES (2);\nEND;",
+        ),
+    ];
+
+    #[test]
+    fn the_statement_under_the_caret_holds_its_whole_body() {
+        for (dialect, script, needle, expected) in BODIES {
+            let (buffer, cache) = open(script, *dialect);
+            let at = script.find(needle).expect("the needle is in the script");
+            let span = syntax::statement_at(&buffer, &cache, at).expect("a statement");
+            assert_eq!(
+                span.text(script),
+                *expected,
+                "at {needle:?} ({:?})",
+                dialect.id()
+            );
+            // And from every byte of it, the same one.
+            for offset in span.start..=span.end {
+                if script.is_char_boundary(offset) {
+                    assert_eq!(
+                        syntax::statement_at(&buffer, &cache, offset),
+                        Some(span),
+                        "at {offset} of {script:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_editor_cuts_the_units_a_run_reads() {
+        // The highlight, "Run statement" and the gutter's buttons all read the
+        // editor's cut; "Run all" reads `script_units`' rules. One cut.
+        for (dialect, script, _, _) in BODIES {
+            let (buffer, cache) = open(script, *dialect);
+            let editor: Vec<_> = syntax::statements_starting_in(&buffer, &cache, 0..buffer.len())
+                .into_iter()
+                .map(|span| (span.start, span.end, span.sql_end))
+                .collect();
+            let units: Vec<_> = script_units(script, dialect)
+                .into_iter()
+                .map(|unit| (unit.range.start, unit.range.end, unit.sql_end()))
+                .collect();
+            assert_eq!(editor, units, "{script:?} ({:?})", dialect.id());
         }
     }
 
