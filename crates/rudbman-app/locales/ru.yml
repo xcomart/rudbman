@@ -836,6 +836,7 @@ context:
   toggle_comment: Закомментировать или раскомментировать
   format_sql: Форматировать SQL
   run_statement: Выполнить инструкцию
+  run_this_statement: Выполнить эту инструкцию
   run_selection: Выполнить выделенное
   run_all: Выполнить всё
   explain: Показать план выполнения

@@ -836,6 +836,7 @@ context:
   toggle_comment: コメントの切り替え
   format_sql: SQL を整形
   run_statement: 文を実行
+  run_this_statement: この文を実行
   run_selection: 選択範囲を実行
   run_all: すべて実行
   explain: 実行計画を表示

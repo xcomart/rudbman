@@ -1361,6 +1361,9 @@ context:
   toggle_comment: Toggle comment
   format_sql: Format SQL
   run_statement: Run statement
+  # The tooltip of the ▶ beside each statement's first line in the editor's
+  # gutter, which runs that statement rather than the one the caret is in.
+  run_this_statement: Run this statement
   run_selection: Run selection
   run_all: Run all
   # Reads the statement's plan without running it. Also a toolbar button and

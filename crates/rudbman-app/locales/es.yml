@@ -836,6 +836,7 @@ context:
   toggle_comment: Comentar o descomentar
   format_sql: Dar formato al SQL
   run_statement: Ejecutar la sentencia
+  run_this_statement: Ejecutar esta sentencia
   run_selection: Ejecutar la selección
   run_all: Ejecutar todo
   explain: Ver plan de ejecución

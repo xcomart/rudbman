@@ -836,6 +836,7 @@ context:
   toggle_comment: 주석 토글
   format_sql: SQL 서식 정리
   run_statement: 현재 SQL 문 실행
+  run_this_statement: 이 SQL 문 실행
   run_selection: 선택 영역 실행
   run_all: 전체 실행
   explain: 실행 계획 보기

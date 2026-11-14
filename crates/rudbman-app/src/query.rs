@@ -116,7 +116,7 @@ use rugpui_editor::editor::{
     Copy, Cut, Find, Paste, Redo, Replace, RunAll, RunSelection, RunStatement, SelectAll,
     ToggleComment, Undo,
 };
-use rugpui_editor::{EditorEvent, EditorView};
+use rugpui_editor::{EditorEvent, EditorView, RunButtons};
 use rugpui_grid::{
     GridEvent, GridRequest, GridSource, GridSourceState, GridView, MenuTarget, RowStatus,
     SortDirection,
@@ -852,6 +852,13 @@ impl QueryPane {
         let editor = cx.new(|cx| {
             let mut editor = EditorView::new(cx)
                 .highlighter(DialectHighlighter::shared(dialect))
+                // A ▶ beside each statement's first line, which runs that one
+                // statement down the same path as "Run statement". The
+                // tooltip is asked for each time, so it follows the language.
+                .run_buttons(
+                    RunButtons::new(|_| ts!("context.run_this_statement"))
+                        .icon(crate::icons::RUN_STATEMENT),
+                )
                 // Unlike the fonts, wrapping is state the editor carries rather
                 // than something it reads back from the settings each frame, so
                 // a pane opened while the switch is on has to be built with it
@@ -867,8 +874,9 @@ impl QueryPane {
                 &editor,
                 window,
                 |pane, editor, event, window, cx| match event {
-                    // The statement under the caret, sent as "Run all" would
-                    // send that statement.
+                    // The statement under the caret, or the one whose run button
+                    // was pressed: both arrive here, and both are sent as "Run
+                    // all" would send that statement.
                     EditorEvent::RunStatement { span } => {
                         let text = editor.read(cx).text();
                         match statements::editor_statement(&text, *span, &pane.dialect) {
