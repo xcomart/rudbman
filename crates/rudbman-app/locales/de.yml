@@ -138,6 +138,11 @@ settings:
   confirm_writes_default: Bei neuen Verbindungen vor schreibenden Anweisungen nachfragen
   query_history: Verlauf der in Abfrage-Tabs ausgeführten Anweisungen führen
   query_history_hint: Wird je Verbindungsprofil als Klartext im Ordner history des Konfigurationsverzeichnisses gespeichert. Ausgeschaltet wird nichts mehr aufgezeichnet; Vorhandenes bleibt und lässt sich im Verlaufsdialog löschen.
+  sql_file_date: Datum im Dateinamen
+  sql_file_date_suffix: Nach dem Namen
+  sql_file_date_prefix: Vor dem Namen
+  sql_file_date_omit: Keines
+  sql_file_date_hint: Gilt für den Namen, den der Speicherdialog für einen noch nie gespeicherten Abfrage-Tab vorschlägt, z. B. Abfrage 1_20261114.sql oder 20261114_Abfrage 1.sql.
 
   jvm_heap: Java-Heap
   jvm_heap_hint: MB — das -Xmx, unter dem ein Treiber läuft

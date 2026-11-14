@@ -138,6 +138,11 @@ settings:
   confirm_writes_default: 新しい接続では書き込み文の実行前に確認する
   query_history: クエリタブで実行した文の履歴を残す
   query_history_hint: 接続プロファイルごとに設定フォルダー内の history フォルダーへプレーンテキストで保存されます。オフにすると記録を止め、記録済みの内容は残ります。履歴ダイアログから削除できます。
+  sql_file_date: ファイル名の日付
+  sql_file_date_suffix: 名前の後ろ
+  sql_file_date_prefix: 名前の前
+  sql_file_date_omit: 付けない
+  sql_file_date_hint: "一度も保存していないクエリタブを保存するとき、ダイアログが提案する名前に使われます。例: クエリ 1_20261114.sql、20261114_クエリ 1.sql"
 
   jvm_heap: Java ヒープ
   jvm_heap_hint: MB — ドライバーが動作する -Xmx

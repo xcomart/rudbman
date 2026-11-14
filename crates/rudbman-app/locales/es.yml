@@ -138,6 +138,11 @@ settings:
   confirm_writes_default: Preguntar antes de ejecutar una sentencia de escritura en una conexión nueva
   query_history: Guardar un historial de las sentencias que ejecutan las pestañas de consulta
   query_history_hint: Se guarda por perfil de conexión en la carpeta history del directorio de configuración, como texto sin cifrar. Al desactivarlo deja de registrarse y lo registrado se conserva; puedes borrarlo desde el diálogo del historial.
+  sql_file_date: Fecha en el nombre de archivo
+  sql_file_date_suffix: Después del nombre
+  sql_file_date_prefix: Antes del nombre
+  sql_file_date_omit: Ninguna
+  sql_file_date_hint: Se aplica al nombre que propone el diálogo de guardado para una pestaña de consulta nunca guardada, por ejemplo Consulta 1_20261114.sql o 20261114_Consulta 1.sql.
 
   jvm_heap: Montículo de Java
   jvm_heap_hint: MB — el -Xmx con el que corre un controlador

@@ -138,6 +138,11 @@ settings:
   confirm_writes_default: 新连接默认在执行写入语句前先确认
   query_history: 保存查询标签页执行过的语句历史
   query_history_hint: 按连接配置以纯文本保存在配置目录的 history 文件夹中。关闭后不再记录，已记录的内容会保留，可在历史对话框中删除。
+  sql_file_date: 文件名中的日期
+  sql_file_date_suffix: 名称之后
+  sql_file_date_prefix: 名称之前
+  sql_file_date_omit: 不添加
+  sql_file_date_hint: 用于保存从未保存过的查询标签页时对话框建议的文件名，例如 查询 1_20261114.sql 或 20261114_查询 1.sql。
 
   jvm_heap: Java 堆
   jvm_heap_hint: MB — 驱动运行时的 -Xmx

@@ -716,7 +716,8 @@ text size is **Editor size** in Settings.
 
 - **Save SQL file** (<kbd>Ctrl</kbd>+<kbd>S</kbd>) writes the tab to the file
   it was opened from or last saved to. The first time, it asks where,
-  suggesting the tab's name with today's date after it. A name typed without
+  suggesting the tab's name with today's date after it — or before it, or
+  left out, as **SQL file name date** in Settings says. A name typed without
   an extension is saved as `.sql`.
 - **Save SQL file as…** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> on Linux
   and Windows) always asks.
@@ -1259,6 +1260,7 @@ starts.
 | **Connection timeout** | 0–600 seconds | 30 by default; 0 leaves it to the driver. Applies to the next connect. |
 | **Ask before running a write statement on a new connection** | on/off | On by default. The starting value of the profile switch for profiles made afterwards. |
 | **Keep a history of the statements query tabs run** | on/off | On by default. See [Query history](#query-history). |
+| **SQL file name date** | after the name / before the name / none | After the name by default: `Query 1_20261114.sql`. Before it gives `20261114_Query 1.sql`, none gives `Query 1.sql`. Only the name suggested the first time a tab is saved; see [SQL files](#sql-files). |
 
 ### Java virtual machine
 

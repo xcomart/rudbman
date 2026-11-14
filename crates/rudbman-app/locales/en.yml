@@ -237,6 +237,11 @@ settings:
   confirm_writes_default: Ask before running a write statement on a new connection
   query_history: Keep a history of the statements query tabs run
   query_history_hint: Kept per connection profile in the history folder of the configuration directory, as plain text. Turning this off stops recording and keeps what was recorded; the history dialog deletes it.
+  sql_file_date: SQL file name date
+  sql_file_date_suffix: After the name
+  sql_file_date_prefix: Before the name
+  sql_file_date_omit: None
+  sql_file_date_hint: Applies to the name the save dialog suggests for a query tab that has never been saved, e.g. Query 1_20261114.sql or 20261114_Query 1.sql.
 
   jvm_heap: Java heap
   jvm_heap_hint: MB — the -Xmx a driver runs under

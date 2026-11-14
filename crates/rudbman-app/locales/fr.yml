@@ -138,6 +138,11 @@ settings:
   confirm_writes_default: Demander confirmation avant une instruction d’écriture sur une nouvelle connexion
   query_history: Conserver l’historique des instructions exécutées dans les onglets de requête
   query_history_hint: Conservé par profil de connexion dans le dossier history du répertoire de configuration, en texte clair. Désactivé, plus rien n’est enregistré et ce qui l’a été est gardé ; la boîte de dialogue de l’historique permet de le supprimer.
+  sql_file_date: Date dans le nom de fichier
+  sql_file_date_suffix: Après le nom
+  sql_file_date_prefix: Avant le nom
+  sql_file_date_omit: Aucune
+  sql_file_date_hint: S’applique au nom que la boîte d’enregistrement propose pour un onglet de requête jamais enregistré, par exemple Requête 1_20261114.sql ou 20261114_Requête 1.sql.
 
   jvm_heap: Tas Java
   jvm_heap_hint: Mo — le -Xmx sous lequel tourne un pilote

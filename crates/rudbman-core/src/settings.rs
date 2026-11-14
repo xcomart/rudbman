@@ -133,6 +133,24 @@ pub enum TitlebarStyle {
     System,
 }
 
+/// Where the save dialog's suggested name for a query tab puts the date.
+///
+/// Only the name a tab that has no file yet is offered: a tab bound to a file
+/// suggests that file's name as it is, whatever this says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SqlFileDate {
+    /// `report_20261107.sql`: a script's versions sort together under its
+    /// name. The default, and what every build before the choice wrote.
+    #[default]
+    Suffix,
+    /// `20261107_report.sql`: a folder's scripts sort by the day they were
+    /// saved.
+    Prefix,
+    /// `report.sql`: the tab's title alone.
+    Omit,
+}
+
 /// Where the window was, how big it was, and how it was painted.
 ///
 /// Geometry is restored on the next start so the app comes back where the user
@@ -289,6 +307,9 @@ pub struct AppSettings {
     /// it off stops recording and leaves what was recorded, which the history
     /// dialog deletes.
     pub query_history: bool,
+    /// Where the date goes in the file name the save dialog suggests for a
+    /// query tab that has never been saved.
+    pub sql_file_date: SqlFileDate,
     /// Width of the explorer sidebar in logical pixels; clamped to
     /// 140.0 ..= 720.0 on load.
     ///
@@ -363,6 +384,7 @@ impl Default for AppSettings {
             login_timeout_s: DEFAULT_LOGIN_TIMEOUT_S,
             confirm_writes_default: true,
             query_history: true,
+            sql_file_date: SqlFileDate::Suffix,
             explorer_width: DEFAULT_EXPLORER_WIDTH,
             explorer_visible: true,
             erd_logical_names: false,
@@ -502,6 +524,7 @@ mod tests {
         assert!(!settings.window.maximized);
         assert_eq!(settings.window.background_opacity, 1.0);
         assert_eq!(settings.window.titlebar, TitlebarStyle::Custom);
+        assert_eq!(settings.sql_file_date, SqlFileDate::Suffix);
     }
 
     #[test]
@@ -524,6 +547,7 @@ mod tests {
             query_timeout_s: 30,
             login_timeout_s: 12,
             confirm_writes_default: false,
+            sql_file_date: SqlFileDate::Prefix,
             window: WindowState {
                 x: Some(120),
                 y: Some(60),
@@ -814,6 +838,23 @@ mod tests {
         assert_eq!(settings.jvm_heap_mb, 128);
         assert_eq!(settings.fetch_batch_rows, 100_000);
         assert_eq!(settings.window.background_opacity, 0.5);
+    }
+
+    #[test]
+    fn sql_file_date_serializes_in_snake_case() {
+        for (choice, json) in [
+            (SqlFileDate::Suffix, "suffix"),
+            (SqlFileDate::Prefix, "prefix"),
+            (SqlFileDate::Omit, "omit"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(choice).unwrap(),
+                serde_json::json!(json)
+            );
+        }
+        // A file written before the choice existed keeps the date at the end.
+        let settings: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.sql_file_date, SqlFileDate::Suffix);
     }
 
     #[test]
