@@ -50,7 +50,20 @@ Download the build for your platform from
 every download carries a Java runtime built with `jlink`, and rudbman uses the
 one next to its executable.
 
-- **Windows** — two downloads, the same program inside.
+- **Windows** — rudbman is in the Windows Package Manager, so on Windows 10
+  and 11 one command installs it:
+
+  ```powershell
+  winget install Xcomart.Rudbman
+  ```
+
+  winget downloads the `…-setup.exe` described below from the GitHub release,
+  checks it against the SHA256 recorded in its manifest and installs it for
+  the current user. A new release reaches winget once its manifest is merged
+  into [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs), so
+  it can trail the GitHub release by a day or two.
+
+  The release page itself offers two downloads, the same program inside.
   - `…-setup.exe` is an installer. It installs into your user profile, so it
     needs no administrator rights and raises no UAC prompt, and it adds a
     Start-menu entry plus an **Apps & features** entry you can uninstall from

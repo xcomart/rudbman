@@ -38,10 +38,11 @@ Windows are in the menu bar on macOS.
 ### Installing
 
 Download the build for your platform from the
-[Releases](https://github.com/xcomart/rudbman/releases) page. Every download
-carries its own Java runtime, so no JDK has to be installed. The
-[README](../README.md#installing) walks through each platform: the Windows
-installer and portable zip, the macOS Gatekeeper and local-network steps, and
+[Releases](https://github.com/xcomart/rudbman/releases) page, or on Windows
+install it with `winget install Xcomart.Rudbman`. Every download carries its
+own Java runtime, so no JDK has to be installed. The
+[README](../README.md#installing) walks through each platform: the winget
+package, the Windows installer and portable zip, the macOS Gatekeeper and local-network steps, and
 the Linux `install.sh`.
 
 rudbman ships no JDBC drivers. The first time you connect to a product, the
