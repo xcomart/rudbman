@@ -53,14 +53,22 @@
 //! ([`Kind::ToEnd`]); the `GO` that ends the batch does, and that is the
 //! caller's to see. Oracle's `CREATE JAVA SOURCE` is the same, up to its `/`.
 //!
+//! An `IF` needs no `BEGIN` for a branch of one statement, and that statement
+//! may end in a `;`: `IF @a = 1 SELECT 1; ELSE SELECT 2;` is one statement.
+//! No statement starts with `ELSE`, so a `;` with an `IF` still waiting for
+//! one ends the statement only if something else comes next
+//! ([`Semicolon::EndsUnlessElse`]), which is the caller's to look at. Each
+//! `ELSE` answers the nearest `IF`, so an outer `IF` with none ends at the
+//! `;` after the inner one's.
+//!
 //! # What it gets wrong
 //!
-//! A label, an `ELSE` with no `BEGIN` after a T-SQL `IF`, MariaDB's top-level
-//! `IF … END IF` outside a `BEGIN NOT ATOMIC`: each is cut as a semicolon
-//! splitter cuts it, which is no worse than before. Counting the other way —
-//! a body that never closes because an `END` was missed — runs the statement
-//! to the end of the script, or to SQL\*Plus's `/`, which is where a client
-//! that counts nothing would have run it.
+//! A label, or MariaDB's top-level `IF … END IF` outside a
+//! `BEGIN NOT ATOMIC`: each is cut as a semicolon splitter cuts it, which is
+//! no worse than before. Counting the other way — a body that never closes
+//! because an `END` was missed — runs the statement to the end of the script,
+//! or to SQL\*Plus's `/`, which is where a client that counts nothing would
+//! have run it.
 
 use crate::dialect::{Dialect, DialectId};
 use crate::lexer::TokenKind;
@@ -172,6 +180,12 @@ pub(crate) enum Semicolon {
     Ends,
     /// It ends the statement and is part of it, as PL/SQL's `END;` is.
     EndsWithin,
+    /// It ends the statement unless the next word is `ELSE`, as it does not
+    /// in T-SQL's `IF @a = 1 SELECT 1; ELSE SELECT 2;`. The statement is
+    /// still being read: a caller that finds an `ELSE` next reads on, the `;`
+    /// part of the statement, and one that finds anything else ends it and
+    /// calls [`Blocks::reset`].
+    EndsUnlessElse,
 }
 
 /// Whose rules the words are read by.
@@ -316,6 +330,9 @@ pub(crate) struct Blocks {
     item_opens: bool,
     /// PL/SQL: the unit's own `IS` or `AS` has been read.
     unit_opened: bool,
+    /// T-SQL: how many `IF`s outside any level are still without their
+    /// `ELSE`.
+    ifs: u32,
 }
 
 impl Blocks {
@@ -330,6 +347,7 @@ impl Blocks {
             item_start: false,
             item_opens: false,
             unit_opened: false,
+            ifs: 0,
         }
     }
 
@@ -342,6 +360,7 @@ impl Blocks {
         self.item_start = false;
         self.item_opens = false;
         self.unit_opened = false;
+        self.ifs = 0;
     }
 
     /// Reads one token of the statement: anything but whitespace, a comment
@@ -370,6 +389,7 @@ impl Blocks {
         }
         let answer = match self.kind {
             Kind::Open(_) | Kind::Plain => Semicolon::Ends,
+            Kind::Blocks if self.frames.is_empty() && self.ifs > 0 => Semicolon::EndsUnlessElse,
             Kind::Blocks if self.frames.is_empty() => Semicolon::Ends,
             Kind::PlSql(_) if self.frames.is_empty() => Semicolon::EndsWithin,
             Kind::Blocks | Kind::PlSql(_) | Kind::ToEnd => Semicolon::Inside,
@@ -384,6 +404,8 @@ impl Blocks {
                 }
             }
             Semicolon::Ends | Semicolon::EndsWithin => self.reset(),
+            // The caller's to settle.
+            Semicolon::EndsUnlessElse => {}
         }
         answer
     }
@@ -576,6 +598,16 @@ impl Blocks {
             && self.kind == Kind::PlSql(Unit::Trigger)
         {
             self.pending = Pending::Compound;
+        } else if self.family == Family::MsSql
+            && self.kind == Kind::Blocks
+            && self.frames.is_empty()
+            && self.parens == 0
+        {
+            if word.eq_ignore_ascii_case("IF") {
+                self.ifs += 1;
+            } else if word.eq_ignore_ascii_case("ELSE") {
+                self.ifs = self.ifs.saturating_sub(1);
+            }
         } else if at_item_start {
             self.item_opens = any(word, SUBPROGRAM_HEADS);
         }
@@ -607,10 +639,10 @@ mod tests {
         let mut out = Vec::new();
         let mut start = None;
         let mut end = 0;
-        for token in Lexer::new(script, dialect) {
-            if token.kind.is_trivia() {
-                continue;
-            }
+        let tokens: Vec<_> = Lexer::new(script, dialect)
+            .filter(|token| !token.kind.is_trivia())
+            .collect();
+        for (i, token) in tokens.iter().enumerate() {
             let text = token.text(script);
             if text == ";" && token.kind == TokenKind::Punctuation {
                 match blocks.semicolon() {
@@ -618,6 +650,15 @@ mod tests {
                         end = token.end;
                         continue;
                     }
+                    Semicolon::EndsUnlessElse
+                        if tokens
+                            .get(i + 1)
+                            .is_some_and(|next| next.text(script).eq_ignore_ascii_case("else")) =>
+                    {
+                        end = token.end;
+                        continue;
+                    }
+                    Semicolon::EndsUnlessElse => blocks.reset(),
                     Semicolon::Ends => {}
                     Semicolon::EndsWithin => end = token.end,
                 }
@@ -811,5 +852,27 @@ select 1;",
         let units = cut(script, &Dialect::MSSQL);
         assert_eq!(units.len(), 5, "{units:#?}");
         assert_eq!(units[3], "begin tran");
+    }
+
+    #[test]
+    fn a_tsql_if_reads_on_into_its_else() {
+        let script = "if @a = 1 select 1;\nelse if @a = 2 select 2;\nelse select 3;\n\
+                      if @a = 1 select 4;\nselect 5;\n\
+                      if @a = case when @b = 1 then 1 else 2 end select 6; else select 7;\n\
+                      select 8; else select 9;";
+        assert_eq!(
+            cut(script, &Dialect::MSSQL),
+            [
+                "if @a = 1 select 1;\nelse if @a = 2 select 2;\nelse select 3",
+                "if @a = 1 select 4",
+                "select 5",
+                "if @a = case when @b = 1 then 1 else 2 end select 6; else select 7",
+                // Nothing but an `IF` waits for an `ELSE`.
+                "select 8",
+                "else select 9",
+            ]
+        );
+        // Elsewhere an `IF` is MySQL's function or a body's own statement.
+        assert_eq!(cut("select if(1, 2, 3); else;", &Dialect::MYSQL).len(), 2);
     }
 }

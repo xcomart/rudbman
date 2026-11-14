@@ -641,7 +641,9 @@ impl ScriptSplitter {
                 self.mark(start, end, true);
                 Ok(())
             }
-            Semicolon::Ends => {
+            // Only `sqlcmd` has an `ELSE` to wait for, and its batches are cut
+            // by `split_statements`, which looks past the `;`.
+            Semicolon::Ends | Semicolon::EndsUnlessElse => {
                 self.closed = Some(end);
                 self.emit(out)
             }
@@ -1590,6 +1592,25 @@ mod tests {
         // "Run all" still sends the batch that holds a block whole, as sqlcmd
         // does, so that the variables declared in it stay in scope.
         assert_eq!(sqls(script, &Dialect::MSSQL).len(), 2);
+    }
+
+    #[test]
+    fn a_tsql_if_runs_with_its_else() {
+        // No `BEGIN` in the batch, so "Run all" sends it statement by
+        // statement: the `ELSE` after a `;` is still its `IF`'s.
+        let script = "if @a = 1\n  select 1;\nelse\n  select 2;\nselect 3\nGO\n\
+                      if @a = 1 print 'one'; else if @a = 2 print 'two'; else print 'many';\n";
+        let whole = [
+            "if @a = 1\n  select 1;\nelse\n  select 2",
+            "select 3",
+            "if @a = 1 print 'one'; else if @a = 2 print 'two'; else print 'many'",
+        ];
+        assert_eq!(sqls(script, &Dialect::MSSQL), whole);
+        let runs: Vec<String> = units(script, &Dialect::MSSQL)
+            .into_iter()
+            .map(|(_, run)| run.expect("nothing refused"))
+            .collect();
+        assert_eq!(runs, whole);
     }
 
     #[test]

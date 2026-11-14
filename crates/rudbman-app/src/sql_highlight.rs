@@ -399,6 +399,12 @@ mod tests {
             "if @a = 1\nbegin\n  update t set a = 1;\n  delete from t;\nend;",
         ),
         (
+            Dialect::MSSQL,
+            "select 1;\nif @a = 1\n  update t set a = 1;\nelse\n  delete from t;\nselect 2;\n",
+            "update",
+            "if @a = 1\n  update t set a = 1;\nelse\n  delete from t;",
+        ),
+        (
             Dialect::SQLITE,
             "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = CASE WHEN new.a THEN 1 END;\n  DELETE FROM t;\nEND;\nSELECT 1;\n",
             "DELETE",

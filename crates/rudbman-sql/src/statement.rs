@@ -39,7 +39,9 @@
 //! module describes. The `;` that ends a PL/SQL unit is part of its
 //! [`StatementSpan::sql`], because Oracle rejects `BEGIN NULL; END` without
 //! it. A T-SQL routine has no end a semicolon could mark — its body is the
-//! rest of the batch — and so runs to the end of `source`.
+//! rest of the batch — and so runs to the end of `source`. A T-SQL `IF`
+//! whose branch ends in a `;` reads on past it into its `ELSE`:
+//! `IF @a = 1 SELECT 1; ELSE SELECT 2;` is one statement.
 //!
 //! # Known limitations
 //!
@@ -143,6 +145,17 @@ impl<'a> Statements<'a> {
             blocks: Blocks::new(dialect),
         }
     }
+
+    /// Whether the next word, past any whitespace and comments, is `ELSE`.
+    fn else_follows(&self) -> bool {
+        self.lexer
+            .clone()
+            .find(|token| !token.kind.is_trivia())
+            .is_some_and(|token| {
+                matches!(token.kind, TokenKind::Keyword | TokenKind::Identifier)
+                    && token.text(self.src).eq_ignore_ascii_case("ELSE")
+            })
+    }
 }
 
 impl Iterator for Statements<'_> {
@@ -157,7 +170,7 @@ impl Iterator for Statements<'_> {
         let mut last_end = 0;
         let mut has_code = false;
 
-        for token in self.lexer.by_ref() {
+        while let Some(token) = self.lexer.next() {
             if token.kind == TokenKind::Whitespace {
                 continue;
             }
@@ -171,6 +184,15 @@ impl Iterator for Statements<'_> {
                         Semicolon::Inside => {
                             last_end = token.end;
                             continue;
+                        }
+                        // So is one before a T-SQL `ELSE`, the `IF`'s.
+                        Semicolon::EndsUnlessElse if self.else_follows() => {
+                            last_end = token.end;
+                            continue;
+                        }
+                        Semicolon::EndsUnlessElse => {
+                            self.blocks.reset();
+                            last_end
                         }
                         Semicolon::Ends => last_end,
                         Semicolon::EndsWithin => token.end,
@@ -445,6 +467,67 @@ mod tests {
         ] {
             assert!(!holds_procedural_block(script, dialect), "{script}");
         }
+    }
+
+    #[test]
+    fn a_tsql_else_reads_on_past_the_semicolon_before_it() {
+        // No statement starts with `ELSE`: the `;` before one ends a branch of
+        // the `IF`, not the `IF`.
+        assert_eq!(
+            sqls(
+                "if @a = 1\n  select 1;\nelse\n  select 2;\nselect 3;",
+                &Dialect::MSSQL
+            ),
+            ["if @a = 1\n  select 1;\nelse\n  select 2", "select 3"]
+        );
+        for (script, last) in [
+            (
+                "if @a = 1 print 'one';\nelse if @a = 2 print 'two';\nelse print 'many';\nprint 'done';",
+                "print 'done'",
+            ),
+            (
+                "if @a = 1 if @b = 1 print 'a'; else print 'b'; else print 'c'; print 'd';",
+                "print 'd'",
+            ),
+            (
+                "if @a = 1 select 1; -- one\n/* or else */ else select 2; select 3;",
+                "select 3",
+            ),
+            (
+                "if @a = 1 begin select 1; end; else begin select 2; end; select 3;",
+                "select 3",
+            ),
+            (
+                "while @i < 3 if @i = 1 break; else set @i += 1; select @i;",
+                "select @i",
+            ),
+        ] {
+            let whole = script[..script.len() - last.len() - 1].trim_end();
+            let whole = whole.strip_suffix(';').unwrap_or(whole);
+            assert_eq!(sqls(script, &Dialect::MSSQL), [whole, last], "{script}");
+        }
+        // An `ELSE` belongs to the nearest `IF`, so the outer one ends here.
+        assert_eq!(
+            sqls(
+                "if @a = 1 if @b = 1 print 'a'; else print 'b'; print 'c';",
+                &Dialect::MSSQL
+            ),
+            ["if @a = 1 if @b = 1 print 'a'; else print 'b'", "print 'c'"]
+        );
+        // Without an `ELSE`, an `IF` ends at its `;`; and an `IF` that does not
+        // start the statement is no `IF` statement.
+        assert_eq!(
+            sqls("if @a = 1 select 1;\nselect 2;", &Dialect::MSSQL),
+            ["if @a = 1 select 1", "select 2"]
+        );
+        assert_eq!(
+            sqls(
+                "drop table if exists t;\nelse select 1;\nselect case when 1 = 1 then 1 else 0 end; select 2",
+                &Dialect::MSSQL
+            )
+            .len(),
+            4
+        );
     }
 
     #[test]

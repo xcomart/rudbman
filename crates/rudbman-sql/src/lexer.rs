@@ -324,6 +324,7 @@ const OPERATORS: &[&str] = &[
 ///     .collect();
 /// assert_eq!(kinds, [TokenKind::Keyword, TokenKind::Number]);
 /// ```
+#[derive(Clone)]
 pub struct Lexer<'a> {
     /// The input, kept as a `str` for slicing out token text.
     src: &'a str,
