@@ -36,6 +36,7 @@ menu:
   copy_insert: INSERT-Anweisung kopieren
   transfer_table: Zeilen übertragen…
   backup_schema: Schema sichern…
+  restore_schema: "Aus Skript wiederherstellen…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD-Diagramm
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -137,6 +138,11 @@ settings:
   confirm_writes_default: Bei neuen Verbindungen vor schreibenden Anweisungen nachfragen
   query_history: Verlauf der in Abfrage-Tabs ausgeführten Anweisungen führen
   query_history_hint: Wird je Verbindungsprofil als Klartext im Ordner history des Konfigurationsverzeichnisses gespeichert. Ausgeschaltet wird nichts mehr aufgezeichnet; Vorhandenes bleibt und lässt sich im Verlaufsdialog löschen.
+  sql_file_date: Datum im Dateinamen
+  sql_file_date_suffix: Nach dem Namen
+  sql_file_date_prefix: Vor dem Namen
+  sql_file_date_omit: Keines
+  sql_file_date_hint: Gilt für den Namen, den der Speicherdialog für einen noch nie gespeicherten Abfrage-Tab vorschlägt, z. B. Abfrage 1_20261114.sql oder 20261114_Abfrage 1.sql.
 
   jvm_heap: Java-Heap
   jvm_heap_hint: MB — das -Xmx, unter dem ein Treiber läuft
@@ -718,6 +724,46 @@ backup:
   skipped: "%{count} Objekte ließen sich nicht lesen und wurden ausgelassen:"
   skipped_more: "…und %{count} weitere"
 
+restore:
+  title: "Aus Skript wiederherstellen"
+  target: "Ziel"
+  input: "Skriptdatei"
+  input_none: "Keine Datei gewählt"
+  browse: "Wiederherzustellendes Skript wählen"
+  continue_on_error: "Fehlgeschlagene Anweisungen überspringen"
+  warning: "Jede Anweisung der Datei läuft unverändert in einer eigenen Sitzung; ihre DROP-Anweisungen entfernen, was sie nennen."
+  read_only: "Diese Verbindung ist schreibgeschützt; in sie kann nichts wiederhergestellt werden."
+  start: "Wiederherstellen"
+  scanning: "Skript wird gelesen…"
+  scanned: "%{count} Anweisungen"
+  several: "Das Skript legt Objekte an mehreren Orten an (%{names}); sie werden dort wiederhergestellt, wo es sie nennt."
+  move: "Die Objekte von %{source} in %{target} wiederherstellen"
+  move_off: "Sie werden in %{source} wiederhergestellt, wo das Skript sie nennt."
+  checking: "Skript wird geprüft…"
+  connecting: "Sitzung wird geöffnet…"
+  running: "Skript wird ausgeführt…"
+  canceling: "Wird angehalten…"
+  counted: "Bisher %{statements} Anweisungen, %{bytes}"
+  counters: "%{done} von %{total} Anweisungen, %{bytes} von %{size}"
+  failed_so_far: "%{count} Anweisungen fehlgeschlagen und übersprungen"
+  done: "%{count} Anweisungen aus %{path} ausgeführt."
+  done_with_failures: "%{count} Anweisungen aus %{path} ausgeführt; %{failed} sind fehlgeschlagen und wurden übersprungen:"
+  failure_line: "Zeile %{line}: %{error}"
+  failed: "Zeile %{line} schlug fehl, nachdem %{count} Anweisungen gelaufen waren: %{error}"
+  enter_failed: "Das Ziel ließ sich nicht setzen: %{error}"
+  refused: "Es wurde nichts ausgeführt. %{reason}"
+  not_text: "Zeile %{line} ist kein UTF-8- oder UTF-16-Text. Speichern Sie das Skript als UTF-8; ein mysqldump mit Binärspalten braucht --hex-blob."
+  pg_archive: "Dies ist ein pg_dump-Archiv, kein Skript; stellen Sie es mit pg_restore wieder her oder erzeugen Sie den Dump mit --format=plain --inserts."
+  unreadable: "Die Datei ließ sich nicht lesen: %{error}"
+  no_session: "Für das Skript ließ sich keine Sitzung öffnen: %{error}"
+  canceled: "Nach %{count} Anweisungen angehalten. Was sie bewirkt haben, bleibt."
+  stop_question: "Wiederherstellung anhalten? Bereits Ausgeführtes bleibt."
+
+script:
+  unsupported: "Zeile %{line}: Der Client-Befehl %{command} wird hier nicht unterstützt."
+  copy_stdin: "Zeile %{line}: COPY … FROM stdin wird nicht unterstützt; erzeugen Sie den Dump mit --inserts."
+  missing_delimiter: "Zeile %{line}: Der Befehl nennt kein Trennzeichen."
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ERD — %{scope}"
@@ -790,6 +836,7 @@ context:
   toggle_comment: Kommentar umschalten
   format_sql: SQL formatieren
   run_statement: Anweisung ausführen
+  run_this_statement: Diese Anweisung ausführen
   run_selection: Auswahl ausführen
   run_all: Alles ausführen
   explain: Ausführungsplan anzeigen
@@ -878,6 +925,7 @@ closing:
   work_extract: Eine noch laufende Extraktion
   work_transfer: Eine noch laufende Übertragung
   work_backup: Eine noch laufende Sicherung
+  work_restore: "Eine noch laufende Wiederherstellung"
 
 close_guard:
   title_window: "Fenster mit nicht gespeicherter Arbeit schließen?"

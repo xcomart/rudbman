@@ -992,6 +992,7 @@ impl Workspace {
             || self.extract.read(cx).is_open()
             || self.transfer.read(cx).is_open()
             || self.backup.read(cx).is_open()
+            || self.restore.read(cx).is_open()
             || self.update.read(cx).is_open()
     }
 

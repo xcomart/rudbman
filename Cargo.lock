@@ -2341,7 +2341,6 @@ version = "1.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab4e5aa225bc56696909483320f0ff9b600f1a971b52e07a17d70f3d9b43254b"
 dependencies = [
- "generic-array 0.14.7",
  "rustversion",
  "typenum",
 ]
@@ -2499,7 +2498,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2629,7 +2628,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2673,7 +2672,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2813,7 +2812,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3270,18 +3269,6 @@ checksum = "4250ce6452e92010fdf7268ccc5d14faa80bb12fc741938534c58f16804e03c7"
 dependencies = [
  "block-padding 0.4.2",
  "hybrid-array",
-]
-
-[[package]]
-name = "internal-russh-num-bigint"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae8e22120c32fb4d19ec55fba35015f57095cd95a2e3b732e44457f5915b2ee8"
-dependencies = [
- "num-integer",
- "num-traits",
- "rand 0.10.2",
- "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -4014,7 +4001,7 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-complex",
  "num-integer",
  "num-iter",
@@ -4030,6 +4017,18 @@ checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
 dependencies = [
  "num-integer",
  "num-traits",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
+dependencies = [
+ "num-integer",
+ "num-traits",
+ "rand 0.10.2",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -4101,7 +4100,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
 ]
@@ -5551,8 +5550,8 @@ dependencies = [
 
 [[package]]
 name = "rudbkit-core"
-version = "0.1.6"
-source = "git+https://github.com/xcomart/rudbkit?rev=98570125053e93291b4d46cb6f24320c003f0b18#98570125053e93291b4d46cb6f24320c003f0b18"
+version = "0.1.7"
+source = "git+https://github.com/xcomart/rudbkit?rev=5d7ddeb2ef2e0e2e4c7c48139b83a76881c8573c#5d7ddeb2ef2e0e2e4c7c48139b83a76881c8573c"
 dependencies = [
  "log",
  "serde",
@@ -5561,8 +5560,8 @@ dependencies = [
 
 [[package]]
 name = "rudbkit-jdbc"
-version = "0.1.6"
-source = "git+https://github.com/xcomart/rudbkit?rev=98570125053e93291b4d46cb6f24320c003f0b18#98570125053e93291b4d46cb6f24320c003f0b18"
+version = "0.1.7"
+source = "git+https://github.com/xcomart/rudbkit?rev=5d7ddeb2ef2e0e2e4c7c48139b83a76881c8573c#5d7ddeb2ef2e0e2e4c7c48139b83a76881c8573c"
 dependencies = [
  "jni",
  "log",
@@ -5572,8 +5571,8 @@ dependencies = [
 
 [[package]]
 name = "rudbkit-ssh"
-version = "0.1.6"
-source = "git+https://github.com/xcomart/rudbkit?rev=98570125053e93291b4d46cb6f24320c003f0b18#98570125053e93291b4d46cb6f24320c003f0b18"
+version = "0.1.7"
+source = "git+https://github.com/xcomart/rudbkit?rev=5d7ddeb2ef2e0e2e4c7c48139b83a76881c8573c#5d7ddeb2ef2e0e2e4c7c48139b83a76881c8573c"
 dependencies = [
  "async-trait",
  "futures",
@@ -5586,13 +5585,14 @@ dependencies = [
 
 [[package]]
 name = "rudbman-app"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
  "directories",
  "env_logger",
+ "flate2",
  "futures",
  "gpui",
  "gpui_platform",
@@ -5622,7 +5622,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-core"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "directories",
@@ -5638,7 +5638,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-erd"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "gpui",
  "rugpui",
@@ -5647,7 +5647,7 @@ dependencies = [
 
 [[package]]
 name = "rudbman-jdbc"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "jni",
@@ -5664,11 +5664,11 @@ dependencies = [
 
 [[package]]
 name = "rudbman-sql"
-version = "0.3.8"
+version = "0.3.9"
 
 [[package]]
 name = "rudbman-ssh"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "async-trait",
  "futures",
@@ -5680,8 +5680,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui"
-version = "0.1.16"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+version = "0.1.17"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "anyhow",
  "gpui",
@@ -5693,8 +5693,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui-editor"
-version = "0.1.16"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+version = "0.1.17"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "gpui",
  "log",
@@ -5706,8 +5706,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui-grid"
-version = "0.1.16"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+version = "0.1.17"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "gpui",
  "rugpui",
@@ -5716,8 +5716,8 @@ dependencies = [
 
 [[package]]
 name = "rugpui-shell"
-version = "0.1.16"
-source = "git+https://github.com/xcomart/rugpui?rev=474d7d0d3deab073883b9150ae82849e7cf98960#474d7d0d3deab073883b9150ae82849e7cf98960"
+version = "0.1.17"
+source = "git+https://github.com/xcomart/rugpui?rev=ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c#ea4632686fe2c43c3fdd6b9dcbf0ca136ed0d37c"
 dependencies = [
  "anyhow",
  "futures",
@@ -5735,9 +5735,9 @@ dependencies = [
 
 [[package]]
 name = "russh"
-version = "0.62.5"
+version = "0.65.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da7c230e0ed9cbeb92fbad6c8848985d6df2a1464c0dc247a021abd666e9005e"
+checksum = "94be3d86c71b9ed220a675c405e35c7a02565a009bf8da2e9cc13a700320a5c5"
 dependencies = [
  "aes 0.9.2",
  "bitflags 2.13.1",
@@ -5765,13 +5765,12 @@ dependencies = [
  "hex-literal",
  "hmac 0.13.0",
  "inout 0.2.2",
- "internal-russh-num-bigint",
  "keccak",
  "log",
  "md5",
  "ml-kem",
  "module-lattice",
- "num-bigint",
+ "num-bigint 0.5.1",
  "p256",
  "p384",
  "p521",

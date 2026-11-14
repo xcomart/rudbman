@@ -36,6 +36,7 @@ menu:
   copy_insert: INSERT 문 복사
   transfer_table: 행 전송…
   backup_schema: 스키마 백업…
+  restore_schema: "스크립트로 복원…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD 다이어그램
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -137,6 +138,11 @@ settings:
   confirm_writes_default: 새 연결에서 쓰기 SQL 문을 실행하기 전에 확인
   query_history: 쿼리 탭에서 실행한 SQL 문의 이력 남기기
   query_history_hint: 연결 프로필마다 설정 폴더의 history 폴더에 일반 텍스트로 저장됩니다. 끄면 새로 기록하지 않으며, 이미 기록된 내용은 이력 창에서 지울 수 있습니다.
+  sql_file_date: SQL 파일 이름의 날짜
+  sql_file_date_suffix: 이름 뒤에
+  sql_file_date_prefix: 이름 앞에
+  sql_file_date_omit: 넣지 않음
+  sql_file_date_hint: "저장한 적 없는 쿼리 탭을 저장할 때 대화 상자가 제안하는 이름에 적용됩니다. 예: 쿼리 1_20261114.sql, 20261114_쿼리 1.sql"
 
   jvm_heap: 자바 힙
   jvm_heap_hint: MB — 드라이버가 사용하는 -Xmx
@@ -718,6 +724,46 @@ backup:
   skipped: "읽을 수 없는 객체 %{count}개는 빼고 썼습니다:"
   skipped_more: "…외 %{count}개"
 
+restore:
+  title: "스크립트로 복원"
+  target: "복원 위치"
+  input: "스크립트 파일"
+  input_none: "선택한 파일 없음"
+  browse: "복원할 스크립트 선택"
+  continue_on_error: "실패한 문은 건너뛰고 계속하기"
+  warning: "파일의 모든 문을 별도 세션에서 적힌 그대로 실행합니다. 파일의 DROP 문은 해당 객체를 삭제합니다."
+  read_only: "읽기 전용 연결이라 복원할 수 없습니다."
+  start: "복원"
+  scanning: "스크립트를 읽는 중…"
+  scanned: "문 %{count}개"
+  several: "스크립트가 여러 위치(%{names})에 객체를 만듭니다. 스크립트에 적힌 위치에 그대로 복원합니다."
+  move: "%{source}의 객체를 %{target}에 복원"
+  move_off: "스크립트에 적힌 %{source}에 복원합니다."
+  checking: "스크립트를 확인하는 중…"
+  connecting: "세션을 여는 중…"
+  running: "스크립트를 실행하는 중…"
+  canceling: "중지하는 중…"
+  counted: "지금까지 문 %{statements}개, %{bytes}"
+  counters: "문 %{total}개 중 %{done}개, %{size} 중 %{bytes}"
+  failed_so_far: "문 %{count}개가 실패해 건너뛰었습니다"
+  done: "%{path}의 문 %{count}개를 실행했습니다."
+  done_with_failures: "%{path}의 문 %{count}개를 실행했습니다. %{failed}개는 실패해 건너뛰었습니다:"
+  failure_line: "%{line}행: %{error}"
+  failed: "문 %{count}개를 실행한 뒤 %{line}행에서 실패했습니다: %{error}"
+  enter_failed: "복원 위치로 들어가지 못했습니다: %{error}"
+  refused: "아무것도 실행하지 않았습니다. %{reason}"
+  not_text: "%{line}행이 UTF-8이나 UTF-16 텍스트가 아닙니다. 스크립트를 UTF-8로 저장하세요. 바이너리 열이 있는 mysqldump는 --hex-blob이 필요합니다."
+  pg_archive: "스크립트가 아니라 pg_dump 아카이브입니다. pg_restore로 복원하거나 --format=plain --inserts로 다시 덤프하세요."
+  unreadable: "파일을 읽지 못했습니다: %{error}"
+  no_session: "스크립트를 실행할 세션을 열지 못했습니다: %{error}"
+  canceled: "문 %{count}개를 실행한 뒤 중지했습니다. 이미 실행한 내용은 남아 있습니다."
+  stop_question: "복원을 중지할까요? 이미 실행한 내용은 남아 있습니다."
+
+script:
+  unsupported: "%{line}행: 클라이언트 명령 %{command}은(는) 여기서 지원하지 않습니다."
+  copy_stdin: "%{line}행: COPY … FROM stdin은 지원하지 않습니다. --inserts로 덤프하세요."
+  missing_delimiter: "%{line}행: 명령에 구분자가 없습니다."
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ERD — %{scope}"
@@ -790,6 +836,7 @@ context:
   toggle_comment: 주석 토글
   format_sql: SQL 서식 정리
   run_statement: 현재 SQL 문 실행
+  run_this_statement: 이 SQL 문 실행
   run_selection: 선택 영역 실행
   run_all: 전체 실행
   explain: 실행 계획 보기
@@ -878,6 +925,7 @@ closing:
   work_extract: 실행 중인 추출
   work_transfer: 실행 중인 전송
   work_backup: 실행 중인 백업
+  work_restore: "실행 중인 복원"
 
 close_guard:
   title_window: "저장하지 않은 작업이 있는데 창을 닫을까요?"

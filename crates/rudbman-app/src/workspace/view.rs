@@ -452,6 +452,11 @@ impl Render for Workspace {
             .read(cx)
             .is_open()
             .then(|| div().absolute().inset_0().child(self.backup.clone()));
+        let restore = self
+            .restore
+            .read(cx)
+            .is_open()
+            .then(|| div().absolute().inset_0().child(self.restore.clone()));
         let update = self
             .update
             .read(cx)
@@ -537,6 +542,7 @@ impl Render for Workspace {
             .on_action(cx.listener(actions::unless_held(Self::extract_script_action)))
             .on_action(cx.listener(actions::unless_held(Self::transfer_table_action)))
             .on_action(cx.listener(actions::unless_held(Self::backup_schema_action)))
+            .on_action(cx.listener(actions::unless_held(Self::restore_schema_action)))
             .on_action(cx.listener(actions::unless_held(Self::open_erd_action)))
             .on_action(cx.listener(actions::unless_held(Self::add_to_builder_action)))
             .on_action(cx.listener(actions::unless_held(Self::new_builder_action)))
@@ -564,6 +570,7 @@ impl Render for Workspace {
             .children(extract)
             .children(transfer)
             .children(backup)
+            .children(restore)
             .children(update)
             .children(confirm)
             .children(rename_tab)
@@ -875,6 +882,7 @@ impl Workspace {
             row(ts!("menu.extract_script"), Box::new(ExtractScript)).disabled(!relation_live),
             row(ts!("menu.transfer_table"), Box::new(TransferTable)).disabled(!relation_live),
             row(ts!("menu.backup_schema"), Box::new(BackupSchema)).disabled(!scope_live),
+            row(ts!("menu.restore_schema"), Box::new(RestoreSchema)).disabled(!scope_live),
             row(ts!("menu.new_builder"), Box::new(NewBuilder)).disabled(!live),
             row(ts!("menu.add_to_builder"), Box::new(AddToBuilder)).disabled(!addable),
             MenuEntry::separator(),

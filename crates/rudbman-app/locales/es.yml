@@ -36,6 +36,7 @@ menu:
   copy_insert: Copiar la sentencia INSERT
   transfer_table: Transferir filas…
   backup_schema: Copia de seguridad del esquema…
+  restore_schema: "Restaurar desde un script…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagrama ERD
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -137,6 +138,11 @@ settings:
   confirm_writes_default: Preguntar antes de ejecutar una sentencia de escritura en una conexión nueva
   query_history: Guardar un historial de las sentencias que ejecutan las pestañas de consulta
   query_history_hint: Se guarda por perfil de conexión en la carpeta history del directorio de configuración, como texto sin cifrar. Al desactivarlo deja de registrarse y lo registrado se conserva; puedes borrarlo desde el diálogo del historial.
+  sql_file_date: Fecha en el nombre de archivo
+  sql_file_date_suffix: Después del nombre
+  sql_file_date_prefix: Antes del nombre
+  sql_file_date_omit: Ninguna
+  sql_file_date_hint: Se aplica al nombre que propone el diálogo de guardado para una pestaña de consulta nunca guardada, por ejemplo Consulta 1_20261114.sql o 20261114_Consulta 1.sql.
 
   jvm_heap: Montículo de Java
   jvm_heap_hint: MB — el -Xmx con el que corre un controlador
@@ -718,6 +724,46 @@ backup:
   skipped: "No se pudieron leer %{count} objetos y se omitieron:"
   skipped_more: "…y %{count} más"
 
+restore:
+  title: "Restaurar desde un script"
+  target: "Destino"
+  input: "Archivo de script"
+  input_none: "Ningún archivo elegido"
+  browse: "Elegir el script que restaurar"
+  continue_on_error: "Continuar tras las sentencias que fallen"
+  warning: "Cada sentencia del archivo se ejecuta tal cual en una sesión propia; sus sentencias DROP eliminan lo que nombran."
+  read_only: "Esta conexión es de solo lectura; no se puede restaurar nada en ella."
+  start: "Restaurar"
+  scanning: "Leyendo el script…"
+  scanned: "%{count} sentencias"
+  several: "El script crea objetos en varios lugares (%{names}); se restauran donde el script los nombra."
+  move: "Restaurar los objetos de %{source} en %{target}"
+  move_off: "Se restaurarán en %{source}, donde los nombra el script."
+  checking: "Comprobando el script…"
+  connecting: "Abriendo una sesión…"
+  running: "Ejecutando el script…"
+  canceling: "Deteniendo…"
+  counted: "%{statements} sentencias hasta ahora, %{bytes}"
+  counters: "%{done} de %{total} sentencias, %{bytes} de %{size}"
+  failed_so_far: "%{count} sentencias fallaron y se omitieron"
+  done: "Se ejecutaron %{count} sentencias de %{path}."
+  done_with_failures: "Se ejecutaron %{count} sentencias de %{path}; %{failed} fallaron y se omitieron:"
+  failure_line: "Línea %{line}: %{error}"
+  failed: "La línea %{line} falló después de ejecutarse %{count} sentencias: %{error}"
+  enter_failed: "No se pudo pasar al destino: %{error}"
+  refused: "No se ejecutó nada. %{reason}"
+  not_text: "La línea %{line} no es texto UTF-8 ni UTF-16. Guarde el script como UTF-8; un mysqldump con columnas binarias necesita --hex-blob."
+  pg_archive: "Esto es un archivo de pg_dump, no un script; restáurelo con pg_restore o vuelva a volcarlo con --format=plain --inserts."
+  unreadable: "No se pudo leer el archivo: %{error}"
+  no_session: "No se pudo abrir una sesión para ejecutar el script: %{error}"
+  canceled: "Detenido tras %{count} sentencias. Lo que hicieron se mantiene."
+  stop_question: "¿Detener la restauración? Lo ya ejecutado se mantiene."
+
+script:
+  unsupported: "Línea %{line}: el comando de cliente %{command} no se admite aquí."
+  copy_stdin: "Línea %{line}: COPY … FROM stdin no se admite; vuelque con --inserts."
+  missing_delimiter: "Línea %{line}: el comando no indica ningún delimitador."
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ERD — %{scope}"
@@ -790,6 +836,7 @@ context:
   toggle_comment: Comentar o descomentar
   format_sql: Dar formato al SQL
   run_statement: Ejecutar la sentencia
+  run_this_statement: Ejecutar esta sentencia
   run_selection: Ejecutar la selección
   run_all: Ejecutar todo
   explain: Ver plan de ejecución
@@ -878,6 +925,7 @@ closing:
   work_extract: Una extracción aún en curso
   work_transfer: Una transferencia aún en curso
   work_backup: Una copia de seguridad aún en curso
+  work_restore: "Una restauración aún en curso"
 
 close_guard:
   title_window: "¿Cerrar la ventana con trabajo sin guardar?"

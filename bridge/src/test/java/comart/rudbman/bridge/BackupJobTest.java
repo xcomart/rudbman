@@ -72,6 +72,8 @@ class BackupJobTest {
         assertEquals(Files.size(out), done.get("bytes").getAsLong(), done.toString());
 
         String script = read(out);
+        // The scope it was taken of, for a restore into another one.
+        assertTrue(script.startsWith("-- rudbman backup: {\"schema\":\"BK\"}\n"), script);
         // H2's own DDL, not a reconstruction.
         assertTrue(script.contains("CREATE MEMORY TABLE \"BK\".\"CHILD\""), script);
         assertTrue(!script.contains("ELSEWHERE"), "the scope was ignored:\n" + script);

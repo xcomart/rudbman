@@ -52,4 +52,4 @@ pub use profile::{
     TunnelAuth, TunnelConfig,
 };
 pub use secrets::{SecretSlot, SecretStore, init as init_secrets};
-pub use settings::{AppSettings, TitlebarStyle, WindowState};
+pub use settings::{AppSettings, SqlFileDate, TitlebarStyle, WindowState};

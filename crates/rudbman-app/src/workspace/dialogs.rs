@@ -1,5 +1,7 @@
 //! Dialogs.
 
+use rudbman_core::SqlFileDate;
+
 use super::*;
 
 impl Workspace {
@@ -71,17 +73,21 @@ impl Workspace {
         if self.backup.read(cx).is_open() && !self.backup.read(cx).is_running() {
             self.backup.update(cx, |dialog, cx| dialog.close(cx));
         }
+        if self.restore.read(cx).is_open() && !self.restore.read(cx).is_running() {
+            self.restore.update(cx, |dialog, cx| dialog.close(cx));
+        }
         if self.update.read(cx).is_open() {
             self.update.update(cx, |dialog, cx| dialog.close(cx));
         }
         !self.job_running(cx) && !self.update.read(cx).is_open()
     }
 
-    /// Whether one of the three job dialogs has a job running under it.
+    /// Whether one of the job dialogs has a job running under it.
     pub(super) fn job_running(&self, cx: &App) -> bool {
         self.extract.read(cx).is_running()
             || self.transfer.read(cx).is_running()
             || self.backup.read(cx).is_running()
+            || self.restore.read(cx).is_running()
     }
 
     /// Shows or hides the application dropdown menu.
@@ -331,6 +337,41 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens the restore dialog over `scope`, closing whatever else was
+    /// showing.
+    ///
+    /// Gated on the session the same way as the backup, and handed the
+    /// connection's dialect — the script is read the way that product's own
+    /// client reads one — and whether its profile is read-only, which the
+    /// form refuses.
+    pub(super) fn open_restore(
+        &mut self,
+        connection: ConnectionId,
+        scope: explorer::Scope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session_of(connection) else {
+            return;
+        };
+        let Some(profile) = self
+            .connections
+            .iter()
+            .find(|open| open.id == connection)
+            .map(|open| open.profile.clone())
+        else {
+            return;
+        };
+        if !self.close_overlays(window, cx) {
+            return;
+        }
+        let dialect = rudbman_sql::Dialect::from_id(&Self::dialect_of(&profile));
+        self.restore.update(cx, |dialog, cx| {
+            dialog.open(scope, session, dialect, profile.read_only, cx)
+        });
+        cx.notify();
+    }
+
     /// Reads `path` into a query pane on the connection whose tab is showing.
     ///
     /// The read is a background task because a script can be a hundred
@@ -448,7 +489,8 @@ impl Workspace {
     ///
     /// It opens where the bound file is, suggesting its name; a pane bound to
     /// none starts from the home directory, with the tab's `title` and today's
-    /// date made into a file name. Nothing waits on the prompt, for the reason
+    /// date, placed where the settings say, made into a file name. Nothing
+    /// waits on the prompt, for the reason
     /// [`Workspace::open_sql_file`] gives.
     pub(super) fn ask_where_to_save(
         &mut self,
@@ -465,7 +507,11 @@ impl Workspace {
             .unwrap_or_else(crate::extract_dialog::default_directory);
         let suggested = match bound.as_deref().and_then(Path::file_name) {
             Some(name) => name.to_string_lossy().into_owned(),
-            None => suggested_file_name(title, &chrono::Local::now().format("%Y%m%d").to_string()),
+            None => suggested_file_name(
+                title,
+                &chrono::Local::now().format("%Y%m%d").to_string(),
+                crate::app_settings::current(cx).sql_file_date,
+            ),
         };
         self.prompt_for_save(pane, directory, suggested, window, cx);
     }
@@ -816,16 +862,18 @@ fn with_sql_extension(path: &Path) -> PathBuf {
 }
 
 /// The file name a save dialog suggests for a tab titled `title`, saved on
-/// `date`.
+/// `date`, with the date where `placement` puts it.
 ///
-/// The title as it reads with `_` and the date after it, then `.sql` — before
-/// any `.sql` the title already ends with, so that a day's scripts sort
-/// together and a second day's does not offer to replace the first's. Every
+/// The title as it reads joined to the date by `_` — the date after it by
+/// default, so that a script's days sort together and a second day's does not
+/// offer to replace the first's; before it when the user sorts a folder by
+/// day; left out when they name their scripts themselves — then `.sql`, or
+/// whatever spelling of `.sql` the title already ends with. Every
 /// character a file name cannot hold on one of the three platforms is swapped
 /// for `_` — a tab the user named "매출/분석" is still a name worth starting
 /// from, but the slash would turn it into a directory. Trailing dots and
 /// spaces go too, which Windows would strip on its own.
-fn suggested_file_name(title: &str, date: &str) -> String {
+fn suggested_file_name(title: &str, date: &str, placement: SqlFileDate) -> String {
     let cleaned: String = title
         .chars()
         .map(|c| match c {
@@ -842,18 +890,24 @@ fn suggested_file_name(title: &str, date: &str) -> String {
         _ => (stem, ".sql"),
     };
     let stem = if stem.is_empty() { "query" } else { stem };
-    format!("{stem}_{date}{extension}")
+    match placement {
+        SqlFileDate::Suffix => format!("{stem}_{date}{extension}"),
+        SqlFileDate::Prefix => format!("{date}_{stem}{extension}"),
+        SqlFileDate::Omit => format!("{stem}{extension}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use rudbman_core::SqlFileDate;
+
     use super::{suggested_file_name, with_sql_extension};
 
     #[test]
     fn a_tab_title_becomes_a_dated_file_name_a_save_dialog_can_take() {
-        let name = |title| suggested_file_name(title, "20261107");
+        let name = |title| suggested_file_name(title, "20261107", SqlFileDate::Suffix);
         assert_eq!(name("쿼리 3"), "쿼리 3_20261107.sql");
         assert_eq!(name("매출/분석"), "매출_분석_20261107.sql");
         assert_eq!(name("a:b*c?"), "a_b_c__20261107.sql");
@@ -863,6 +917,21 @@ mod tests {
         assert_eq!(name("  "), "query_20261107.sql");
         assert_eq!(name(".sql"), "query_20261107.sql");
         assert_eq!(name("tab\tname"), "tab_name_20261107.sql");
+    }
+
+    #[test]
+    fn the_date_goes_where_the_settings_put_it() {
+        let name = |title, placement| suggested_file_name(title, "20261107", placement);
+        assert_eq!(name("쿼리 3", SqlFileDate::Prefix), "20261107_쿼리 3.sql");
+        assert_eq!(
+            name("REPORT.SQL", SqlFileDate::Prefix),
+            "20261107_REPORT.SQL"
+        );
+        assert_eq!(name("  ", SqlFileDate::Prefix), "20261107_query.sql");
+        assert_eq!(name("쿼리 3", SqlFileDate::Omit), "쿼리 3.sql");
+        assert_eq!(name("매출/분석", SqlFileDate::Omit), "매출_분석.sql");
+        assert_eq!(name("report.sql", SqlFileDate::Omit), "report.sql");
+        assert_eq!(name(".sql", SqlFileDate::Omit), "query.sql");
     }
 
     #[test]

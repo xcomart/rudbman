@@ -723,6 +723,7 @@ public final class BackupJob extends Jobs.Job {
     // ---------------------------------------------------------------- write
 
     private void write(ScriptOut out, Plan plan) throws Exception {
+        out.line(header());
         phase("ddl");
         List<Obj> dataOrder = runLocked(() -> {
             if (ddlInclude) {
@@ -1101,6 +1102,35 @@ public final class BackupJob extends Jobs.Job {
         }
         out.paragraph(text);
     }
+
+    /**
+     * The first line of every backup: a comment naming the scope it was taken
+     * of, {@code -- rudbman backup: {"catalog":"shop","schema":"dbo"}}, the
+     * names as the catalog stores them and absent where the request named
+     * none.
+     *
+     * <p>A backup names its objects in full, so a restore into another scope
+     * has to know which names to move. This line says it outright, rather
+     * than leaving the restore to read it off the statements; to every
+     * product's client it is a comment, so the script still replays with
+     * {@code psql}, {@code mysql}, {@code sqlcmd} or SQL*Plus as it stands.
+     * One line of JSON, so that a name with a quote or a line break in it
+     * cannot end the comment early.
+     */
+    String header() {
+        JsonObject scope = new JsonObject();
+        if (scopeCatalog != null && !scopeCatalog.isEmpty()) {
+            scope.addProperty("catalog", scopeCatalog);
+        }
+        if (scopeSchema != null && !scopeSchema.isEmpty()) {
+            scope.addProperty("schema", scopeSchema);
+        }
+        return HEADER + new com.google.gson.GsonBuilder().disableHtmlEscaping().create()
+                .toJson(scope);
+    }
+
+    /** What the first line of a backup starts with; see {@link #header}. */
+    static final String HEADER = "-- rudbman backup: ";
 
     private static void lines(ScriptOut out, List<String> statements) throws IOException {
         for (String s : statements) {

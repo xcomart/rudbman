@@ -36,7 +36,7 @@ use gpui::{
     KeyBinding, KeyDownEvent, MouseButton, MouseUpEvent, Render, ScrollHandle, SharedString,
     Subscription, Window, actions, div, prelude::*, px,
 };
-use rudbman_core::{AppSettings, TitlebarStyle};
+use rudbman_core::{AppSettings, SqlFileDate, TitlebarStyle};
 use rugpui::SmoothScrollExt;
 use rugpui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, EditorTheme, EditorThemeRegistry, SchemePreview,
@@ -80,6 +80,21 @@ fn titlebar_options() -> [(&'static str, SharedString); 2] {
         ("system", ts!("settings.titlebar_system")),
     ]
 }
+
+/// Segments of the SQL file name date picker, in [`SQL_FILE_DATES`] order.
+///
+/// Ids and labels as in [`titlebar_options`].
+fn sql_file_date_options() -> [(&'static str, SharedString); 3] {
+    [
+        ("suffix", ts!("settings.sql_file_date_suffix")),
+        ("prefix", ts!("settings.sql_file_date_prefix")),
+        ("omit", ts!("settings.sql_file_date_omit")),
+    ]
+}
+
+/// The choices [`sql_file_date_options`] labels, segment by segment.
+const SQL_FILE_DATES: [SqlFileDate; 3] =
+    [SqlFileDate::Suffix, SqlFileDate::Prefix, SqlFileDate::Omit];
 
 /// Label of the entry that hands the choice back to the operating system.
 ///
@@ -147,6 +162,8 @@ mod tab {
     pub const CONFIRM_WRITES: isize = 130;
     /// "Keep a history of the statements run" toggle.
     pub const QUERY_HISTORY: isize = 135;
+    /// Where a saved query tab's suggested file name puts the date.
+    pub const SQL_FILE_DATE: isize = 137;
     /// Java heap ceiling.
     pub const JVM_HEAP: isize = 140;
     /// Extra JVM arguments.
@@ -308,6 +325,8 @@ pub struct SettingsDialog {
     confirm_writes_default: bool,
     /// Whether the statements query tabs run are written into the history.
     query_history: bool,
+    /// Where the date goes in the file name a query tab's save suggests.
+    sql_file_date: SqlFileDate,
     /// Editor font family; `None` means the per-OS default.
     font_family: Option<SharedString>,
     /// The chrome palettes, as the management row and the editor see them.
@@ -471,6 +490,7 @@ impl SettingsDialog {
             titlebar: defaults.window.titlebar,
             confirm_writes_default: defaults.confirm_writes_default,
             query_history: defaults.query_history,
+            sql_file_date: defaults.sql_file_date,
             font_family: defaults.editor_font_family.map(SharedString::from),
             ui_catalog,
             editor_catalog,
@@ -748,6 +768,7 @@ impl SettingsDialog {
         self.titlebar = settings.window.titlebar;
         self.confirm_writes_default = settings.confirm_writes_default;
         self.query_history = settings.query_history;
+        self.sql_file_date = settings.sql_file_date;
         self.font_family = settings.editor_font_family.clone().map(SharedString::from);
 
         set_text(
@@ -804,6 +825,7 @@ impl SettingsDialog {
         settings.editor_word_wrap = self.editor_word_wrap;
         settings.confirm_writes_default = self.confirm_writes_default;
         settings.query_history = self.query_history;
+        settings.sql_file_date = self.sql_file_date;
         settings.window.titlebar = self.titlebar;
         settings.window.background_blur = self.background_blur;
 
@@ -1430,9 +1452,28 @@ impl SettingsDialog {
         let query_history = Checkbox::new("settings-query-history", ts!("settings.query_history"))
             .checked(self.query_history)
             .tab_index(tab::QUERY_HISTORY)
-            .on_toggle(move |checked, _window, cx| {
+            .on_toggle({
+                let this = this.clone();
+                move |checked, _window, cx| {
+                    this.update(cx, |dialog, cx| {
+                        dialog.query_history = checked;
+                        cx.notify();
+                    });
+                }
+            });
+
+        let sql_file_date = Segmented::new("settings-sql-file-date")
+            .options(sql_file_date_options())
+            .selected(
+                SQL_FILE_DATES
+                    .iter()
+                    .position(|choice| *choice == self.sql_file_date)
+                    .unwrap_or_default(),
+            )
+            .tab_index(tab::SQL_FILE_DATE)
+            .on_select(move |index, _window, cx| {
                 this.update(cx, |dialog, cx| {
-                    dialog.query_history = checked;
+                    dialog.sql_file_date = SQL_FILE_DATES.get(index).copied().unwrap_or_default();
                     cx.notify();
                 });
             });
@@ -1479,7 +1520,12 @@ impl SettingsDialog {
                 )
                 .child(form_row("", confirm_writes).label_width(self.label_width))
                 .child(form_row("", query_history).label_width(self.label_width))
-                .child(hint(ts!("settings.query_history_hint"), cx)),
+                .child(hint(ts!("settings.query_history_hint"), cx))
+                .child(
+                    form_row(ts!("settings.sql_file_date"), sql_file_date)
+                        .label_width(self.label_width),
+                )
+                .child(hint(ts!("settings.sql_file_date_hint"), cx)),
         )
     }
 
@@ -1635,6 +1681,7 @@ impl SettingsDialog {
             ts!("settings.fetch_batch_rows"),
             ts!("settings.query_timeout"),
             ts!("settings.login_timeout"),
+            ts!("settings.sql_file_date"),
             ts!("settings.jvm_heap"),
             ts!("settings.jvm_args"),
         ]
@@ -1733,7 +1780,7 @@ fn section_of(tab_index: isize) -> usize {
         index if index <= tab::EDITOR_WORD_WRAP => 0,
         index if index <= tab::TITLEBAR => 1,
         index if index <= tab::LANGUAGE => 2,
-        index if index <= tab::CONFIRM_WRITES => 3,
+        index if index <= tab::SQL_FILE_DATE => 3,
         _ => 4,
     }
 }
@@ -1774,6 +1821,7 @@ mod tests {
             login_timeout_s: 12,
             confirm_writes_default: false,
             query_history: false,
+            sql_file_date: SqlFileDate::Omit,
             window: WindowState {
                 x: Some(120),
                 y: Some(60),
@@ -1981,6 +2029,9 @@ mod tests {
         for (_, label) in titlebar_options() {
             translated(label);
         }
+        for (_, label) in sql_file_date_options() {
+            translated(label);
+        }
         for label in [
             ts!("settings.title"),
             ts!("settings.section.appearance"),
@@ -2011,6 +2062,8 @@ mod tests {
             ts!("settings.confirm_writes_default"),
             ts!("settings.query_history"),
             ts!("settings.query_history_hint"),
+            ts!("settings.sql_file_date"),
+            ts!("settings.sql_file_date_hint"),
             ts!("settings.jvm_heap"),
             ts!("settings.jvm_heap_hint"),
             ts!("settings.jvm_args"),
@@ -2083,6 +2136,8 @@ mod tests {
             tab::QUERY_TIMEOUT,
             tab::LOGIN_TIMEOUT,
             tab::CONFIRM_WRITES,
+            tab::QUERY_HISTORY,
+            tab::SQL_FILE_DATE,
         ] {
             assert_eq!(section_of(index), 3, "{index}");
         }

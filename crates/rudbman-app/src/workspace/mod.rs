@@ -31,10 +31,10 @@ use crate::{
     AddToBuilder, BackupSchema, CheckUpdates, ClosePane, CloseTab, DismissDialog, ExplainQuery,
     ExtractScript, FocusNextPane, FocusPrevPane, NewBuilder, NewConnection, NewQuery,
     NextConnection, NextRegion, NextTab, OpenErd, OpenSettings, OpenSqlFile, OpenUserGuide,
-    PrevConnection, PrevRegion, PrevTab, QueryObject, Quit, ReopenClosedTab, SaveSqlFile,
-    SaveSqlFileAs, SelectTab, ShowAbout, ShowQueryHistory, ShowShortcuts, SplitBelow, SplitRight,
-    ToggleExplorer, TransferTable, app_identity, app_settings, builder_pane, builder_sql,
-    connection, context_menu, erd_pane, explorer, i18n, icons, table_detail,
+    PrevConnection, PrevRegion, PrevTab, QueryObject, Quit, ReopenClosedTab, RestoreSchema,
+    SaveSqlFile, SaveSqlFileAs, SelectTab, ShowAbout, ShowQueryHistory, ShowShortcuts, SplitBelow,
+    SplitRight, ToggleExplorer, TransferTable, app_identity, app_settings, builder_pane,
+    builder_sql, connection, context_menu, erd_pane, explorer, i18n, icons, table_detail,
 };
 
 mod actions;
@@ -98,6 +98,7 @@ use crate::explorer::{
     ConnectionId, Explorer, ExplorerEvent, Folder, NodeId, ObjectTarget, RootInfo,
 };
 use crate::extract_dialog::{ExtractDialog, ExtractDialogEvent};
+use crate::restore_dialog::{RestoreDialog, RestoreDialogEvent};
 
 /// Which statement the explorer's "copy … statement" rows write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -752,6 +753,8 @@ struct Workspace {
     transfer: Entity<TransferDialog>,
     /// The schema backup dialog, rendered only while it reports itself open.
     backup: Entity<BackupDialog>,
+    /// The restore dialog, rendered only while it reports itself open.
+    restore: Entity<RestoreDialog>,
     /// The update dialog, rendered only while it reports itself open.
     ///
     /// Two things open it: the start-up check in [`update`], at most once per
@@ -833,6 +836,8 @@ struct Workspace {
     _transfer_events: Subscription,
     /// Keeps the backup dialog subscription alive.
     _backup_events: Subscription,
+    /// Keeps the restore dialog subscription alive.
+    _restore_events: Subscription,
     /// Keeps the update dialog subscription alive.
     _update_events: Subscription,
     /// Records the window's placement as it is moved and resized.
@@ -878,6 +883,9 @@ impl Workspace {
 
         let backup = cx.new(BackupDialog::new);
         let backup_events = cx.subscribe_in(&backup, window, Self::on_backup_event);
+
+        let restore = cx.new(RestoreDialog::new);
+        let restore_events = cx.subscribe_in(&restore, window, Self::on_restore_event);
 
         let update = cx.new(UpdateDialog::new);
         let update_events = cx.subscribe_in(&update, window, Self::on_update_event);
@@ -951,6 +959,7 @@ impl Workspace {
             extract,
             transfer,
             backup,
+            restore,
             update,
             menu_open: false,
             menu_by_keyboard: false,
@@ -977,6 +986,7 @@ impl Workspace {
             _extract_events: extract_events,
             _transfer_events: transfer_events,
             _backup_events: backup_events,
+            _restore_events: restore_events,
             _update_events: update_events,
             _bounds: bounds,
             _button_layout: button_layout,

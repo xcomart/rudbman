@@ -246,7 +246,7 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             // is no schema to make one in.
             let rows = workspace.explorer_rows(&root, cx);
             assert_eq!(context_menu::labels(&rows), scope_labels());
-            assert_eq!(context_menu::grayed(&rows), scope_labels()[..2]);
+            assert_eq!(context_menu::grayed(&rows), scope_labels()[..3]);
         })
         .expect("the window is open");
 

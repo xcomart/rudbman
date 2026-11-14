@@ -181,7 +181,10 @@ fn sql_server_reads_plain_selects_through_a_server_cursor() {
 
 #[test]
 fn a_selection_is_cut_into_its_statements_where_it_sits_in_the_editor() {
-    use crate::query::statements::selection_statements;
+    use crate::query::statements;
+    let selection_statements = |selected: &str, offset: usize, dialect: &Dialect| {
+        statements::selection_statements(selected, offset, dialect).unwrap()
+    };
     let sql = |cut: &[(String, Option<std::ops::Range<usize>>)]| {
         cut.iter().map(|(sql, _)| sql.clone()).collect::<Vec<_>>()
     };
@@ -234,5 +237,130 @@ fn a_selection_is_cut_into_its_statements_where_it_sits_in_the_editor() {
             &Dialect::MYSQL
         )),
         ["/*!40101 SET @x = 1 */ select 1", "select 2"]
+    );
+}
+
+#[test]
+fn run_all_cuts_the_script_the_way_its_client_does() {
+    use crate::query::statements::{script_statements, selection_statements};
+    let sql = |cut: Vec<(String, Option<std::ops::Range<usize>>)>| {
+        cut.into_iter().map(|(sql, _)| sql).collect::<Vec<_>>()
+    };
+
+    // A MySQL script with its routine between DELIMITER lines, which the
+    // semicolon splitter cut into fragments.
+    let mysql = "DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END//\n\
+                 DELIMITER ;\nCALL p();";
+    assert_eq!(
+        sql(script_statements(mysql, 0, &Dialect::MYSQL).unwrap()),
+        [
+            "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
+            "CALL p()"
+        ]
+    );
+
+    // SQL Server batches, and a routine whose body runs to its GO.
+    let mssql = "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;\nGO\nEXEC p;\nselect 3";
+    assert_eq!(
+        sql(script_statements(mssql, 0, &Dialect::MSSQL).unwrap()),
+        [
+            "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;",
+            "EXEC p",
+            "select 3"
+        ]
+    );
+
+    // An Oracle unit runs to its slash, and the rest is cut as before.
+    let oracle = "create or replace procedure p as\nbegin\n  null;\nend;\n/\nselect 1 from dual;";
+    let cut = script_statements(oracle, 0, &Dialect::ORACLE).unwrap();
+    assert_eq!(
+        sql(cut.clone()),
+        [
+            "create or replace procedure p as\nbegin\n  null;\nend;",
+            "select 1 from dual"
+        ]
+    );
+    let range = cut[1].1.clone().unwrap();
+    assert_eq!(&oracle[range], "select 1 from dual");
+
+    // A command the run cannot carry out stops it before anything is sent,
+    // pointing at its line.
+    let error = script_statements("select 1;\n\\connect other\n", 0, &Dialect::POSTGRES)
+        .expect_err("\\connect cannot be run");
+    assert_eq!(error.line, 2);
+
+    // A selection with a client line in it is cut the same way, at its place
+    // in the editor.
+    let cut = selection_statements("select 1\nGO\nselect 2", 10, &Dialect::MSSQL).unwrap();
+    assert_eq!(
+        cut,
+        [
+            ("select 1".to_string(), Some(10..18)),
+            ("select 2".to_string(), Some(22..30)),
+        ]
+    );
+    // One without keeps the old fallback: a routine typed without DELIMITER
+    // lines goes whole.
+    let routine = "create procedure p() begin select 1; select 2; end";
+    assert_eq!(
+        sql(selection_statements(routine, 0, &Dialect::MYSQL).unwrap()),
+        [routine]
+    );
+}
+
+#[test]
+fn run_statement_sends_the_unit_the_editor_highlighted() {
+    use crate::query::statements::editor_statement;
+    use crate::sql_highlight::DialectHighlighter;
+    use rugpui_editor::{Buffer, SyntaxCache, syntax};
+
+    // What the editor highlights at `needle`, and what "Run statement" sends
+    // for it.
+    let run = |script: &str, needle: &str, dialect: Dialect| {
+        let buffer = Buffer::new(script);
+        let cache = SyntaxCache::new(&buffer, Some(DialectHighlighter::shared(dialect)));
+        let at = script.find(needle).expect("the needle is in the script");
+        let span = syntax::statement_at(&buffer, &cache, at).expect("a statement");
+        editor_statement(script, span, &dialect)
+    };
+
+    // A body is sent whole, and without the terminator a driver would refuse.
+    let mysql = "CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND;\nCALL p();";
+    let (sql, range) = run(mysql, "SELECT 2", Dialect::MYSQL).unwrap();
+    assert_eq!(
+        sql,
+        "CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND"
+    );
+    assert_eq!(&mysql[range.unwrap()], sql);
+    let delimited = "DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; END//\nDELIMITER ;";
+    assert_eq!(
+        run(delimited, "SELECT 1", Dialect::MYSQL).unwrap().0,
+        "CREATE PROCEDURE p() BEGIN SELECT 1; END"
+    );
+    // PL/SQL keeps its `END;`, and SQL*Plus's `EXEC` is the block it stands for.
+    let oracle = "begin\n  null;\nend;\n/\nexec dbms_lock.sleep(1)\n";
+    assert_eq!(
+        run(oracle, "null", Dialect::ORACLE).unwrap().0,
+        "begin\n  null;\nend;"
+    );
+    assert_eq!(
+        run(oracle, "exec", Dialect::ORACLE).unwrap().0,
+        "BEGIN dbms_lock.sleep(1); END;"
+    );
+    // A T-SQL routine runs to its GO.
+    let mssql = "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;\nGO\nEXEC p";
+    assert_eq!(
+        run(mssql, "SELECT 2", Dialect::MSSQL).unwrap().0,
+        "CREATE PROCEDURE p AS\n  SELECT 1;\n  SELECT 2;"
+    );
+    // A line the client would refuse is refused here too, with its line.
+    let error = run("select 1;\n\\connect other\n", "connect", Dialect::POSTGRES)
+        .expect_err("\\connect cannot be run");
+    assert_eq!(error.line, 2);
+    // Plain statements go as they always went.
+    let plain = "select 1;\nselect 2;";
+    assert_eq!(
+        run(plain, "2", Dialect::POSTGRES).unwrap(),
+        ("select 2".to_string(), Some(10..18))
     );
 }

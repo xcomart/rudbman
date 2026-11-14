@@ -36,6 +36,7 @@ menu:
   copy_insert: INSERT 文をコピー
   transfer_table: 行を転送…
   backup_schema: スキーマをバックアップ…
+  restore_schema: "スクリプトから復元…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER図
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -137,6 +138,11 @@ settings:
   confirm_writes_default: 新しい接続では書き込み文の実行前に確認する
   query_history: クエリタブで実行した文の履歴を残す
   query_history_hint: 接続プロファイルごとに設定フォルダー内の history フォルダーへプレーンテキストで保存されます。オフにすると記録を止め、記録済みの内容は残ります。履歴ダイアログから削除できます。
+  sql_file_date: ファイル名の日付
+  sql_file_date_suffix: 名前の後ろ
+  sql_file_date_prefix: 名前の前
+  sql_file_date_omit: 付けない
+  sql_file_date_hint: "一度も保存していないクエリタブを保存するとき、ダイアログが提案する名前に使われます。例: クエリ 1_20261114.sql、20261114_クエリ 1.sql"
 
   jvm_heap: Java ヒープ
   jvm_heap_hint: MB — ドライバーが動作する -Xmx
@@ -718,6 +724,46 @@ backup:
   skipped: "読み取れなかったオブジェクト %{count} 個を除いて書き出しました:"
   skipped_more: "…ほか %{count} 個"
 
+restore:
+  title: "スクリプトから復元"
+  target: "復元先"
+  input: "スクリプトファイル"
+  input_none: "ファイルが選択されていません"
+  browse: "復元するスクリプトを選択"
+  continue_on_error: "失敗した文を飛ばして続行する"
+  warning: "ファイル内のすべての文を、専用のセッションで書かれたとおりに実行します。DROP 文は対象のオブジェクトを削除します。"
+  read_only: "この接続は読み取り専用のため、復元できません。"
+  start: "復元"
+  scanning: "スクリプトを読み込んでいます…"
+  scanned: "%{count} 文"
+  several: "スクリプトは複数の場所（%{names}）にオブジェクトを作成します。スクリプトに書かれた場所にそのまま復元します。"
+  move: "%{source} のオブジェクトを %{target} に復元する"
+  move_off: "スクリプトに書かれた %{source} に復元します。"
+  checking: "スクリプトを確認しています…"
+  connecting: "セッションを開いています…"
+  running: "スクリプトを実行しています…"
+  canceling: "停止しています…"
+  counted: "これまでに %{statements} 文、%{bytes}"
+  counters: "%{total} 文中 %{done} 文、%{size} 中 %{bytes}"
+  failed_so_far: "%{count} 文が失敗し、飛ばしました"
+  done: "%{path} の %{count} 文を実行しました。"
+  done_with_failures: "%{path} の %{count} 文を実行しました。%{failed} 文は失敗し、飛ばしました:"
+  failure_line: "%{line} 行目: %{error}"
+  failed: "%{count} 文を実行した後、%{line} 行目で失敗しました: %{error}"
+  enter_failed: "復元先に切り替えられませんでした: %{error}"
+  refused: "何も実行していません。%{reason}"
+  not_text: "%{line} 行目が UTF-8 または UTF-16 のテキストではありません。スクリプトを UTF-8 で保存してください。バイナリ列を含む mysqldump には --hex-blob が必要です。"
+  pg_archive: "これはスクリプトではなく pg_dump のアーカイブです。pg_restore で復元するか、--format=plain --inserts でダンプし直してください。"
+  unreadable: "ファイルを読み込めませんでした: %{error}"
+  no_session: "スクリプトを実行するセッションを開けませんでした: %{error}"
+  canceled: "%{count} 文を実行した後に停止しました。実行済みの内容は残ります。"
+  stop_question: "復元を停止しますか？実行済みの内容は残ります。"
+
+script:
+  unsupported: "%{line} 行目: クライアントコマンド %{command} はここではサポートされていません。"
+  copy_stdin: "%{line} 行目: COPY … FROM stdin はサポートされていません。--inserts でダンプしてください。"
+  missing_delimiter: "%{line} 行目: コマンドに区切り文字がありません。"
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 erd:
   tab: "ER図 — %{scope}"
@@ -790,6 +836,7 @@ context:
   toggle_comment: コメントの切り替え
   format_sql: SQL を整形
   run_statement: 文を実行
+  run_this_statement: この文を実行
   run_selection: 選択範囲を実行
   run_all: すべて実行
   explain: 実行計画を表示
@@ -878,6 +925,7 @@ closing:
   work_extract: 実行中の抽出
   work_transfer: 実行中の転送
   work_backup: 実行中のバックアップ
+  work_restore: "実行中の復元"
 
 close_guard:
   title_window: "未保存の作業があります。ウィンドウを閉じますか？"

@@ -107,9 +107,11 @@ impl Workspace {
         let settings = app_settings::current(cx);
         let attempt = profile.clone();
         // Read here, on the UI thread, and moved straight into the task: the
-        // secret exists as a value for the length of one connection attempt and
-        // is written to nothing. Typed into the dialog instead when the profile
-        // keeps none, or the keychain would not take it.
+        // secret is written to nothing. Typed into the dialog instead when the
+        // profile keeps none, or the keychain would not take it. The session
+        // that opens keeps it in memory, in the specification it was opened
+        // with, so that a restore can open a second session without asking
+        // again (`SessionHandle::open_sibling`).
         let credentials = typed.unwrap_or_else(|| connection::Credentials::read(profile));
         let opening = cx.background_spawn(async move {
             connection::connect(&attempt, &driver, &credentials, &settings)

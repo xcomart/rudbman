@@ -2,6 +2,10 @@
 
 use super::*;
 use rudbman_sql::lexer::TokenKind;
+use rudbman_sql::{
+    ScriptError, ScriptErrorKind, has_client_directives, script_units, split_script,
+};
+use rugpui_editor::StatementSpan;
 
 /// Whether `sql` is a statement `confirm_writes` should ask about.
 ///
@@ -16,22 +20,96 @@ pub fn is_write_statement(sql: &str, dialect: &Dialect) -> bool {
                 || sql.contains("/*M!"))
 }
 
+/// One statement a run sends, and the range of the editor it was cut from.
+pub(super) type EditorStatement = (String, Option<std::ops::Range<usize>>);
+
+/// The statements "Run all" sends: `text`, which starts at `offset` in the
+/// editor, cut the way the product's own command-line client cuts a script
+/// ([`rudbman_sql::split_script`]) — so a `DELIMITER`, a `GO`, SQL\*Plus's
+/// `/` and its `SET DEFINE OFF` mean in the editor what they mean in a file
+/// restored from a backup.
+///
+/// # Errors
+///
+/// The line holding a client command the run cannot carry out — `\connect`,
+/// `SOURCE`, `@file` — before anything is sent.
+pub(super) fn script_statements(
+    text: &str,
+    offset: usize,
+    dialect: &Dialect,
+) -> Result<Vec<EditorStatement>, ScriptError> {
+    Ok(split_script(text, dialect)?
+        .into_iter()
+        .map(|statement| {
+            (
+                statement.sql,
+                Some(offset + statement.range.start..offset + statement.range.end),
+            )
+        })
+        .collect())
+}
+
+/// What "Run statement" sends for the editor's `span` of `text`, and the
+/// range of the editor it was cut from.
+///
+/// The editor cuts its statements with [`rudbman_sql::script_units`] (see
+/// [`crate::sql_highlight`]), so `span` is one of those units, and it is sent
+/// the way "Run all" sends that statement: a SQL\*Plus `EXEC` as the block it
+/// stands for, a body whole, a line the client would refuse refused. A
+/// document too long for the editor to cut that way
+/// ([`rugpui_editor::syntax::MAX_SPLIT`]) was cut by its semicolons, and its
+/// span is sent as it reads, so that what runs is what was highlighted.
+///
+/// # Errors
+///
+/// The unit's refusal: a `\connect`, a `COPY … FROM stdin`.
+pub(super) fn editor_statement(
+    text: &str,
+    span: StatementSpan,
+    dialect: &Dialect,
+) -> Result<EditorStatement, ScriptError> {
+    let as_written = || (span.sql(text).to_string(), Some(span.sql_range()));
+    if text.len() > rugpui_editor::syntax::MAX_SPLIT {
+        return Ok(as_written());
+    }
+    match script_units(text, dialect)
+        .into_iter()
+        .find(|unit| unit.range.start == span.start)
+    {
+        Some(unit) => unit
+            .run
+            .map(|statement| (statement.sql, Some(statement.range))),
+        None => Ok(as_written()),
+    }
+}
+
 /// The statements a run of the selection sends, each with the range of the
 /// editor it was cut from: `selected` is the selected text and `offset` where
 /// it starts in the editor.
 ///
-/// Split like a run of the whole script, because a driver is handed one
-/// statement at a time — MySQL's and MariaDB's refuse several in one without
-/// `allowMultiQueries`, and the others would answer with the first result
-/// only. Sent whole, as written, when splitting would lose part of it: a
-/// procedural block the splitter would cut into fragments
+/// A selection holding one of the client's own lines — a `DELIMITER`, a `GO`,
+/// a `/` — is cut as "Run all" cuts a script ([`script_statements`]). Without
+/// one it is split like a run of the whole script, because a driver is handed
+/// one statement at a time — MySQL's and MariaDB's refuse several in one
+/// without `allowMultiQueries`, and the others would answer with the first
+/// result only — and sent whole, as written, when splitting would lose part
+/// of it: a procedural block the splitter would cut into fragments
 /// ([`rudbman_sql::holds_procedural_block`]), and a MySQL executable comment
 /// standing as a statement of its own, which the splitter drops as a comment.
+/// That fallback is what lets a selected `CREATE PROCEDURE` run without the
+/// `DELIMITER` lines a file would need around it.
+///
+/// # Errors
+///
+/// As [`script_statements`], for a selection read as a script.
 pub(super) fn selection_statements(
     selected: &str,
     offset: usize,
     dialect: &Dialect,
-) -> Vec<(String, Option<std::ops::Range<usize>>)> {
+) -> Result<Vec<EditorStatement>, ScriptError> {
+    if has_client_directives(selected, dialect) {
+        return script_statements(selected, offset, dialect);
+    }
     let spans = split_statements(selected, dialect);
     let dropped_executable = || {
         rudbman_sql::lex(selected, dialect).iter().any(|token| {
@@ -44,9 +122,12 @@ pub(super) fn selection_statements(
         })
     };
     if spans.is_empty() || holds_procedural_block(selected, dialect) || dropped_executable() {
-        return vec![(selected.to_string(), Some(offset..offset + selected.len()))];
+        return Ok(vec![(
+            selected.to_string(),
+            Some(offset..offset + selected.len()),
+        )]);
     }
-    spans
+    Ok(spans
         .into_iter()
         .map(|span| {
             (
@@ -54,7 +135,22 @@ pub(super) fn selection_statements(
                 Some(offset + span.start..offset + span.sql_end),
             )
         })
-        .collect()
+        .collect())
+}
+
+/// What the notice says about a script line a run will not send.
+pub(crate) fn script_refusal(error: &ScriptError) -> SharedString {
+    match &error.kind {
+        ScriptErrorKind::Unsupported(command) => ts!(
+            "script.unsupported",
+            line = error.line,
+            command = command.as_str()
+        ),
+        ScriptErrorKind::CopyFromStdin => ts!("script.copy_stdin", line = error.line),
+        ScriptErrorKind::MissingDelimiter => {
+            ts!("script.missing_delimiter", line = error.line)
+        }
+    }
 }
 
 /// Quotes an identifier the way `dialect` spells a quoted identifier.

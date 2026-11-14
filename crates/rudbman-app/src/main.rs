@@ -37,6 +37,8 @@ mod pane_tree;
 mod query;
 mod query_history;
 mod query_source;
+mod restore;
+mod restore_dialog;
 mod row_apply;
 mod settings_dialog;
 mod sql_highlight;
@@ -101,6 +103,9 @@ actions!(
         /// Open the backup dialog over the scope the explorer's selection sits
         /// in.
         BackupSchema,
+        /// Open the restore dialog over the scope the explorer's selection
+        /// sits in.
+        RestoreSchema,
         /// Draw the ERD of the scope the explorer's selection sits in.
         OpenErd,
         /// Put the object selected in the explorer onto a query builder.

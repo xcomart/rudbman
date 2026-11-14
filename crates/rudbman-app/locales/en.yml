@@ -80,6 +80,8 @@ menu:
   transfer_table: Transfer rows…
   # Opens the backup dialog over the scope the explorer's selection sits in.
   backup_schema: Back up schema…
+  # Opens the restore dialog over the scope the explorer's selection sits in.
+  restore_schema: "Restore from script…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD diagram
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -235,6 +237,11 @@ settings:
   confirm_writes_default: Ask before running a write statement on a new connection
   query_history: Keep a history of the statements query tabs run
   query_history_hint: Kept per connection profile in the history folder of the configuration directory, as plain text. Turning this off stops recording and keeps what was recorded; the history dialog deletes it.
+  sql_file_date: SQL file name date
+  sql_file_date_suffix: After the name
+  sql_file_date_prefix: Before the name
+  sql_file_date_omit: None
+  sql_file_date_hint: Applies to the name the save dialog suggests for a query tab that has never been saved, e.g. Query 1_20261114.sql or 20261114_Query 1.sql.
 
   jvm_heap: Java heap
   jvm_heap_hint: MB — the -Xmx a driver runs under
@@ -1165,6 +1172,64 @@ backup:
   skipped: "%{count} objects could not be read and were left out:"
   skipped_more: "…and %{count} more"
 
+# The restore dialog: a script file run against the scope the explorer's
+# selection sits in, read the way the product's own command-line client
+# reads one.
+restore:
+  title: "Restore from a script"
+  # The scope the dialog was opened over: the names a script leaves
+  # unqualified land there.
+  target: "Into"
+  input: "Script file"
+  input_none: "No file chosen"
+  # The title of the file picker.
+  browse: "Choose the script to restore"
+  continue_on_error: "Continue past failed statements"
+  warning: "Every statement in the file runs on a session of its own, as it is written; its DROP statements remove what they name."
+  read_only: "This connection is read-only, so nothing can be restored into it."
+  start: "Restore"
+  # Under the file, once it has been read through: how many statements it
+  # holds, and where the script puts its objects when that is not the
+  # target. `source` and `target` are a catalog and schema as the database
+  # names them.
+  scanning: "Reading the script…"
+  scanned: "%{count} statements"
+  several: "The script names objects in several scopes (%{names}); they are restored where it names them."
+  move: "Restore the objects of %{source} into %{target}"
+  move_off: "They will be restored into %{source}, where the script names them."
+  # The progress card. The script is read through once before anything
+  # runs, so a line it cannot carry out stops it before anything changes.
+  checking: "Checking the script…"
+  connecting: "Opening a session…"
+  running: "Running the script…"
+  canceling: "Stopping…"
+  # `bytes` and `size` arrive already formatted with their unit symbols.
+  counted: "%{statements} statements so far, %{bytes}"
+  counters: "%{done} of %{total} statements, %{bytes} of %{size}"
+  failed_so_far: "%{count} statements failed and were passed"
+  done: "Ran %{count} statements from %{path}."
+  done_with_failures: "Ran %{count} statements from %{path}; %{failed} failed and were passed:"
+  failure_line: "Line %{line}: %{error}"
+  failed: "Line %{line} failed, after %{count} statements had run: %{error}"
+  enter_failed: "The target could not be entered: %{error}"
+  # `reason` is one of the four sentences below, or a script line the run
+  # cannot carry out (the `script` namespace).
+  refused: "Nothing was run. %{reason}"
+  not_text: "Line %{line} is not UTF-8 or UTF-16 text. Save the script as UTF-8; a mysqldump with binary columns needs --hex-blob."
+  pg_archive: "This is a pg_dump archive, not a script; restore it with pg_restore, or dump with --format=plain --inserts."
+  unreadable: "The file could not be read: %{error}"
+  no_session: "No session could be opened to run the script on: %{error}"
+  canceled: "Stopped after %{count} statements. What they did stays."
+  stop_question: "Stop the restore? What already ran stays."
+
+# A script line "Run all", "Run selection" and a restore will not send: a
+# command of the product's own command-line client that cannot be carried
+# out here. `command` is the command as the script spells it.
+script:
+  unsupported: "Line %{line}: the client command %{command} is not supported here."
+  copy_stdin: "Line %{line}: COPY … FROM stdin is not supported; dump with --inserts instead."
+  missing_delimiter: "Line %{line}: the command names no delimiter."
+
 # The ERD panel: one schema's tables and the foreign keys between them.
 #
 # Never translated: table and column names, type names, and the "SVG" and
@@ -1296,6 +1361,9 @@ context:
   toggle_comment: Toggle comment
   format_sql: Format SQL
   run_statement: Run statement
+  # The tooltip of the ▶ beside each statement's first line in the editor's
+  # gutter, which runs that statement rather than the one the caret is in.
+  run_this_statement: Run this statement
   run_selection: Run selection
   run_all: Run all
   # Reads the statement's plan without running it. Also a toolbar button and
@@ -1426,6 +1494,7 @@ closing:
   work_extract: An extraction still running
   work_transfer: A transfer still running
   work_backup: A backup still running
+  work_restore: "A restore still running"
 
 # The window's close guard: asked before a quit, a close of the window or the
 # restart an update ends in would lose what is listed under the message.

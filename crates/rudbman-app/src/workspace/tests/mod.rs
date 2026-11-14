@@ -295,6 +295,7 @@ fn scope_labels() -> Vec<String> {
     vec![
         ts!("menu.erd").to_string(),
         ts!("menu.backup_schema").to_string(),
+        ts!("menu.restore_schema").to_string(),
         String::new(),
         ts!("explorer.refresh").to_string(),
     ]

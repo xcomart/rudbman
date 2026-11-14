@@ -194,12 +194,14 @@ fn statement_at_agrees_with_the_split() {
 /// the day someone fixes them, the test says so rather than passing quietly.
 #[test]
 fn known_limitations_are_what_the_documentation_says() {
-    // A PL/SQL block splits into pieces. It should be one statement.
+    // A PL/SQL block is one statement, its `END;` included, but the `/`
+    // SQL*Plus runs it with is not a terminator: it is a statement of its own.
     let block = "begin\n  insert into t values (1);\n  commit;\nend;\n/";
+    let spans = split_statements(block, &Dialect::ORACLE);
     assert_eq!(
-        split_statements(block, &Dialect::ORACLE).len(),
-        4,
-        "PL/SQL blocks are not supported; see the `statement` module docs"
+        spans.iter().map(|span| span.sql(block)).collect::<Vec<_>>(),
+        ["begin\n  insert into t values (1);\n  commit;\nend;", "/"],
+        "SQL*Plus's `/` is not honored; see the `statement` module docs"
     );
 
     // `DELIMITER` is not honored, so the trigger body is cut at the `;` inside

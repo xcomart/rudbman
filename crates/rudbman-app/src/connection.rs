@@ -251,8 +251,46 @@ struct Live {
     /// The title of the query tab that sent the last of those writes, when
     /// it said; see [`SessionHandle::uncommitted_refusal`].
     writer: Mutex<Option<String>>,
+    /// What opened the session, for [`SessionHandle::open_sibling`].
+    reopen: Reopen,
     /// The tunnel underneath, if any. Declared last, so it lies down last.
     lease: Option<TunnelLease>,
+}
+
+/// The runtime and the specification a session was opened with.
+///
+/// The specification holds the password the session logged in with, so this
+/// keeps that secret in memory — never on disk — for as long as the session
+/// is open. That is the price of a second session that needs no second
+/// prompt: a restore runs a whole script of `SET search_path`, `USE` and
+/// `SET FOREIGN_KEY_CHECKS` on a session of its own, and asking the user for
+/// a password they already typed would be the alternative.
+struct Reopen {
+    jvm: &'static Jvm,
+    spec: ConnectionSpec,
+}
+
+/// A second session to the database another one is connected to; see
+/// [`SessionHandle::open_sibling`].
+pub struct SiblingSession {
+    /// The session. Declared first, so it is closed before the handle that
+    /// keeps the tunnel up is let go.
+    session: Session,
+    /// The session it was opened beside, held for the tunnel under both.
+    _parent: SessionHandle,
+}
+
+impl SiblingSession {
+    /// The session, for the blocking calls a script is run with.
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    /// Closes the session, reporting the failure.
+    pub fn close(self) -> Result<(), JdbcError> {
+        let SiblingSession { session, _parent } = self;
+        session.close()
+    }
 }
 
 /// A shared, `Send` claim on an open session.
@@ -323,6 +361,22 @@ impl SessionHandle {
     pub fn clear_uncommitted(&self) {
         self.0.uncommitted.store(false, Ordering::Release);
         *self.0.writer.lock() = None;
+    }
+
+    /// Opens a second session the way this one was opened: the same URL —
+    /// the local end of the tunnel, when there is one — the same user,
+    /// password and properties.
+    ///
+    /// For work that must leave the session every pane shares as it is.
+    /// Blocks until the driver has connected or refused, so it belongs on a
+    /// background thread. The new session holds this handle, which keeps the
+    /// tunnel under both up for as long as it is open.
+    pub fn open_sibling(&self) -> Result<SiblingSession, JdbcError> {
+        let session = Session::open(self.0.reopen.jvm, &self.0.reopen.spec)?;
+        Ok(SiblingSession {
+            session,
+            _parent: self.clone(),
+        })
     }
 }
 
@@ -588,6 +642,7 @@ fn connect_once(
             session,
             uncommitted: AtomicBool::new(false),
             writer: Mutex::new(None),
+            reopen: Reopen { jvm, spec },
             lease,
         }),
         info,
