@@ -34,7 +34,7 @@
 //!
 //! A statement with a body — `CREATE PROCEDURE … BEGIN …; …; END`, a PL/SQL
 //! block or package (on MariaDB and Db2 too), a SQLite trigger, PostgreSQL's
-//! `BEGIN ATOMIC` — is one
+//! `BEGIN ATOMIC`, Firebird's and Informix's routines — is one
 //! statement, its inner semicolons included: which `;` ends it is read off
 //! its first words and the `BEGIN`, `CASE` and `END` in it, as the `block`
 //! module describes. The `;` that ends a PL/SQL unit is part of its

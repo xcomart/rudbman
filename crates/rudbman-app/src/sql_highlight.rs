@@ -440,6 +440,36 @@ mod tests {
             "VALUES (2)",
             "CREATE PROCEDURE p()\nBEGIN\n  INSERT INTO t VALUES (1);\n  INSERT INTO t VALUES (2);\nEND;",
         ),
+        (
+            Dialect::MARIADB,
+            "DECLARE\n  n INT;\nBEGIN\n  n := 1;\nEND;\nSELECT 1;\n",
+            "n := 1",
+            "DECLARE\n  n INT;\nBEGIN\n  n := 1;\nEND;",
+        ),
+        (
+            Dialect::MARIADB,
+            "CREATE PACKAGE BODY pkg\n  DECLARE a INT DEFAULT 1;\n  PROCEDURE p1()\n  BEGIN\n    SELECT a;\n  END;\n  SET a = 2;\nEND;\nCALL pkg.p1();\n",
+            "SET a = 2",
+            "CREATE PACKAGE BODY pkg\n  DECLARE a INT DEFAULT 1;\n  PROCEDURE p1()\n  BEGIN\n    SELECT a;\n  END;\n  SET a = 2;\nEND;",
+        ),
+        (
+            Dialect::DB2,
+            "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nDECLARE\n  v NUMBER;\nBEGIN\n  v := 1;\nEND;\nSELECT 1 FROM t;\n",
+            "v := 1",
+            "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nDECLARE\n  v NUMBER;\nBEGIN\n  v := 1;\nEND;",
+        ),
+        (
+            Dialect::GENERIC,
+            "CREATE PROCEDURE p AS\n  DECLARE VARIABLE x INT;\nBEGIN\n  x = 1;\nEND;\nSELECT 1;\n",
+            "x = 1",
+            "CREATE PROCEDURE p AS\n  DECLARE VARIABLE x INT;\nBEGIN\n  x = 1;\nEND;",
+        ),
+        (
+            Dialect::GENERIC,
+            "CREATE PROCEDURE p()\n  DEFINE x INT;\n  LET x = 1;\nEND PROCEDURE;\nSELECT 1;\n",
+            "LET x",
+            "CREATE PROCEDURE p()\n  DEFINE x INT;\n  LET x = 1;\nEND PROCEDURE;",
+        ),
     ];
 
     #[test]

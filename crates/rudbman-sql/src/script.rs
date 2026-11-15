@@ -1618,6 +1618,35 @@ mod tests {
     }
 
     #[test]
+    fn blocks_packages_and_routines_without_a_plsql_header_run_whole() {
+        let block = "DECLARE\n  n INT;\nBEGIN\n  n := 1;\nEND;";
+        let trigger = "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nDECLARE\n  \
+                       v INT := 1;\nBEGIN\n  :NEW.a := v;\nEND;";
+        let package = "CREATE PACKAGE BODY pkg\n  DECLARE a INT DEFAULT 1;\n  \
+                       PROCEDURE p1()\n  BEGIN\n    SELECT a;\n  END;\n  SET a = 2;\nEND";
+        let script = format!("{block}\n{trigger}\n{package};\nSELECT 1;\n");
+        assert_eq!(
+            sqls(&script, &Dialect::MARIADB),
+            [block, trigger, package, "SELECT 1"]
+        );
+        assert_eq!(
+            sqls(&format!("{block}\nSELECT 1;\n"), &Dialect::DB2),
+            [block, "SELECT 1"]
+        );
+
+        let firebird = "CREATE PROCEDURE p AS\n  DECLARE VARIABLE x INT;\nBEGIN\n  x = 1;\nEND;";
+        let informix = "CREATE PROCEDURE q()\n  DEFINE x INT;\n  LET x = 1;\nEND PROCEDURE";
+        let script = format!("{firebird}\n{informix};\nSELECT 1;\n");
+        let whole = [firebird, informix, "SELECT 1"];
+        assert_eq!(sqls(&script, &Dialect::GENERIC), whole);
+        let runs: Vec<String> = units(&script, &Dialect::GENERIC)
+            .into_iter()
+            .map(|(_, run)| run.expect("nothing refused"))
+            .collect();
+        assert_eq!(runs, whole);
+    }
+
+    #[test]
     fn a_tsql_if_runs_with_its_else() {
         // No `BEGIN` in the batch, so "Run all" sends it statement by
         // statement: the `ELSE` after a `;` is still its `IF`'s.

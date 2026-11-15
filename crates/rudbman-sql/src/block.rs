@@ -17,7 +17,9 @@
 //! as MySQL's `ALTER EVENT … DO BEGIN` and Db2's `ALTER MODULE … ADD
 //! PROCEDURE` do; on Oracle `DECLARE`, `BEGIN`
 //! and the `CREATE` of any stored unit; on SQL Server `IF`, `WHILE` and a
-//! `BEGIN` that does not start a transaction. Everything else is
+//! `BEGIN` that does not start a transaction; on MariaDB, Db2 and a product
+//! nobody named, a `DECLARE` that declares no cursor or temporary table of
+//! its own, and Firebird's `EXECUTE BLOCK`. Everything else is
 //! [`Kind::Plain`], and every `;` ends it, exactly as before this module
 //! existed. A `CASE … END` typed half-way through an ordinary `SELECT` never
 //! swallows the statements under it.
@@ -57,6 +59,34 @@
 //! or a `RETURN` after the header's `RETURNS`), an `AS` is a column's alias
 //! and an `IS` an `IS NULL`.
 //!
+//! What has no such header tells by its first word instead. SQL/PSM
+//! declares inside a `BEGIN` only, so a `DECLARE` before one — leading the
+//! statement, or leading a trigger's body — is PL/SQL's, unless it is Db2's
+//! `DECLARE GLOBAL TEMPORARY TABLE` or its command line's `DECLARE c
+//! CURSOR`. MariaDB's own `BEGIN` starts a transaction, `BEGIN WORK` at
+//! most, so a `BEGIN` before anything else is a block. And MariaDB's package
+//! in SQL/PSM, which has no `AS`, opens on its first declaration and runs to
+//! the `END` that closes it.
+//!
+//! # A product nobody named
+//!
+//! A driver's own dialect is read as the SQL/PSM its `BEGIN … END` is, and
+//! PL/SQL and the bodies other products write without a `BEGIN` are told by
+//! marks of their own:
+//!
+//! - **PL/SQL** (Tibero, Altibase): a header's `IS`, or its `AS` before a
+//!   declaration — a `CURSOR`, a `TYPE`, a subprogram, or a name and a type.
+//!   An `AS` before a statement is T-SQL's, one before a quoted body
+//!   PostgreSQL's, and one before `x IS NULL` or `a + b` a DuckDB macro's.
+//!   A `DECLARE` is read as on MariaDB, and T-SQL's `DECLARE @n` is no
+//!   block's.
+//! - **Firebird**: `AS` and a `DECLARE` to each declaration, read as a
+//!   PL/SQL declaration section, sub-routines and all.
+//! - **Informix**: a body with no `BEGIN` that runs to `END PROCEDURE` or
+//!   `END FUNCTION`, told by its header's `RETURNING` or a first statement
+//!   only SPL writes (`DEFINE`, `LET`, `FOREACH`, `TRACE`). Nothing inside
+//!   it is counted.
+//!
 //! # SQL Server
 //!
 //! A `CREATE PROCEDURE`, `FUNCTION` or `TRIGGER` has no end of its own: the
@@ -75,9 +105,11 @@
 //! # What it gets wrong
 //!
 //! A label, MariaDB's top-level `IF … END IF` outside a `BEGIN NOT ATOMIC`,
-//! a PL/SQL anonymous block or trigger on MariaDB or Db2, whose `DECLARE`
-//! has no header before it: each is cut as a semicolon splitter cuts it,
-//! which is no worse than before. Counting the other way — a body that never closes
+//! a block that declares a cursor first as `DECLARE c CURSOR` (Snowflake's,
+//! say, on a product nobody named), an Informix routine whose header has no
+//! `RETURNING` and whose first statement is one any product writes: each is
+//! cut as a semicolon splitter cuts it, which is no worse than before.
+//! Counting the other way — a body that never closes
 //! because an `END` was missed — runs the statement to the end of the script,
 //! or to SQL\*Plus's `/`, which is where a client that counts nothing would
 //! have run it.
@@ -160,6 +192,72 @@ const ROUTINES: &[&str] = &["PROCEDURE", "FUNCTION", "TRIGGER", "EVENT", "PACKAG
 
 /// The routines MariaDB and Db2 also take in PL/SQL.
 const PLSQL_ROUTINES: &[&str] = &["PROCEDURE", "FUNCTION", "PACKAGE"];
+
+/// The first words of a PL/SQL declaration that is not a variable's.
+const PLSQL_DECLARATIONS: &[&str] = &[
+    "CURSOR",
+    "TYPE",
+    "SUBTYPE",
+    "PRAGMA",
+    "PROCEDURE",
+    "FUNCTION",
+];
+
+/// What follows the name in a `DECLARE name …` that is a statement of its
+/// own rather than the start of a PL/SQL block: a cursor, as Db2's command
+/// line, PostgreSQL and Informix declare one.
+const CURSOR_DECLARATIONS: &[&str] = &[
+    "CURSOR",
+    "BINARY",
+    "NO",
+    "SCROLL",
+    "INSENSITIVE",
+    "ASENSITIVE",
+    "SENSITIVE",
+];
+
+/// The words besides [`PSM_BODY_STARTS`] that may follow a routine's `AS`
+/// when no PL/SQL declaration does: a T-SQL body's first statement, a
+/// DuckDB macro's `AS TABLE`. On a product nobody named, they keep that `AS`
+/// from being taken for PL/SQL's.
+const AS_STATEMENTS: &[&str] = &[
+    "RETURN",
+    "PRINT",
+    "EXEC",
+    "RAISERROR",
+    "THROW",
+    "WAITFOR",
+    "BREAK",
+    "CONTINUE",
+    "DENY",
+    "SAVE",
+    "DBCC",
+    "BULK",
+    "BACKUP",
+    "RESTORE",
+    "CHECKPOINT",
+    "READTEXT",
+    "WRITETEXT",
+    "UPDATETEXT",
+    "DUMP",
+    "RECONFIGURE",
+    "SETUSER",
+    "SHUTDOWN",
+    "TABLE",
+];
+
+/// The words that, second after a routine's `AS`, make the first one an
+/// expression's rather than a variable's, as in DuckDB's
+/// `CREATE FUNCTION f(x) AS x IS NULL`.
+const OPERATOR_WORDS: &[&str] = &[
+    "IS", "AND", "OR", "NOT", "IN", "LIKE", "ILIKE", "BETWEEN", "COLLATE", "ESCAPE", "AS", "FROM",
+    "OVER", "FILTER", "DIV", "MOD", "XOR", "REGEXP", "GLOB", "SIMILAR",
+];
+
+/// What only Informix's SPL writes before a routine's first statement or as
+/// that statement: the header's `RETURNING`, and the statements its bodies
+/// most often open with.
+const SPL_MARKS: &[&str] = &["RETURNING", "DEFINE", "LET", "FOREACH", "TRACE"];
 
 /// What a routine's name may follow: `CREATE PROCEDURE IF NOT EXISTS p`.
 const NAME_GUARDS: &[&str] = &["IF", "NOT", "EXISTS"];
@@ -280,10 +378,22 @@ enum Family {
     Psm {
         /// What a statement starting with `BEGIN` is.
         begin: BeginRule,
-        /// Whether a routine may be written in PL/SQL instead: MariaDB and
-        /// Db2.
-        plsql: bool,
+        /// What else a routine and a block may be written in.
+        routines: Routines,
     },
+}
+
+/// What a body may be written in besides SQL/PSM, outside Oracle and SQL
+/// Server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Routines {
+    /// Nothing else: MySQL, PostgreSQL, SQLite, H2.
+    Psm,
+    /// PL/SQL: MariaDB under `sql_mode=ORACLE`, and Db2.
+    PlSql,
+    /// Whatever a product nobody named writes: PL/SQL, Firebird's PSQL,
+    /// Informix's SPL, each told by marks of its own.
+    Unknown,
 }
 
 /// What a statement that starts with `BEGIN` is, outside Oracle and SQL
@@ -307,23 +417,23 @@ impl Family {
             DialectId::MsSql => Self::MsSql,
             DialectId::MySql => Self::Psm {
                 begin: BeginRule::NotAtomic,
-                plsql: false,
+                routines: Routines::Psm,
             },
             DialectId::MariaDb => Self::Psm {
                 begin: BeginRule::NotAtomic,
-                plsql: true,
+                routines: Routines::PlSql,
             },
             DialectId::Db2 => Self::Psm {
                 begin: BeginRule::UnlessTransaction,
-                plsql: true,
+                routines: Routines::PlSql,
             },
             DialectId::Generic => Self::Psm {
                 begin: BeginRule::UnlessTransaction,
-                plsql: false,
+                routines: Routines::Unknown,
             },
             DialectId::Postgres | DialectId::Sqlite | DialectId::H2 => Self::Psm {
                 begin: BeginRule::Transaction,
-                plsql: false,
+                routines: Routines::Psm,
             },
         }
     }
@@ -358,6 +468,12 @@ enum Lead {
     Begin,
     /// MySQL's `BEGIN NOT`.
     BeginNot,
+    /// A leading `DECLARE`, outside Oracle and SQL Server.
+    Declare,
+    /// `DECLARE` and a name, which `CURSOR` makes a cursor's declaration.
+    DeclareName,
+    /// A leading `EXECUTE`, which Firebird's `BLOCK` makes a block.
+    Execute,
 }
 
 /// What a PL/SQL unit is, which decides what its own `IS` or `AS` does.
@@ -384,6 +500,9 @@ enum Frame {
         /// Whether its `BEGIN` has been read.
         begun: bool,
     },
+    /// An Informix SPL routine's body, which only its `END PROCEDURE` or
+    /// `END FUNCTION` closes.
+    Spl,
 }
 
 /// A word whose meaning waits on the token after it.
@@ -401,18 +520,32 @@ enum Pending {
     Opener,
     /// Oracle's `COMPOUND`, waiting for `TRIGGER`.
     Compound,
+    /// A `DECLARE` at the top of a body outside Oracle, which opens a
+    /// PL/SQL declaration section unless a T-SQL `@variable` follows.
+    Declare,
+    /// A routine's `AS` on a product nobody named, which the word after it
+    /// tells PL/SQL's from anything else's.
+    As,
+    /// That `AS` and a name, which a word after it makes a PL/SQL
+    /// variable's.
+    AsName,
 }
 
-/// How far the header of a routine that may be PL/SQL has been read, on
-/// MariaDB and Db2.
+/// How far the header of a routine that may be in something other than
+/// SQL/PSM has been read, outside Oracle and SQL Server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Head {
     /// Not in one: no such routine, or its header is over.
     Closed,
     /// Before the routine's name, or a part of it after a `.`.
-    Name,
+    Name {
+        /// Whether the routine is a package.
+        package: bool,
+    },
     /// After the name, where an `IS` or an `AS` makes the routine PL/SQL.
     Named {
+        /// Whether the routine is a package.
+        package: bool,
         /// Whether `RETURNS` has been read, which only SQL/PSM writes: a
         /// `RETURN` after it is the body's.
         returns: bool,
@@ -430,7 +563,7 @@ pub(crate) struct Blocks {
     /// The dialect's family.
     home: Family,
     /// Whose rules the statement is read by: [`Self::home`]'s, or Oracle's
-    /// once a PL/SQL header has been read on MariaDB or Db2.
+    /// once PL/SQL has been told from SQL/PSM outside Oracle.
     family: Family,
     kind: Kind,
     frames: Vec<Frame>,
@@ -447,7 +580,8 @@ pub(crate) struct Blocks {
     /// T-SQL: how many `IF`s outside any level are still without their
     /// `ELSE`.
     ifs: u32,
-    /// MariaDB and Db2: the header of a routine that may be PL/SQL.
+    /// Outside Oracle and SQL Server: the header of a routine that may be in
+    /// something other than SQL/PSM.
     head: Head,
 }
 
@@ -493,16 +627,33 @@ impl Blocks {
         )
         .then_some(text);
 
-        if !self.resolve(word) {
+        if !self.resolve(word, text) {
             return;
         }
         if let Kind::Open(lead) = self.kind {
             self.kind = self.classify(lead, word, text);
+            if let (Kind::PlSql(_), Family::Psm { .. }) = (self.kind, self.family) {
+                // An anonymous PL/SQL block outside Oracle.
+                self.family = Family::Oracle;
+                match lead {
+                    // This token heads the block's first declaration.
+                    Lead::Declare => self.open_declare(),
+                    // This one is the type of a declaration already begun.
+                    Lead::DeclareName => {
+                        self.open_declare();
+                        self.item_start = false;
+                    }
+                    // A `BEGIN`, whose level is open already.
+                    _ => {}
+                }
+            }
             if self.kind == Kind::Blocks
-                && matches!(self.home, Family::Psm { plsql: true, .. })
+                && self.routines() != Routines::Psm
                 && word.is_some_and(|word| any(word, PLSQL_ROUTINES))
             {
-                self.head = Head::Name;
+                self.head = Head::Name {
+                    package: word.is_some_and(|word| word.eq_ignore_ascii_case("PACKAGE")),
+                };
                 // The routine's word is not its name.
                 self.structure(word, text);
                 return;
@@ -511,12 +662,22 @@ impl Blocks {
         if self.head != Head::Closed && self.frames.is_empty() && self.parens == 0 {
             self.read_head(word, text);
         }
+        if self.kind == Kind::Blocks
+            && self.frames.is_empty()
+            && self.parens == 0
+            && self.routines() != Routines::Psm
+            && word.is_some_and(|word| word.eq_ignore_ascii_case("DECLARE"))
+        {
+            // SQL/PSM declares inside a `BEGIN` only: one before any is a
+            // PL/SQL trigger's, or Firebird's after a routine's `AS`.
+            self.pending = Pending::Declare;
+        }
         self.structure(word, text);
     }
 
     /// Reads a `;`, and says what it does.
     pub(crate) fn semicolon(&mut self) -> Semicolon {
-        self.resolve(None);
+        self.resolve(None, "");
         self.head = Head::Closed;
         if let Kind::Open(_) = self.kind {
             self.kind = Kind::Plain;
@@ -544,13 +705,21 @@ impl Blocks {
         answer
     }
 
-    /// Settles a [`Pending`] word against the token after it, `None` for a
-    /// `;`. Answers whether that token still has to be read for itself.
-    fn resolve(&mut self, word: Option<&str>) -> bool {
+    /// Settles a [`Pending`] word against the token after it, whose text is
+    /// `text`: `word` if it is one, and nothing at all for a `;`. Answers
+    /// whether that token still has to be read for itself.
+    fn resolve(&mut self, word: Option<&str>, text: &str) -> bool {
         let pending = std::mem::replace(&mut self.pending, Pending::None);
         let is = |set: &[&str]| word.is_some_and(|word| any(word, set));
         match pending {
             Pending::None => true,
+            Pending::End if self.frames.last() == Some(&Frame::Spl) => {
+                if is(&["PROCEDURE", "FUNCTION"]) {
+                    self.frames.pop();
+                    return false;
+                }
+                true
+            }
             Pending::End => {
                 if is(UNCOUNTED_ENDS) || (self.family == Family::MsSql && is(&["CONVERSATION"])) {
                     return false;
@@ -577,36 +746,116 @@ impl Blocks {
                 }
                 true
             }
+            Pending::Declare => {
+                if !text.is_empty() && !text.starts_with('@') {
+                    self.family = Family::Oracle;
+                    // A unit whose own `AS` is behind it, as a trigger's is.
+                    self.kind = Kind::PlSql(Unit::Trigger);
+                    self.open_declare();
+                }
+                true
+            }
+            Pending::As => {
+                if is(PLSQL_DECLARATIONS) {
+                    self.open_plsql_unit();
+                    self.open_declare();
+                } else if word.is_some_and(|word| {
+                    !word.starts_with('$')
+                        && !any(word, PSM_BODY_STARTS)
+                        && !any(word, AS_STATEMENTS)
+                        && !any(word, CALL_SPECS)
+                }) {
+                    self.pending = Pending::AsName;
+                }
+                true
+            }
+            Pending::AsName => {
+                if word.is_some_and(|word| !any(word, OPERATOR_WORDS)) {
+                    // `n NUMBER`: a variable, whose declaration has begun.
+                    self.open_plsql_unit();
+                    self.frames.push(Frame::Declare { begun: false });
+                }
+                true
+            }
         }
     }
 
-    /// Reads a token of the header of a routine that may be PL/SQL, outside
-    /// any parentheses: its parameters and the length of its return type are
-    /// none of the header's business.
+    /// Reads a token of the header of a routine that may be in something
+    /// other than SQL/PSM, outside any parentheses: its parameters and the
+    /// length of its return type are none of the header's business.
     fn read_head(&mut self, word: Option<&str>, text: &str) {
-        let Head::Named { returns } = self.head else {
+        let Head::Named { package, returns } = self.head else {
             // `Head::Name`: the routine's name, or the guard before it.
-            if word.is_some_and(|word| !any(word, NAME_GUARDS)) {
-                self.head = Head::Named { returns: false };
+            if let (Head::Name { package }, Some(word)) = (self.head, word)
+                && !any(word, NAME_GUARDS)
+            {
+                self.head = Head::Named {
+                    package,
+                    returns: false,
+                };
             }
             return;
         };
         let Some(word) = word else {
             if text == "." && !returns {
-                self.head = Head::Name;
+                self.head = Head::Name { package };
             }
             return;
         };
+        let routines = self.routines();
         if any(word, &["IS", "AS"]) {
+            self.head = Head::Closed;
+            if routines == Routines::Unknown {
+                // Only PL/SQL writes an `IS` here, but `AS` heads PostgreSQL's
+                // quoted body, Firebird's and T-SQL's as well: what follows it
+                // tells. A function's `RETURNS` was never PL/SQL's.
+                if returns {
+                    return;
+                }
+                if word.eq_ignore_ascii_case("AS") {
+                    self.pending = Pending::As;
+                    return;
+                }
+            }
             // The header of a PL/SQL unit, whose `IS` or `AS` the Oracle
             // rules take as its own.
-            self.head = Head::Closed;
             self.family = Family::Oracle;
             self.kind = Kind::PlSql(Unit::Opens);
         } else if word.eq_ignore_ascii_case("RETURNS") {
-            self.head = Head::Named { returns: true };
+            self.head = Head::Named {
+                package,
+                returns: true,
+            };
+        } else if routines == Routines::PlSql
+            && package
+            && (any(word, &["PROCEDURE", "FUNCTION"]) || any(word, PSM_BODY_STARTS))
+        {
+            // MariaDB's package in SQL/PSM, whose body starts with its first
+            // declaration and runs to the `END` that closes the package.
+            self.head = Head::Closed;
+            self.frames.push(Frame::Block);
+        } else if routines == Routines::Unknown && any(word, SPL_MARKS) {
+            self.head = Head::Closed;
+            self.frames.push(Frame::Spl);
         } else if any(word, PSM_BODY_STARTS) || (returns && word.eq_ignore_ascii_case("RETURN")) {
             self.head = Head::Closed;
+        }
+    }
+
+    /// Hands a routine whose header has been read over to the Oracle rules,
+    /// its own `IS` or `AS` behind it.
+    fn open_plsql_unit(&mut self) {
+        self.family = Family::Oracle;
+        self.kind = Kind::PlSql(Unit::Opens);
+        self.unit_opened = true;
+    }
+
+    /// What a body may be written in besides SQL/PSM, by the rules being
+    /// read.
+    const fn routines(&self) -> Routines {
+        match self.family {
+            Family::Psm { routines, .. } => routines,
+            Family::Oracle | Family::MsSql => Routines::Psm,
         }
     }
 
@@ -674,11 +923,40 @@ impl Blocks {
                 }
             }
 
-            (Family::Psm { begin, .. }, Lead::Start) => {
-                if is(&["CREATE", "ALTER"]) {
+            (Family::Psm { begin, routines }, Lead::Start) => {
+                if is(&["CREATE", "ALTER", "RECREATE"]) {
                     Kind::Open(Lead::Create(0))
                 } else if is(&["BEGIN"]) && begin != BeginRule::Transaction {
                     Kind::Open(Lead::Begin)
+                } else if is(&["DECLARE"]) && routines != Routines::Psm {
+                    Kind::Open(Lead::Declare)
+                } else if is(&["EXECUTE"]) && routines == Routines::Unknown {
+                    Kind::Open(Lead::Execute)
+                } else {
+                    Kind::Plain
+                }
+            }
+            // An anonymous PL/SQL block, or a statement of its own: Db2's
+            // `DECLARE GLOBAL TEMPORARY TABLE`, T-SQL's `DECLARE @n INT`.
+            (Family::Psm { .. }, Lead::Declare) => {
+                if text.starts_with('@') || is(&["GLOBAL"]) {
+                    Kind::Plain
+                } else if is(PLSQL_DECLARATIONS) || is(&["BEGIN"]) {
+                    Kind::PlSql(Unit::Anonymous)
+                } else {
+                    Kind::Open(Lead::DeclareName)
+                }
+            }
+            (Family::Psm { .. }, Lead::DeclareName) => {
+                if is(CURSOR_DECLARATIONS) {
+                    Kind::Plain
+                } else {
+                    Kind::PlSql(Unit::Anonymous)
+                }
+            }
+            (Family::Psm { .. }, Lead::Execute) => {
+                if is(&["BLOCK"]) {
+                    Kind::Blocks
                 } else {
                     Kind::Plain
                 }
@@ -692,8 +970,13 @@ impl Blocks {
                     Kind::Open(Lead::Create(seen + 1))
                 }
             }
-            (Family::Psm { begin, .. }, Lead::Begin) => match begin {
+            (Family::Psm { begin, routines }, Lead::Begin) => match begin {
                 BeginRule::NotAtomic if is(&["NOT"]) => Kind::Open(Lead::BeginNot),
+                // MariaDB's own `BEGIN` is a transaction's, `BEGIN WORK` at
+                // most: one before anything else is `sql_mode=ORACLE`'s block.
+                BeginRule::NotAtomic if routines == Routines::PlSql && !is(TRANSACTION_WORDS) => {
+                    Kind::PlSql(Unit::Anonymous)
+                }
                 BeginRule::UnlessTransaction if word.is_some() && !is(TRANSACTION_WORDS) => {
                     Kind::Blocks
                 }
@@ -719,6 +1002,14 @@ impl Blocks {
             ")" => self.parens = self.parens.saturating_sub(1),
             _ => {}
         }
+        if self.frames.last() == Some(&Frame::Spl) {
+            // An SPL body ends at its `END PROCEDURE` or `END FUNCTION`, and
+            // nothing inside it is counted.
+            if word.is_some_and(|word| word.eq_ignore_ascii_case("END")) {
+                self.pending = Pending::End;
+            }
+            return;
+        }
         let Some(word) = word else {
             self.item_start = false;
             return;
@@ -740,7 +1031,13 @@ impl Blocks {
         } else if word.eq_ignore_ascii_case("END") {
             self.pending = Pending::End;
         } else if oracle && word.eq_ignore_ascii_case("DECLARE") {
-            self.open_declare();
+            if matches!(self.frames.last(), Some(Frame::Declare { begun: false })) {
+                // Firebird's `DECLARE VARIABLE`, a `DECLARE` to each
+                // declaration: PL/SQL writes none inside a section.
+                self.item_start = true;
+            } else {
+                self.open_declare();
+            }
         } else if oracle && any(word, &["IS", "AS"]) {
             if self.parens > 0 {
                 return;
@@ -1101,6 +1398,131 @@ select 1;",
             ),
             ["CREATE PROCEDURE p AS\n  n INT", "BEGIN NOT ATOMIC\nEND"]
         );
+    }
+
+    #[test]
+    fn plsql_blocks_and_triggers_on_mariadb_and_db2_have_no_header_to_tell() {
+        for dialect in [Dialect::MARIADB, Dialect::DB2] {
+            for unit in [
+                "DECLARE\n  n INT;\n  CURSOR c IS SELECT 1 FROM t;\nBEGIN\n  n := 1;\nEND;",
+                "DECLARE\n  PROCEDURE log(m VARCHAR2) IS BEGIN NULL; END;\nBEGIN\n  log('x');\nEND;",
+                "CREATE OR REPLACE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nDECLARE\n  \
+                 v INT := 1;\nBEGIN\n  :NEW.a := v;\nEND;",
+            ] {
+                let script = format!("{unit}\nSELECT 1;");
+                assert_eq!(
+                    cut(&script, &dialect),
+                    [unit, "SELECT 1"],
+                    "{:?}",
+                    dialect.id()
+                );
+            }
+        }
+        // A MariaDB `BEGIN` with anything after it but `WORK` or `NOT ATOMIC`
+        // is `sql_mode=ORACLE`'s block.
+        assert_eq!(
+            cut(
+                "BEGIN\n  FOR i IN 1..3 LOOP\n    INSERT INTO t VALUES (i);\n  END LOOP;\nEND;\n\
+                 BEGIN;\nBEGIN WORK;\nBEGIN NOT ATOMIC\n  SELECT 1;\nEND;",
+                &Dialect::MARIADB
+            ),
+            [
+                "BEGIN\n  FOR i IN 1..3 LOOP\n    INSERT INTO t VALUES (i);\n  END LOOP;\nEND;",
+                "BEGIN",
+                "BEGIN WORK",
+                "BEGIN NOT ATOMIC\n  SELECT 1;\nEND"
+            ]
+        );
+        // A `DECLARE` that is a statement of its own stays one.
+        assert_eq!(
+            cut(
+                "DECLARE GLOBAL TEMPORARY TABLE session.t (a INT);\n\
+                 DECLARE c1 CURSOR WITH HOLD FOR SELECT a FROM t;\nSELECT 1;",
+                &Dialect::DB2
+            )
+            .len(),
+            3
+        );
+        // MySQL has neither.
+        assert_eq!(
+            cut("DECLARE\n  n INT;\nBEGIN\n  n := 1;\nEND;", &Dialect::MYSQL).len(),
+            3
+        );
+    }
+
+    #[test]
+    fn a_mariadb_package_in_sql_psm_runs_to_its_end() {
+        let spec = "CREATE OR REPLACE PACKAGE pkg\n  PROCEDURE p1();\n  \
+                    FUNCTION f1() RETURNS INT;\nEND";
+        let body = "CREATE OR REPLACE PACKAGE BODY pkg\n  DECLARE a INT DEFAULT 11;\n  \
+                    FUNCTION f1() RETURNS INT\n  BEGIN\n    SET a = a - 1;\n    RETURN a;\n  \
+                    END;\n  PROCEDURE p1() SELECT a, f1();\n  SET a = a - 1;\nEND";
+        assert_eq!(
+            cut(
+                &format!("{spec};\n{body};\nSELECT 1;\nCREATE USER package IDENTIFIED BY 'x';"),
+                &Dialect::MARIADB
+            ),
+            [
+                spec,
+                body,
+                "SELECT 1",
+                "CREATE USER package IDENTIFIED BY 'x'"
+            ]
+        );
+    }
+
+    #[test]
+    fn routines_of_a_product_nobody_named_are_told_by_their_own_marks() {
+        let firebird = [
+            "CREATE OR ALTER PROCEDURE p (a INT) RETURNS (b INT) AS\n  DECLARE VARIABLE x INT;\n  \
+             DECLARE y INT = 0;\nBEGIN\n  IF (a > 0) THEN\n  BEGIN\n    x = a;\n  END\n  \
+             SUSPEND;\nEND;",
+            "CREATE PROCEDURE p AS\n  DECLARE PROCEDURE sub (a INT) AS\n    DECLARE i INT;\n  \
+             BEGIN\n    i = a;\n  END\n  DECLARE FUNCTION f RETURNS INT AS\n  BEGIN\n    \
+             RETURN 1;\n  END\nBEGIN\n  EXECUTE PROCEDURE sub(f());\nEND;",
+            "CREATE TRIGGER t FOR tbl ACTIVE BEFORE INSERT POSITION 0 AS\n  \
+             DECLARE VARIABLE x INT;\nBEGIN\n  NEW.id = GEN_ID(g, 1);\nEND;",
+            "EXECUTE BLOCK RETURNS (n INT) AS\n  DECLARE i INT = 0;\nBEGIN\n  WHILE (i < 3) DO\n  \
+             BEGIN\n    i = i + 1;\n    SUSPEND;\n  END\nEND;",
+            // Without declarations it is SQL/PSM's `BEGIN … END`, as before.
+            "RECREATE PROCEDURE p AS\nBEGIN\n  INSERT INTO t VALUES (1);\nEND",
+        ];
+        let informix = [
+            "CREATE FUNCTION f(a INT)\n  RETURNING INT;\n  RETURN a + 1;\nEND FUNCTION\n\
+             DOCUMENT 'adds one'\nWITH LISTING IN '/tmp/f.log'",
+            "CREATE DBA PROCEDURE p()\n  DEFINE x INT;\n  ON EXCEPTION IN (-206)\n    LET x = 0;\n  \
+             END EXCEPTION WITH RESUME;\n  FOREACH SELECT a INTO x FROM t\n    \
+             IF x > 0 THEN CONTINUE FOREACH; END IF;\n  END FOREACH;\nEND PROCEDURE",
+        ];
+        let plsql = [
+            "CREATE OR REPLACE PROCEDURE p AS\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;",
+            "CREATE OR REPLACE PROCEDURE p IS\n  CURSOR c IS SELECT 1 FROM dual;\nBEGIN\n  NULL;\nEND;",
+            "CREATE PACKAGE pkg AS\n  PROCEDURE p;\n  FUNCTION f RETURN NUMBER;\nEND;",
+            "DECLARE\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;",
+        ];
+        for unit in firebird.into_iter().chain(informix).chain(plsql) {
+            // A unit the `;` after it is part of shows it.
+            let terminator = if unit.ends_with(';') { "" } else { ";" };
+            let script = format!("{unit}{terminator}\nSELECT 1;");
+            assert_eq!(cut(&script, &Dialect::GENERIC), [unit, "SELECT 1"]);
+        }
+        // Everything else's `AS` and `DECLARE` are read as before.
+        for first in [
+            "CREATE PROCEDURE p AS SELECT a AS b FROM t",
+            "CREATE PROCEDURE p @a INT AS EXEC q @a",
+            "CREATE PROCEDURE p AS DECLARE @x INT",
+            "CREATE FUNCTION f() RETURNS int AS $$ select 1 $$ LANGUAGE sql",
+            "CREATE FUNCTION add(a, b) AS a + b",
+            "CREATE FUNCTION is_null(x) AS x IS NULL",
+            "CREATE FUNCTION t() AS TABLE SELECT 1 AS a",
+            "DECLARE c NO SCROLL CURSOR FOR SELECT 1",
+            "DECLARE @x INT",
+            "EXECUTE PROCEDURE p",
+        ] {
+            let script = format!("{first};\nSELECT 1;\nSELECT 2;");
+            assert_eq!(cut(&script, &Dialect::GENERIC)[0], first);
+            assert_eq!(cut(&script, &Dialect::GENERIC).len(), 3, "{first}");
+        }
     }
 
     #[test]
