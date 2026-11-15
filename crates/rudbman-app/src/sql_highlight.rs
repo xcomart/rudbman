@@ -470,6 +470,18 @@ mod tests {
             "LET x",
             "CREATE PROCEDURE p()\n  DEFINE x INT;\n  LET x = 1;\nEND PROCEDURE;",
         ),
+        (
+            Dialect::GENERIC,
+            "CREATE PROCEDURE p(n INT)\n  UPDATE t SET a = n;\n  DELETE FROM u;\nEND PROCEDURE;\nSELECT 1;\n",
+            "FROM u",
+            "CREATE PROCEDURE p(n INT)\n  UPDATE t SET a = n;\n  DELETE FROM u;\nEND PROCEDURE;",
+        ),
+        (
+            Dialect::GENERIC,
+            "DECLARE\n  c1 CURSOR FOR SELECT id FROM t;\nBEGIN\n  OPEN c1;\nEND;\nSELECT 1;\n",
+            "OPEN c1",
+            "DECLARE\n  c1 CURSOR FOR SELECT id FROM t;\nBEGIN\n  OPEN c1;\nEND;",
+        ),
     ];
 
     #[test]

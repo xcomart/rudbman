@@ -63,7 +63,7 @@
 //! [`holds_procedural_block`] tells a caller the pieces would be fragments,
 //! so it can send the text whole instead.
 
-use crate::block::{Blocks, Semicolon, TRANSACTION_WORDS};
+use crate::block::{Blocks, Semicolon, TRANSACTION_WORDS, VERDICT_REACH, Verdict};
 use crate::dialect::{Dialect, DialectId};
 use crate::lexer::{Lexer, TokenKind};
 
@@ -147,15 +147,30 @@ impl<'a> Statements<'a> {
         }
     }
 
-    /// Whether the next word, past any whitespace and comments, is `ELSE`.
-    fn else_follows(&self) -> bool {
-        self.lexer
-            .clone()
-            .find(|token| !token.kind.is_trivia())
-            .is_some_and(|token| {
-                matches!(token.kind, TokenKind::Keyword | TokenKind::Identifier)
-                    && token.text(self.src).eq_ignore_ascii_case("ELSE")
-            })
+    /// Whether the statement [`Self::blocks`] was unsure of ended at the
+    /// `;` that ends at `at`, by the tokens after it: read ahead on a copy,
+    /// as far as [`VERDICT_REACH`].
+    fn ends_at(&self, at: usize) -> bool {
+        let mut blocks = self.blocks.clone();
+        for token in self.lexer.clone() {
+            if token.kind.is_trivia() {
+                continue;
+            }
+            if token.start.saturating_sub(at) > VERDICT_REACH {
+                break;
+            }
+            if token.kind == TokenKind::Punctuation && token.text(self.src) == ";" {
+                blocks.semicolon();
+            } else {
+                blocks.token(token.kind, token.text(self.src));
+            }
+            match blocks.verdict() {
+                Verdict::Open => {}
+                Verdict::Continues => return false,
+                Verdict::Ended => return true,
+            }
+        }
+        true
     }
 }
 
@@ -186,12 +201,13 @@ impl Iterator for Statements<'_> {
                             last_end = token.end;
                             continue;
                         }
-                        // So is one before a T-SQL `ELSE`, the `IF`'s.
-                        Semicolon::EndsUnlessElse if self.else_follows() => {
+                        // So is one that what follows carries on: a T-SQL
+                        // `ELSE`, an Informix `END PROCEDURE`.
+                        Semicolon::Unsure if !self.ends_at(token.end) => {
                             last_end = token.end;
                             continue;
                         }
-                        Semicolon::EndsUnlessElse => {
+                        Semicolon::Unsure => {
                             self.blocks.reset();
                             last_end
                         }

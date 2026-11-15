@@ -79,13 +79,19 @@
 //!   An `AS` before a statement is T-SQL's, one before a quoted body
 //!   PostgreSQL's, and one before `x IS NULL` or `a + b` a DuckDB macro's.
 //!   A `DECLARE` is read as on MariaDB, and T-SQL's `DECLARE @n` is no
-//!   block's.
+//!   block's. A `DECLARE c CURSOR …;` is PostgreSQL's statement, or the
+//!   first declaration of a Snowflake block, as the `BEGIN` or the next
+//!   declaration after its `;` says ([`Semicolon::Unsure`]).
 //! - **Firebird**: `AS` and a `DECLARE` to each declaration, read as a
 //!   PL/SQL declaration section, sub-routines and all.
 //! - **Informix**: a body with no `BEGIN` that runs to `END PROCEDURE` or
-//!   `END FUNCTION`, told by its header's `RETURNING` or a first statement
-//!   only SPL writes (`DEFINE`, `LET`, `FOREACH`, `TRACE`). Nothing inside
-//!   it is counted.
+//!   `END FUNCTION`, nothing inside it counted. Its header's `RETURNING`, or
+//!   a first statement only SPL writes (`DEFINE`, `LET`, `FOREACH`,
+//!   `TRACE`), tells it at once. Any other procedure or function is
+//!   Informix's if an `END PROCEDURE` or `END FUNCTION` comes before the
+//!   next routine's `CREATE`, so the `;` that would end it is
+//!   [`Semicolon::Unsure`] and the script after it is read on that far, up
+//!   to [`VERDICT_REACH`].
 //!
 //! # SQL Server
 //!
@@ -98,17 +104,16 @@
 //! may end in a `;`: `IF @a = 1 SELECT 1; ELSE SELECT 2;` is one statement.
 //! No statement starts with `ELSE`, so a `;` with an `IF` still waiting for
 //! one ends the statement only if something else comes next
-//! ([`Semicolon::EndsUnlessElse`]), which is the caller's to look at. Each
+//! ([`Semicolon::Unsure`]). Each
 //! `ELSE` answers the nearest `IF`, so an outer `IF` with none ends at the
 //! `;` after the inner one's.
 //!
 //! # What it gets wrong
 //!
 //! A label, MariaDB's top-level `IF … END IF` outside a `BEGIN NOT ATOMIC`,
-//! a block that declares a cursor first as `DECLARE c CURSOR` (Snowflake's,
-//! say, on a product nobody named), an Informix routine whose header has no
-//! `RETURNING` and whose first statement is one any product writes: each is
-//! cut as a semicolon splitter cuts it, which is no worse than before.
+//! an Informix routine longer than [`VERDICT_REACH`] whose header says
+//! nothing: each is cut as a semicolon splitter cuts it, which is no worse
+//! than before.
 //! Counting the other way — a body that never closes
 //! because an `END` was missed — runs the statement to the end of the script,
 //! or to SQL\*Plus's `/`, which is where a client that counts nothing would
@@ -246,6 +251,14 @@ const AS_STATEMENTS: &[&str] = &[
     "TABLE",
 ];
 
+/// The words besides [`PSM_BODY_STARTS`] and [`AS_STATEMENTS`] that start a
+/// statement after a cursor's `DECLARE`, as PostgreSQL's `MOVE` and `END`
+/// do: what follows that cursor's `;` when it was a statement of its own.
+const MORE_STATEMENTS: &[&str] = &[
+    "MOVE", "END", "ABORT", "VACUUM", "COPY", "LISTEN", "NOTIFY", "UNLISTEN", "DISCARD", "CLUSTER",
+    "REINDEX", "REFRESH", "RESET", "COMMENT", "EXPLAIN", "DESCRIBE",
+];
+
 /// The words that, second after a routine's `AS`, make the first one an
 /// expression's rather than a variable's, as in DuckDB's
 /// `CREATE FUNCTION f(x) AS x IS NULL`.
@@ -358,12 +371,59 @@ pub(crate) enum Semicolon {
     Ends,
     /// It ends the statement and is part of it, as PL/SQL's `END;` is.
     EndsWithin,
-    /// It ends the statement unless the next word is `ELSE`, as it does not
-    /// in T-SQL's `IF @a = 1 SELECT 1; ELSE SELECT 2;`. The statement is
-    /// still being read: a caller that finds an `ELSE` next reads on, the `;`
-    /// part of the statement, and one that finds anything else ends it and
-    /// calls [`Blocks::reset`].
-    EndsUnlessElse,
+    /// It ends the statement unless what comes after it carries the statement
+    /// on: an `ELSE` after T-SQL's `IF @a = 1 SELECT 1;`, a `BEGIN` after a
+    /// cursor's `DECLARE`, an `END PROCEDURE` further on. The statement is
+    /// read on as if it did not end, the `;` part of it, and
+    /// [`Blocks::verdict`] says after each token whether it did: a caller
+    /// that hears [`Verdict::Ended`] ends the statement at this `;`, calls
+    /// [`Blocks::reset`], and reads what came after it again as the next
+    /// statement's.
+    Unsure,
+}
+
+/// What the tokens after a [`Semicolon::Unsure`] have told so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// Not enough yet.
+    Open,
+    /// The statement goes on past that `;`.
+    Continues,
+    /// It ended at that `;`.
+    Ended,
+}
+
+/// How far past a [`Semicolon::Unsure`] a caller reads for its
+/// [`Verdict`] before taking it as [`Verdict::Ended`]: no Informix routine
+/// is as long, and a script streamed from a file is not held back further.
+pub(crate) const VERDICT_REACH: usize = 1 << 20;
+
+/// What the tokens after a [`Semicolon::Unsure`] are waited on for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Guess {
+    /// Nothing.
+    None,
+    /// T-SQL: an `ELSE` next.
+    Else,
+    /// A cursor's `DECLARE` on a product nobody named: a `BEGIN` next, or
+    /// another declaration — a name, which has been read once `named`, and
+    /// its type.
+    Cursor {
+        /// Whether the name has been read.
+        named: bool,
+    },
+    /// A procedure or a function on a product nobody named: an
+    /// `END PROCEDURE` or `END FUNCTION` before the next one's `CREATE`,
+    /// which makes it Informix's.
+    Spl {
+        /// Whether the last token was a `;`, after which a `CREATE` starts a
+        /// statement.
+        after_semicolon: bool,
+        /// How many tokens after such a `CREATE` have been read.
+        create: Option<u8>,
+    },
+    /// Told: whether the statement goes on.
+    Told(bool),
 }
 
 /// Whose rules the words are read by.
@@ -453,6 +513,9 @@ enum Kind {
     PlSql(Unit),
     /// A body with no end a `;` could mark.
     ToEnd,
+    /// A product nobody named: `DECLARE c CURSOR …`, a statement of its own
+    /// or the first declaration of a block, as the token after its `;` tells.
+    Cursor,
 }
 
 /// The words of a statement's head that the kind is still waiting on.
@@ -583,6 +646,11 @@ pub(crate) struct Blocks {
     /// Outside Oracle and SQL Server: the header of a routine that may be in
     /// something other than SQL/PSM.
     head: Head,
+    /// A product nobody named: the statement is a procedure or a function
+    /// that may yet turn out Informix's, nothing in its header having said.
+    maybe_spl: bool,
+    /// What the tokens after a [`Semicolon::Unsure`] are waited on for.
+    guess: Guess,
 }
 
 impl Blocks {
@@ -601,6 +669,8 @@ impl Blocks {
             unit_opened: false,
             ifs: 0,
             head: Head::Closed,
+            maybe_spl: false,
+            guess: Guess::None,
         }
     }
 
@@ -616,6 +686,17 @@ impl Blocks {
         self.ifs = 0;
         self.family = self.home;
         self.head = Head::Closed;
+        self.maybe_spl = false;
+        self.guess = Guess::None;
+    }
+
+    /// What the tokens read since the last [`Semicolon::Unsure`] have told.
+    pub(crate) const fn verdict(&self) -> Verdict {
+        match self.guess {
+            Guess::Else | Guess::Cursor { .. } | Guess::Spl { .. } => Verdict::Open,
+            Guess::Told(false) => Verdict::Ended,
+            Guess::None | Guess::Told(true) => Verdict::Continues,
+        }
     }
 
     /// Reads one token of the statement: anything but whitespace, a comment
@@ -627,6 +708,9 @@ impl Blocks {
         )
         .then_some(text);
 
+        if !self.weigh(word, text) {
+            return;
+        }
         if !self.resolve(word, text) {
             return;
         }
@@ -654,6 +738,8 @@ impl Blocks {
                 self.head = Head::Name {
                     package: word.is_some_and(|word| word.eq_ignore_ascii_case("PACKAGE")),
                 };
+                self.maybe_spl = self.routines() == Routines::Unknown
+                    && word.is_some_and(|word| any(word, &["PROCEDURE", "FUNCTION"]));
                 // The routine's word is not its name.
                 self.structure(word, text);
                 return;
@@ -677,6 +763,20 @@ impl Blocks {
 
     /// Reads a `;`, and says what it does.
     pub(crate) fn semicolon(&mut self) -> Semicolon {
+        match self.guess {
+            // Not the word waited for.
+            Guess::Else | Guess::Cursor { .. } => {
+                self.guess = Guess::Told(false);
+                return Semicolon::Inside;
+            }
+            Guess::Spl { .. } => {
+                self.guess = Guess::Spl {
+                    after_semicolon: true,
+                    create: None,
+                };
+            }
+            Guess::None | Guess::Told(_) => {}
+        }
         self.resolve(None, "");
         self.head = Head::Closed;
         if let Kind::Open(_) = self.kind {
@@ -684,7 +784,25 @@ impl Blocks {
         }
         let answer = match self.kind {
             Kind::Open(_) | Kind::Plain => Semicolon::Ends,
-            Kind::Blocks if self.frames.is_empty() && self.ifs > 0 => Semicolon::EndsUnlessElse,
+            Kind::Cursor => {
+                self.guess = Guess::Cursor { named: false };
+                Semicolon::Unsure
+            }
+            Kind::Blocks if self.frames.is_empty() && self.ifs > 0 => {
+                self.guess = Guess::Else;
+                Semicolon::Unsure
+            }
+            Kind::Blocks if self.frames.is_empty() && self.maybe_spl => {
+                // Informix's if an `END PROCEDURE` comes before the next
+                // routine: its body until then, counting nothing.
+                self.maybe_spl = false;
+                self.frames.push(Frame::Spl);
+                self.guess = Guess::Spl {
+                    after_semicolon: true,
+                    create: None,
+                };
+                Semicolon::Unsure
+            }
             Kind::Blocks if self.frames.is_empty() => Semicolon::Ends,
             Kind::PlSql(_) if self.frames.is_empty() => Semicolon::EndsWithin,
             Kind::Blocks | Kind::PlSql(_) | Kind::ToEnd => Semicolon::Inside,
@@ -699,10 +817,89 @@ impl Blocks {
                 }
             }
             Semicolon::Ends | Semicolon::EndsWithin => self.reset(),
-            // The caller's to settle.
-            Semicolon::EndsUnlessElse => {}
+            // The tokens after it settle it.
+            Semicolon::Unsure => {}
         }
         answer
+    }
+
+    /// Weighs a token against what a [`Semicolon::Unsure`] waits on. Answers
+    /// whether the token is still to be read as part of the statement: not
+    /// once it has shown that the statement ended.
+    fn weigh(&mut self, word: Option<&str>, text: &str) -> bool {
+        let is = |set: &[&str]| word.is_some_and(|word| any(word, set));
+        match self.guess {
+            Guess::None | Guess::Told(_) => true,
+            Guess::Else => {
+                let goes_on = is(&["ELSE"]);
+                self.guess = Guess::Told(goes_on);
+                goes_on
+            }
+            Guess::Cursor { named: false } => {
+                if is(&["BEGIN"]) {
+                    self.guess = Guess::Told(true);
+                    self.open_cursor_block();
+                    true
+                } else {
+                    // A name, unless it starts a statement of its own.
+                    self.guess = if word.is_some_and(|word| {
+                        !word.starts_with('$')
+                            && !any(word, PSM_BODY_STARTS)
+                            && !any(word, AS_STATEMENTS)
+                            && !any(word, MORE_STATEMENTS)
+                    }) {
+                        Guess::Cursor { named: true }
+                    } else {
+                        Guess::Told(false)
+                    };
+                    false
+                }
+            }
+            Guess::Cursor { named: true } => {
+                // A type, or a default given straight away.
+                let goes_on = word.is_some() || text == ":=";
+                self.guess = Guess::Told(goes_on);
+                if goes_on {
+                    self.open_cursor_block();
+                }
+                goes_on
+            }
+            Guess::Spl {
+                after_semicolon,
+                create,
+            } => {
+                let create = if after_semicolon && is(&["CREATE"]) {
+                    Some(0)
+                } else if let Some(seen) = create {
+                    if is(&["PROCEDURE", "FUNCTION"]) {
+                        // The next routine, which no SPL body holds.
+                        self.guess = Guess::Told(false);
+                        return false;
+                    }
+                    (!is(OBJECTS) && text != "(" && seen + 1 < CREATE_LOOKAHEAD).then_some(seen + 1)
+                } else {
+                    None
+                };
+                self.guess = Guess::Spl {
+                    after_semicolon: false,
+                    create,
+                };
+                true
+            }
+        }
+    }
+
+    /// Takes the cursor's `DECLARE` read so far as the first declaration of
+    /// a block.
+    fn open_cursor_block(&mut self) {
+        self.family = Family::Oracle;
+        self.kind = Kind::PlSql(Unit::Anonymous);
+        // Read as a plain statement's, its query left nothing open.
+        self.frames.clear();
+        self.parens = 0;
+        self.frames.push(Frame::Declare { begun: false });
+        self.item_start = false;
+        self.item_opens = false;
     }
 
     /// Settles a [`Pending`] word against the token after it, whose text is
@@ -716,6 +913,9 @@ impl Blocks {
             Pending::End if self.frames.last() == Some(&Frame::Spl) => {
                 if is(&["PROCEDURE", "FUNCTION"]) {
                     self.frames.pop();
+                    if matches!(self.guess, Guess::Spl { .. }) {
+                        self.guess = Guess::Told(true);
+                    }
                     return false;
                 }
                 true
@@ -804,6 +1004,8 @@ impl Blocks {
         };
         let routines = self.routines();
         if any(word, &["IS", "AS"]) {
+            // No routine of Informix's has either.
+            self.maybe_spl = false;
             self.head = Head::Closed;
             if routines == Routines::Unknown {
                 // Only PL/SQL writes an `IS` here, but `AS` heads PostgreSQL's
@@ -836,6 +1038,7 @@ impl Blocks {
             self.frames.push(Frame::Block);
         } else if routines == Routines::Unknown && any(word, SPL_MARKS) {
             self.head = Head::Closed;
+            self.maybe_spl = false;
             self.frames.push(Frame::Spl);
         } else if any(word, PSM_BODY_STARTS) || (returns && word.eq_ignore_ascii_case("RETURN")) {
             self.head = Head::Closed;
@@ -947,9 +1150,14 @@ impl Blocks {
                     Kind::Open(Lead::DeclareName)
                 }
             }
-            (Family::Psm { .. }, Lead::DeclareName) => {
+            (Family::Psm { routines, .. }, Lead::DeclareName) => {
                 if is(CURSOR_DECLARATIONS) {
-                    Kind::Plain
+                    // Snowflake's blocks declare cursors so too.
+                    if routines == Routines::Unknown {
+                        Kind::Cursor
+                    } else {
+                        Kind::Plain
+                    }
                 } else {
                     Kind::PlSql(Unit::Anonymous)
                 }
@@ -1111,15 +1319,11 @@ mod tests {
                         end = token.end;
                         continue;
                     }
-                    Semicolon::EndsUnlessElse
-                        if tokens
-                            .get(i + 1)
-                            .is_some_and(|next| next.text(script).eq_ignore_ascii_case("else")) =>
-                    {
+                    Semicolon::Unsure if !ends_here(&blocks, &tokens[i + 1..], script) => {
                         end = token.end;
                         continue;
                     }
-                    Semicolon::EndsUnlessElse => blocks.reset(),
+                    Semicolon::Unsure => blocks.reset(),
                     Semicolon::Ends => {}
                     Semicolon::EndsWithin => end = token.end,
                 }
@@ -1136,6 +1340,26 @@ mod tests {
             out.push(script[from..end].to_string());
         }
         out
+    }
+
+    /// Whether the statement `blocks` was unsure of ended at its `;`, by
+    /// the tokens after it.
+    fn ends_here(blocks: &Blocks, after: &[crate::lexer::Token], script: &str) -> bool {
+        let mut ahead = blocks.clone();
+        for token in after {
+            let text = token.text(script);
+            if text == ";" && token.kind == TokenKind::Punctuation {
+                ahead.semicolon();
+            } else {
+                ahead.token(token.kind, text);
+            }
+            match ahead.verdict() {
+                Verdict::Open => {}
+                Verdict::Continues => return false,
+                Verdict::Ended => return true,
+            }
+        }
+        true
     }
 
     #[test]
@@ -1523,6 +1747,64 @@ select 1;",
             assert_eq!(cut(&script, &Dialect::GENERIC)[0], first);
             assert_eq!(cut(&script, &Dialect::GENERIC).len(), 3, "{first}");
         }
+    }
+
+    #[test]
+    fn what_follows_tells_an_informix_routine_and_a_cursor_block() {
+        let routines = [
+            "CREATE PROCEDURE raise_prices (per_cent INT)\n  \
+             UPDATE stock SET price = price * per_cent;\nEND PROCEDURE",
+            "CREATE FUNCTION f(a INT) RETURNS INT;\n  RETURN a + 1;\nEND FUNCTION",
+            "CREATE PROCEDURE p()\n  BEGIN\n    INSERT INTO t VALUES (1);\n  END;\n  \
+             INSERT INTO t VALUES (2);\nEND PROCEDURE",
+        ];
+        let blocks = [
+            "DECLARE\n  c1 CURSOR FOR SELECT id FROM t;\nBEGIN\n  OPEN c1;\nEND;",
+            "DECLARE\n  c1 CURSOR FOR SELECT id FROM t;\n  total INTEGER DEFAULT 0;\nBEGIN\n  \
+             RETURN total;\nEND;",
+        ];
+        for unit in routines {
+            assert_eq!(
+                cut(&format!("{unit};\nSELECT 1;"), &Dialect::GENERIC),
+                [unit, "SELECT 1"]
+            );
+        }
+        for unit in blocks {
+            assert_eq!(
+                cut(&format!("{unit}\nSELECT 1;"), &Dialect::GENERIC),
+                [unit, "SELECT 1"]
+            );
+        }
+        // Without an `END PROCEDURE` before the next routine, a routine ends
+        // at its `;` as before, and so does a cursor a statement follows.
+        assert_eq!(
+            cut(
+                "CREATE PROCEDURE p() SELECT 1;\nSELECT 2;\nCREATE PROCEDURE q() SELECT 3;\n\
+                 INSERT INTO t VALUES (4);\nCREATE PROCEDURE r()\n  INSERT INTO t VALUES (5);\n\
+                 END PROCEDURE;\nDECLARE c CURSOR FOR SELECT 6;\nMOVE NEXT FROM c;\n\
+                 DECLARE d CURSOR FOR SELECT 7;",
+                &Dialect::GENERIC
+            ),
+            [
+                "CREATE PROCEDURE p() SELECT 1",
+                "SELECT 2",
+                "CREATE PROCEDURE q() SELECT 3",
+                "INSERT INTO t VALUES (4)",
+                "CREATE PROCEDURE r()\n  INSERT INTO t VALUES (5);\nEND PROCEDURE",
+                "DECLARE c CURSOR FOR SELECT 6",
+                "MOVE NEXT FROM c",
+                "DECLARE d CURSOR FOR SELECT 7",
+            ]
+        );
+        // Only a product nobody named is read so.
+        assert_eq!(
+            cut(
+                "CREATE PROCEDURE p() SELECT 1;\nSELECT 2;\nEND PROCEDURE;",
+                &Dialect::MYSQL
+            )
+            .len(),
+            3
+        );
     }
 
     #[test]
