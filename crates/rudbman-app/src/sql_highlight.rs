@@ -417,6 +417,24 @@ mod tests {
             "CREATE ALIAS twice AS $$\nint twice(int x) {\n  int y = x;\n  return y * 2;\n}\n$$;",
         ),
         (
+            Dialect::MARIADB,
+            "SET sql_mode = ORACLE;\nCREATE PACKAGE BODY pkg AS\n  n INT;\n  PROCEDURE p IS\n  BEGIN\n    n := 1;\n  END;\nEND;\nCALL pkg.p;\n",
+            "n := 1",
+            "CREATE PACKAGE BODY pkg AS\n  n INT;\n  PROCEDURE p IS\n  BEGIN\n    n := 1;\n  END;\nEND;",
+        ),
+        (
+            Dialect::DB2,
+            "CREATE OR REPLACE PROCEDURE p IS\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;\nCALL p;\n",
+            "n NUMBER",
+            "CREATE OR REPLACE PROCEDURE p IS\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;",
+        ),
+        (
+            Dialect::DB2,
+            "ALTER MODULE m ADD PROCEDURE p()\nBEGIN\n  SELECT 1 FROM t;\n  SELECT 2 FROM t;\nEND;\nCALL m.p();\n",
+            "SELECT 2",
+            "ALTER MODULE m ADD PROCEDURE p()\nBEGIN\n  SELECT 1 FROM t;\n  SELECT 2 FROM t;\nEND;",
+        ),
+        (
             Dialect::DB2,
             "CREATE PROCEDURE p()\nBEGIN\n  INSERT INTO t VALUES (1);\n  INSERT INTO t VALUES (2);\nEND;\nCALL p();\n",
             "VALUES (2)",

@@ -1595,6 +1595,29 @@ mod tests {
     }
 
     #[test]
+    fn plsql_on_mariadb_and_db2_runs_whole() {
+        // Sent with its `END;`, as the `mysql` client sends it from inside a
+        // `DELIMITER` and Db2's CLP from before a `/`.
+        let unit = "CREATE PROCEDURE p AS\n  n INT;\nBEGIN\n  n := 1;\nEND;";
+        let script = format!(
+            "SET sql_mode = ORACLE;\n{unit}\nDELIMITER //\n{unit}\n//\nDELIMITER ;\nCALL p;\n"
+        );
+        let whole = ["SET sql_mode = ORACLE", unit, unit, "CALL p"];
+        assert_eq!(sqls(&script, &Dialect::MARIADB), whole);
+        let runs: Vec<String> = units(&script, &Dialect::MARIADB)
+            .into_iter()
+            .map(|(_, run)| run.expect("nothing refused"))
+            .collect();
+        assert_eq!(runs, whole);
+
+        let unit = "CREATE OR REPLACE PROCEDURE p IS\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;";
+        assert_eq!(
+            sqls(&format!("{unit}\nCALL p;\n"), &Dialect::DB2),
+            [unit, "CALL p"]
+        );
+    }
+
+    #[test]
     fn a_tsql_if_runs_with_its_else() {
         // No `BEGIN` in the batch, so "Run all" sends it statement by
         // statement: the `ELSE` after a `;` is still its `IF`'s.

@@ -13,7 +13,9 @@
 //!
 //! **Does the statement have a body at all?** Its first few words say, the
 //! same few a product's own client looks at: `CREATE [OR REPLACE] PROCEDURE`,
-//! `FUNCTION`, `TRIGGER`, `EVENT` or `PACKAGE`; on Oracle `DECLARE`, `BEGIN`
+//! `FUNCTION`, `TRIGGER`, `EVENT` or `PACKAGE`, or an `ALTER` that names one,
+//! as MySQL's `ALTER EVENT … DO BEGIN` and Db2's `ALTER MODULE … ADD
+//! PROCEDURE` do; on Oracle `DECLARE`, `BEGIN`
 //! and the `CREATE` of any stored unit; on SQL Server `IF`, `WHILE` and a
 //! `BEGIN` that does not start a transaction. Everything else is
 //! [`Kind::Plain`], and every `;` ends it, exactly as before this module
@@ -46,6 +48,15 @@
 //! The `;` that ends a PL/SQL unit is part of it ([`Semicolon::EndsWithin`]):
 //! the server rejects `BEGIN NULL; END` without it.
 //!
+//! MariaDB (under `sql_mode=ORACLE`) and Db2 take PL/SQL too, beside their
+//! own SQL/PSM. Which one a procedure, a function or a package is written
+//! in, its header says: PL/SQL's ends in `IS` or `AS`, and SQL/PSM's has
+//! neither. Such an `IS` or `AS` turns the rest of the statement over to the
+//! Oracle rules above. It counts only while the header is being read: once a
+//! word that starts a SQL/PSM body has come (`BEGIN`, `SELECT`, `SET`, …,
+//! or a `RETURN` after the header's `RETURNS`), an `AS` is a column's alias
+//! and an `IS` an `IS NULL`.
+//!
 //! # SQL Server
 //!
 //! A `CREATE PROCEDURE`, `FUNCTION` or `TRIGGER` has no end of its own: the
@@ -63,9 +74,10 @@
 //!
 //! # What it gets wrong
 //!
-//! A label, or MariaDB's top-level `IF … END IF` outside a
-//! `BEGIN NOT ATOMIC`: each is cut as a semicolon splitter cuts it, which is
-//! no worse than before. Counting the other way — a body that never closes
+//! A label, MariaDB's top-level `IF … END IF` outside a `BEGIN NOT ATOMIC`,
+//! a PL/SQL anonymous block or trigger on MariaDB or Db2, whose `DECLARE`
+//! has no header before it: each is cut as a semicolon splitter cuts it,
+//! which is no worse than before. Counting the other way — a body that never closes
 //! because an `END` was missed — runs the statement to the end of the script,
 //! or to SQL\*Plus's `/`, which is where a client that counts nothing would
 //! have run it.
@@ -146,6 +158,74 @@ const CALL_SPECS: &[&str] = &["LANGUAGE", "EXTERNAL", "MLE"];
 /// The routine words a `CREATE` names within its first few tokens.
 const ROUTINES: &[&str] = &["PROCEDURE", "FUNCTION", "TRIGGER", "EVENT", "PACKAGE"];
 
+/// The routines MariaDB and Db2 also take in PL/SQL.
+const PLSQL_ROUTINES: &[&str] = &["PROCEDURE", "FUNCTION", "PACKAGE"];
+
+/// What a routine's name may follow: `CREATE PROCEDURE IF NOT EXISTS p`.
+const NAME_GUARDS: &[&str] = &["IF", "NOT", "EXISTS"];
+
+/// The words a SQL/PSM body can start with, which end its routine's header:
+/// an `AS` or an `IS` after one is the body's own, as in
+/// `CREATE PROCEDURE p() SELECT a AS b FROM t`.
+const PSM_BODY_STARTS: &[&str] = &[
+    "BEGIN",
+    "DECLARE",
+    "SELECT",
+    "WITH",
+    "VALUES",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "REPLACE",
+    "MERGE",
+    "SET",
+    "CALL",
+    "DO",
+    "IF",
+    "CASE",
+    "WHILE",
+    "REPEAT",
+    "LOOP",
+    "FOR",
+    "LEAVE",
+    "ITERATE",
+    "OPEN",
+    "FETCH",
+    "CLOSE",
+    "SIGNAL",
+    "RESIGNAL",
+    "GET",
+    "EXECUTE",
+    "PREPARE",
+    "DEALLOCATE",
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "RENAME",
+    "TRUNCATE",
+    "GRANT",
+    "REVOKE",
+    "COMMIT",
+    "ROLLBACK",
+    "START",
+    "SAVEPOINT",
+    "RELEASE",
+    "LOCK",
+    "UNLOCK",
+    "HANDLER",
+    "LOAD",
+    "ANALYZE",
+    "OPTIMIZE",
+    "SHOW",
+    "FLUSH",
+    "PURGE",
+    "KILL",
+    "USE",
+    "XA",
+    "GOTO",
+    "PIPE",
+];
+
 /// The words a `CREATE` names an object with that is not a routine: once one
 /// is read, a routine word after it is a name or a column — `CREATE VIEW v AS
 /// SELECT event, begin FROM t` holds MySQL's `begin` column, not a block.
@@ -200,6 +280,9 @@ enum Family {
     Psm {
         /// What a statement starting with `BEGIN` is.
         begin: BeginRule,
+        /// Whether a routine may be written in PL/SQL instead: MariaDB and
+        /// Db2.
+        plsql: bool,
     },
 }
 
@@ -222,14 +305,25 @@ impl Family {
         match dialect.id() {
             DialectId::Oracle => Self::Oracle,
             DialectId::MsSql => Self::MsSql,
-            DialectId::MySql | DialectId::MariaDb => Self::Psm {
+            DialectId::MySql => Self::Psm {
                 begin: BeginRule::NotAtomic,
+                plsql: false,
             },
-            DialectId::Db2 | DialectId::Generic => Self::Psm {
+            DialectId::MariaDb => Self::Psm {
+                begin: BeginRule::NotAtomic,
+                plsql: true,
+            },
+            DialectId::Db2 => Self::Psm {
                 begin: BeginRule::UnlessTransaction,
+                plsql: true,
+            },
+            DialectId::Generic => Self::Psm {
+                begin: BeginRule::UnlessTransaction,
+                plsql: false,
             },
             DialectId::Postgres | DialectId::Sqlite | DialectId::H2 => Self::Psm {
                 begin: BeginRule::Transaction,
+                plsql: false,
             },
         }
     }
@@ -309,6 +403,22 @@ enum Pending {
     Compound,
 }
 
+/// How far the header of a routine that may be PL/SQL has been read, on
+/// MariaDB and Db2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Head {
+    /// Not in one: no such routine, or its header is over.
+    Closed,
+    /// Before the routine's name, or a part of it after a `.`.
+    Name,
+    /// After the name, where an `IS` or an `AS` makes the routine PL/SQL.
+    Named {
+        /// Whether `RETURNS` has been read, which only SQL/PSM writes: a
+        /// `RETURN` after it is the body's.
+        returns: bool,
+    },
+}
+
 /// Reads one statement's tokens and says what each of its `;` does.
 ///
 /// Fed every token that is not whitespace, a comment or a `;` through
@@ -317,6 +427,10 @@ enum Pending {
 /// starts it over for a caller that dropped what it was reading.
 #[derive(Debug, Clone)]
 pub(crate) struct Blocks {
+    /// The dialect's family.
+    home: Family,
+    /// Whose rules the statement is read by: [`Self::home`]'s, or Oracle's
+    /// once a PL/SQL header has been read on MariaDB or Db2.
     family: Family,
     kind: Kind,
     frames: Vec<Frame>,
@@ -333,13 +447,17 @@ pub(crate) struct Blocks {
     /// T-SQL: how many `IF`s outside any level are still without their
     /// `ELSE`.
     ifs: u32,
+    /// MariaDB and Db2: the header of a routine that may be PL/SQL.
+    head: Head,
 }
 
 impl Blocks {
     /// A reader for statements in `dialect`.
     pub(crate) fn new(dialect: &Dialect) -> Self {
+        let family = Family::of(dialect);
         Self {
-            family: Family::of(dialect),
+            home: family,
+            family,
             kind: Kind::Open(Lead::Start),
             frames: Vec::new(),
             pending: Pending::None,
@@ -348,6 +466,7 @@ impl Blocks {
             item_opens: false,
             unit_opened: false,
             ifs: 0,
+            head: Head::Closed,
         }
     }
 
@@ -361,6 +480,8 @@ impl Blocks {
         self.item_opens = false;
         self.unit_opened = false;
         self.ifs = 0;
+        self.family = self.home;
+        self.head = Head::Closed;
     }
 
     /// Reads one token of the statement: anything but whitespace, a comment
@@ -377,6 +498,18 @@ impl Blocks {
         }
         if let Kind::Open(lead) = self.kind {
             self.kind = self.classify(lead, word, text);
+            if self.kind == Kind::Blocks
+                && matches!(self.home, Family::Psm { plsql: true, .. })
+                && word.is_some_and(|word| any(word, PLSQL_ROUTINES))
+            {
+                self.head = Head::Name;
+                // The routine's word is not its name.
+                self.structure(word, text);
+                return;
+            }
+        }
+        if self.head != Head::Closed && self.frames.is_empty() && self.parens == 0 {
+            self.read_head(word, text);
         }
         self.structure(word, text);
     }
@@ -384,6 +517,7 @@ impl Blocks {
     /// Reads a `;`, and says what it does.
     pub(crate) fn semicolon(&mut self) -> Semicolon {
         self.resolve(None);
+        self.head = Head::Closed;
         if let Kind::Open(_) = self.kind {
             self.kind = Kind::Plain;
         }
@@ -443,6 +577,36 @@ impl Blocks {
                 }
                 true
             }
+        }
+    }
+
+    /// Reads a token of the header of a routine that may be PL/SQL, outside
+    /// any parentheses: its parameters and the length of its return type are
+    /// none of the header's business.
+    fn read_head(&mut self, word: Option<&str>, text: &str) {
+        let Head::Named { returns } = self.head else {
+            // `Head::Name`: the routine's name, or the guard before it.
+            if word.is_some_and(|word| !any(word, NAME_GUARDS)) {
+                self.head = Head::Named { returns: false };
+            }
+            return;
+        };
+        let Some(word) = word else {
+            if text == "." && !returns {
+                self.head = Head::Name;
+            }
+            return;
+        };
+        if any(word, &["IS", "AS"]) {
+            // The header of a PL/SQL unit, whose `IS` or `AS` the Oracle
+            // rules take as its own.
+            self.head = Head::Closed;
+            self.family = Family::Oracle;
+            self.kind = Kind::PlSql(Unit::Opens);
+        } else if word.eq_ignore_ascii_case("RETURNS") {
+            self.head = Head::Named { returns: true };
+        } else if any(word, PSM_BODY_STARTS) || (returns && word.eq_ignore_ascii_case("RETURN")) {
+            self.head = Head::Closed;
         }
     }
 
@@ -510,8 +674,8 @@ impl Blocks {
                 }
             }
 
-            (Family::Psm { begin }, Lead::Start) => {
-                if is(&["CREATE"]) {
+            (Family::Psm { begin, .. }, Lead::Start) => {
+                if is(&["CREATE", "ALTER"]) {
                     Kind::Open(Lead::Create(0))
                 } else if is(&["BEGIN"]) && begin != BeginRule::Transaction {
                     Kind::Open(Lead::Begin)
@@ -528,7 +692,7 @@ impl Blocks {
                     Kind::Open(Lead::Create(seen + 1))
                 }
             }
-            (Family::Psm { begin }, Lead::Begin) => match begin {
+            (Family::Psm { begin, .. }, Lead::Begin) => match begin {
                 BeginRule::NotAtomic if is(&["NOT"]) => Kind::Open(Lead::BeginNot),
                 BeginRule::UnlessTransaction if word.is_some() && !is(TRANSACTION_WORDS) => {
                     Kind::Blocks
@@ -874,5 +1038,99 @@ select 1;",
         );
         // Elsewhere an `IF` is MySQL's function or a body's own statement.
         assert_eq!(cut("select if(1, 2, 3); else;", &Dialect::MYSQL).len(), 2);
+    }
+
+    #[test]
+    fn plsql_on_mariadb_and_db2_is_read_as_oracle_reads_it() {
+        // MariaDB's `sql_mode=ORACLE` and Db2's PL/SQL: a routine's header
+        // that ends in `IS` or `AS` opens a declaration section.
+        let body = "CREATE OR REPLACE PACKAGE BODY pkg AS\n  CURSOR c IS SELECT 1 FROM t;\n  \
+                    n INT := 0;\n  PROCEDURE p IS\n  BEGIN\n    NULL;\n  END p;\n  \
+                    FUNCTION f RETURN INT AS\n  BEGIN\n    RETURN n;\n  END;\nBEGIN\n  n := 1;\nEND pkg;";
+        for dialect in [Dialect::MARIADB, Dialect::DB2] {
+            for unit in [
+                "CREATE PACKAGE pkg AS\n  PROCEDURE p;\n  FUNCTION f RETURN INT;\nEND;",
+                body,
+                "CREATE PROCEDURE p AS\n  n INT;\nBEGIN\n  n := 1;\nEND;",
+                "CREATE OR REPLACE PROCEDURE p(a IN INT) IS\n  n INT;\nBEGIN\n  \
+                 IF a > 0 THEN n := a; END IF;\nEND p;",
+                "CREATE FUNCTION f(a INT) RETURN INT AS\nBEGIN\n  RETURN a;\nEND;",
+                "CREATE PROCEDURE IF NOT EXISTS db.load AS\nBEGIN\n  NULL;\nEND;",
+            ] {
+                let script = format!("{unit}\nSELECT 1;");
+                assert_eq!(
+                    cut(&script, &dialect),
+                    [unit, "SELECT 1"],
+                    "{:?}",
+                    dialect.id()
+                );
+            }
+        }
+        // Their own SQL/PSM is read as before: an `IS` or an `AS` in a body
+        // that started without a `BEGIN` is the body's.
+        for (dialect, script) in [
+            (
+                Dialect::MARIADB,
+                "CREATE PROCEDURE p() SELECT a AS b FROM t;\nSELECT 1;",
+            ),
+            (
+                Dialect::MARIADB,
+                "CREATE PROCEDURE load() SELECT 1 AS a;\nSELECT 1;",
+            ),
+            (
+                Dialect::MARIADB,
+                "CREATE FUNCTION f(a INT) RETURNS BOOL RETURN a IS NULL;\nSELECT 1;",
+            ),
+            (
+                Dialect::MARIADB,
+                "CREATE PROCEDURE p()\nmain: BEGIN\n  SELECT a AS b FROM t;\nEND main;\nSELECT 1;",
+            ),
+            (
+                Dialect::DB2,
+                "CREATE FUNCTION t() RETURNS TABLE (a INT) LANGUAGE SQL\n  \
+                 RETURN SELECT x AS a FROM t;\nSELECT 1;",
+            ),
+        ] {
+            assert_eq!(cut(script, &dialect).len(), 2, "{script}");
+        }
+        // MySQL has no PL/SQL to read.
+        assert_eq!(
+            cut(
+                "CREATE PROCEDURE p AS\n  n INT;\nBEGIN NOT ATOMIC\nEND;",
+                &Dialect::MYSQL
+            ),
+            ["CREATE PROCEDURE p AS\n  n INT", "BEGIN NOT ATOMIC\nEND"]
+        );
+    }
+
+    #[test]
+    fn a_routine_an_alter_names_has_its_body_too() {
+        assert_eq!(
+            cut(
+                "ALTER MODULE m ADD PROCEDURE p()\nBEGIN\n  SELECT 1 FROM t;\n  SELECT 2 FROM t;\nEND;\n\
+                 SELECT 3 FROM t;",
+                &Dialect::DB2
+            ),
+            [
+                "ALTER MODULE m ADD PROCEDURE p()\nBEGIN\n  SELECT 1 FROM t;\n  SELECT 2 FROM t;\nEND",
+                "SELECT 3 FROM t"
+            ]
+        );
+        assert_eq!(
+            cut(
+                "ALTER EVENT e DO BEGIN DELETE FROM t; DELETE FROM u; END;\nSELECT 1;",
+                &Dialect::MYSQL
+            )
+            .len(),
+            2
+        );
+        assert_eq!(
+            cut(
+                "ALTER TABLE t ADD c INT; ALTER PROCEDURE p COMMENT 'x'; ALTER VIEW v AS SELECT CASE WHEN a THEN 1 END; SELECT 1;",
+                &Dialect::MYSQL
+            )
+            .len(),
+            4
+        );
     }
 }
