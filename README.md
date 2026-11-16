@@ -75,8 +75,22 @@ one next to its executable.
 
   Either way the executable is self-signed at best, so SmartScreen may say
   "Windows protected your PC"; choose **More info → Run anyway**.
-- **macOS** — unpack the `.tar.gz` and drag `rudbman.app` to Applications.
-  The bundle is ad-hoc signed rather than notarized, so Gatekeeper quarantines
+- **macOS** — on an Apple Silicon Mac, the project's Homebrew tap installs it
+  with one command:
+
+  ```sh
+  brew install --cask xcomart/tap/rudbman
+  ```
+
+  Homebrew checks the download against the SHA256 recorded in the cask, moves
+  `rudbman.app` into `/Applications` and clears the quarantine flag described
+  next, so the first launch opens normally. rudbman updates itself, so
+  `brew upgrade` skips it unless run with `--greedy`. The
+  [tap's README](https://github.com/xcomart/homebrew-tap#readme) covers
+  Homebrew's tap trust and what `--zap` removes.
+
+  To install by hand instead, unpack the `.tar.gz` and drag `rudbman.app` to
+  Applications. The bundle is ad-hoc signed rather than notarized, so Gatekeeper quarantines
   it on arrival: the first launch needs **right-click → Open** instead of a
   double-click, and if macOS still refuses (newer versions offer no way
   through), drop the quarantine flag and launch normally:
