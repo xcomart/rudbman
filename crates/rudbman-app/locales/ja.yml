@@ -37,6 +37,14 @@ menu:
   transfer_table: 行を転送…
   backup_schema: スキーマをバックアップ…
   restore_schema: "スクリプトから復元…"
+  drop_table: "テーブルを削除 (DROP)…"
+  drop_view: "ビューを削除 (DROP)…"
+  drop_sequence: "シーケンスを削除 (DROP)…"
+  drop_schema: "スキーマを削除 (DROP)…"
+  drop_database: "データベースを削除 (DROP)…"
+  drop_objects: "選択したオブジェクトを削除 (DROP、%{count} 件)…"
+  truncate_table: "テーブルを空にする (TRUNCATE)…"
+  truncate_tables: "選択したテーブルを空にする (TRUNCATE、%{count} 件)…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER図
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -946,6 +954,20 @@ toast:
   columns_failed: "%{table} の列を読み込めませんでした: %{error}"
   sql_copied: "SQL をクリップボードにコピーしました。"
   keychain_unavailable: "システムのキーチェーンを使用できません (%{error})。保存したパスワードは読み込めず、新しいパスワードも保存されません。"
+
+removal:
+  drop_title: 完全に削除しますか？
+  truncate_title: すべての行を削除しますか？
+  drop_body: "以下の文は、対象とその中に保存されているすべてを完全に削除します。元に戻せません。"
+  truncate_body: "以下の文は、対象テーブルのすべての行を削除します。テーブルは残りますが、行は元に戻せません。"
+  type_to_confirm: "確認のため、下に「%{phrase}」と入力してください。"
+  drop_run: 削除
+  truncate_run: 空にする
+  read_only: "読み取り専用の接続のため、削除も TRUNCATE もできません。"
+  dropped: "削除しました。実行した文: %{count} 件"
+  truncated: "空にしました。実行した文: %{count} 件"
+  failed: "何も削除されませんでした: %{error}"
+  failed_partway: "%{total} 件中 %{number} 件目の文が失敗しました: %{error}。その前の %{committed} 件は実行済みで取り消せません。"
 
 history:
   title: "クエリ履歴 — %{name}"

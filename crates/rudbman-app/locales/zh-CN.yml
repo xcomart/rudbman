@@ -37,6 +37,14 @@ menu:
   transfer_table: 传输数据行…
   backup_schema: 备份模式（Schema）…
   restore_schema: "从脚本恢复…"
+  drop_table: "删除表（DROP）…"
+  drop_view: "删除视图（DROP）…"
+  drop_sequence: "删除序列（DROP）…"
+  drop_schema: "删除模式（DROP）…"
+  drop_database: "删除数据库（DROP）…"
+  drop_objects: "删除所选对象（DROP，%{count} 个）…"
+  truncate_table: "清空表（TRUNCATE）…"
+  truncate_tables: "清空所选表（TRUNCATE，%{count} 个）…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ER 图
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -946,6 +954,20 @@ toast:
   columns_failed: "无法读取 %{table} 的列：%{error}"
   sql_copied: "已将 SQL 复制到剪贴板。"
   keychain_unavailable: "系统钥匙串不可用（%{error}）。无法读取已保存的密码，新密码也不会被保存。"
+
+removal:
+  drop_title: 永久删除吗？
+  truncate_title: 删除所有行吗？
+  drop_body: "下面的语句会永久删除其指定的对象及其中存储的一切，无法撤销。"
+  truncate_body: "下面的语句会删除所指定表中的所有行。表会保留，但行无法恢复。"
+  type_to_confirm: "要确认，请在下方输入“%{phrase}”。"
+  drop_run: 删除
+  truncate_run: 清空
+  read_only: "此连接为只读，无法删除或清空。"
+  dropped: "已删除。已执行的语句：%{count} 条"
+  truncated: "已清空。已执行的语句：%{count} 条"
+  failed: "未删除任何内容：%{error}"
+  failed_partway: "第 %{number} 条语句（共 %{total} 条）失败：%{error}。它之前的 %{committed} 条已执行，无法撤销。"
 
 history:
   title: "查询历史 — %{name}"

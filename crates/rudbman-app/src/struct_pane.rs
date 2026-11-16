@@ -2431,14 +2431,17 @@ fn drops_constraints(dialect: &Dialect) -> bool {
 /// There is no `half_applied` flag the way §7.9's failure has one, because
 /// there is nothing to be uncertain about: every statement before the one that
 /// failed is committed, and `committed` says how many that is.
-struct AlterFailure {
+///
+/// Shared with the explorer's drop and truncate, which run their batch the
+/// same way.
+pub(crate) struct AlterFailure {
     /// The driver's own envelope, from the statement that failed.
-    error: JdbcError,
+    pub(crate) error: JdbcError,
     /// How many statements ran and committed before it.
-    committed: usize,
+    pub(crate) committed: usize,
     /// How many there were in the batch. What makes `committed` legible: "1 of
     /// 4 committed" is a position in a list the user has just read.
-    total: usize,
+    pub(crate) total: usize,
 }
 
 /// Runs one `ALTER TABLE` batch and reports how far it got.
@@ -2465,7 +2468,11 @@ struct AlterFailure {
 /// * Autocommit goes back to `restore` whatever happened. A failure to restore
 ///   it is logged and no more: the work is committed either way, and reporting
 ///   it as this batch's failure would say something untrue about the batch.
-fn apply_alter(
+///
+/// The explorer's drop and truncate run through here too: they are DDL with
+/// the same implicit commits, and one function is what keeps the autocommit
+/// flip and its restore in one place.
+pub(crate) fn apply_alter(
     session: &Session,
     statements: &[String],
     restore: bool,

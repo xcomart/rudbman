@@ -46,6 +46,8 @@ impl Workspace {
             // Declining is the only safe reading of "the dialog went away".
             self.answer_confirm(false, window, cx);
         }
+        // And for a drop, the same: nothing runs.
+        self.removal = None;
         // And for a close, the only safe reading is that nothing closes.
         if self.close_question.is_some() {
             self.answer_close(closing::CloseAnswer::Cancel, window, cx);

@@ -37,6 +37,14 @@ menu:
   transfer_table: 행 전송…
   backup_schema: 스키마 백업…
   restore_schema: "스크립트로 복원…"
+  drop_table: "테이블 삭제(DROP)…"
+  drop_view: "뷰 삭제(DROP)…"
+  drop_sequence: "시퀀스 삭제(DROP)…"
+  drop_schema: "스키마 삭제(DROP)…"
+  drop_database: "데이터베이스 삭제(DROP)…"
+  drop_objects: "선택한 객체 삭제(DROP, %{count}개)…"
+  truncate_table: "테이블 비우기(TRUNCATE)…"
+  truncate_tables: "선택한 테이블 비우기(TRUNCATE, %{count}개)…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD 다이어그램
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -946,6 +954,20 @@ toast:
   columns_failed: "%{table}의 열 목록을 읽을 수 없습니다: %{error}"
   sql_copied: "SQL 문을 클립보드에 복사했습니다."
   keychain_unavailable: "시스템 키체인을 사용할 수 없습니다(%{error}). 저장된 비밀번호를 읽을 수 없고, 새 비밀번호도 보관되지 않습니다."
+
+removal:
+  drop_title: 영구히 삭제할까요?
+  truncate_title: 모든 행을 삭제할까요?
+  drop_body: "아래 SQL 문은 대상과 그 안에 저장된 모든 것을 영구히 삭제합니다. 되돌릴 수 없습니다."
+  truncate_body: "아래 SQL 문은 대상 테이블의 모든 행을 삭제합니다. 테이블은 남지만 행은 되돌릴 수 없습니다."
+  type_to_confirm: "확인하려면 아래에 “%{phrase}”을(를) 입력하세요."
+  drop_run: 삭제
+  truncate_run: 비우기
+  read_only: "읽기 전용 연결이라 삭제하거나 비울 수 없습니다."
+  dropped: "삭제했습니다. 실행한 SQL 문: %{count}개"
+  truncated: "비웠습니다. 실행한 SQL 문: %{count}개"
+  failed: "아무것도 삭제하지 못했습니다: %{error}"
+  failed_partway: "%{total}개 중 %{number}번째 SQL 문이 실패했습니다: %{error}. 그 앞의 %{committed}개는 이미 실행되어 되돌릴 수 없습니다."
 
 history:
   title: "쿼리 실행 이력 — %{name}"

@@ -37,6 +37,14 @@ menu:
   transfer_table: Zeilen übertragen…
   backup_schema: Schema sichern…
   restore_schema: "Aus Skript wiederherstellen…"
+  drop_table: "Tabelle löschen (DROP)…"
+  drop_view: "Sicht löschen (DROP)…"
+  drop_sequence: "Sequenz löschen (DROP)…"
+  drop_schema: "Schema löschen (DROP)…"
+  drop_database: "Datenbank löschen (DROP)…"
+  drop_objects: "Ausgewählte Objekte löschen (DROP, %{count})…"
+  truncate_table: "Tabelle leeren (TRUNCATE)…"
+  truncate_tables: "Ausgewählte Tabellen leeren (TRUNCATE, %{count})…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD-Diagramm
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -946,6 +954,20 @@ toast:
   columns_failed: "Die Spalten von %{table} konnten nicht gelesen werden: %{error}"
   sql_copied: "SQL in die Zwischenablage kopiert."
   keychain_unavailable: "Der Schlüsselbund des Systems ist nicht verfügbar (%{error}). Gespeicherte Passwörter können nicht gelesen und neue nicht behalten werden."
+
+removal:
+  drop_title: Endgültig löschen?
+  truncate_title: Alle Zeilen löschen?
+  drop_body: "Die Anweisungen unten entfernen, was sie nennen, samt allem, was darin gespeichert ist. Das lässt sich nicht rückgängig machen."
+  truncate_body: "Die Anweisungen unten löschen alle Zeilen der genannten Tabellen. Die Tabellen bleiben, die Zeilen lassen sich nicht wiederherstellen."
+  type_to_confirm: "Geben Sie zur Bestätigung unten „%{phrase}“ ein."
+  drop_run: Löschen
+  truncate_run: Leeren
+  read_only: "Diese Verbindung ist schreibgeschützt: Hier lässt sich nichts löschen oder leeren."
+  dropped: "Gelöscht. Ausgeführte Anweisungen: %{count}"
+  truncated: "Geleert. Ausgeführte Anweisungen: %{count}"
+  failed: "Nichts wurde entfernt: %{error}"
+  failed_partway: "Anweisung %{number} von %{total} ist fehlgeschlagen: %{error}. Die %{committed} davor wurden bereits ausgeführt und lassen sich nicht rückgängig machen."
 
 history:
   title: "Abfrageverlauf — %{name}"

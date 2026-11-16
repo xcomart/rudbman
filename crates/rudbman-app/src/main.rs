@@ -16,6 +16,7 @@ mod context_menu;
 mod data_edit;
 mod data_pane;
 mod driver_manager;
+mod drop_sql;
 mod erd_layout;
 mod erd_pane;
 mod explorer;

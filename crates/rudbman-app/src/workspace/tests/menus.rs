@@ -203,7 +203,10 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             let rows = workspace.explorer_rows(&table, cx);
             let mut expected = relation_labels();
             expected.extend(table_copy_labels());
-            expected.extend(scope_labels());
+            expected.extend(scope_labels_with(&[
+                "menu.truncate_table",
+                "menu.drop_table",
+            ]));
             assert_eq!(context_menu::labels(&rows), expected);
             assert!(context_menu::grayed(&rows).is_empty());
 
@@ -224,7 +227,10 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             let mut with_create = vec![ts!("menu.new_table").to_string()];
             with_create.extend(scope_labels());
             let mut named = name_copy_labels();
-            named.extend(with_create.clone());
+            named.push(ts!("menu.new_table").to_string());
+            // A schema can be dropped; a folder is this program's grouping and
+            // names nothing the server could drop.
+            named.extend(scope_labels_with(&["menu.drop_schema"]));
             assert_eq!(
                 context_menu::labels(&workspace.explorer_rows(&schema, cx)),
                 named
@@ -274,7 +280,10 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
             expected.pop();
             expected.push(ts!("menu.copy_select").to_string());
             expected.push(ts!("menu.copy_insert").to_string());
-            expected.extend(scope_labels());
+            expected.extend(scope_labels_with(&[
+                "menu.truncate_table",
+                "menu.drop_table",
+            ]));
             expected.retain(|label| !label.is_empty());
             assert_eq!(
                 context_menu::grayed(&rows),

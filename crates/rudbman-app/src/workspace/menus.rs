@@ -168,6 +168,14 @@ impl Workspace {
                 .enabled(live && scope.is_some())
                 .on_activate(scoped(Workspace::open_restore)),
         );
+        // The two commands nothing takes back, in a group of their own at the
+        // bottom where a slip of the pointer is least likely to land, and only
+        // on what they can remove — see [`removal`].
+        let removals = self.removal_rows(node, live, cx);
+        if !removals.is_empty() {
+            rows.push(MenuRow::separator());
+            rows.extend(removals);
+        }
         rows.push(MenuRow::separator());
         let explorer = self.explorer.clone();
         let node = node.clone();

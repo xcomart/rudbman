@@ -37,6 +37,14 @@ menu:
   transfer_table: Перенести строки…
   backup_schema: Резервная копия схемы…
   restore_schema: "Восстановить из скрипта…"
+  drop_table: "Удалить таблицу (DROP)…"
+  drop_view: "Удалить представление (DROP)…"
+  drop_sequence: "Удалить последовательность (DROP)…"
+  drop_schema: "Удалить схему (DROP)…"
+  drop_database: "Удалить базу данных (DROP)…"
+  drop_objects: "Удалить выбранные объекты (DROP, %{count})…"
+  truncate_table: "Очистить таблицу (TRUNCATE)…"
+  truncate_tables: "Очистить выбранные таблицы (TRUNCATE, %{count})…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD-диаграмма
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -946,6 +954,20 @@ toast:
   columns_failed: "Не удалось прочитать столбцы %{table}: %{error}"
   sql_copied: "SQL скопирован в буфер обмена."
   keychain_unavailable: "Системное хранилище ключей недоступно (%{error}). Сохранённые пароли нельзя прочитать, а новые не будут сохранены."
+
+removal:
+  drop_title: Удалить безвозвратно?
+  truncate_title: Удалить все строки?
+  drop_body: "Инструкции ниже безвозвратно удаляют то, что в них названо, вместе со всем содержимым. Отменить это нельзя."
+  truncate_body: "Инструкции ниже удаляют все строки названных таблиц. Таблицы останутся, а строки восстановить нельзя."
+  type_to_confirm: "Для подтверждения введите ниже «%{phrase}»."
+  drop_run: Удалить
+  truncate_run: Очистить
+  read_only: "Это подключение только для чтения: удалять и очищать в нём ничего нельзя."
+  dropped: "Удалено. Выполнено инструкций: %{count}"
+  truncated: "Очищено. Выполнено инструкций: %{count}"
+  failed: "Ничего не удалено: %{error}"
+  failed_partway: "Инструкция %{number} из %{total} завершилась ошибкой: %{error}. Предыдущие (%{committed}) уже выполнены, и отменить их нельзя."
 
 history:
   title: "История запросов — %{name}"
