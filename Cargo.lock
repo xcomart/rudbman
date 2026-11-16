@@ -5600,11 +5600,11 @@ dependencies = [
  "parking_lot",
  "regex",
  "rudbkit-core",
+ "rudbkit-ssh",
  "rudbman-core",
  "rudbman-erd",
  "rudbman-jdbc",
  "rudbman-sql",
- "rudbman-ssh",
  "rugpui",
  "rugpui-editor",
  "rugpui-grid",
@@ -5665,18 +5665,6 @@ dependencies = [
 [[package]]
 name = "rudbman-sql"
 version = "0.3.9"
-
-[[package]]
-name = "rudbman-ssh"
-version = "0.3.9"
-dependencies = [
- "async-trait",
- "futures",
- "rudbkit-ssh",
- "rudbman-core",
- "russh",
- "tokio",
-]
 
 [[package]]
 name = "rugpui"

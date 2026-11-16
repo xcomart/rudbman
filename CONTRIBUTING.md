@@ -64,7 +64,6 @@ locations; only release archives include a runtime.
 | `crates/rudbman-erd` | ER diagram model, layout and views |
 | `crates/rudbman-jdbc` | Rust bridge client, result decoding and JDBC integration tests |
 | `bridge` | Java JDBC sessions, metadata, cursors, LOBs and database jobs |
-| `crates/rudbman-ssh` | Compatibility facade over shared SSH transport |
 | `crates/rudbman-app/locales` | Interface translations |
 
 Reusable widgets, grids, editor and shell belong in
@@ -100,7 +99,6 @@ Use focused checks while iterating:
 cargo test -p rudbman-sql --locked
 cargo test -p rudbman-erd --locked
 cargo test -p rudbman-jdbc --test h2 --locked
-cargo test -p rudbman-ssh --locked
 ```
 
 ### Database-specific checks

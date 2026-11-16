@@ -21,7 +21,7 @@
 //! # The tunnel is shared, the session is not
 //!
 //! Two profiles that reach the same database through the same bastion get one
-//! tunnel between them, reference counted here (§9.3 — `rudbman-ssh` says in as
+//! tunnel between them, reference counted here (§9.3 — `rudbkit-ssh` says in as
 //! many words that the counting belongs to the application). The last lease
 //! dropped is what closes it.
 //!
@@ -47,6 +47,7 @@ use futures::StreamExt;
 use futures::channel::oneshot;
 use futures::executor::block_on;
 use parking_lot::Mutex;
+use rudbkit_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 use rudbman_core::{
     AppSettings, ConnectionProfile, DriverDef, KnownHosts, SecretSlot, SecretStore, TunnelConfig,
 };
@@ -54,7 +55,6 @@ use rudbman_jdbc::{
     BridgeError, BridgeErrorKind, ConnectionSpec, Error as JdbcError, Jvm, JvmConfig,
     KeepAliveSpec, Session, SessionInfo, default_bridge_jar,
 };
-use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 
 pub use rudbkit_core::url::{CATALOG_PLACEHOLDERS, placeholders_of, redirect_url, substitute};
 
@@ -962,8 +962,8 @@ impl StoredHostKeys {
     /// A host key rejection is re-read from what the verifier recorded, so the
     /// user is told which fingerprint arrived and whether it merely was not
     /// known or actively contradicts one that is.
-    fn explain(&self, kind: rudbman_ssh::SshErrorKind, message: String) -> ConnectError {
-        if kind != rudbman_ssh::SshErrorKind::HostKeyRejected {
+    fn explain(&self, kind: rudbkit_ssh::SshErrorKind, message: String) -> ConnectError {
+        if kind != rudbkit_ssh::SshErrorKind::HostKeyRejected {
             return ConnectError::Tunnel(format!("{kind}: {message}"));
         }
         let seen = self.seen.lock().clone();
@@ -995,8 +995,8 @@ impl StoredHostKeys {
 #[async_trait::async_trait]
 impl HostKeyVerifier for StoredHostKeys {
     async fn verify(&self, host: &str, port: u16, key: &PublicKey) -> bool {
-        let algorithm = rudbman_ssh::algorithm_name(key);
-        let fingerprint = rudbman_ssh::fingerprint(key);
+        let algorithm = rudbkit_ssh::algorithm_name(key);
+        let fingerprint = rudbkit_ssh::fingerprint(key);
         let trusted = matches!(
             KnownHosts::load().map(|hosts| hosts.status(host, port, &algorithm, &fingerprint)),
             Ok(rudbman_core::HostKeyStatus::Trusted)
@@ -1647,7 +1647,7 @@ mod tests {
 
     #[test]
     fn no_route_to_host_is_recognized_from_either_layer() {
-        // The SSH tunnel path: `rudbman-ssh` surfaces the OS error as text.
+        // The SSH tunnel path: `rudbkit-ssh` surfaces the OS error as text.
         assert!(is_no_route(&ConnectError::Tunnel(
             "connect: No route to host (os error 65)".to_string()
         )));

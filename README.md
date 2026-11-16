@@ -178,7 +178,7 @@ SSH transport, tunnel ownership, connection validation and saving, and JVM
 startup come from [rudbkit](https://github.com/xcomart/rudbkit), pinned to one
 Git revision in the root Cargo manifest. Cargo fetches it automatically. The
 application keeps its own settings, keychain, Java bridge protocol and dialog
-layout; its SSH crate is a compatibility facade over the shared transport.
+layout.
 
 The widget kit, the virtualized result grid and the code editor are not in this
 repository. They are [rugpui](https://github.com/xcomart/rugpui), extracted so that
