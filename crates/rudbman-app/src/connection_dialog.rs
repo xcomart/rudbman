@@ -46,9 +46,11 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, Render, ScrollHandle, SharedString,
     Subscription, Task, Window, div, prelude::*, px,
 };
+use rudbkit_core::url::{CATALOG_PLACEHOLDERS, placeholders_of, substitute};
+use rudbkit_core::{TunnelAuth, TunnelConfig};
 use rudbman_core::{
     ConnectionProfile, ConnectionStore, DriverDef, DriverStore, ExplorerHide, HideList, KeepAlive,
-    SecretSlot, SecretStore, TunnelAuth, TunnelConfig,
+    SecretSlot, SecretStore,
 };
 use rugpui::{
     Button, ButtonVariant, Checkbox, Collapsible, DismissReason, DraggedThumb, Scrollbar,
@@ -58,9 +60,7 @@ use rugpui::{
 use uuid::Uuid;
 
 use crate::app_settings;
-use crate::connection::{
-    self, CATALOG_PLACEHOLDERS, ConnectError, Credentials, placeholders_of, substitute,
-};
+use crate::connection::{self, ConnectError, Credentials};
 use crate::driver_manager::{DriverManager, DriverManagerEvent};
 use crate::explorer::FOLDERS;
 use crate::explorer_filter::FolderSet;

@@ -29,6 +29,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use rudbkit_core::TunnelConfig;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
@@ -242,8 +243,6 @@ impl Default for KeepAlive {
         }
     }
 }
-
-pub use rudbkit_core::{TunnelAuth, TunnelConfig};
 
 /// One list of names the explorer leaves out of a profile's tree.
 ///
@@ -990,6 +989,7 @@ fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rudbkit_core::TunnelAuth;
 
     fn sample(name: &str) -> ConnectionProfile {
         ConnectionProfile::new(

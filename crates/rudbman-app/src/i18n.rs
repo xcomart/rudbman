@@ -37,7 +37,7 @@ use std::sync::OnceLock;
 use gpui::SharedString;
 
 #[cfg(test)]
-pub use rugpui_shell::locale::FALLBACK;
+use rugpui_shell::locale::FALLBACK;
 
 /// Translates a key and hands the result back as a [`SharedString`].
 ///

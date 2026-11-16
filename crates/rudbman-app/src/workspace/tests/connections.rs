@@ -676,11 +676,11 @@ fn a_failed_tab_shows_its_reason_and_reconnects_in_place(cx: &mut gpui::TestAppC
 #[test]
 fn an_unknown_host_key_is_offered_for_trusting_from_the_card() {
     let mut profile = unopenable_profile("bastion");
-    profile.tunnel = Some(rudbman_core::TunnelConfig {
+    profile.tunnel = Some(rudbkit_core::TunnelConfig {
         host: "bastion.example".to_string(),
         port: 2222,
         username: "ops".to_string(),
-        auth: rudbman_core::TunnelAuth::Agent,
+        auth: rudbkit_core::TunnelAuth::Agent,
         remote_host: "db.internal".to_string(),
         remote_port: 5432,
         local_port: 0,

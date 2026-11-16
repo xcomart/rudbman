@@ -49,7 +49,6 @@ pub use paths::{
 };
 pub use profile::{
     ConnectionProfile, ConnectionStore, DriverDef, DriverStore, ExplorerHide, HideList, KeepAlive,
-    TunnelAuth, TunnelConfig,
 };
 pub use secrets::{SecretSlot, SecretStore, init as init_secrets};
 pub use settings::{AppSettings, SqlFileDate, TitlebarStyle, WindowState};

@@ -105,7 +105,7 @@ rudbman/
 ├── packaging/                  linux/macos/windows packaging
 └── crates/
     ├── rudbman-core/           settings, profiles, secrets, paths, known_hosts;
-    │                            the tunnel block re-exported from rudbkit-core
+    │                            the tunnel block is rudbkit-core's
     ├── rudbman-jdbc/           JNI. Session workers, wire codec, LOBs; the JVM
     │                            bootstrap is rudbkit-jdbc's, under rudbman's name
     ├── rudbman-sql/            SQL lexer, dialects, formatter, completion index
@@ -257,15 +257,17 @@ dialog validates and saves in (`rudbkit-core`), and finding and starting a JVM
 with a bridge JAR on its class path (`rudbkit-jdbc`). All three are pinned to
 one revision in the root `Cargo.toml` and bumped together.
 
-The rudbman crates in front of them are deliberately thin:
+rudbman names them directly; no rudbman crate re-exports one of them under its
+own name:
 
-- `rudbkit-ssh` has no rudbman crate in front of it. `rudbman-app` depends on
-  it directly, and the tunnel's integration tests — the hermetic `tunnel.rs`
-  and the in-process bastion of `e2e.rs` — live in rudbkit with the code. §9
-  describes what the crate does.
-- `rudbman-core` re-exports `TunnelConfig` and `TunnelAuth` from `rudbkit-core`
-  in `profile.rs` and keeps everything rudbman persists: settings, profiles,
-  drivers, the keychain slots and `known_hosts`.
+- `rudbkit-ssh` is a dependency of `rudbman-app`. The tunnel's integration
+  tests — the hermetic `tunnel.rs` and the in-process bastion of `e2e.rs` —
+  live in rudbkit with the code. §9 describes what the crate does.
+- `TunnelConfig` and `TunnelAuth` are imported from `rudbkit-core` wherever
+  they are used, and so are the URL helpers (`rudbkit_core::url`). The
+  profile's tunnel block is `rudbkit_core::TunnelConfig`; `rudbman-core` keeps
+  everything rudbman persists: settings, profiles, drivers, the keychain slots
+  and `known_hosts`.
 - `rudbman-jdbc` wraps `rudbkit_jdbc::Jvm` and `JvmConfig` with rudbman's
   `RuntimeIdentity` (`src/jvm.rs`) — its name, the bridge's entry class and
   the `RUDBMAN_JAVA_HOME`/`RUDBMAN_BRIDGE_JAR` overrides — and owns everything
