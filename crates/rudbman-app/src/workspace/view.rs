@@ -463,6 +463,7 @@ impl Render for Workspace {
             .is_open()
             .then(|| div().absolute().inset_0().child(self.update.clone()));
         let confirm = self.render_confirm(cx);
+        let removal = self.render_removal(cx);
         let close_question = self.render_close_question(cx);
         let rename_tab = self.render_rename_tab(cx);
         let history = self.render_history(cx);
@@ -573,6 +574,7 @@ impl Render for Workspace {
             .children(restore)
             .children(update)
             .children(confirm)
+            .children(removal)
             .children(rename_tab)
             .children(history)
             .children(shortcuts)

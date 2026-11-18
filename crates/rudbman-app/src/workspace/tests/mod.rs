@@ -292,13 +292,24 @@ fn public() -> explorer::Scope {
 
 /// The scope commands and refresh row every explorer node offers.
 fn scope_labels() -> Vec<String> {
-    vec![
+    scope_labels_with(&[])
+}
+
+/// The same, with the drop and truncate rows a node offers in their own group
+/// above the refresh.
+fn scope_labels_with(removals: &[&str]) -> Vec<String> {
+    let mut labels = vec![
         ts!("menu.erd").to_string(),
         ts!("menu.backup_schema").to_string(),
         ts!("menu.restore_schema").to_string(),
-        String::new(),
-        ts!("explorer.refresh").to_string(),
-    ]
+    ];
+    if !removals.is_empty() {
+        labels.push(String::new());
+        labels.extend(removals.iter().map(|label| ts!(*label).to_string()));
+    }
+    labels.push(String::new());
+    labels.push(ts!("explorer.refresh").to_string());
+    labels
 }
 
 /// The four rows only a table or a view offers, and the rule under them.
@@ -330,6 +341,7 @@ fn name_copy_labels() -> Vec<String> {
 }
 
 mod connections;
+mod drop_truncate;
 mod files;
 mod guards;
 mod keys;

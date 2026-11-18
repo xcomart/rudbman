@@ -49,6 +49,7 @@ mod history;
 mod menus;
 mod objects;
 mod panes;
+mod removal;
 mod session;
 mod shortcuts;
 mod tab_name;
@@ -780,6 +781,9 @@ struct Workspace {
     confirm: Option<PendingConfirm>,
     /// A close waiting on the user's answer; see [`closing`].
     close_question: Option<closing::CloseQuestion>,
+    /// A drop or a truncate from the explorer, waiting for the user to type
+    /// the name back; see [`removal`].
+    removal: Option<removal::RemovalQuestion>,
     /// The write confirmation's Cancel button, which takes the keyboard when
     /// the confirmation opens.
     confirm_focus: FocusHandle,
@@ -966,6 +970,7 @@ impl Workspace {
             context_menu: None,
             confirm: None,
             close_question: None,
+            removal: None,
             confirm_focus: cx.focus_handle(),
             close_focus: cx.focus_handle(),
             close_scroll: ScrollHandle::new(),

@@ -16,6 +16,7 @@ mod context_menu;
 mod data_edit;
 mod data_pane;
 mod driver_manager;
+mod drop_sql;
 mod erd_layout;
 mod erd_pane;
 mod explorer;
@@ -28,11 +29,6 @@ mod icons;
 mod lob_dialog;
 mod maven;
 mod notice;
-// The pane tree is written as a self-contained data structure with its own
-// tests rather than for the call sites the shell currently has, so it offers
-// operations nothing reaches yet — merging a subtree, editing a payload — which
-// inside a binary crate read as dead code.
-#[allow(dead_code)]
 mod pane_tree;
 mod query;
 mod query_history;

@@ -106,7 +106,7 @@ pub mod spec;
 
 pub use codec::{Batch, CodecError, Column, ColumnKind, Value};
 pub use error::{BridgeError, BridgeErrorKind, Error, Result};
-pub use jvm::{BRIDGE_JAR_ENV, JAVA_HOME_ENV, Jvm, JvmConfig, default_bridge_jar};
+pub use jvm::{Jvm, JvmConfig, default_bridge_jar};
 pub use lob::LobFile;
 pub use protocol::Op;
 pub use response::{

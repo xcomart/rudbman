@@ -33,13 +33,16 @@
 //! # Bodies
 //!
 //! A statement with a body — `CREATE PROCEDURE … BEGIN …; …; END`, a PL/SQL
-//! block or package, a SQLite trigger, PostgreSQL's `BEGIN ATOMIC` — is one
+//! block or package (on MariaDB and Db2 too), a SQLite trigger, PostgreSQL's
+//! `BEGIN ATOMIC`, Firebird's and Informix's routines — is one
 //! statement, its inner semicolons included: which `;` ends it is read off
 //! its first words and the `BEGIN`, `CASE` and `END` in it, as the `block`
 //! module describes. The `;` that ends a PL/SQL unit is part of its
 //! [`StatementSpan::sql`], because Oracle rejects `BEGIN NULL; END` without
 //! it. A T-SQL routine has no end a semicolon could mark — its body is the
-//! rest of the batch — and so runs to the end of `source`.
+//! rest of the batch — and so runs to the end of `source`. A T-SQL `IF`
+//! whose branch ends in a `;` reads on past it into its `ELSE`:
+//! `IF @a = 1 SELECT 1; ELSE SELECT 2;` is one statement.
 //!
 //! # Known limitations
 //!
@@ -60,7 +63,7 @@
 //! [`holds_procedural_block`] tells a caller the pieces would be fragments,
 //! so it can send the text whole instead.
 
-use crate::block::{Blocks, Semicolon, TRANSACTION_WORDS};
+use crate::block::{Blocks, Semicolon, TRANSACTION_WORDS, VERDICT_REACH, Verdict};
 use crate::dialect::{Dialect, DialectId};
 use crate::lexer::{Lexer, TokenKind};
 
@@ -143,6 +146,32 @@ impl<'a> Statements<'a> {
             blocks: Blocks::new(dialect),
         }
     }
+
+    /// Whether the statement [`Self::blocks`] was unsure of ended at the
+    /// `;` that ends at `at`, by the tokens after it: read ahead on a copy,
+    /// as far as [`VERDICT_REACH`].
+    fn ends_at(&self, at: usize) -> bool {
+        let mut blocks = self.blocks.clone();
+        for token in self.lexer.clone() {
+            if token.kind.is_trivia() {
+                continue;
+            }
+            if token.start.saturating_sub(at) > VERDICT_REACH {
+                break;
+            }
+            if token.kind == TokenKind::Punctuation && token.text(self.src) == ";" {
+                blocks.semicolon();
+            } else {
+                blocks.token(token.kind, token.text(self.src));
+            }
+            match blocks.verdict() {
+                Verdict::Open => {}
+                Verdict::Continues => return false,
+                Verdict::Ended => return true,
+            }
+        }
+        true
+    }
 }
 
 impl Iterator for Statements<'_> {
@@ -157,7 +186,7 @@ impl Iterator for Statements<'_> {
         let mut last_end = 0;
         let mut has_code = false;
 
-        for token in self.lexer.by_ref() {
+        while let Some(token) = self.lexer.next() {
             if token.kind == TokenKind::Whitespace {
                 continue;
             }
@@ -171,6 +200,16 @@ impl Iterator for Statements<'_> {
                         Semicolon::Inside => {
                             last_end = token.end;
                             continue;
+                        }
+                        // So is one that what follows carries on: a T-SQL
+                        // `ELSE`, an Informix `END PROCEDURE`.
+                        Semicolon::Unsure if !self.ends_at(token.end) => {
+                            last_end = token.end;
+                            continue;
+                        }
+                        Semicolon::Unsure => {
+                            self.blocks.reset();
+                            last_end
                         }
                         Semicolon::Ends => last_end,
                         Semicolon::EndsWithin => token.end,
@@ -445,6 +484,67 @@ mod tests {
         ] {
             assert!(!holds_procedural_block(script, dialect), "{script}");
         }
+    }
+
+    #[test]
+    fn a_tsql_else_reads_on_past_the_semicolon_before_it() {
+        // No statement starts with `ELSE`: the `;` before one ends a branch of
+        // the `IF`, not the `IF`.
+        assert_eq!(
+            sqls(
+                "if @a = 1\n  select 1;\nelse\n  select 2;\nselect 3;",
+                &Dialect::MSSQL
+            ),
+            ["if @a = 1\n  select 1;\nelse\n  select 2", "select 3"]
+        );
+        for (script, last) in [
+            (
+                "if @a = 1 print 'one';\nelse if @a = 2 print 'two';\nelse print 'many';\nprint 'done';",
+                "print 'done'",
+            ),
+            (
+                "if @a = 1 if @b = 1 print 'a'; else print 'b'; else print 'c'; print 'd';",
+                "print 'd'",
+            ),
+            (
+                "if @a = 1 select 1; -- one\n/* or else */ else select 2; select 3;",
+                "select 3",
+            ),
+            (
+                "if @a = 1 begin select 1; end; else begin select 2; end; select 3;",
+                "select 3",
+            ),
+            (
+                "while @i < 3 if @i = 1 break; else set @i += 1; select @i;",
+                "select @i",
+            ),
+        ] {
+            let whole = script[..script.len() - last.len() - 1].trim_end();
+            let whole = whole.strip_suffix(';').unwrap_or(whole);
+            assert_eq!(sqls(script, &Dialect::MSSQL), [whole, last], "{script}");
+        }
+        // An `ELSE` belongs to the nearest `IF`, so the outer one ends here.
+        assert_eq!(
+            sqls(
+                "if @a = 1 if @b = 1 print 'a'; else print 'b'; print 'c';",
+                &Dialect::MSSQL
+            ),
+            ["if @a = 1 if @b = 1 print 'a'; else print 'b'", "print 'c'"]
+        );
+        // Without an `ELSE`, an `IF` ends at its `;`; and an `IF` that does not
+        // start the statement is no `IF` statement.
+        assert_eq!(
+            sqls("if @a = 1 select 1;\nselect 2;", &Dialect::MSSQL),
+            ["if @a = 1 select 1", "select 2"]
+        );
+        assert_eq!(
+            sqls(
+                "drop table if exists t;\nelse select 1;\nselect case when 1 = 1 then 1 else 0 end; select 2",
+                &Dialect::MSSQL
+            )
+            .len(),
+            4
+        );
     }
 
     #[test]

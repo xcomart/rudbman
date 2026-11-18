@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en" data-repo="xcomart/rudbman">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rudbman — a database workbench for any JDBC database</title>
+  <meta name="description" content="A multi-platform database workbench written in Rust on gpui. Schema explorer, SQL editor, editable result grid, ERD and query builder for any database with a JDBC driver.">
+  <meta name="theme-color" content="#0b0e13">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="rudbman — a database workbench for any JDBC database">
+  <meta property="og:description" content="Browse schemas, write SQL, edit data and draw diagrams for any database with a JDBC driver. Windows, macOS and Linux.">
+  <meta property="og:url" content="https://xcomart.github.io/rudbman/">
+  <meta property="og:image" content="https://xcomart.github.io/rudbman/screenshots/workbench.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="style.css">
+  <style>:root { --a1: #e5c07b; --a2: #61afef; --a1-ink: #8a5a00; --a2-ink: #1f6fb8; }</style>
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="icon.svg" alt="" width="28" height="28">rudbman</a>
+      <nav class="links" aria-label="Main">
+        <a class="opt" href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/xcomart/rudbman/blob/main/docs/user-guide.md">Guide</a>
+        <a href="https://github.com/xcomart/rudbman" aria-label="rudbman on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.23 1.87.87 2.33.67.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg></a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="wrap">
+        <span class="pill"><i></i>Written in Rust · GPU-accelerated with gpui</span>
+        <h1>One workbench for<br> <span class="grad">every database.</span></h1>
+        <p class="lead">Browse schemas, write SQL, edit data and draw diagrams — for any database with a JDBC driver. No JDK to install.</p>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/xcomart/rudbman/releases/latest">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+            Download <span class="ver" data-version hidden></span>
+          </a>
+          <a class="btn" href="https://github.com/xcomart/rudbman">
+            <svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.23 1.87.87 2.33.67.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+        <p class="meta">Free and open source (MIT) · Windows, macOS and Linux</p>
+        <img class="shot" src="screenshots/workbench.png" width="1440" height="900" fetchpriority="high"
+          alt="The SQL workbench: schema explorer, a query in the editor and its result grid">
+      </div>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="head">
+          <span class="kicker">Features</span>
+          <h2>From the first query to the last backup.</h2>
+          <p>One fast native window for the work you do against a database every day.</p>
+        </div>
+        <div class="features">
+          <article class="card">
+            <div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg></div>
+            <h3>Any JDBC driver</h3>
+            <p>Downloaded from Maven Central or picked from disk. Eight popular databases come predefined.</p>
+          </article>
+          <article class="card">
+            <div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/></svg></div>
+            <h3>SQL workbench</h3>
+            <p>Dialect-aware highlighting, completion, Format SQL, transactions, query history and execution plans.</p>
+          </article>
+          <article class="card">
+            <div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg></div>
+            <h3>Editable result grid</h3>
+            <p>A virtualized grid with staged edits, BLOB and CLOB values, multiline text and <code>WHERE</code> filters.</p>
+          </article>
+          <article class="card">
+            <div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="6" rx="1.5"/><rect x="14" y="15" width="7" height="6" rx="1.5"/><path d="M6.5 9v4a2 2 0 0 0 2 2H14"/></svg></div>
+            <h3>ERD and query builder</h3>
+            <p>Schema diagrams laid out and routed automatically, and joins dragged into SQL you can watch take shape.</p>
+          </article>
+          <article class="card">
+            <div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h15l-4-4M20 16H5l4 4"/></svg></div>
+            <h3>Backup, restore, transfer</h3>
+            <p>Replayable <code>.sql</code> backups, other tools' dumps restored, and tables copied between connections.</p>
+          </article>
+          <article class="card">
+            <div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+            <h3>SSH tunnels</h3>
+            <p>Password or key through a bastion host. Secrets stay in the OS keychain, never in a file.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Screenshots">
+      <div class="wrap gallery">
+        <figure>
+          <a href="screenshots/erd.png"><img src="screenshots/erd.png" width="1440" height="900" loading="lazy" alt="An ERD of a schema, laid out and routed automatically"></a>
+          <figcaption>Diagrams laid out and routed for you</figcaption>
+        </figure>
+        <figure>
+          <a href="screenshots/builder.png"><img src="screenshots/builder.png" width="1440" height="900" loading="lazy" alt="The visual query builder with joins and a live SQL preview"></a>
+          <figcaption>Build joins visually, with live SQL</figcaption>
+        </figure>
+        <figure>
+          <a href="screenshots/detail-ddl.png"><img src="screenshots/detail-ddl.png" width="1440" height="900" loading="lazy" alt="The explorer's detail panel showing a table's DDL"></a>
+          <figcaption>Columns, keys and DDL at a glance</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="wrap install">
+        <div class="head">
+          <span class="kicker">Install</span>
+          <h2>Up and running in a minute.</h2>
+          <p>Every download carries its own Java runtime, so there is no JDK to install. From then on rudbman updates itself.</p>
+          <div class="more">
+            <a href="https://github.com/xcomart/rudbman/releases">All releases →</a>
+            <a href="https://github.com/xcomart/rudbman/blob/main/docs/user-guide.md">User guide →</a>
+          </div>
+        </div>
+        <div>
+          <div class="tabs" role="tablist" aria-label="Platform">
+            <button role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="true">Windows</button>
+            <button role="tab" id="tab-macos" aria-controls="panel-macos" aria-selected="false" tabindex="-1">macOS</button>
+            <button role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux</button>
+          </div>
+          <div class="panel" id="panel-windows" role="tabpanel" aria-labelledby="tab-windows">
+            <div class="term"><pre><span class="p">&gt; </span><span class="c">winget install Xcomart.Rudbman</span></pre><button class="copy" type="button">Copy</button></div>
+            <p class="note">Windows 10 and 11, no administrator rights. The installer and a portable zip are also on the <a href="https://github.com/xcomart/rudbman/releases/latest">release page</a>.</p>
+          </div>
+          <div class="panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos" hidden>
+            <div class="term"><pre><span class="p">$ </span><span class="c">brew install --cask xcomart/tap/rudbman</span></pre><button class="copy" type="button">Copy</button></div>
+            <p class="note">Apple Silicon. The cask clears the quarantine flag, so the first launch just opens.</p>
+          </div>
+          <div class="panel" id="panel-linux" role="tabpanel" aria-labelledby="tab-linux" hidden>
+            <div class="term"><pre><span class="cm"># the x86_64 linux-gnu archive from the latest release</span>
+<span class="p">$ </span><span class="c">tar xzf rudbman-v*-x86_64-unknown-linux-gnu.tar.gz</span>
+<span class="p">$ </span><span class="c">cd rudbman-v*/ &amp;&amp; ./install.sh</span></pre><button class="copy" type="button">Copy</button></div>
+            <p class="note">Installs under <code>~/.local</code> with no root. Needs glibc 2.35 or newer — Ubuntu 22.04, Debian 12 and later.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>rudbman · MIT License</span>
+      <nav aria-label="Related projects">
+        <a href="https://xcomart.github.io/rulogman/">rulogman</a>
+        <a href="https://xcomart.github.io/rudbman/" aria-current="page">rudbman</a>
+        <a href="https://xcomart.github.io/rudbgen/">rudbgen</a>
+        <a href="https://github.com/xcomart/rudbman/issues">Issues</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="main.js" defer></script>
+</body>
+</html>

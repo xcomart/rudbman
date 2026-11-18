@@ -984,6 +984,7 @@ impl Workspace {
         self.rename_tab.is_some()
             || self.history.is_some()
             || self.confirm.is_some()
+            || self.removal.is_some()
             || self.close_question.is_some()
             || self.shortcuts_open
             || self.about.read(cx).is_open()

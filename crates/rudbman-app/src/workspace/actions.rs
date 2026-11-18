@@ -492,6 +492,10 @@ impl Workspace {
             self.answer_confirm(false, window, cx);
             return;
         }
+        if self.removal.is_some() {
+            self.answer_removal(false, window, cx);
+            return;
+        }
         if self.update.read(cx).is_open() {
             // Swallowed rather than propagated while an install runs: the key
             // must not reach a pane, but nothing may take the screen from a

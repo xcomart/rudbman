@@ -3,6 +3,7 @@
 [![CI](https://github.com/xcomart/rudbman/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xcomart/rudbman/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)
+[![Website](https://img.shields.io/badge/website-xcomart.github.io%2Frudbman-e5c07b)](https://xcomart.github.io/rudbman/)
 
 A multi-platform GUI database workbench written in Rust, built on
 [gpui](https://gpui.rs) — the GPU-accelerated UI framework behind the Zed
@@ -75,8 +76,22 @@ one next to its executable.
 
   Either way the executable is self-signed at best, so SmartScreen may say
   "Windows protected your PC"; choose **More info → Run anyway**.
-- **macOS** — unpack the `.tar.gz` and drag `rudbman.app` to Applications.
-  The bundle is ad-hoc signed rather than notarized, so Gatekeeper quarantines
+- **macOS** — on an Apple Silicon Mac, the project's Homebrew tap installs it
+  with one command:
+
+  ```sh
+  brew install --cask xcomart/tap/rudbman
+  ```
+
+  Homebrew checks the download against the SHA256 recorded in the cask, moves
+  `rudbman.app` into `/Applications` and clears the quarantine flag described
+  next, so the first launch opens normally. rudbman updates itself, so
+  `brew upgrade` skips it unless run with `--greedy`. The
+  [tap's README](https://github.com/xcomart/homebrew-tap#readme) covers
+  Homebrew's tap trust and what `--zap` removes.
+
+  To install by hand instead, unpack the `.tar.gz` and drag `rudbman.app` to
+  Applications. The bundle is ad-hoc signed rather than notarized, so Gatekeeper quarantines
   it on arrival: the first launch needs **right-click → Open** instead of a
   double-click, and if macOS still refuses (newer versions offer no way
   through), drop the quarantine flag and launch normally:
@@ -164,7 +179,7 @@ SSH transport, tunnel ownership, connection validation and saving, and JVM
 startup come from [rudbkit](https://github.com/xcomart/rudbkit), pinned to one
 Git revision in the root Cargo manifest. Cargo fetches it automatically. The
 application keeps its own settings, keychain, Java bridge protocol and dialog
-layout; its SSH crate is a compatibility facade over the shared transport.
+layout.
 
 The widget kit, the virtualized result grid and the code editor are not in this
 repository. They are [rugpui](https://github.com/xcomart/rugpui), extracted so that

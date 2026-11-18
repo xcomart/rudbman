@@ -399,6 +399,12 @@ mod tests {
             "if @a = 1\nbegin\n  update t set a = 1;\n  delete from t;\nend;",
         ),
         (
+            Dialect::MSSQL,
+            "select 1;\nif @a = 1\n  update t set a = 1;\nelse\n  delete from t;\nselect 2;\n",
+            "update",
+            "if @a = 1\n  update t set a = 1;\nelse\n  delete from t;",
+        ),
+        (
             Dialect::SQLITE,
             "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = CASE WHEN new.a THEN 1 END;\n  DELETE FROM t;\nEND;\nSELECT 1;\n",
             "DELETE",
@@ -411,10 +417,70 @@ mod tests {
             "CREATE ALIAS twice AS $$\nint twice(int x) {\n  int y = x;\n  return y * 2;\n}\n$$;",
         ),
         (
+            Dialect::MARIADB,
+            "SET sql_mode = ORACLE;\nCREATE PACKAGE BODY pkg AS\n  n INT;\n  PROCEDURE p IS\n  BEGIN\n    n := 1;\n  END;\nEND;\nCALL pkg.p;\n",
+            "n := 1",
+            "CREATE PACKAGE BODY pkg AS\n  n INT;\n  PROCEDURE p IS\n  BEGIN\n    n := 1;\n  END;\nEND;",
+        ),
+        (
+            Dialect::DB2,
+            "CREATE OR REPLACE PROCEDURE p IS\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;\nCALL p;\n",
+            "n NUMBER",
+            "CREATE OR REPLACE PROCEDURE p IS\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;",
+        ),
+        (
+            Dialect::DB2,
+            "ALTER MODULE m ADD PROCEDURE p()\nBEGIN\n  SELECT 1 FROM t;\n  SELECT 2 FROM t;\nEND;\nCALL m.p();\n",
+            "SELECT 2",
+            "ALTER MODULE m ADD PROCEDURE p()\nBEGIN\n  SELECT 1 FROM t;\n  SELECT 2 FROM t;\nEND;",
+        ),
+        (
             Dialect::DB2,
             "CREATE PROCEDURE p()\nBEGIN\n  INSERT INTO t VALUES (1);\n  INSERT INTO t VALUES (2);\nEND;\nCALL p();\n",
             "VALUES (2)",
             "CREATE PROCEDURE p()\nBEGIN\n  INSERT INTO t VALUES (1);\n  INSERT INTO t VALUES (2);\nEND;",
+        ),
+        (
+            Dialect::MARIADB,
+            "DECLARE\n  n INT;\nBEGIN\n  n := 1;\nEND;\nSELECT 1;\n",
+            "n := 1",
+            "DECLARE\n  n INT;\nBEGIN\n  n := 1;\nEND;",
+        ),
+        (
+            Dialect::MARIADB,
+            "CREATE PACKAGE BODY pkg\n  DECLARE a INT DEFAULT 1;\n  PROCEDURE p1()\n  BEGIN\n    SELECT a;\n  END;\n  SET a = 2;\nEND;\nCALL pkg.p1();\n",
+            "SET a = 2",
+            "CREATE PACKAGE BODY pkg\n  DECLARE a INT DEFAULT 1;\n  PROCEDURE p1()\n  BEGIN\n    SELECT a;\n  END;\n  SET a = 2;\nEND;",
+        ),
+        (
+            Dialect::DB2,
+            "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nDECLARE\n  v NUMBER;\nBEGIN\n  v := 1;\nEND;\nSELECT 1 FROM t;\n",
+            "v := 1",
+            "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nDECLARE\n  v NUMBER;\nBEGIN\n  v := 1;\nEND;",
+        ),
+        (
+            Dialect::GENERIC,
+            "CREATE PROCEDURE p AS\n  DECLARE VARIABLE x INT;\nBEGIN\n  x = 1;\nEND;\nSELECT 1;\n",
+            "x = 1",
+            "CREATE PROCEDURE p AS\n  DECLARE VARIABLE x INT;\nBEGIN\n  x = 1;\nEND;",
+        ),
+        (
+            Dialect::GENERIC,
+            "CREATE PROCEDURE p()\n  DEFINE x INT;\n  LET x = 1;\nEND PROCEDURE;\nSELECT 1;\n",
+            "LET x",
+            "CREATE PROCEDURE p()\n  DEFINE x INT;\n  LET x = 1;\nEND PROCEDURE;",
+        ),
+        (
+            Dialect::GENERIC,
+            "CREATE PROCEDURE p(n INT)\n  UPDATE t SET a = n;\n  DELETE FROM u;\nEND PROCEDURE;\nSELECT 1;\n",
+            "FROM u",
+            "CREATE PROCEDURE p(n INT)\n  UPDATE t SET a = n;\n  DELETE FROM u;\nEND PROCEDURE;",
+        ),
+        (
+            Dialect::GENERIC,
+            "DECLARE\n  c1 CURSOR FOR SELECT id FROM t;\nBEGIN\n  OPEN c1;\nEND;\nSELECT 1;\n",
+            "OPEN c1",
+            "DECLARE\n  c1 CURSOR FOR SELECT id FROM t;\nBEGIN\n  OPEN c1;\nEND;",
         ),
     ];
 

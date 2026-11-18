@@ -37,6 +37,14 @@ menu:
   transfer_table: Transférer les lignes…
   backup_schema: Sauvegarder le schéma…
   restore_schema: "Restaurer depuis un script…"
+  drop_table: "Supprimer la table (DROP)…"
+  drop_view: "Supprimer la vue (DROP)…"
+  drop_sequence: "Supprimer la séquence (DROP)…"
+  drop_schema: "Supprimer le schéma (DROP)…"
+  drop_database: "Supprimer la base de données (DROP)…"
+  drop_objects: "Supprimer les objets sélectionnés (DROP, %{count})…"
+  truncate_table: "Vider la table (TRUNCATE)…"
+  truncate_tables: "Vider les tables sélectionnées (TRUNCATE, %{count})…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagramme ERD
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -946,6 +954,20 @@ toast:
   columns_failed: "Impossible de lire les colonnes de %{table} : %{error}"
   sql_copied: "SQL copié dans le presse-papiers."
   keychain_unavailable: "Le trousseau du système est indisponible (%{error}). Les mots de passe enregistrés ne peuvent pas être lus, et les nouveaux ne seront pas conservés."
+
+removal:
+  drop_title: Supprimer définitivement ?
+  truncate_title: Effacer toutes les lignes ?
+  drop_body: "Les instructions ci-dessous suppriment définitivement ce qu’elles nomment, avec tout ce qui y est stocké. Impossible de revenir en arrière."
+  truncate_body: "Les instructions ci-dessous effacent toutes les lignes des tables qu’elles nomment. Les tables restent ; les lignes ne peuvent pas être récupérées."
+  type_to_confirm: "Pour confirmer, saisissez « %{phrase} » ci-dessous."
+  drop_run: Supprimer
+  truncate_run: Vider
+  read_only: "Cette connexion est en lecture seule : rien ne peut y être supprimé ni vidé."
+  dropped: "Supprimé. Instructions exécutées : %{count}"
+  truncated: "Vidé. Instructions exécutées : %{count}"
+  failed: "Rien n’a été supprimé : %{error}"
+  failed_partway: "L’instruction %{number} sur %{total} a échoué : %{error}. Les %{committed} qui la précèdent ont déjà été exécutées et ne peuvent pas être annulées."
 
 history:
   title: "Historique des requêtes — %{name}"

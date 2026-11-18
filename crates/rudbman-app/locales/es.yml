@@ -37,6 +37,14 @@ menu:
   transfer_table: Transferir filas…
   backup_schema: Copia de seguridad del esquema…
   restore_schema: "Restaurar desde un script…"
+  drop_table: "Eliminar tabla (DROP)…"
+  drop_view: "Eliminar vista (DROP)…"
+  drop_sequence: "Eliminar secuencia (DROP)…"
+  drop_schema: "Eliminar esquema (DROP)…"
+  drop_database: "Eliminar base de datos (DROP)…"
+  drop_objects: "Eliminar los objetos seleccionados (DROP, %{count})…"
+  truncate_table: "Vaciar tabla (TRUNCATE)…"
+  truncate_tables: "Vaciar las tablas seleccionadas (TRUNCATE, %{count})…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: Diagrama ERD
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -946,6 +954,20 @@ toast:
   columns_failed: "No se pudieron leer las columnas de %{table}: %{error}"
   sql_copied: "SQL copiado al portapapeles."
   keychain_unavailable: "El llavero del sistema no está disponible (%{error}). No se pueden leer las contraseñas guardadas y las nuevas no se conservarán."
+
+removal:
+  drop_title: "¿Eliminar definitivamente?"
+  truncate_title: "¿Borrar todas las filas?"
+  drop_body: "Las sentencias de abajo eliminan para siempre lo que nombran, junto con todo lo que contiene. No se puede deshacer."
+  truncate_body: "Las sentencias de abajo borran todas las filas de las tablas que nombran. Las tablas se conservan; las filas no se pueden recuperar."
+  type_to_confirm: "Para confirmar, escriba «%{phrase}» abajo."
+  drop_run: Eliminar
+  truncate_run: Vaciar
+  read_only: "Esta conexión es de solo lectura: no se puede eliminar ni vaciar nada en ella."
+  dropped: "Eliminado. Sentencias ejecutadas: %{count}"
+  truncated: "Vaciado. Sentencias ejecutadas: %{count}"
+  failed: "No se eliminó nada: %{error}"
+  failed_partway: "La sentencia %{number} de %{total} ha fallado: %{error}. Las %{committed} anteriores ya se ejecutaron y no se pueden deshacer."
 
 history:
   title: "Historial de consultas — %{name}"

@@ -38,12 +38,13 @@ Windows are in the menu bar on macOS.
 ### Installing
 
 Download the build for your platform from the
-[Releases](https://github.com/xcomart/rudbman/releases) page, or on Windows
-install it with `winget install Xcomart.Rudbman`. Every download carries its
-own Java runtime, so no JDK has to be installed. The
+[Releases](https://github.com/xcomart/rudbman/releases) page, or install it
+with `winget install Xcomart.Rudbman` on Windows or
+`brew install --cask xcomart/tap/rudbman` on an Apple Silicon Mac. Every
+download carries its own Java runtime, so no JDK has to be installed. The
 [README](../README.md#installing) walks through each platform: the winget
-package, the Windows installer and portable zip, the macOS Gatekeeper and local-network steps, and
-the Linux `install.sh`.
+package, the Windows installer and portable zip, the Homebrew cask, the macOS
+Gatekeeper and local-network steps, and the Linux `install.sh`.
 
 rudbman ships no JDBC drivers. The first time you connect to a product, the
 connection dialog offers to download its driver from Maven Central, or you can
@@ -466,7 +467,8 @@ connects again.
   each value, for each selected table.
 
 Right-clicking inside the selection keeps it; right-clicking elsewhere acts on
-the row under the pointer. Every other command acts on one object.
+the row under the pointer. **Drop** and **Truncate** act on the selection the
+same way; every other command acts on one object.
 
 ### The explorer's menu
 
@@ -475,16 +477,40 @@ with the tree focused. A row an object has no use for is left out.
 
 | Node | Menu |
 | --- | --- |
-| Table | **View data**, **Edit structure**, **Query the selected object** (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>), **Add to query builder**, **Extract script…**, **Transfer rows…** · **Copy names**, **Copy SELECT statement**, **Copy INSERT statement** · **ERD diagram** (<kbd>Ctrl</kbd>+<kbd>E</kbd>), **Back up schema…**, **Restore from script…** · **Refresh** |
-| View | The same, without **Copy INSERT statement** |
-| Procedure, function, sequence, trigger | **Copy names** · **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
-| Schema or catalog | **Copy names** · **New table**, **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
+| Table | **View data**, **Edit structure**, **Query the selected object** (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>), **Add to query builder**, **Extract script…**, **Transfer rows…** · **Copy names**, **Copy SELECT statement**, **Copy INSERT statement** · **ERD diagram** (<kbd>Ctrl</kbd>+<kbd>E</kbd>), **Back up schema…**, **Restore from script…** · **Truncate table…**, **Drop table…** · **Refresh** |
+| View | The same, without **Copy INSERT statement** and **Truncate table…**, and with **Drop view…** |
+| Sequence | **Copy names** · **ERD diagram**, **Back up schema…**, **Restore from script…** · **Drop sequence…** · **Refresh** |
+| Procedure, function, trigger | **Copy names** · **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
+| Schema or catalog | **Copy names** · **New table**, **ERD diagram**, **Back up schema…**, **Restore from script…** · **Drop schema…** or **Drop database…** · **Refresh** |
 | Tables folder | **New table**, **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
 | Other folders | **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
 
 **Query the selected object** opens a query tab with `SELECT * FROM` the
 object in it. **ERD diagram**, **Back up schema…** and **Restore from
 script…** act on the schema (or catalog) the selection sits in.
+
+### Dropping and truncating
+
+**Drop…** removes a table, view, sequence, schema or database; **Truncate
+table…** deletes every row of a table and keeps the table. Neither runs from
+the menu: a question shows every statement it will send, and its button stays
+disabled until you type the object's name (or `DROP` / `TRUNCATE` when several
+objects are selected) into the field below them. `Esc`, **Cancel** or a click
+outside sends nothing.
+
+- The statements are the plain ones — no `CASCADE`, no `IF EXISTS` — so the
+  database refuses a schema that is not empty or a table another table's key
+  still points at, and its reason is shown.
+- Over a selection, views are dropped before tables and sequences last; the
+  first failure stops the rest, and what ran before it stays done.
+- Each product's own spelling is used: Oracle drops a schema with
+  `DROP USER`, Db2 with `DROP SCHEMA … RESTRICT`, MySQL and MariaDB with
+  `DROP DATABASE`; SQLite empties a table with `DELETE FROM`. **Drop
+  database…** is offered on PostgreSQL, MySQL, MariaDB and SQL Server only.
+- Both rows are grayed on a read-only connection, and refused while a query
+  tab on the same connection has uncommitted changes.
+- Procedures, functions and triggers are not offered: their drop needs a
+  signature or a parent table the tree does not hold.
 
 ### The detail panel
 

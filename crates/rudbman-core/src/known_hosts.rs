@@ -15,7 +15,7 @@
 //! [`HostKeyStatus::Mismatch`], not as a host that is merely new.
 //!
 //! The hosts recorded here are the SSH bastions a connection profile tunnels
-//! through, see [`TunnelConfig`](crate::TunnelConfig).
+//! through, see [`TunnelConfig`](rudbkit_core::TunnelConfig).
 
 use std::fmt::Write as _;
 use std::fs;

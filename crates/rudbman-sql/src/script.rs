@@ -90,7 +90,7 @@
 use std::fmt;
 use std::ops::Range;
 
-use crate::block::{Blocks, Semicolon};
+use crate::block::{Blocks, Semicolon, VERDICT_REACH, Verdict};
 use crate::dialect::{Dialect, DialectId};
 use crate::lexer::{Lexer, LineState, Token, TokenKind};
 use crate::statement::{holds_procedural_block, split_statements};
@@ -254,6 +254,43 @@ impl Client {
     }
 }
 
+/// A statement read on past a [`Semicolon::Unsure`].
+struct Held {
+    /// One past its last byte before that `;`, where it ends if it ended
+    /// there.
+    end: usize,
+    /// One past the `;`.
+    closed: usize,
+    /// What has been read since, to be read again as what follows the
+    /// statement if it did end there.
+    since: Vec<Fed>,
+}
+
+/// One thing read into a held statement.
+enum Fed {
+    /// A comment, `code` when MySQL runs it.
+    Comment {
+        start: usize,
+        end: usize,
+        code: bool,
+        line: usize,
+    },
+    /// A token of code other than a `;`.
+    Token {
+        kind: TokenKind,
+        text: String,
+        start: usize,
+        end: usize,
+        line: usize,
+    },
+    /// A `;`.
+    Semicolon {
+        start: usize,
+        end: usize,
+        line: usize,
+    },
+}
+
 /// What a directive line asked for.
 enum Directive {
     /// Nothing reaches the server.
@@ -271,7 +308,10 @@ enum Directive {
 /// may end without terminating. Statements come out as soon as they are
 /// complete; nothing is held back but the statement being read (and on SQL
 /// Server the batch, which is only cut once its `GO` shows whether it holds a
-/// block).
+/// block). A statement that may end at a `;` or go on past it, as the lines
+/// after it tell, is read on and held until they have, as far as an
+/// Informix routine's `END PROCEDURE` at most: what was read meanwhile is
+/// read again as the statements after it if it ended there.
 pub struct ScriptSplitter {
     dialect: Dialect,
     client: Client,
@@ -297,6 +337,8 @@ pub struct ScriptSplitter {
     delimiter: String,
     /// Which `;` ends the statement being read, while the terminator is one.
     blocks: Blocks,
+    /// The statement being read, read on past a `;` it may have ended at.
+    held: Option<Held>,
     /// One past the terminator that ended the statement about to be handed
     /// out, which is where an editor's unit of it ends.
     closed: Option<usize>,
@@ -328,6 +370,7 @@ impl ScriptSplitter {
             code: false,
             delimiter: ";".to_string(),
             blocks: Blocks::new(dialect),
+            held: None,
             closed: None,
             copy_rows: false,
             continued: false,
@@ -423,7 +466,13 @@ impl ScriptSplitter {
         }
         match self.client {
             Client::Sqlcmd => self.flush_batch(1, out),
-            _ => self.emit(out),
+            _ => {
+                // Nothing after it carried a held statement on.
+                while self.held.is_some() {
+                    self.settle(out)?;
+                }
+                self.emit(out)
+            }
         }
     }
 
@@ -536,12 +585,12 @@ impl ScriptSplitter {
                     let text = &line[token.start..token.end];
                     let executable = executable_comments
                         && (text.starts_with("/*!") || text.starts_with("/*M!"));
-                    self.mark(at + token.start, at + token.end, executable);
+                    self.comment(at + token.start, at + token.end, executable);
                     i += 1;
                 }
                 TokenKind::String | TokenKind::QuotedIdentifier => {
-                    self.mark(at + token.start, at + token.end, true);
-                    self.blocks.token(token.kind, &line[token.start..token.end]);
+                    let text = &line[token.start..token.end];
+                    self.code(token.kind, text, at + token.start, at + token.end, out)?;
                     i += 1;
                 }
                 _ => {
@@ -593,8 +642,7 @@ impl ScriptSplitter {
                 if token.kind == TokenKind::Punctuation && text == ";" {
                     self.semicolon(at + token.start, at + token.end, out)?;
                 } else {
-                    self.mark(at + token.start, at + token.end, true);
-                    self.blocks.token(token.kind, text);
+                    self.code(token.kind, text, at + token.start, at + token.end, out)?;
                 }
             }
             return Ok(());
@@ -632,6 +680,14 @@ impl ScriptSplitter {
         end: usize,
         out: &mut O,
     ) -> Result<(), ScriptError> {
+        self.reach(start, out)?;
+        if let Some(held) = &mut self.held {
+            held.since.push(Fed::Semicolon {
+                start,
+                end,
+                line: self.line,
+            });
+        }
         if self.start.is_none() || !self.code {
             // `;;`, or a comment with nothing under it.
             return self.emit(out);
@@ -639,7 +695,7 @@ impl ScriptSplitter {
         match self.blocks.semicolon() {
             Semicolon::Inside => {
                 self.mark(start, end, true);
-                Ok(())
+                self.judge(out)
             }
             Semicolon::Ends => {
                 self.closed = Some(end);
@@ -650,7 +706,123 @@ impl ScriptSplitter {
                 self.closed = Some(end);
                 self.emit(out)
             }
+            // Read on as if it did not end here, ready to read what follows
+            // again as the next statement's if it did.
+            Semicolon::Unsure => {
+                debug_assert!(self.held.is_none(), "a guess is told before another starts");
+                let before = self.end;
+                self.mark(start, end, true);
+                self.held = Some(Held {
+                    end: before,
+                    closed: end,
+                    since: Vec::new(),
+                });
+                Ok(())
+            }
         }
+    }
+
+    /// Reads the comment at `start..end`, which `code` when it is MySQL's
+    /// executable one.
+    fn comment(&mut self, start: usize, end: usize, code: bool) {
+        if let Some(held) = &mut self.held {
+            held.since.push(Fed::Comment {
+                start,
+                end,
+                code,
+                line: self.line,
+            });
+        }
+        self.mark(start, end, code);
+    }
+
+    /// Reads the token of code at `start..end`, `text`, other than a `;`.
+    fn code<O: Out>(
+        &mut self,
+        kind: TokenKind,
+        text: &str,
+        start: usize,
+        end: usize,
+        out: &mut O,
+    ) -> Result<(), ScriptError> {
+        self.reach(start, out)?;
+        if let Some(held) = &mut self.held {
+            held.since.push(Fed::Token {
+                kind,
+                text: text.to_string(),
+                start,
+                end,
+                line: self.line,
+            });
+        }
+        self.mark(start, end, true);
+        self.blocks.token(kind, text);
+        self.judge(out)
+    }
+
+    /// Acts on what the tokens after a held statement's `;` have told.
+    fn judge<O: Out>(&mut self, out: &mut O) -> Result<(), ScriptError> {
+        if self.held.is_none() {
+            return Ok(());
+        }
+        match self.blocks.verdict() {
+            Verdict::Open => Ok(()),
+            Verdict::Continues => {
+                self.held = None;
+                Ok(())
+            }
+            Verdict::Ended => self.settle(out),
+        }
+    }
+
+    /// Takes a held statement as ended once the token at `start` lies further
+    /// from its `;` than a verdict is waited for.
+    fn reach<O: Out>(&mut self, start: usize, out: &mut O) -> Result<(), ScriptError> {
+        match &self.held {
+            Some(held) if start.saturating_sub(held.closed) > VERDICT_REACH => self.settle(out),
+            _ => Ok(()),
+        }
+    }
+
+    /// Ends the held statement at the `;` it was held at, and reads what came
+    /// after that `;` again, as the statements after it.
+    fn settle<O: Out>(&mut self, out: &mut O) -> Result<(), ScriptError> {
+        let Some(held) = self.held.take() else {
+            return Ok(());
+        };
+        self.end = held.end;
+        self.closed = Some(held.closed);
+        self.emit(out)?;
+        let line = self.line;
+        for fed in held.since {
+            match fed {
+                Fed::Comment {
+                    start,
+                    end,
+                    code,
+                    line,
+                } => {
+                    self.line = line;
+                    self.comment(start, end, code);
+                }
+                Fed::Token {
+                    kind,
+                    text,
+                    start,
+                    end,
+                    line,
+                } => {
+                    self.line = line;
+                    self.code(kind, &text, start, end, out)?;
+                }
+                Fed::Semicolon { start, end, line } => {
+                    self.line = line;
+                    self.semicolon(start, end, out)?;
+                }
+            }
+        }
+        self.line = line;
+        Ok(())
     }
 
     /// Records the bytes `start..end` as part of the statement being read.
@@ -668,6 +840,8 @@ impl ScriptSplitter {
         self.start = None;
         self.code = false;
         self.closed = None;
+        // Whatever was held is in the statement that ended.
+        self.held = None;
         self.blocks.reset();
     }
 
@@ -1593,6 +1767,77 @@ mod tests {
     }
 
     #[test]
+    fn plsql_on_mariadb_and_db2_runs_whole() {
+        // Sent with its `END;`, as the `mysql` client sends it from inside a
+        // `DELIMITER` and Db2's CLP from before a `/`.
+        let unit = "CREATE PROCEDURE p AS\n  n INT;\nBEGIN\n  n := 1;\nEND;";
+        let script = format!(
+            "SET sql_mode = ORACLE;\n{unit}\nDELIMITER //\n{unit}\n//\nDELIMITER ;\nCALL p;\n"
+        );
+        let whole = ["SET sql_mode = ORACLE", unit, unit, "CALL p"];
+        assert_eq!(sqls(&script, &Dialect::MARIADB), whole);
+        let runs: Vec<String> = units(&script, &Dialect::MARIADB)
+            .into_iter()
+            .map(|(_, run)| run.expect("nothing refused"))
+            .collect();
+        assert_eq!(runs, whole);
+
+        let unit = "CREATE OR REPLACE PROCEDURE p IS\n  n NUMBER;\nBEGIN\n  n := 1;\nEND;";
+        assert_eq!(
+            sqls(&format!("{unit}\nCALL p;\n"), &Dialect::DB2),
+            [unit, "CALL p"]
+        );
+    }
+
+    #[test]
+    fn blocks_packages_and_routines_without_a_plsql_header_run_whole() {
+        let block = "DECLARE\n  n INT;\nBEGIN\n  n := 1;\nEND;";
+        let trigger = "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nDECLARE\n  \
+                       v INT := 1;\nBEGIN\n  :NEW.a := v;\nEND;";
+        let package = "CREATE PACKAGE BODY pkg\n  DECLARE a INT DEFAULT 1;\n  \
+                       PROCEDURE p1()\n  BEGIN\n    SELECT a;\n  END;\n  SET a = 2;\nEND";
+        let script = format!("{block}\n{trigger}\n{package};\nSELECT 1;\n");
+        assert_eq!(
+            sqls(&script, &Dialect::MARIADB),
+            [block, trigger, package, "SELECT 1"]
+        );
+        assert_eq!(
+            sqls(&format!("{block}\nSELECT 1;\n"), &Dialect::DB2),
+            [block, "SELECT 1"]
+        );
+
+        let firebird = "CREATE PROCEDURE p AS\n  DECLARE VARIABLE x INT;\nBEGIN\n  x = 1;\nEND;";
+        let informix = "CREATE PROCEDURE q()\n  DEFINE x INT;\n  LET x = 1;\nEND PROCEDURE";
+        let script = format!("{firebird}\n{informix};\nSELECT 1;\n");
+        let whole = [firebird, informix, "SELECT 1"];
+        assert_eq!(sqls(&script, &Dialect::GENERIC), whole);
+        let runs: Vec<String> = units(&script, &Dialect::GENERIC)
+            .into_iter()
+            .map(|(_, run)| run.expect("nothing refused"))
+            .collect();
+        assert_eq!(runs, whole);
+    }
+
+    #[test]
+    fn a_tsql_if_runs_with_its_else() {
+        // No `BEGIN` in the batch, so "Run all" sends it statement by
+        // statement: the `ELSE` after a `;` is still its `IF`'s.
+        let script = "if @a = 1\n  select 1;\nelse\n  select 2;\nselect 3\nGO\n\
+                      if @a = 1 print 'one'; else if @a = 2 print 'two'; else print 'many';\n";
+        let whole = [
+            "if @a = 1\n  select 1;\nelse\n  select 2",
+            "select 3",
+            "if @a = 1 print 'one'; else if @a = 2 print 'two'; else print 'many'",
+        ];
+        assert_eq!(sqls(script, &Dialect::MSSQL), whole);
+        let runs: Vec<String> = units(script, &Dialect::MSSQL)
+            .into_iter()
+            .map(|(_, run)| run.expect("nothing refused"))
+            .collect();
+        assert_eq!(runs, whole);
+    }
+
+    #[test]
     fn units_and_a_run_cut_alike_where_nothing_is_refused() {
         for (script, dialect) in [
             (
@@ -1619,6 +1864,57 @@ mod tests {
                 .collect();
             assert_eq!(units, run, "{script:?}");
         }
+    }
+
+    #[test]
+    fn what_follows_a_semicolon_can_say_the_statement_went_on() {
+        let informix = "CREATE PROCEDURE raise_prices (per_cent INT)\n  \
+                        UPDATE stock SET price = price * per_cent;\nEND PROCEDURE\n\
+                        DOCUMENT 'raises prices'";
+        let block = "DECLARE\n  c1 CURSOR FOR SELECT id FROM t;\nBEGIN\n  OPEN c1;\nEND;";
+        let script = format!(
+            "CREATE PROCEDURE p() SELECT 1;\n-- the next one\nSELECT 2;\n{informix};\n{block}\n\
+             DECLARE c CURSOR FOR SELECT 3;\nFETCH NEXT FROM c;\n"
+        );
+        let whole = [
+            "CREATE PROCEDURE p() SELECT 1",
+            "-- the next one\nSELECT 2",
+            informix,
+            block,
+            "DECLARE c CURSOR FOR SELECT 3",
+            "FETCH NEXT FROM c",
+        ];
+        let run = split_script(&script, &Dialect::GENERIC).unwrap();
+        assert_eq!(
+            run.iter().map(|s| s.sql.as_str()).collect::<Vec<_>>(),
+            whole
+        );
+        // What was read again keeps the lines it was read on.
+        assert_eq!(
+            run.iter().map(|s| s.line).collect::<Vec<_>>(),
+            [1, 2, 4, 8, 13, 14]
+        );
+        let units: Vec<_> = script_units(&script, &Dialect::GENERIC)
+            .into_iter()
+            .map(|unit| unit.run.unwrap())
+            .collect();
+        assert_eq!(units, run);
+        let spans: Vec<&str> = split_statements(&script, &Dialect::GENERIC)
+            .iter()
+            .map(|span| span.sql(&script))
+            .collect();
+        assert_eq!(spans, whole);
+
+        // A routine is not waited on for its `END PROCEDURE` forever.
+        let filler = "SELECT 1;\n".repeat(VERDICT_REACH / 10 + 1);
+        let script =
+            format!("CREATE PROCEDURE p()\n  UPDATE t SET a = 1;\n{filler}END PROCEDURE;\n");
+        let run = split_script(&script, &Dialect::GENERIC).unwrap();
+        assert_eq!(run[0].sql, "CREATE PROCEDURE p()\n  UPDATE t SET a = 1");
+        assert_eq!(
+            run.len(),
+            split_statements(&script, &Dialect::GENERIC).len()
+        );
     }
 
     #[test]

@@ -21,7 +21,7 @@
 //! # The tunnel is shared, the session is not
 //!
 //! Two profiles that reach the same database through the same bastion get one
-//! tunnel between them, reference counted here (§9.3 — `rudbman-ssh` says in as
+//! tunnel between them, reference counted here (§9.3 — `rudbkit-ssh` says in as
 //! many words that the counting belongs to the application). The last lease
 //! dropped is what closes it.
 //!
@@ -37,8 +37,6 @@
 //! type that touches one — [`ConnectionSpec`], [`TunnelSpec`], [`SshAuth`] —
 //! masks it in `Debug`, and nothing in this module renders one by hand.
 
-#[cfg(test)]
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,16 +45,16 @@ use futures::StreamExt;
 use futures::channel::oneshot;
 use futures::executor::block_on;
 use parking_lot::Mutex;
+use rudbkit_core::TunnelConfig;
+use rudbkit_core::url::redirect_url;
+use rudbkit_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
 use rudbman_core::{
-    AppSettings, ConnectionProfile, DriverDef, KnownHosts, SecretSlot, SecretStore, TunnelConfig,
+    AppSettings, ConnectionProfile, DriverDef, KnownHosts, SecretSlot, SecretStore,
 };
 use rudbman_jdbc::{
     BridgeError, BridgeErrorKind, ConnectionSpec, Error as JdbcError, Jvm, JvmConfig,
     KeepAliveSpec, Session, SessionInfo, default_bridge_jar,
 };
-use rudbman_ssh::{HostKeyVerifier, LeasePool, PublicKey, SshTunnel, TunnelEvent, TunnelSpec};
-
-pub use rudbkit_core::url::{CATALOG_PLACEHOLDERS, placeholders_of, redirect_url, substitute};
 
 use crate::i18n::ts;
 
@@ -694,7 +692,7 @@ struct TunnelKey {
 
 /// The authentication half of a [`TunnelKey`].
 ///
-/// [`TunnelAuth`](rudbman_core::TunnelAuth) itself does not hash, and could not
+/// [`TunnelAuth`](rudbkit_core::TunnelAuth) itself does not hash, and could not
 /// tell two passwords apart if it did: no variant carries the secret. The
 /// secret is therefore taken in as a [`secret_fingerprint`] — never as itself,
 /// so the pool's keys, and anything that ever prints one, hold nothing a
@@ -734,12 +732,12 @@ impl TunnelKey {
     /// The key of one profile's tunnel block, opened with `secret`.
     fn of(config: &TunnelConfig, secret: Option<&str>) -> Self {
         let auth = match &config.auth {
-            rudbman_core::TunnelAuth::Agent => TunnelAuthKey::Agent,
-            rudbman_core::TunnelAuth::Key { path } => TunnelAuthKey::Key {
+            rudbkit_core::TunnelAuth::Agent => TunnelAuthKey::Agent,
+            rudbkit_core::TunnelAuth::Key { path } => TunnelAuthKey::Key {
                 path: path.clone(),
                 passphrase: secret_fingerprint(secret),
             },
-            rudbman_core::TunnelAuth::Password => {
+            rudbkit_core::TunnelAuth::Password => {
                 TunnelAuthKey::Password(secret_fingerprint(secret))
             }
         };
@@ -962,8 +960,8 @@ impl StoredHostKeys {
     /// A host key rejection is re-read from what the verifier recorded, so the
     /// user is told which fingerprint arrived and whether it merely was not
     /// known or actively contradicts one that is.
-    fn explain(&self, kind: rudbman_ssh::SshErrorKind, message: String) -> ConnectError {
-        if kind != rudbman_ssh::SshErrorKind::HostKeyRejected {
+    fn explain(&self, kind: rudbkit_ssh::SshErrorKind, message: String) -> ConnectError {
+        if kind != rudbkit_ssh::SshErrorKind::HostKeyRejected {
             return ConnectError::Tunnel(format!("{kind}: {message}"));
         }
         let seen = self.seen.lock().clone();
@@ -995,8 +993,8 @@ impl StoredHostKeys {
 #[async_trait::async_trait]
 impl HostKeyVerifier for StoredHostKeys {
     async fn verify(&self, host: &str, port: u16, key: &PublicKey) -> bool {
-        let algorithm = rudbman_ssh::algorithm_name(key);
-        let fingerprint = rudbman_ssh::fingerprint(key);
+        let algorithm = rudbkit_ssh::algorithm_name(key);
+        let fingerprint = rudbkit_ssh::fingerprint(key);
         let trusted = matches!(
             KnownHosts::load().map(|hosts| hosts.status(host, port, &algorithm, &fingerprint)),
             Ok(rudbman_core::HostKeyStatus::Trusted)
@@ -1149,109 +1147,6 @@ pub(crate) mod h2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn values(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-            .collect()
-    }
-
-    #[test]
-    fn a_template_is_filled_hole_by_hole() {
-        let filled = substitute(
-            "jdbc:postgresql://{host}:{port}/{database}",
-            &values(&[
-                ("host", "db.example.com"),
-                ("port", "5432"),
-                ("database", "app"),
-            ]),
-        );
-        assert_eq!(filled, "jdbc:postgresql://db.example.com:5432/app");
-
-        // SQL Server's semicolon grammar and Oracle's `@//` both go through the
-        // same substitution untouched.
-        assert_eq!(
-            substitute(
-                "jdbc:sqlserver://{host}:{port};databaseName={database}",
-                &values(&[("host", "sql"), ("port", "1433"), ("database", "app")]),
-            ),
-            "jdbc:sqlserver://sql:1433;databaseName=app"
-        );
-        assert_eq!(
-            substitute(
-                "jdbc:oracle:thin:@//{host}:{port}/{service}",
-                &values(&[("host", "ora"), ("port", "1521"), ("service", "ORCLPDB")]),
-            ),
-            "jdbc:oracle:thin:@//ora:1521/ORCLPDB"
-        );
-    }
-
-    #[test]
-    fn a_hole_nothing_fills_stays_visible() {
-        // A hand-written `drivers.json` may use a placeholder the editor has no
-        // field for. Leaving it in the preview says so; blanking it would
-        // produce a URL that fails at the driver with nothing to point at.
-        assert_eq!(
-            substitute("jdbc:x://{host}/{warehouse}", &values(&[("host", "h")])),
-            "jdbc:x://h/{warehouse}"
-        );
-        // An unbalanced brace is part of the URL.
-        assert_eq!(substitute("jdbc:x:{oops", &values(&[])), "jdbc:x:{oops");
-    }
-
-    #[test]
-    fn the_holes_a_template_uses_are_listed_in_order_and_once_each() {
-        assert_eq!(
-            placeholders_of("jdbc:postgresql://{host}:{port}/{database}"),
-            vec!["host", "port", "database"]
-        );
-        assert_eq!(placeholders_of("jdbc:sqlite:{file}"), vec!["file"]);
-        assert_eq!(
-            placeholders_of("jdbc:x://{host}:{port}/?failover={host}"),
-            vec!["host", "port"]
-        );
-        assert!(placeholders_of("jdbc:h2:mem:test").is_empty());
-    }
-
-    #[test]
-    fn a_tunnel_redirects_the_url_or_refuses_it() {
-        let to_tunnel = |url: &str, template: &str| redirect_url(url, template, "127.0.0.1", 41234);
-        assert_eq!(
-            to_tunnel(
-                "jdbc:postgresql://db.internal:5432/app",
-                "jdbc:postgresql://{host}:{port}/{database}"
-            )
-            .unwrap(),
-            "jdbc:postgresql://127.0.0.1:41234/app"
-        );
-        // A hand-edited URL the template no longer fits keeps its own grammar:
-        // the authority ends at the first `;` or `?`.
-        assert_eq!(
-            to_tunnel(
-                "jdbc:sqlserver://db.internal:1433;databaseName=app",
-                "jdbc:sqlserver://{host}:{port}/{database}"
-            )
-            .unwrap(),
-            "jdbc:sqlserver://127.0.0.1:41234;databaseName=app"
-        );
-        assert_eq!(
-            to_tunnel("jdbc:mysql://db.internal:3306/app?useSSL=false", "jdbc:x").unwrap(),
-            "jdbc:mysql://127.0.0.1:41234/app?useSSL=false"
-        );
-        // No `//` at all: only the template's holes can take the tunnel.
-        assert_eq!(
-            to_tunnel(
-                "jdbc:cubrid:db.internal:33000:app:::",
-                "jdbc:cubrid:{host}:{port}:{database}:::"
-            )
-            .unwrap(),
-            "jdbc:cubrid:127.0.0.1:41234:app:::"
-        );
-        // Nothing to redirect is refused, never connected around the tunnel.
-        assert!(to_tunnel("jdbc:h2:mem:test", "jdbc:h2:mem:{database}").is_err());
-        assert!(to_tunnel("jdbc:sqlite:/var/db/app.sqlite", "jdbc:sqlite:{file}").is_err());
-    }
 
     #[test]
     fn the_spec_carries_the_profile_and_nothing_it_was_not_given() {
@@ -1454,11 +1349,11 @@ mod tests {
             ..TunnelConfig::default()
         };
         let key = |path: &str| TunnelConfig {
-            auth: rudbman_core::TunnelAuth::Key { path: path.into() },
+            auth: rudbkit_core::TunnelAuth::Key { path: path.into() },
             ..agent.clone()
         };
         let password = TunnelConfig {
-            auth: rudbman_core::TunnelAuth::Password,
+            auth: rudbkit_core::TunnelAuth::Password,
             ..agent.clone()
         };
 
@@ -1647,7 +1542,7 @@ mod tests {
 
     #[test]
     fn no_route_to_host_is_recognized_from_either_layer() {
-        // The SSH tunnel path: `rudbman-ssh` surfaces the OS error as text.
+        // The SSH tunnel path: `rudbkit-ssh` surfaces the OS error as text.
         assert!(is_no_route(&ConnectError::Tunnel(
             "connect: No route to host (os error 65)".to_string()
         )));

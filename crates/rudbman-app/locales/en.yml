@@ -82,6 +82,20 @@ menu:
   backup_schema: Back up schema…
   # Opens the restore dialog over the scope the explorer's selection sits in.
   restore_schema: "Restore from script…"
+  # The explorer's two commands nothing takes back. Each opens a question that
+  # shows the statements and runs nothing until the object's name is typed.
+  # "Drop" removes the object itself; "truncate" deletes every row of a table
+  # and keeps the table.
+  drop_table: "Drop table…"
+  drop_view: "Drop view…"
+  drop_sequence: "Drop sequence…"
+  drop_schema: "Drop schema…"
+  # A catalog, on the products that call it a database (MySQL, SQL Server…).
+  drop_database: "Drop database…"
+  # Over a selection of several tables, views and sequences.
+  drop_objects: "Drop selected objects (%{count})…"
+  truncate_table: "Truncate table…"
+  truncate_tables: "Truncate selected tables (%{count})…"
   # Draws the ERD of the scope the explorer's selection sits in.
   erd: ERD diagram
   # Puts the object selected in the explorer onto a query builder's canvas,
@@ -1525,6 +1539,25 @@ toast:
   sql_copied: "Copied the SQL to the clipboard."
   # At start-up, when the platform has no usable credential store.
   keychain_unavailable: "The system keychain is unavailable (%{error}). Saved passwords can't be read, and new ones won't be kept."
+
+# The question the explorer's drop and truncate rows ask. The statements are
+# shown below the warning, and the run button stays disabled until `phrase` —
+# the object's name, or the verb DROP or TRUNCATE over several — is typed.
+removal:
+  drop_title: Drop permanently?
+  truncate_title: Delete every row?
+  drop_body: "The statements below remove what they name for good, along with everything stored in it. This cannot be undone."
+  truncate_body: "The statements below delete every row of the tables they name. The tables stay; the rows cannot be brought back."
+  type_to_confirm: "To confirm, type “%{phrase}” below."
+  drop_run: Drop
+  truncate_run: Truncate
+  read_only: "This connection is read-only: nothing can be dropped or truncated on it."
+  # Toasts once the statements have run. `count` is how many ran.
+  dropped: "Dropped. Statements run: %{count}"
+  truncated: "Truncated. Statements run: %{count}"
+  # The first statement failed, so nothing was changed.
+  failed: "Nothing was removed: %{error}"
+  failed_partway: "Statement %{number} of %{total} failed: %{error}. The %{committed} before it already ran and cannot be undone."
 
 # The query history dialog: the statements a connection profile's query tabs
 # ran, newest first. `name` is the connection's name.
