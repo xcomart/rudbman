@@ -79,8 +79,8 @@ const ARP_KEY: &str = concat!(
 pub const IDENTITY: AppIdentity = AppIdentity {
     name: "rudbman",
     version: env!("CARGO_PKG_VERSION"),
-    repository_url: "https://github.com/xcomart/rudbman",
-    repository_label: "github.com/xcomart/rudbman",
+    repository_url: "https://xcomart.github.io/rudbman/",
+    repository_label: "xcomart.github.io/rudbman",
     latest_release_api: "https://api.github.com/repos/xcomart/rudbman/releases/latest",
     releases_page: RELEASES_PAGE,
     fallback_archive: "rudbman-update",
