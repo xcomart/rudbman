@@ -34,6 +34,11 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "unmaintained (merged into zbus 6), pulled in by gpui_linux via zbus 5" },
     { id = "RUSTSEC-2026-0371", reason = "unmaintained (merged into zbus 6), pulled in by gpui_linux via zbus 5" },
     { id = "RUSTSEC-2026-0372", reason = "unmaintained (merged into zbus 6), pulled in by gpui_linux via zbus 5" },
+    # `chrono` is soft-deprecated by its maintainer in favour of `jiff`, with no
+    # advisory against its behavior. gpui, Zed's `scheduler` and russh's
+    # `russh-util` take it; the query history's own timestamps use it too, but
+    # moving those alone would not drop the crate.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained (soft-deprecated for jiff), pulled in by gpui, scheduler and russh; no replacement upstream" },
 ]
 
 [licenses]
