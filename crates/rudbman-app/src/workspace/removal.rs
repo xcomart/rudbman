@@ -13,14 +13,19 @@
 //! refused while another pane on the connection holds uncommitted work, because
 //! the autocommit flip — and every product's implicit commit at DDL — would end
 //! that transaction along with it.
+//!
+//! A routine or a trigger is looked up by its name before its statements are
+//! written, because the tree holds the name and nothing else: the lookup is
+//! what finds every overload of it, or every table a PostgreSQL trigger of that
+//! name fires on, and each one becomes a statement of its own in the question.
 
 use gpui::Subscription;
 use rudbman_jdbc::DescribeRequest;
-use rudbman_sql::Dialect;
+use rudbman_sql::{Dialect, DialectId};
 use rugpui::TextInput;
 
 use super::*;
-use crate::drop_sql::{DropKind, DropTarget, drop_statement, truncate_statement};
+use crate::drop_sql::{DropKind, DropTarget, Identity, drop_statement, truncate_statement};
 use crate::query::QueryError;
 use crate::struct_pane::apply_alter;
 
@@ -94,9 +99,7 @@ fn statement(
                 ..
             },
         ) => {
-            // Routines and triggers are left out: a dropped overload needs its
-            // signature, a PostgreSQL trigger its table, an H2 routine is an
-            // alias, and the tree holds none of that.
+            // Routines and triggers need a lookup first; see `identified`.
             let kind = match folder {
                 Folder::Tables => DropKind::Table,
                 Folder::Views if materialized => DropKind::MaterializedView,
@@ -106,34 +109,169 @@ fn statement(
             };
             drop_statement(
                 dialect,
-                &DropTarget {
+                &DropTarget::new(
                     kind,
-                    catalog: scope.catalog.as_deref(),
-                    schema: scope.schema.as_deref(),
+                    scope.catalog.as_deref(),
+                    scope.schema.as_deref(),
                     name,
-                },
+                ),
             )
         }
         (Removal::Drop, NodeId::Schema { catalog, name, .. }) => drop_statement(
             dialect,
-            &DropTarget {
-                kind: DropKind::Schema,
-                catalog: catalog.as_deref(),
-                schema: None,
-                name,
-            },
+            &DropTarget::new(DropKind::Schema, catalog.as_deref(), None, name),
         ),
         (Removal::Drop, NodeId::Catalog { name, .. }) => drop_statement(
             dialect,
-            &DropTarget {
-                kind: DropKind::Database,
-                catalog: None,
-                schema: None,
-                name,
-            },
+            &DropTarget::new(DropKind::Database, None, None, name),
         ),
         _ => None,
     }
+}
+
+/// The kind of drop a routine's or a trigger's folder stands for, or `None` for
+/// everything that is dropped without a lookup.
+fn looked_up_kind(removal: Removal, node: &NodeId) -> Option<DropKind> {
+    match (removal, node) {
+        (Removal::Drop, NodeId::Object { folder, .. }) => match folder {
+            Folder::Procedures => Some(DropKind::Procedure),
+            Folder::Functions => Some(DropKind::Function),
+            Folder::Triggers => Some(DropKind::Trigger),
+            Folder::Tables | Folder::Views | Folder::Sequences => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `removal` is offered over `node` on this product at all, before any
+/// lookup: SQLite is the one product with no routines to drop.
+fn applies(dialect: &Dialect, removal: Removal, node: &NodeId) -> bool {
+    match looked_up_kind(removal, node) {
+        Some(DropKind::Procedure | DropKind::Function) => dialect.id() != DialectId::Sqlite,
+        Some(_) => true,
+        None => statement(dialect, removal, node, false).is_some(),
+    }
+}
+
+/// One routine or trigger a lookup found under a name, with what tells it
+/// apart from its namesakes. See [`drop_sql::Identity`](crate::drop_sql::Identity).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Found {
+    /// The catalog the driver filed it under: Oracle's package, for a routine.
+    catalog: Option<String>,
+    /// PostgreSQL's identity argument list; empty for none.
+    arguments: Option<String>,
+    /// PostgreSQL's `prokind`.
+    routine_kind: Option<String>,
+    /// The driver's specific name.
+    specific_name: Option<String>,
+    /// The table a trigger fires on.
+    table: Option<String>,
+}
+
+/// Every routine or trigger listed under `node`'s exact name, as its folder's
+/// own `DESCRIBE` reports it.
+///
+/// **Blocks**, on the session's worker thread. A failed lookup finds nothing,
+/// and [`identified`] then drops by the name alone, so that the server says
+/// for itself whatever it thinks of that.
+fn look_up(session: &rudbman_jdbc::Session, node: &NodeId) -> Vec<Found> {
+    let NodeId::Object {
+        folder,
+        scope,
+        name,
+        ..
+    } = node
+    else {
+        return Vec::new();
+    };
+    let mut request = DescribeRequest::new(folder.describe_kind()).with_name(name);
+    request.catalog = scope.catalog.clone();
+    request.schema = scope.schema.clone();
+    let Ok(result) = session.describe(&request) else {
+        return Vec::new();
+    };
+    let text = |item: &serde_json::Map<String, serde_json::Value>, key: &str| {
+        item.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    result
+        .items
+        .iter()
+        // The name goes to the driver as a pattern, where `_` matches anything.
+        .filter(|item| text(item, "name").as_deref() == Some(name.as_str()))
+        .map(|item| {
+            let present = |key| text(item, key).filter(|value| !value.is_empty());
+            Found {
+                catalog: present("catalog"),
+                // Empty is an answer here: a routine with no arguments.
+                arguments: text(item, "arguments"),
+                routine_kind: present("routine_kind"),
+                specific_name: present("specific_name"),
+                table: present("table"),
+            }
+        })
+        .collect()
+}
+
+/// The statements that drop the routine or trigger `node` names, one for each
+/// of `found` the product tells apart, in the order found.
+///
+/// Products that need nothing but the name get one statement whatever the
+/// lookup found, even nothing. Empty where nothing found can be dropped: an
+/// Oracle routine that lives in a package, a PostgreSQL trigger whose table the
+/// lookup did not find.
+fn identified(dialect: &Dialect, removal: Removal, node: &NodeId, found: &[Found]) -> Vec<String> {
+    let (Some(kind), NodeId::Object { scope, name, .. }) = (looked_up_kind(removal, node), node)
+    else {
+        return Vec::new();
+    };
+    let target = DropTarget::new(
+        kind,
+        scope.catalog.as_deref(),
+        scope.schema.as_deref(),
+        name,
+    );
+    if found.is_empty() {
+        return drop_statement(dialect, &target).into_iter().collect();
+    }
+    let oracle = dialect.id() == DialectId::Oracle;
+    let mut statements: Vec<String> = Vec::new();
+    for found in found {
+        let identity = Identity {
+            arguments: found.arguments.as_deref(),
+            routine_kind: found.routine_kind.as_deref(),
+            specific_name: found.specific_name.as_deref(),
+            package: found.catalog.as_deref().filter(|_| oracle),
+            table: found.table.as_deref(),
+        };
+        if let Some(statement) = drop_statement(dialect, &DropTarget { identity, ..target })
+            && !statements.contains(&statement)
+        {
+            statements.push(statement);
+        }
+    }
+    statements
+}
+
+/// Every statement `removal` sends for `node`, looked up where it needs to be.
+///
+/// **Blocks**, on the session's worker thread: a view asks whether it is a
+/// materialized one, and a routine or a trigger asks what it is.
+fn plan(
+    session: &rudbman_jdbc::Session,
+    dialect: &Dialect,
+    removal: Removal,
+    node: &NodeId,
+) -> Vec<String> {
+    if looked_up_kind(removal, node).is_some() {
+        return identified(dialect, removal, node, &look_up(session, node));
+    }
+    let materialized = removal == Removal::Drop && is_materialized(session, node);
+    statement(dialect, removal, node, materialized)
+        .into_iter()
+        .collect()
 }
 
 /// What a removal over `node` acts on, in the order it runs; empty when the
@@ -145,16 +283,17 @@ fn statement(
 /// is always alone: dropping several of those at once is not something one
 /// right-click should be able to ask for.
 ///
-/// Views go first and sequences last, the order dependents have to go in: a
-/// view reads the tables beside it, and a table's default may draw on a
-/// sequence.
+/// Triggers go first, then views, tables and routines, and sequences last, the
+/// order dependents have to go in: a trigger rides on a table and calls a
+/// routine, a view reads the tables and routines beside it, and a table's
+/// default may call a routine or draw on a sequence.
 fn removal_nodes(
     removal: Removal,
     dialect: &Dialect,
     node: &NodeId,
     selection: &[NodeId],
 ) -> Vec<NodeId> {
-    let applies = |node: &NodeId| statement(dialect, removal, node, false).is_some();
+    let applies = |node: &NodeId| applies(dialect, removal, node);
     if !applies(node) {
         return Vec::new();
     }
@@ -173,15 +312,14 @@ fn removal_nodes(
             vec![node.clone()]
         };
     nodes.sort_by_key(|node| match node {
-        NodeId::Object {
-            folder: Folder::Views,
-            ..
-        } => 0,
-        NodeId::Object {
-            folder: Folder::Tables,
-            ..
-        } => 1,
-        _ => 2,
+        NodeId::Object { folder, .. } => match folder {
+            Folder::Triggers => 0,
+            Folder::Views => 1,
+            Folder::Tables => 2,
+            Folder::Procedures | Folder::Functions => 3,
+            Folder::Sequences => 4,
+        },
+        _ => 5,
     });
     nodes
 }
@@ -210,6 +348,18 @@ fn menu_label(removal: Removal, nodes: &[NodeId]) -> SharedString {
                 folder: Folder::Sequences,
                 ..
             } => ts!("menu.drop_sequence"),
+            NodeId::Object {
+                folder: Folder::Procedures,
+                ..
+            } => ts!("menu.drop_procedure"),
+            NodeId::Object {
+                folder: Folder::Functions,
+                ..
+            } => ts!("menu.drop_function"),
+            NodeId::Object {
+                folder: Folder::Triggers,
+                ..
+            } => ts!("menu.drop_trigger"),
             NodeId::Schema { .. } => ts!("menu.drop_schema"),
             NodeId::Catalog { .. } => ts!("menu.drop_database"),
             _ => ts!("menu.drop_table"),
@@ -322,7 +472,9 @@ impl Workspace {
     /// Writes the statements for `nodes` and puts them up as a question.
     ///
     /// The statements are written on the session's thread rather than here,
-    /// because a view's needs a lookup: whether it is a materialized one.
+    /// because some need a lookup first; see [`plan`]. When one of `nodes`
+    /// turns out to have nothing that can be dropped, nothing is asked and a
+    /// notice names it instead.
     pub(super) fn ask_removal(
         &mut self,
         removal: Removal,
@@ -345,21 +497,32 @@ impl Workspace {
         };
         let dialect = Dialect::from_id(&Self::dialect_of(&open.profile));
         let planning = cx.background_spawn(async move {
-            let statements: Vec<String> = nodes
-                .iter()
-                .filter_map(|node| {
-                    let materialized =
-                        removal == Removal::Drop && is_materialized(session.session(), node);
-                    statement(&dialect, removal, node, materialized)
-                })
-                .collect();
-            (nodes, statements)
+            let mut statements = Vec::new();
+            let mut missing = Vec::new();
+            for node in &nodes {
+                let planned = plan(session.session(), &dialect, removal, node);
+                if planned.is_empty() {
+                    missing.push(name_of(node).to_string());
+                }
+                statements.extend(planned);
+            }
+            (nodes, statements, missing)
         });
         cx.spawn_in(window, async move |workspace, cx| {
-            let (nodes, statements) = planning.await;
+            let (nodes, statements, missing) = planning.await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace.open_removal(removal, connection, nodes, statements, window, cx);
+                    if missing.is_empty() {
+                        workspace.open_removal(removal, connection, nodes, statements, window, cx);
+                    } else {
+                        rugpui_shell::show_toast(
+                            rugpui_shell::Toast::warning(ts!(
+                                "removal.not_droppable",
+                                names = missing.join(", ")
+                            )),
+                            cx,
+                        );
+                    }
                 })
                 .ok();
         })
@@ -380,7 +543,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if statements.is_empty() || statements.len() != nodes.len() || self.dialog_open(cx) {
+        if statements.is_empty() || self.dialog_open(cx) {
             return;
         }
         if !self.close_overlays(window, cx) {
@@ -706,8 +869,15 @@ mod tests {
         assert_eq!(one(Removal::Drop, &schema), std::slice::from_ref(&schema));
         assert!(one(Removal::Truncate, &schema).is_empty());
         for folder in [Folder::Procedures, Folder::Functions, Folder::Triggers] {
-            assert!(one(Removal::Drop, &object(folder, "R")).is_empty());
+            let routine = object(folder, "R");
+            assert_eq!(one(Removal::Drop, &routine), std::slice::from_ref(&routine));
+            assert!(one(Removal::Truncate, &routine).is_empty());
         }
+        // SQLite has triggers and no routines.
+        let sqlite = |node: &NodeId| removal_nodes(Removal::Drop, &Dialect::SQLITE, node, &[]);
+        assert!(sqlite(&object(Folder::Functions, "F")).is_empty());
+        assert!(sqlite(&object(Folder::Procedures, "P")).is_empty());
+        assert_eq!(sqlite(&object(Folder::Triggers, "T")).len(), 1);
         // H2's catalog is the database file; MySQL's is a database it can drop.
         assert!(one(Removal::Drop, &catalog).is_empty());
         assert_eq!(
@@ -733,6 +903,7 @@ mod tests {
         let view = object(Folder::Views, "V");
         let sequence = object(Folder::Sequences, "S");
         let routine = object(Folder::Procedures, "P");
+        let trigger = object(Folder::Triggers, "TR");
         let schema = NodeId::Schema {
             connection: C,
             catalog: None,
@@ -743,11 +914,18 @@ mod tests {
             table.clone(),
             routine.clone(),
             view.clone(),
+            trigger.clone(),
             schema.clone(),
         ];
         assert_eq!(
             removal_nodes(Removal::Drop, &h2, &table, &selection),
-            [view.clone(), table.clone(), sequence.clone()]
+            [
+                trigger.clone(),
+                view.clone(),
+                table.clone(),
+                routine.clone(),
+                sequence.clone()
+            ]
         );
         assert_eq!(
             removal_nodes(Removal::Truncate, &h2, &table, &selection),
@@ -771,12 +949,134 @@ mod tests {
         );
         assert_eq!(menu_label(Removal::Drop, &[view]), ts!("menu.drop_view"));
         assert_eq!(
+            menu_label(Removal::Drop, &[routine]),
+            ts!("menu.drop_procedure")
+        );
+        assert_eq!(
+            menu_label(Removal::Drop, &[object(Folder::Functions, "F")]),
+            ts!("menu.drop_function")
+        );
+        assert_eq!(
+            menu_label(Removal::Drop, &[trigger]),
+            ts!("menu.drop_trigger")
+        );
+        assert_eq!(
             menu_label(Removal::Drop, &[schema]),
             ts!("menu.drop_schema")
         );
         assert_eq!(
             menu_label(Removal::Truncate, &[table.clone(), table]),
             ts!("menu.truncate_tables", count = 2)
+        );
+    }
+
+    fn found(arguments: Option<&str>, kind: Option<&str>) -> Found {
+        Found {
+            arguments: arguments.map(str::to_owned),
+            routine_kind: kind.map(str::to_owned),
+            ..Found::default()
+        }
+    }
+
+    #[test]
+    fn every_overload_a_lookup_finds_is_a_statement_of_its_own() {
+        let pg = Dialect::POSTGRES;
+        let function = NodeId::Object {
+            connection: C,
+            scope: explorer::Scope {
+                catalog: Some("db".into()),
+                schema: Some("app".into()),
+            },
+            folder: Folder::Functions,
+            name: "total".into(),
+        };
+        assert_eq!(
+            identified(
+                &pg,
+                Removal::Drop,
+                &function,
+                &[
+                    found(Some("a integer"), Some("f")),
+                    found(Some("a integer, b integer"), Some("f")),
+                ]
+            ),
+            [
+                "DROP FUNCTION app.total(a integer)",
+                "DROP FUNCTION app.total(a integer, b integer)"
+            ]
+        );
+        // Nothing found: the name alone, for the server to judge.
+        assert_eq!(
+            identified(&pg, Removal::Drop, &function, &[]),
+            ["DROP FUNCTION app.total"]
+        );
+        // A truncate never looks anything up.
+        assert!(identified(&pg, Removal::Truncate, &function, &[found(None, None)]).is_empty());
+    }
+
+    #[test]
+    fn a_trigger_is_dropped_on_every_table_it_is_found_on() {
+        let trigger = object(Folder::Triggers, "AUDIT");
+        let on = |table: &str| Found {
+            table: Some(table.into()),
+            ..Found::default()
+        };
+        assert_eq!(
+            identified(
+                &Dialect::POSTGRES,
+                Removal::Drop,
+                &trigger,
+                &[on("orders"), on("items")]
+            ),
+            [
+                "DROP TRIGGER \"AUDIT\" ON \"APP\".orders",
+                "DROP TRIGGER \"AUDIT\" ON \"APP\".items"
+            ]
+        );
+        // PostgreSQL cannot drop one without its table.
+        assert!(identified(&Dialect::POSTGRES, Removal::Drop, &trigger, &[]).is_empty());
+        // Elsewhere the name is enough, and said once.
+        assert_eq!(
+            identified(
+                &Dialect::ORACLE,
+                Removal::Drop,
+                &trigger,
+                &[on("ORDERS"), on("ORDERS")]
+            ),
+            ["DROP TRIGGER APP.AUDIT"]
+        );
+    }
+
+    #[test]
+    fn an_oracle_routine_inside_a_package_is_not_dropped_alone() {
+        let procedure = object(Folder::Procedures, "POST");
+        let standalone = Found::default();
+        let packaged = Found {
+            catalog: Some("BILLING".into()),
+            ..Found::default()
+        };
+        assert_eq!(
+            identified(
+                &Dialect::ORACLE,
+                Removal::Drop,
+                &procedure,
+                &[packaged.clone(), standalone]
+            ),
+            ["DROP PROCEDURE APP.POST"]
+        );
+        assert!(
+            identified(
+                &Dialect::ORACLE,
+                Removal::Drop,
+                &procedure,
+                std::slice::from_ref(&packaged)
+            )
+            .is_empty()
+        );
+        // Only Oracle's catalog is a package: MySQL's is the database.
+        assert_eq!(
+            identified(&Dialect::MYSQL, Removal::Drop, &procedure, &[packaged]),
+            ["DROP PROCEDURE APP.POST"]
         );
     }
 }

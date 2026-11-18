@@ -40,6 +40,9 @@ menu:
   drop_table: "Удалить таблицу (DROP)…"
   drop_view: "Удалить представление (DROP)…"
   drop_sequence: "Удалить последовательность (DROP)…"
+  drop_procedure: "Удалить процедуру (DROP)…"
+  drop_function: "Удалить функцию (DROP)…"
+  drop_trigger: "Удалить триггер (DROP)…"
   drop_schema: "Удалить схему (DROP)…"
   drop_database: "Удалить базу данных (DROP)…"
   drop_objects: "Удалить выбранные объекты (DROP, %{count})…"
@@ -964,6 +967,7 @@ removal:
   drop_run: Удалить
   truncate_run: Очистить
   read_only: "Это подключение только для чтения: удалять и очищать в нём ничего нельзя."
+  not_droppable: "%{names}: удалять нечего. Объекта уже нет, или он входит в пакет и удаляется только вместе с ним."
   dropped: "Удалено. Выполнено инструкций: %{count}"
   truncated: "Очищено. Выполнено инструкций: %{count}"
   failed: "Ничего не удалено: %{error}"
