@@ -480,7 +480,7 @@ with the tree focused. A row an object has no use for is left out.
 | Table | **View data**, **Edit structure**, **Query the selected object** (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>), **Add to query builder**, **Extract script…**, **Transfer rows…** · **Copy names**, **Copy SELECT statement**, **Copy INSERT statement** · **ERD diagram** (<kbd>Ctrl</kbd>+<kbd>E</kbd>), **Back up schema…**, **Restore from script…** · **Truncate table…**, **Drop table…** · **Refresh** |
 | View | The same, without **Copy INSERT statement** and **Truncate table…**, and with **Drop view…** |
 | Sequence | **Copy names** · **ERD diagram**, **Back up schema…**, **Restore from script…** · **Drop sequence…** · **Refresh** |
-| Procedure, function, trigger | **Copy names** · **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
+| Procedure, function, trigger | **Copy names** · **ERD diagram**, **Back up schema…**, **Restore from script…** · **Drop procedure…**, **Drop function…** or **Drop trigger…** · **Refresh** |
 | Schema or catalog | **Copy names** · **New table**, **ERD diagram**, **Back up schema…**, **Restore from script…** · **Drop schema…** or **Drop database…** · **Refresh** |
 | Tables folder | **New table**, **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
 | Other folders | **ERD diagram**, **Back up schema…**, **Restore from script…** · **Refresh** |
@@ -491,8 +491,9 @@ script…** act on the schema (or catalog) the selection sits in.
 
 ### Dropping and truncating
 
-**Drop…** removes a table, view, sequence, schema or database; **Truncate
-table…** deletes every row of a table and keeps the table. Neither runs from
+**Drop…** removes a table, view, sequence, procedure, function, trigger, schema
+or database; **Truncate table…** deletes every row of a table and keeps the
+table. Neither runs from
 the menu: a question shows every statement it will send, and its button stays
 disabled until you type the object's name (or `DROP` / `TRUNCATE` when several
 objects are selected) into the field below them. `Esc`, **Cancel** or a click
@@ -501,16 +502,25 @@ outside sends nothing.
 - The statements are the plain ones — no `CASCADE`, no `IF EXISTS` — so the
   database refuses a schema that is not empty or a table another table's key
   still points at, and its reason is shown.
-- Over a selection, views are dropped before tables and sequences last; the
-  first failure stops the rest, and what ran before it stays done.
+- Over a selection, triggers go first, then views, tables and routines, and
+  sequences last; the first failure stops the rest, and what ran before it
+  stays done.
 - Each product's own spelling is used: Oracle drops a schema with
   `DROP USER`, Db2 with `DROP SCHEMA … RESTRICT`, MySQL and MariaDB with
   `DROP DATABASE`; SQLite empties a table with `DELETE FROM`. **Drop
   database…** is offered on PostgreSQL, MySQL, MariaDB and SQL Server only.
 - Both rows are grayed on a read-only connection, and refused while a query
   tab on the same connection has uncommitted changes.
-- Procedures, functions and triggers are not offered: their drop needs a
-  signature or a parent table the tree does not hold.
+- A procedure, function or trigger is looked up by its name when the
+  question opens, and everything found under that name is a statement of its
+  own: each overload of a PostgreSQL function, dropped with its argument list,
+  and of a Db2 one, dropped by its specific name; on PostgreSQL, each table a
+  trigger of that name fires on (`DROP TRIGGER … ON` the table). A PostgreSQL
+  routine is dropped as the function, procedure or aggregate its catalog says
+  it is, and an H2 routine as the alias it is. An Oracle routine inside a
+  package is not dropped on its own; dropping the package is what removes it.
+  When nothing is left to drop under the name, a notice says so instead of the
+  question.
 
 ### The detail panel
 
