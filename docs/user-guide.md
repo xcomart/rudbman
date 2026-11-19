@@ -40,11 +40,12 @@ Windows are in the menu bar on macOS.
 Download the build for your platform from the
 [Releases](https://github.com/xcomart/rudbman/releases) page, or install it
 with `winget install Xcomart.Rudbman` on Windows or
-`brew install --cask xcomart/tap/rudbman` on an Apple Silicon Mac. Every
+`brew install --cask xcomart/tap/rudbman` on a Mac, Apple Silicon or Intel. Every
 download carries its own Java runtime, so no JDK has to be installed. The
 [README](../README.md#installing) walks through each platform: the winget
 package, the Windows installer and portable zip, the Homebrew cask, the macOS
-Gatekeeper and local-network steps, and the Linux `install.sh`.
+Gatekeeper and local-network steps, the Linux `install.sh` and the Linux
+AppImage, one file that runs without being installed.
 
 rudbman ships no JDBC drivers. The first time you connect to a product, the
 connection dialog offers to download its driver from Maven Central, or you can
@@ -1365,7 +1366,9 @@ Nothing is elevated and nothing is written outside the folder rudbman is
 installed in. A copy that cannot be overwritten — a read-only location, a
 system package — fails with **Open the release page**, which is also what
 **Update and restart** does on a platform without a published build. Builds are
-published for x86-64 Windows, Apple Silicon macOS and x86-64 Linux.
+published for Windows, macOS and Linux, each for x86-64 and ARM64. A copy
+started from an AppImage downloads the release's AppImage and renames it over
+the image file.
 
 ## Keyboard shortcuts
 
