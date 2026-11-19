@@ -197,6 +197,10 @@ jobs:
       # falls back to a tarball with no repository around it, and no compiler
       # either. The job runs as root in the container, so there is no sudo.
       # `file` is for appimagetool, which refuses to run without it.
+      # Gradle takes its home from root's passwd entry, /root, while the
+      # runner sets HOME=/github/home and setup-java saves the Gradle cache
+      # from $HOME/.gradle; pointing GRADLE_USER_HOME there keeps the two on
+      # one directory, or the post step finds nothing to save.
       - name: Install Linux system libraries
         if: runner.os == 'Linux'
         run: |
@@ -204,6 +208,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential pkg-config ca-certificates curl file git \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev libfreetype-dev
+          echo "GRADLE_USER_HOME=$HOME/.gradle" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
