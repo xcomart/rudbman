@@ -1716,6 +1716,12 @@ released after the file was written: a built-in not on it is appended once on
 load and recorded, so Db2 reaches a configuration that predates it. A file
 without the list is read as having been offered the first seven.
 
+What belongs to each product — its driver class and Maven artifact, its URL
+template, port and dialect id, its name — comes from `rudbkit_core::products`,
+which rudbgen's built-ins draw on too. The id, the icon and the driver
+version a built-in pins are rudbman's own, so the two applications can
+download different releases of the same driver.
+
 ---
 
 ## 9. SSH tunnels (`rudbkit-ssh`)
