@@ -104,4 +104,62 @@ final class OracleVendor extends Vendor {
                   List<String> updates) {
         return Upsert.merge(id, qualified, columns, keys, updates, true, false);
     }
+
+    @Override
+    String tableText(Connection conn, Ident id, String catalog, String schema, String table) {
+        return Ddl.oracle(conn, schema, table, true);
+    }
+
+    @Override
+    Ddl.Script nativeSplit(Connection conn, Ident id, String catalog, String schema,
+                           String table) {
+        return Ddl.oracleSplit(conn, schema, table);
+    }
+
+    @Override
+    boolean indexesForeignKeys() {
+        return false;
+    }
+
+    /**
+     * {@code DBMS_METADATA}'s text of the view or, failing that, of the
+     * materialized view and the indexes of the table its rows sit in, then
+     * the comments.
+     */
+    @Override
+    String viewText(Connection conn, ObjectDdl.Target t) {
+        String text = DdlText.oracleMetadata(conn, "VIEW", t.schema, t.name);
+        if (text == null) {
+            text = DdlText.oracleMetadata(conn, "MATERIALIZED_VIEW", t.schema, t.name);
+            if (text != null) {
+                // A materialized view's rows sit in a table of its name,
+                // and that table's indexes are the view's.
+                List<String> parts = new ArrayList<>();
+                parts.add(text);
+                parts.addAll(Ddl.oracleIndexes(conn, t.schema, t.name));
+                text = DdlText.joined(parts);
+            }
+        }
+        if (text == null) {
+            return null;
+        }
+        String comments = DdlText.oracleDependent(conn, "COMMENT", t.schema, t.name);
+        return comments == null ? text : text + "\n\n" + comments;
+    }
+
+    @Override
+    String sequenceText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.oracleMetadata(conn, "SEQUENCE", t.schema, t.name);
+    }
+
+    @Override
+    String triggerText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.oracleSource(conn, t.schema, t.name, "TRIGGER");
+    }
+
+    /** {@code CREATE SEQUENCE} takes no {@code AS} type. */
+    @Override
+    boolean typesSequences() {
+        return false;
+    }
 }

@@ -92,4 +92,80 @@ class MySqlVendor extends Vendor {
                   List<String> updates) {
         return Upsert.onDuplicateKey(id, qualified, columns, keys, updates);
     }
+
+    /**
+     * Rows go in under {@code NO_AUTO_VALUE_ON_ZERO}, as mysqldump has them,
+     * and the session's own mode comes back after.
+     */
+    @Override
+    List<String> dataPrologue() {
+        return List.of("SET @OLD_SQL_MODE = @@SESSION.SQL_MODE;",
+                "SET SESSION SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';");
+    }
+
+    @Override
+    List<String> dataEpilogue() {
+        return List.of("SET SESSION SQL_MODE = @OLD_SQL_MODE;");
+    }
+
+    /** Foreign keys stay inline, so the server stops checking references. */
+    @Override
+    List<String> scriptPrologue() {
+        return List.of("SET FOREIGN_KEY_CHECKS = 0;");
+    }
+
+    @Override
+    List<String> scriptEpilogue() {
+        return List.of("SET FOREIGN_KEY_CHECKS = 1;");
+    }
+
+    @Override
+    String tableText(Connection conn, Ident id, String catalog, String schema, String table) {
+        String qualified = id.qualify(catalog, schema, table);
+        return Attempt.<String>run(conn, "SHOW CREATE TABLE",
+                st -> Ddl.mysqlShowCreate(st, qualified), null);
+    }
+
+    @Override
+    Ddl.Script nativeSplit(Connection conn, Ident id, String catalog, String schema,
+                           String table) {
+        return Ddl.whole(tableText(conn, id, catalog, schema, table));
+    }
+
+    /** Connector/J reports a generated column's flag wrongly on some servers. */
+    @Override
+    void confirmGenerated(Connection conn, String catalog, String table, List<Ddl.Col> cols) {
+        Ddl.confirmMysqlGenerated(conn, catalog, table, cols);
+    }
+
+    @Override
+    boolean commentsInline() {
+        return true;
+    }
+
+    /** MySQL has no {@code COMMENT ON}. */
+    @Override
+    boolean commentsOn() {
+        return false;
+    }
+
+    @Override
+    String identityClause() {
+        return "AUTO_INCREMENT";
+    }
+
+    @Override
+    boolean notNullFirst() {
+        return true;
+    }
+
+    @Override
+    String viewText(Connection conn, ObjectDdl.Target t) {
+        return ObjectDdl.show(conn, "VIEW", t, 2);
+    }
+
+    @Override
+    String triggerText(Connection conn, ObjectDdl.Target t) {
+        return ObjectDdl.show(conn, "TRIGGER", t, 3);
+    }
 }

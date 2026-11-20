@@ -1,5 +1,6 @@
 package comart.rudbman.bridge.meta;
 
+import java.util.Set;
 import java.sql.Connection;
 import java.util.List;
 
@@ -46,5 +47,38 @@ final class H2Vendor extends Vendor {
     @Override
     public boolean overridesSystemValue() {
         return true;
+    }
+
+    @Override
+    String tableText(Connection conn, Ident id, String catalog, String schema, String table) {
+        String qualified = id.qualify(catalog, schema, table);
+        return Attempt.<String>run(conn, "SCRIPT TABLE",
+                st -> Ddl.h2Script(st, qualified, schema, table), null);
+    }
+
+    @Override
+    Ddl.Script nativeSplit(Connection conn, Ident id, String catalog, String schema,
+                           String table) {
+        return Ddl.h2Split(conn, id, catalog, schema, table);
+    }
+
+    @Override
+    Set<String> alwaysIdentities(Connection conn, String schema, String table) {
+        return Ddl.h2IdentityAlways(conn, schema, table);
+    }
+
+    @Override
+    String viewText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.h2Script(conn, t.id, t.schema, "VIEW", t.name);
+    }
+
+    @Override
+    String sequenceText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.h2Script(conn, t.id, t.schema, "SEQUENCE", t.name);
+    }
+
+    @Override
+    String triggerText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.h2Script(conn, t.id, t.schema, "TRIGGER", t.name);
     }
 }

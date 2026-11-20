@@ -52,4 +52,45 @@ final class Db2Vendor extends Vendor {
                   List<String> updates) {
         return Upsert.merge(id, qualified, columns, keys, updates, false, false);
     }
+
+    @Override
+    boolean reconstructsGenerated() {
+        return true;
+    }
+
+    @Override
+    List<String> catalogExtras(Connection conn, Ident id, String catalog, String schema,
+                               String table, List<Ddl.Col> cols) {
+        return Ddl.db2Extras(conn, id, catalog, schema, table, cols);
+    }
+
+    /** {@code SYSCAT.INDEXES}, for a table named by its schema. */
+    @Override
+    List<String> nativeIndexes(Connection conn, Ident id, String catalog, String schema,
+                               String table, String qualified) {
+        return schema != null && !schema.isEmpty()
+                ? Db2Schema.indexes(conn, id, schema, table, qualified) : null;
+    }
+
+    @Override
+    boolean indexesForeignKeys() {
+        return false;
+    }
+
+    @Override
+    String viewText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.db2Text(conn, "SYSCAT.VIEWS", "VIEWSCHEMA", "VIEWNAME", t.schema, t.name);
+    }
+
+    @Override
+    String triggerText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.db2Text(conn, "SYSCAT.TRIGGERS", "TRIGSCHEMA", "TRIGNAME", t.schema,
+                t.name);
+    }
+
+    /** Db2 keeps {@code NO CACHE} as a cache of 1, and refuses {@code CACHE 1}. */
+    @Override
+    boolean cacheOfOneIsNoCache() {
+        return true;
+    }
 }

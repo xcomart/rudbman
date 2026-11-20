@@ -81,56 +81,7 @@ public final class ObjectDdl {
     }
 
     private static String nativeView(Connection conn, Target t) {
-        switch (t.dialect) {
-            case MYSQL:
-            case MARIADB:
-                return show(conn, "VIEW", t, 2);
-            case H2:
-                return DdlText.h2Script(conn, t.id, t.schema, "VIEW", t.name);
-            case POSTGRESQL:
-                return Attempt.<String>on(conn, "pg_get_viewdef", c -> postgresView(c, t), null);
-            case ORACLE: {
-                String text = DdlText.oracleMetadata(conn, "VIEW", t.schema, t.name);
-                if (text == null) {
-                    text = DdlText.oracleMetadata(conn, "MATERIALIZED_VIEW", t.schema, t.name);
-                    if (text != null) {
-                        // A materialized view's rows sit in a table of its name,
-                        // and that table's indexes are the view's.
-                        List<String> parts = new ArrayList<>();
-                        parts.add(text);
-                        parts.addAll(Ddl.oracleIndexes(conn, t.schema, t.name));
-                        text = DdlText.joined(parts);
-                    }
-                }
-                if (text == null) {
-                    return null;
-                }
-                String comments = DdlText.oracleDependent(conn, "COMMENT", t.schema, t.name);
-                return comments == null ? text : text + "\n\n" + comments;
-            }
-            case SQLSERVER: {
-                String text = DdlText.sqlServerDefinition(conn, t.qualified());
-                List<String> indexes = text == null ? null : SqlServerSchema.indexes(conn, t.id,
-                        t.catalog, t.qualified(), t.qualified());
-                if (indexes == null || indexes.isEmpty()) {
-                    return text;
-                }
-                // An indexed view's indexes, each a batch of its own after the
-                // view's, which has to be alone in its batch.
-                StringBuilder sb = new StringBuilder(text.strip());
-                for (String ix : indexes) {
-                    sb.append("\nGO\n").append(ix).append(';');
-                }
-                return sb.toString();
-            }
-            case SQLITE:
-                return DdlText.sqlite(conn, "view", t.name);
-            case DB2:
-                return DdlText.db2Text(conn, "SYSCAT.VIEWS", "VIEWSCHEMA", "VIEWNAME",
-                        t.schema, t.name);
-            default:
-                return null;
-        }
+        return t.dialect.vendor().viewText(conn, t);
     }
 
     /**
@@ -140,7 +91,7 @@ public final class ObjectDdl {
      * {@code CHECK OPTION} (both kept in {@code reloptions}), a materialized
      * view left unpopulated, and a materialized view's indexes.
      */
-    private static String postgresView(Connection c, Target t) throws SQLException {
+    static String postgresView(Connection c, Target t) throws SQLException {
         String sql = "SELECT c.relkind, pg_catalog.pg_get_viewdef(c.oid, true),"
                 + " pg_catalog.obj_description(c.oid, 'pg_class'),"
                 + " (SELECT pg_catalog.string_agg(pg_catalog.quote_ident(o.option_name) || '='"
@@ -222,20 +173,7 @@ public final class ObjectDdl {
                                String want) {
         Target t = new Target(dbm, req);
         if (!"metadata".equals(want)) {
-            String text;
-            switch (t.dialect) {
-                case MARIADB:
-                    text = show(conn, "SEQUENCE", t, 2);
-                    break;
-                case H2:
-                    text = DdlText.h2Script(conn, t.id, t.schema, "SEQUENCE", t.name);
-                    break;
-                case ORACLE:
-                    text = DdlText.oracleMetadata(conn, "SEQUENCE", t.schema, t.name);
-                    break;
-                default:
-                    text = null;
-            }
+            String text = t.dialect.vendor().sequenceText(conn, t);
             if (text != null) {
                 return Ddl.result(text, "native");
             }
@@ -256,13 +194,11 @@ public final class ObjectDdl {
         if (found == null) {
             throw nothing("options", t);
         }
-        // SQL Server names a sequence by schema alone when creating it: the
-        // database prefix is refused (Msg 166), where a lookup accepts it.
         StringBuilder sb = new StringBuilder("CREATE SEQUENCE ").append(
-                t.dialect == Dialect.SQLSERVER ? t.id.qualify(null, t.schema, t.name)
+                t.dialect.vendor().createsWithoutCatalog() ? t.id.qualify(null, t.schema, t.name)
                         : t.qualified());
         String type = Json.str(found, "data_type");
-        if (type != null && t.dialect != Dialect.ORACLE) {
+        if (type != null && t.dialect.vendor().typesSequences()) {
             sb.append(" AS ").append(type);
         }
         option(sb, "START WITH", Json.str(found, "start_value"));
@@ -270,9 +206,8 @@ public final class ObjectDdl {
         option(sb, "MINVALUE", Json.str(found, "min_value"));
         option(sb, "MAXVALUE", Json.str(found, "max_value"));
         String cache = Json.str(found, "cache");
-        if (t.dialect == Dialect.DB2 && cache != null && cache.matches("\\d+")
+        if (t.dialect.vendor().cacheOfOneIsNoCache() && cache != null && cache.matches("\\d+")
                 && Long.parseLong(cache) < 2) {
-            // Db2 keeps NO CACHE as a cache of 1, and refuses CACHE 1.
             sb.append(" NO CACHE");
         } else if (cache != null && !"0".equals(cache)) {
             option(sb, "CACHE", cache);
@@ -319,50 +254,36 @@ public final class ObjectDdl {
     }
 
     private static String nativeTrigger(Connection conn, Target t) {
-        switch (t.dialect) {
-            case MYSQL:
-            case MARIADB:
-                return show(conn, "TRIGGER", t, 3);
-            case POSTGRESQL:
-                return Attempt.<String>on(conn, "pg_get_triggerdef", c -> {
-                    String sql = "SELECT pg_catalog.pg_get_triggerdef(t.oid, true)"
-                            + " FROM pg_catalog.pg_trigger t"
-                            + " JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid"
-                            + " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
-                            + " WHERE t.tgname = ? AND NOT t.tgisinternal"
-                            + (t.hasSchema() ? " AND n.nspname = ?" : "")
-                            + " ORDER BY c.relname";
-                    List<String> texts = new ArrayList<>();
-                    try (PreparedStatement ps = c.prepareStatement(sql)) {
-                        ps.setString(1, t.name);
-                        if (t.hasSchema()) {
-                            ps.setString(2, t.schema);
-                        }
-                        try (ResultSet rs = ps.executeQuery()) {
-                            while (rs.next()) {
-                                String text = DdlText.terminated(rs.getString(1));
-                                if (text != null) {
-                                    texts.add(text);
-                                }
-                            }
+        return t.dialect.vendor().triggerText(conn, t);
+    }
+
+    /** PostgreSQL's trigger text, one {@code CREATE} per table the name is on. */
+    static String postgresTrigger(Connection conn, Target t) {
+        return Attempt.<String>on(conn, "pg_get_triggerdef", c -> {
+            String sql = "SELECT pg_catalog.pg_get_triggerdef(t.oid, true)"
+                    + " FROM pg_catalog.pg_trigger t"
+                    + " JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid"
+                    + " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+                    + " WHERE t.tgname = ? AND NOT t.tgisinternal"
+                    + (t.hasSchema() ? " AND n.nspname = ?" : "")
+                    + " ORDER BY c.relname";
+            List<String> texts = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, t.name);
+                if (t.hasSchema()) {
+                    ps.setString(2, t.schema);
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String text = DdlText.terminated(rs.getString(1));
+                        if (text != null) {
+                            texts.add(text);
                         }
                     }
-                    return DdlText.joined(texts);
-                }, null);
-            case ORACLE:
-                return DdlText.oracleSource(conn, t.schema, t.name, "TRIGGER");
-            case SQLSERVER:
-                return DdlText.sqlServerDefinition(conn, t.qualified());
-            case SQLITE:
-                return DdlText.sqlite(conn, "trigger", t.name);
-            case H2:
-                return DdlText.h2Script(conn, t.id, t.schema, "TRIGGER", t.name);
-            case DB2:
-                return DdlText.db2Text(conn, "SYSCAT.TRIGGERS", "TRIGSCHEMA", "TRIGNAME",
-                        t.schema, t.name);
-            default:
-                return null;
-        }
+                }
+            }
+            return DdlText.joined(texts);
+        }, null);
     }
 
     /**
@@ -402,8 +323,9 @@ public final class ObjectDdl {
             sb.append(' ').append(String.join(" OR ", events));
         }
         if (head.get("table") != null) {
-            sb.append(" ON ").append(t.id.qualify(t.dialect.isMySqlFamily() ? t.catalog : null,
-                    t.dialect.isMySqlFamily() ? null : t.schema, head.get("table")));
+            boolean byCatalog = t.dialect.vendor().catalogIsSchema();
+            sb.append(" ON ").append(t.id.qualify(byCatalog ? t.catalog : null,
+                    byCatalog ? null : t.schema, head.get("table")));
         }
         if (head.get("orientation") != null) {
             sb.append(" FOR EACH ").append(head.get("orientation"));
@@ -420,7 +342,7 @@ public final class ObjectDdl {
      * {@link DdlText#withoutDefiner}. NULL - an account that may use the object
      * but not read it - is "no native text".
      */
-    private static String show(Connection conn, String what, Target t, int column) {
+    static String show(Connection conn, String what, Target t, int column) {
         String qualified = t.qualified();
         return Attempt.<String>run(conn, "SHOW CREATE " + what, st -> {
             try (ResultSet rs = st.executeQuery("SHOW CREATE " + what + " " + qualified)) {
@@ -445,7 +367,7 @@ public final class ObjectDdl {
     }
 
     /** The object a request names, and how to write its name. */
-    private static final class Target {
+    static final class Target {
         final Dialect dialect;
         final Ident id;
         final String catalog;
@@ -469,7 +391,7 @@ public final class ObjectDdl {
          * database, so its name is left out there, as {@link Ddl} does.
          */
         String qualified() {
-            return id.qualify(dialect == Dialect.POSTGRESQL ? null : catalog, schema, name);
+            return id.qualify(dialect.vendor().qualifiesByCatalog() ? catalog : null, schema, name);
         }
 
         /**
@@ -480,7 +402,7 @@ public final class ObjectDdl {
          */
         PreparedStatement standard(Connection c, String sql, String ownerColumn)
                 throws SQLException {
-            String owner = dialect.isMySqlFamily() ? catalog : schema;
+            String owner = dialect.vendor().catalogIsSchema() ? catalog : schema;
             boolean scoped = owner != null && !owner.isEmpty();
             PreparedStatement ps = c.prepareStatement(
                     sql + (scoped ? " AND " + ownerColumn + " = ?" : ""));

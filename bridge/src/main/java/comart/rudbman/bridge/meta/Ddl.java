@@ -308,19 +308,12 @@ public final class Ddl {
      * @return the statements, terminated
      */
     public static List<String> dataPrologue(DatabaseMetaData dbm) throws SQLException {
-        if (Dialect.of(dbm).isMySqlFamily()) {
-            return List.of("SET @OLD_SQL_MODE = @@SESSION.SQL_MODE;",
-                    "SET SESSION SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';");
-        }
-        return List.of();
+        return Dialect.of(dbm).vendor().dataPrologue();
     }
 
     /** @see #dataPrologue */
     public static List<String> dataEpilogue(DatabaseMetaData dbm) throws SQLException {
-        if (Dialect.of(dbm).isMySqlFamily()) {
-            return List.of("SET SESSION SQL_MODE = @OLD_SQL_MODE;");
-        }
-        return List.of();
+        return Dialect.of(dbm).vendor().dataEpilogue();
     }
 
     /**
@@ -336,15 +329,7 @@ public final class Ddl {
      * @return the statements, terminated
      */
     public static List<String> scriptPrologue(DatabaseMetaData dbm) {
-        List<String> out = new ArrayList<>();
-        Dialect dialect = Dialect.of(dbm);
-        if (dialect.isMySqlFamily()) {
-            out.add("SET FOREIGN_KEY_CHECKS = 0;");
-        } else if (dialect == Dialect.SQLSERVER) {
-            out.add("SET ANSI_NULLS ON;");
-            out.add("SET QUOTED_IDENTIFIER ON;");
-        }
-        return out;
+        return new ArrayList<>(Dialect.of(dbm).vendor().scriptPrologue());
     }
 
     /**
@@ -354,11 +339,7 @@ public final class Ddl {
      * @return the statements, terminated
      */
     public static List<String> scriptEpilogue(DatabaseMetaData dbm) {
-        List<String> out = new ArrayList<>();
-        if (Dialect.of(dbm).isMySqlFamily()) {
-            out.add("SET FOREIGN_KEY_CHECKS = 1;");
-        }
-        return out;
+        return new ArrayList<>(Dialect.of(dbm).vendor().scriptEpilogue());
     }
 
     /**
@@ -366,8 +347,7 @@ public final class Ddl {
      * a catalog query below recovers the expression.
      */
     private static boolean reconstructsGenerated(Dialect dialect) {
-        return dialect == Dialect.POSTGRESQL || dialect == Dialect.SQLSERVER
-                || dialect == Dialect.DB2;
+        return dialect.vendor().reconstructsGenerated();
     }
 
     /**
@@ -376,49 +356,58 @@ public final class Ddl {
      */
     private static Script nativeSplit(Connection conn, Dialect dialect, Ident id,
                                       String catalog, String schema, String table) {
-        if (dialect.isMySqlFamily() || dialect == Dialect.SQLITE) {
-            String text = nativeDdl(conn, dialect, id, catalog, schema, table);
-            return text == null ? null : new Script("native", text, new ArrayList<>(), true);
+        return dialect.vendor().nativeSplit(conn, id, catalog, schema, table);
+    }
+
+    /**
+     * The server's own text as one piece, its foreign keys inline, for the
+     * products whose text keeps them there and replays in any order.
+     */
+    static Script whole(String text) {
+        return text == null ? null : new Script("native", text, new ArrayList<>(), true);
+    }
+
+    /** H2's {@link #nativeSplit}: its {@code SCRIPT}, the foreign keys pulled out. */
+    static Script h2Split(Connection conn, Ident id, String catalog, String schema,
+                          String table) {
+        List<String> rows = Attempt.<List<String>>run(conn, "SCRIPT TABLE",
+                st -> h2Statements(st, id.qualify(catalog, schema, table), schema, table),
+                null);
+        if (rows == null) {
+            return null;
         }
-        if (dialect == Dialect.H2) {
-            List<String> rows = Attempt.<List<String>>run(conn, "SCRIPT TABLE",
-                    st -> h2Statements(st, id.qualify(catalog, schema, table), schema, table),
-                    null);
-            if (rows == null) {
+        List<String> creates = new ArrayList<>();
+        List<String> alters = new ArrayList<>();
+        for (String row : rows) {
+            if (H2_TRIGGER.matcher(row).find()) {
+                continue;
+            }
+            if (H2_FOREIGN_KEY.matcher(row).find()) {
+                alters.add(row.endsWith(";") ? row.substring(0, row.length() - 1) : row);
+            } else {
+                creates.add(row);
+            }
+        }
+        return new Script("native", String.join("\n", creates), alters, true);
+    }
+
+    /** Oracle's {@link #nativeSplit}: the table, then each foreign key on its own. */
+    static Script oracleSplit(Connection conn, String schema, String table) {
+        String text = oracle(conn, schema, table, false);
+        if (text == null) {
+            return null;
+        }
+        List<String> alters = new ArrayList<>();
+        for (String fk : oracleForeignKeys(conn, schema, table)) {
+            String one = DdlText.oracleMetadata(conn, "REF_CONSTRAINT", schema, fk);
+            if (one == null) {
+                // A key the account may see but not script: the whole table
+                // goes the reconstruction's way rather than lose it.
                 return null;
             }
-            List<String> creates = new ArrayList<>();
-            List<String> alters = new ArrayList<>();
-            for (String row : rows) {
-                if (H2_TRIGGER.matcher(row).find()) {
-                    continue;
-                }
-                if (H2_FOREIGN_KEY.matcher(row).find()) {
-                    alters.add(row.endsWith(";") ? row.substring(0, row.length() - 1) : row);
-                } else {
-                    creates.add(row);
-                }
-            }
-            return new Script("native", String.join("\n", creates), alters, true);
+            alters.add(one.endsWith(";") ? one.substring(0, one.length() - 1).strip() : one);
         }
-        if (dialect == Dialect.ORACLE) {
-            String text = oracle(conn, schema, table, false);
-            if (text == null) {
-                return null;
-            }
-            List<String> alters = new ArrayList<>();
-            for (String fk : oracleForeignKeys(conn, schema, table)) {
-                String one = DdlText.oracleMetadata(conn, "REF_CONSTRAINT", schema, fk);
-                if (one == null) {
-                    // A key the account may see but not script: the whole table
-                    // goes the reconstruction's way rather than lose it.
-                    return null;
-                }
-                alters.add(one.endsWith(";") ? one.substring(0, one.length() - 1).strip() : one);
-            }
-            return new Script("native", text, alters, true);
-        }
-        return null;
+        return new Script("native", text, alters, true);
     }
 
     /** One column as a data script sees it. */
@@ -465,11 +454,8 @@ public final class Ddl {
         for (Col c : cols) {
             anyIdentity |= c.autoIncrement;
         }
-        Dialect dialect = Dialect.of(dbm);
         Set<String> always = !anyIdentity ? new HashSet<>()
-                : dialect == Dialect.POSTGRESQL ? pgIdentityAlways(dbm.getConnection(), table, schema)
-                : dialect == Dialect.H2 ? h2IdentityAlways(dbm.getConnection(), schema, table)
-                : new HashSet<>();
+                : Dialect.of(dbm).vendor().alwaysIdentities(dbm.getConnection(), schema, table);
         for (Col c : cols) {
             out.add(new DataColumn(c.name, c.autoIncrement, c.generated,
                     c.autoIncrement && always.contains(c.name)));
@@ -499,7 +485,7 @@ public final class Ddl {
     }
 
     /** The names of a table's foreign keys, from {@code ALL_CONSTRAINTS}. */
-    private static List<String> oracleForeignKeys(Connection conn, String schema, String table) {
+    static List<String> oracleForeignKeys(Connection conn, String schema, String table) {
         return Attempt.<List<String>>on(conn, "ALL_CONSTRAINTS", c -> {
             String sql = "SELECT CONSTRAINT_NAME FROM ALL_CONSTRAINTS WHERE OWNER = "
                     + DdlText.owner(schema) + " AND TABLE_NAME = ? AND CONSTRAINT_TYPE = 'R'"
@@ -557,22 +543,7 @@ public final class Ddl {
      */
     private static String nativeDdl(Connection conn, Dialect dialect, Ident id,
                                     String catalog, String schema, String table) {
-        String qualified = id.qualify(catalog, schema, table);
-        if (dialect.isMySqlFamily()) {
-            return Attempt.<String>run(conn, "SHOW CREATE TABLE",
-                    st -> mysqlShowCreate(st, qualified), null);
-        }
-        if (dialect == Dialect.H2) {
-            return Attempt.<String>run(conn, "SCRIPT TABLE",
-                    st -> h2Script(st, qualified, schema, table), null);
-        }
-        if (dialect == Dialect.ORACLE) {
-            return oracle(conn, schema, table, true);
-        }
-        if (dialect == Dialect.SQLITE) {
-            return sqlite(conn, table);
-        }
-        return null;
+        return dialect.vendor().tableText(conn, id, catalog, schema, table);
     }
 
     /**
@@ -583,7 +554,7 @@ public final class Ddl {
      * @param refConstraints whether the foreign keys are written into the
      *                       {@code CREATE}
      */
-    private static String oracle(Connection conn, String schema, String table,
+    static String oracle(Connection conn, String schema, String table,
                                  boolean refConstraints) {
         String create = DdlText.oracleMetadata(conn, "TABLE", schema, table, refConstraints);
         if (create == null) {
@@ -643,7 +614,7 @@ public final class Ddl {
      * {@code CREATE INDEX} beside it; an index with no text is the one the
      * table's own {@code UNIQUE} or key made.
      */
-    private static String sqlite(Connection conn, String table) {
+    static String sqlite(Connection conn, String table) {
         return Attempt.<String>on(conn, "sqlite_master", c -> {
             List<String> parts = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT sql FROM sqlite_master"
@@ -664,7 +635,7 @@ public final class Ddl {
         }, null);
     }
 
-    private static String mysqlShowCreate(Statement st, String qualified) throws SQLException {
+    static String mysqlShowCreate(Statement st, String qualified) throws SQLException {
         try (ResultSet rs = st.executeQuery(MYSQL_SHOW_CREATE + qualified)) {
             // Column 1 is the table name, column 2 the DDL. Read by position:
             // the label is "Create Table" for tables and "Create View" for
@@ -691,7 +662,7 @@ public final class Ddl {
      * comments and are dropped by the same test only accidentally, so they are
      * excluded explicitly.
      */
-    private static String h2Script(Statement st, String qualified, String schema, String table)
+    static String h2Script(Statement st, String qualified, String schema, String table)
             throws SQLException {
         List<String> rows = h2Statements(st, qualified, schema, table);
         return rows == null ? null : String.join("\n", rows);
@@ -736,7 +707,7 @@ public final class Ddl {
         }, new ArrayList<>());
     }
 
-    private static List<String> h2Statements(Statement st, String qualified, String schema,
+    static List<String> h2Statements(Statement st, String qualified, String schema,
                                              String table) throws SQLException {
         String ref = schema == null || schema.isEmpty()
                 ? '"' + table + '"'
@@ -772,7 +743,7 @@ public final class Ddl {
     // -------------------------------------------------------------- metadata
 
     /** One column of the table being rendered. */
-    private static final class Col {
+    static final class Col {
         String name;
         String typeName;
         Integer dataType;
@@ -851,7 +822,8 @@ public final class Ddl {
 
         // A PostgreSQL connection sees one database, and a name qualified by it
         // reads as a cross-database reference, which PostgreSQL does not have.
-        String nameCatalog = dialect == Dialect.POSTGRESQL ? null : catalog;
+        Vendor vendor = dialect.vendor();
+        String nameCatalog = vendor.qualifiesByCatalog() ? catalog : null;
         String qualified = id.qualify(nameCatalog, schema, table);
         List<String> checks = catalogExtras(dbm.getConnection(), dialect, id, catalog, schema,
                 table, qualified, cols);
@@ -867,8 +839,8 @@ public final class Ddl {
             if (pkName != null && !pkName.isEmpty()) {
                 pk.append("CONSTRAINT ").append(id.q(pkName)).append(' ');
             }
-            String kind = dialect == Dialect.SQLSERVER ? SqlServerSchema.primaryKeyKind(
-                    dbm.getConnection(), id, catalog, id.qualify(catalog, schema, table)) : null;
+            String kind = vendor.primaryKeyKind(dbm.getConnection(), id, catalog,
+                    id.qualify(catalog, schema, table));
             pk.append("PRIMARY KEY ").append(kind == null ? "" : kind + " ")
                     .append('(').append(columnList(pkCols, id)).append(')');
             body.add(pk.toString());
@@ -877,8 +849,7 @@ public final class Ddl {
             body.add("    " + check);
         }
         boolean catalogQualified = nameCatalog != null && !nameCatalog.isEmpty();
-        // Only PostgreSQL among the products this path serves can defer a key.
-        boolean deferrable = dialect == Dialect.POSTGRESQL;
+        boolean deferrable = vendor.defersKeys();
         for (Fk fk : fks) {
             if (alterOut == null) {
                 body.add("    " + foreignKey(fk, id, catalogQualified, deferrable));
@@ -890,19 +861,13 @@ public final class Ddl {
         sb.append(String.join(",\n", body)).append("\n)");
 
         // MySQL has no COMMENT ON; a table comment is part of the CREATE.
-        if (dialect.isMySqlFamily() && tableRemarks != null && !tableRemarks.isEmpty()) {
+        if (vendor.commentsInline() && tableRemarks != null && !tableRemarks.isEmpty()) {
             sb.append(" COMMENT=").append(Ident.literal(tableRemarks));
         }
         sb.append(";\n");
 
-        List<String> nativeIndexes = dialect == Dialect.POSTGRESQL
-                ? pgIndexes(dbm.getConnection(), schema, table, qualified)
-                : dialect == Dialect.SQLSERVER
-                ? SqlServerSchema.indexes(dbm.getConnection(), id, catalog,
-                        id.qualify(catalog, schema, table), qualified)
-                : dialect == Dialect.DB2 && schema != null && !schema.isEmpty()
-                ? Db2Schema.indexes(dbm.getConnection(), id, schema, table, qualified)
-                : null;
+        List<String> nativeIndexes = vendor.nativeIndexes(dbm.getConnection(), id, catalog, schema,
+                table, qualified);
         if (nativeIndexes != null) {
             for (String ix : nativeIndexes) {
                 sb.append('\n').append(ix).append(";\n");
@@ -914,12 +879,10 @@ public final class Ddl {
         }
 
         appendComments(sb, dialect, id, qualified, tableRemarks, cols);
-        if (dialect == Dialect.SQLSERVER) {
-            List<String> props = SqlServerSchema.extendedProperties(dbm.getConnection(), id,
-                    catalog, id.qualify(catalog, schema, table), schema, table);
-            if (!props.isEmpty()) {
-                sb.append('\n').append(String.join("\n", props)).append('\n');
-            }
+        List<String> props = vendor.extendedProperties(dbm.getConnection(), id, catalog, schema,
+                table);
+        if (!props.isEmpty()) {
+            sb.append('\n').append(String.join("\n", props)).append('\n');
         }
         return sb.toString();
     }
@@ -927,8 +890,7 @@ public final class Ddl {
     private static String column(Col c, Dialect dialect, Ident id) {
         StringBuilder sb = new StringBuilder();
         if (c.computed != null) {
-            // SQL Server's computed column has no type of its own to write.
-            if (dialect == Dialect.SQLSERVER) {
+            if (dialect.vendor().computedHasNoType()) {
                 return sb.append(id.q(c.name)).append(' ').append(c.computed).toString();
             }
             sb.append(id.q(c.name)).append(' ').append(typeText(c, dialect))
@@ -938,7 +900,7 @@ public final class Ddl {
             }
             return sb.toString();
         }
-        if (dialect == Dialect.POSTGRESQL && c.autoIncrement && c.def != null
+        if (dialect.vendor().serialColumns() && c.autoIncrement && c.def != null
                 && c.def.trim().startsWith("nextval(")) {
             // A serial column: pgjdbc names its type "serial", which would make
             // the server create the sequence again under the same name, and
@@ -955,8 +917,8 @@ public final class Ddl {
         }
         sb.append(id.q(c.name)).append(' ').append(typeText(c, dialect));
         String identity = c.identityAlways ? "GENERATED ALWAYS AS IDENTITY"
-                : c.identitySpec != null ? c.identitySpec : identityClause(dialect);
-        if (dialect.isMySqlFamily()) {
+                : c.identitySpec != null ? c.identitySpec : dialect.vendor().identityClause();
+        if (dialect.vendor().notNullFirst()) {
             // MySQL's column grammar fixes this order:
             // type [NOT NULL] [DEFAULT] [AUTO_INCREMENT] [COMMENT].
             if (c.notNull) {
@@ -966,7 +928,7 @@ public final class Ddl {
             if (c.autoIncrement) {
                 sb.append(' ').append(identity);
             }
-            if (c.remarks != null && !c.remarks.isEmpty()) {
+            if (dialect.vendor().commentsInline() && c.remarks != null && !c.remarks.isEmpty()) {
                 sb.append(" COMMENT ").append(Ident.literal(c.remarks));
             }
         } else {
@@ -1014,171 +976,193 @@ public final class Ddl {
     private static List<String> catalogExtras(Connection conn, Dialect dialect, Ident id,
                                               String catalog, String schema, String table,
                                               String qualified, List<Col> cols) {
+        return new ArrayList<>(dialect.vendor().catalogExtras(conn, id, catalog, schema, table,
+                cols));
+    }
+
+    /** PostgreSQL's part of {@link #catalogExtras}: its checks, types and generated columns. */
+    static List<String> postgresExtras(Connection conn, Ident id, String catalog, String schema,
+                                     String table, List<Col> cols) {
         List<String> checks = new ArrayList<>();
         boolean scoped = schema != null && !schema.isEmpty();
-        if (dialect == Dialect.POSTGRESQL) {
-            String rel = " JOIN pg_catalog.pg_class c ON c.oid = %s"
-                    + " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
-                    + " WHERE c.relname = ?"
-                    + (scoped ? " AND n.nspname = ?" : " AND pg_catalog.pg_table_is_visible(c.oid)");
-            checks.addAll(Attempt.<List<String>>on(conn, "pg_constraint", c -> {
-                List<String> out = new ArrayList<>();
-                try (PreparedStatement ps = c.prepareStatement("SELECT k.conname,"
-                        + " pg_catalog.pg_get_constraintdef(k.oid, true)"
-                        + " FROM pg_catalog.pg_constraint k"
-                        + String.format(Locale.ROOT, rel, "k.conrelid")
-                        // UNIQUE and EXCLUDE too: written as the constraints
-                        // they are, not as the indexes that back them.
-                        + " AND k.contype IN ('u', 'x', 'c')"
-                        + " ORDER BY k.contype DESC, k.conname")) {
-                    bindRelation(ps, table, schema);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            out.add("CONSTRAINT " + id.q(rs.getString(1)) + " " + rs.getString(2));
-                        }
-                    }
-                }
-                return out;
-            }, new ArrayList<>()));
-            Map<String, String> types = Attempt.<Map<String, String>>on(conn, "format_type", c -> {
-                Map<String, String> out = new LinkedHashMap<>();
-                try (PreparedStatement ps = c.prepareStatement("SELECT a.attname,"
-                        + " pg_catalog.format_type(a.atttypid, a.atttypmod)"
-                        + " FROM pg_catalog.pg_attribute a"
-                        + String.format(Locale.ROOT, rel, "a.attrelid")
-                        + " AND a.attnum > 0 AND NOT a.attisdropped")) {
-                    bindRelation(ps, table, schema);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            out.put(rs.getString(1), rs.getString(2));
-                        }
-                    }
-                }
-                return out;
-            }, new LinkedHashMap<>());
-            for (Col col : cols) {
-                col.nativeType = types.get(col.name);
-            }
-            Set<String> always = pgIdentityAlways(conn, table, schema);
-            for (Col col : cols) {
-                col.identityAlways = col.autoIncrement && always.contains(col.name);
-            }
-            boolean anyGenerated = false;
-            for (Col col : cols) {
-                anyGenerated |= col.generated && !col.autoIncrement;
-            }
-            if (anyGenerated) {
-                // attgenerated: 's' stored, 'v' virtual (PostgreSQL 18). The
-                // expression is COLUMN_DEF, which pgjdbc reads from the same
-                // place a default lives.
-                Map<String, String> kinds = Attempt.<Map<String, String>>on(conn, "pg_attribute",
-                        c -> {
-                            Map<String, String> out = new LinkedHashMap<>();
-                            try (PreparedStatement ps = c.prepareStatement("SELECT a.attname,"
-                                    + " a.attgenerated::text FROM pg_catalog.pg_attribute a"
-                                    + String.format(Locale.ROOT, rel, "a.attrelid")
-                                    + " AND a.attgenerated <> ''")) {
-                                bindRelation(ps, table, schema);
-                                try (ResultSet rs = ps.executeQuery()) {
-                                    while (rs.next()) {
-                                        out.put(rs.getString(1), rs.getString(2));
-                                    }
-                                }
-                            }
-                            return out;
-                        }, new LinkedHashMap<>());
-                for (Col col : cols) {
-                    String kind = kinds.get(col.name);
-                    if (kind != null && col.def != null && !col.def.trim().isEmpty()) {
-                        col.computed = "GENERATED ALWAYS AS (" + col.def.trim() + ") "
-                                + ("v".equals(kind) ? "VIRTUAL" : "STORED");
+        String rel = " JOIN pg_catalog.pg_class c ON c.oid = %s"
+                + " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+                + " WHERE c.relname = ?"
+                + (scoped ? " AND n.nspname = ?" : " AND pg_catalog.pg_table_is_visible(c.oid)");
+        checks.addAll(Attempt.<List<String>>on(conn, "pg_constraint", c -> {
+            List<String> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT k.conname,"
+                    + " pg_catalog.pg_get_constraintdef(k.oid, true)"
+                    + " FROM pg_catalog.pg_constraint k"
+                    + String.format(Locale.ROOT, rel, "k.conrelid")
+                    // UNIQUE and EXCLUDE too: written as the constraints
+                    // they are, not as the indexes that back them.
+                    + " AND k.contype IN ('u', 'x', 'c')"
+                    + " ORDER BY k.contype DESC, k.conname")) {
+                bindRelation(ps, table, schema);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add("CONSTRAINT " + id.q(rs.getString(1)) + " " + rs.getString(2));
                     }
                 }
             }
-        } else if (dialect == Dialect.DB2 && scoped) {
-            Map<String, String> types = Db2Schema.columnTypes(conn, id, schema, table);
-            Map<String, String> identities = new LinkedHashMap<>();
-            Map<String, String> computed = Db2Schema.generated(conn, schema, table, identities);
-            for (Col col : cols) {
-                col.nativeType = types.get(col.name);
-                col.computed = computed.get(col.name);
-                String identity = identities.get(col.name);
-                if (identity != null) {
-                    col.autoIncrement = true;
-                    col.identitySpec = identity;
-                }
-            }
-            checks.addAll(Db2Schema.constraints(conn, id, schema, table));
-        } else if (dialect == Dialect.SQLSERVER) {
-            String object = id.qualify(catalog, schema, table);
-            Map<String, String> types = SqlServerSchema.columnTypes(conn, id, catalog, object);
-            Map<String, String> defaults = SqlServerSchema.defaultNames(conn, id, catalog, object);
-            for (Col col : cols) {
-                col.nativeType = types.get(col.name);
-                col.defaultName = defaults.get(col.name);
-            }
-            checks.addAll(SqlServerSchema.uniqueConstraints(conn, id, catalog, object));
-            checks.addAll(Attempt.<List<String>>on(conn, "sys.check_constraints", c -> {
-                List<String> out = new ArrayList<>();
-                try (PreparedStatement ps = c.prepareStatement("SELECT name, definition"
-                        + " FROM " + SqlServerSchema.sys(id, catalog, "check_constraints")
-                        + " WHERE parent_object_id = OBJECT_ID(?)"
-                        + " ORDER BY name")) {
-                    ps.setString(1, object);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            out.add("CONSTRAINT " + id.q(rs.getString(1)) + " CHECK "
-                                    + rs.getString(2));
-                        }
+            return out;
+        }, new ArrayList<>()));
+        Map<String, String> types = Attempt.<Map<String, String>>on(conn, "format_type", c -> {
+            Map<String, String> out = new LinkedHashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT a.attname,"
+                    + " pg_catalog.format_type(a.atttypid, a.atttypmod)"
+                    + " FROM pg_catalog.pg_attribute a"
+                    + String.format(Locale.ROOT, rel, "a.attrelid")
+                    + " AND a.attnum > 0 AND NOT a.attisdropped")) {
+                bindRelation(ps, table, schema);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.put(rs.getString(1), rs.getString(2));
                     }
                 }
-                return out;
-            }, new ArrayList<>()));
-            Map<String, String> computed = Attempt.<Map<String, String>>on(conn,
-                    "sys.computed_columns", c -> {
+            }
+            return out;
+        }, new LinkedHashMap<>());
+        for (Col col : cols) {
+            col.nativeType = types.get(col.name);
+        }
+        Set<String> always = pgIdentityAlways(conn, table, schema);
+        for (Col col : cols) {
+            col.identityAlways = col.autoIncrement && always.contains(col.name);
+        }
+        boolean anyGenerated = false;
+        for (Col col : cols) {
+            anyGenerated |= col.generated && !col.autoIncrement;
+        }
+        if (anyGenerated) {
+            // attgenerated: 's' stored, 'v' virtual (PostgreSQL 18). The
+            // expression is COLUMN_DEF, which pgjdbc reads from the same
+            // place a default lives.
+            Map<String, String> kinds = Attempt.<Map<String, String>>on(conn, "pg_attribute",
+                    c -> {
                         Map<String, String> out = new LinkedHashMap<>();
-                        try (PreparedStatement ps = c.prepareStatement("SELECT name, definition,"
-                                + " is_persisted FROM "
-                                + SqlServerSchema.sys(id, catalog, "computed_columns")
-                                + " WHERE object_id = OBJECT_ID(?)")) {
-                            ps.setString(1, object);
+                        try (PreparedStatement ps = c.prepareStatement("SELECT a.attname,"
+                                + " a.attgenerated::text FROM pg_catalog.pg_attribute a"
+                                + String.format(Locale.ROOT, rel, "a.attrelid")
+                                + " AND a.attgenerated <> ''")) {
+                            bindRelation(ps, table, schema);
                             try (ResultSet rs = ps.executeQuery()) {
                                 while (rs.next()) {
-                                    String name = rs.getString(1);
-                                    String definition = rs.getString(2);
-                                    boolean persisted = rs.getBoolean(3);
-                                    out.put(name, "AS " + definition
-                                            + (persisted ? " PERSISTED" : ""));
+                                    out.put(rs.getString(1), rs.getString(2));
                                 }
                             }
                         }
                         return out;
                     }, new LinkedHashMap<>());
             for (Col col : cols) {
-                col.computed = computed.get(col.name);
+                String kind = kinds.get(col.name);
+                if (kind != null && col.def != null && !col.def.trim().isEmpty()) {
+                    col.computed = "GENERATED ALWAYS AS (" + col.def.trim() + ") "
+                            + ("v".equals(kind) ? "VIRTUAL" : "STORED");
+                }
             }
-            Map<String, String> identities = Attempt.<Map<String, String>>on(conn,
-                    "sys.identity_columns", c -> {
-                        Map<String, String> out = new LinkedHashMap<>();
-                        try (PreparedStatement ps = c.prepareStatement("SELECT name,"
-                                + " CAST(seed_value AS VARCHAR(40)),"
-                                + " CAST(increment_value AS VARCHAR(40))"
-                                + " FROM " + SqlServerSchema.sys(id, catalog, "identity_columns")
-                                + " WHERE object_id = OBJECT_ID(?)")) {
-                            ps.setString(1, object);
-                            try (ResultSet rs = ps.executeQuery()) {
-                                while (rs.next()) {
-                                    out.put(rs.getString(1), "IDENTITY(" + rs.getString(2) + ", "
-                                            + rs.getString(3) + ")");
-                                }
+        }
+        return checks;
+    }
+
+    /** Db2's part of {@link #catalogExtras}, for a table named by its schema. */
+    static List<String> db2Extras(Connection conn, Ident id, String catalog, String schema,
+                                     String table, List<Col> cols) {
+        List<String> checks = new ArrayList<>();
+        boolean scoped = schema != null && !schema.isEmpty();
+        if (!scoped) {
+            return checks;
+        }
+        Map<String, String> types = Db2Schema.columnTypes(conn, id, schema, table);
+        Map<String, String> identities = new LinkedHashMap<>();
+        Map<String, String> computed = Db2Schema.generated(conn, schema, table, identities);
+        for (Col col : cols) {
+            col.nativeType = types.get(col.name);
+            col.computed = computed.get(col.name);
+            String identity = identities.get(col.name);
+            if (identity != null) {
+                col.autoIncrement = true;
+                col.identitySpec = identity;
+            }
+        }
+        checks.addAll(Db2Schema.constraints(conn, id, schema, table));
+        return checks;
+    }
+
+    /** SQL Server's part of {@link #catalogExtras}. */
+    static List<String> sqlServerExtras(Connection conn, Ident id, String catalog, String schema,
+                                     String table, List<Col> cols) {
+        List<String> checks = new ArrayList<>();
+        boolean scoped = schema != null && !schema.isEmpty();
+        String object = id.qualify(catalog, schema, table);
+        Map<String, String> types = SqlServerSchema.columnTypes(conn, id, catalog, object);
+        Map<String, String> defaults = SqlServerSchema.defaultNames(conn, id, catalog, object);
+        for (Col col : cols) {
+            col.nativeType = types.get(col.name);
+            col.defaultName = defaults.get(col.name);
+        }
+        checks.addAll(SqlServerSchema.uniqueConstraints(conn, id, catalog, object));
+        checks.addAll(Attempt.<List<String>>on(conn, "sys.check_constraints", c -> {
+            List<String> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT name, definition"
+                    + " FROM " + SqlServerSchema.sys(id, catalog, "check_constraints")
+                    + " WHERE parent_object_id = OBJECT_ID(?)"
+                    + " ORDER BY name")) {
+                ps.setString(1, object);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add("CONSTRAINT " + id.q(rs.getString(1)) + " CHECK "
+                                + rs.getString(2));
+                    }
+                }
+            }
+            return out;
+        }, new ArrayList<>()));
+        Map<String, String> computed = Attempt.<Map<String, String>>on(conn,
+                "sys.computed_columns", c -> {
+                    Map<String, String> out = new LinkedHashMap<>();
+                    try (PreparedStatement ps = c.prepareStatement("SELECT name, definition,"
+                            + " is_persisted FROM "
+                            + SqlServerSchema.sys(id, catalog, "computed_columns")
+                            + " WHERE object_id = OBJECT_ID(?)")) {
+                        ps.setString(1, object);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            while (rs.next()) {
+                                String name = rs.getString(1);
+                                String definition = rs.getString(2);
+                                boolean persisted = rs.getBoolean(3);
+                                out.put(name, "AS " + definition
+                                        + (persisted ? " PERSISTED" : ""));
                             }
                         }
-                        return out;
-                    }, new LinkedHashMap<>());
-            for (Col col : cols) {
-                if (col.autoIncrement) {
-                    col.identitySpec = identities.get(col.name);
-                }
+                    }
+                    return out;
+                }, new LinkedHashMap<>());
+        for (Col col : cols) {
+            col.computed = computed.get(col.name);
+        }
+        Map<String, String> identities = Attempt.<Map<String, String>>on(conn,
+                "sys.identity_columns", c -> {
+                    Map<String, String> out = new LinkedHashMap<>();
+                    try (PreparedStatement ps = c.prepareStatement("SELECT name,"
+                            + " CAST(seed_value AS VARCHAR(40)),"
+                            + " CAST(increment_value AS VARCHAR(40))"
+                            + " FROM " + SqlServerSchema.sys(id, catalog, "identity_columns")
+                            + " WHERE object_id = OBJECT_ID(?)")) {
+                        ps.setString(1, object);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            while (rs.next()) {
+                                out.put(rs.getString(1), "IDENTITY(" + rs.getString(2) + ", "
+                                        + rs.getString(3) + ")");
+                            }
+                        }
+                    }
+                    return out;
+                }, new LinkedHashMap<>());
+        for (Col col : cols) {
+            if (col.autoIncrement) {
+                col.identitySpec = identities.get(col.name);
             }
         }
         return checks;
@@ -1189,7 +1173,7 @@ public final class Ddl {
      * IDENTITY}, which pgjdbc reports as auto-increment and no more. Empty for
      * an old server or a refused query.
      */
-    private static Set<String> pgIdentityAlways(Connection conn, String table, String schema) {
+    static Set<String> pgIdentityAlways(Connection conn, String table, String schema) {
         boolean scoped = schema != null && !schema.isEmpty();
         return Attempt.<Set<String>>on(conn, "pg_attribute attidentity", c -> {
             Set<String> out = new HashSet<>();
@@ -1270,7 +1254,7 @@ public final class Ddl {
      * The columns of an H2 table that are {@code GENERATED ALWAYS AS
      * IDENTITY}, which take a value only with {@code OVERRIDING SYSTEM VALUE}.
      */
-    private static Set<String> h2IdentityAlways(Connection conn, String schema, String table) {
+    static Set<String> h2IdentityAlways(Connection conn, String schema, String table) {
         return Attempt.<Set<String>>on(conn, "INFORMATION_SCHEMA.COLUMNS identity", c -> {
             Set<String> out = new HashSet<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT COLUMN_NAME"
@@ -1311,16 +1295,6 @@ public final class Ddl {
         }
     }
 
-    private static String identityClause(Dialect dialect) {
-        switch (dialect) {
-            case MYSQL:
-            case MARIADB:  return "AUTO_INCREMENT";
-            case SQLSERVER: return "IDENTITY";
-            case SQLITE:   return "AUTOINCREMENT";
-            default:       return "GENERATED BY DEFAULT AS IDENTITY";
-        }
-    }
-
     /**
      * Renders a column's type with its precision and scale.
      *
@@ -1338,7 +1312,7 @@ public final class Ddl {
             // Some drivers hand back a fully parameterized name already.
             return name;
         }
-        String max = dialect == Dialect.SQLSERVER ? sqlServerMax(name, c.size) : null;
+        String max = dialect.vendor().maxType(name, c.size);
         if (max != null) {
             return max;
         }
@@ -1368,7 +1342,7 @@ public final class Ddl {
      * one when written without it. {@code text}, {@code ntext} and
      * {@code image} take no length at all. {@code null} for anything else.
      */
-    private static String sqlServerMax(String name, Integer size) {
+    static String sqlServerMax(String name, Integer size) {
         String lower = name.toLowerCase(Locale.ROOT);
         switch (lower) {
             case "varchar":
@@ -1502,7 +1476,7 @@ public final class Ddl {
         // MySQL carried its comments inline; SQL Server has no COMMENT ON at all
         // (extended properties are a stored-procedure call, not DDL), and
         // emitting standard syntax there would produce text that cannot run.
-        if (dialect.isMySqlFamily() || dialect == Dialect.SQLSERVER) {
+        if (!dialect.vendor().commentsOn()) {
             return;
         }
         StringBuilder out = new StringBuilder();
@@ -1566,9 +1540,7 @@ public final class Ddl {
                 out.add(c);
             }
         }
-        if (Dialect.of(dbm) == Dialect.MYSQL) {
-            confirmMysqlGenerated(dbm.getConnection(), catalog, table, out);
-        }
+        Dialect.of(dbm).vendor().confirmGenerated(dbm.getConnection(), catalog, table, out);
         return out;
     }
 
@@ -1581,7 +1553,7 @@ public final class Ddl {
      * expression is what makes a column computed; a refused query leaves the
      * driver's answer.
      */
-    private static void confirmMysqlGenerated(Connection conn, String catalog, String table,
+    static void confirmMysqlGenerated(Connection conn, String catalog, String table,
                                               List<Col> cols) {
         boolean any = false;
         for (Col c : cols) {
@@ -1770,8 +1742,7 @@ public final class Ddl {
             // MySQL, MariaDB and H2 make an index for every foreign key that
             // has none and list it like any other: written out, it would be
             // made twice. Elsewhere such an index is one someone created.
-            boolean automatic = dialect.isMySqlFamily() || dialect == Dialect.H2
-                    || dialect == Dialect.OTHER;
+            boolean automatic = dialect.vendor().indexesForeignKeys();
             boolean backsForeignKey = false;
             for (Fk fk : automatic ? fks : List.<Fk>of()) {
                 if (cols.equals(new ArrayList<>(fk.fkCols.values()))) {

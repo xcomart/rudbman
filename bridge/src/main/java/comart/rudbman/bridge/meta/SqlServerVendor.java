@@ -109,4 +109,104 @@ final class SqlServerVendor extends Vendor {
                   List<String> updates) {
         return Upsert.merge(id, qualified, columns, keys, updates, false, true);
     }
+
+    /**
+     * {@code sqlcmd} starts with {@code QUOTED_IDENTIFIER} off, which refuses
+     * a persisted computed column and is not what the objects were created
+     * under; SSMS writes the same two settings at the head of its scripts.
+     */
+    @Override
+    List<String> scriptPrologue() {
+        return List.of("SET ANSI_NULLS ON;", "SET QUOTED_IDENTIFIER ON;");
+    }
+
+    @Override
+    boolean reconstructsGenerated() {
+        return true;
+    }
+
+    @Override
+    List<String> catalogExtras(Connection conn, Ident id, String catalog, String schema,
+                               String table, List<Ddl.Col> cols) {
+        return Ddl.sqlServerExtras(conn, id, catalog, schema, table, cols);
+    }
+
+    @Override
+    String primaryKeyKind(Connection conn, Ident id, String catalog, String object) {
+        return SqlServerSchema.primaryKeyKind(conn, id, catalog, object);
+    }
+
+    /**
+     * No {@code COMMENT ON} at all: extended properties are a
+     * stored-procedure call, written by {@link #extendedProperties}.
+     */
+    @Override
+    boolean commentsOn() {
+        return false;
+    }
+
+    @Override
+    List<String> nativeIndexes(Connection conn, Ident id, String catalog, String schema,
+                               String table, String qualified) {
+        return SqlServerSchema.indexes(conn, id, catalog, id.qualify(catalog, schema, table),
+                qualified);
+    }
+
+    @Override
+    List<String> extendedProperties(Connection conn, Ident id, String catalog, String schema,
+                                    String table) {
+        return SqlServerSchema.extendedProperties(conn, id, catalog,
+                id.qualify(catalog, schema, table), schema, table);
+    }
+
+    /** A computed column has no type of its own to write. */
+    @Override
+    boolean computedHasNoType() {
+        return true;
+    }
+
+    @Override
+    String identityClause() {
+        return "IDENTITY";
+    }
+
+    @Override
+    String maxType(String name, Integer size) {
+        return Ddl.sqlServerMax(name, size);
+    }
+
+    @Override
+    boolean indexesForeignKeys() {
+        return false;
+    }
+
+    /**
+     * The definition, then an indexed view's indexes, each a batch of its
+     * own after the view's, which has to be alone in its batch.
+     */
+    @Override
+    String viewText(Connection conn, ObjectDdl.Target t) {
+        String text = DdlText.sqlServerDefinition(conn, t.qualified());
+        List<String> indexes = text == null ? null : SqlServerSchema.indexes(conn, t.id,
+                t.catalog, t.qualified(), t.qualified());
+        if (indexes == null || indexes.isEmpty()) {
+            return text;
+        }
+        StringBuilder sb = new StringBuilder(text.strip());
+        for (String ix : indexes) {
+            sb.append("\nGO\n").append(ix).append(';');
+        }
+        return sb.toString();
+    }
+
+    @Override
+    String triggerText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.sqlServerDefinition(conn, t.qualified());
+    }
+
+    /** The database prefix is refused (Msg 166), where a lookup accepts it. */
+    @Override
+    boolean createsWithoutCatalog() {
+        return true;
+    }
 }

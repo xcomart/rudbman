@@ -29,4 +29,35 @@ final class SqliteVendor extends Vendor {
                   List<String> updates) {
         return Upsert.onConflict(id, qualified, columns, keys, updates);
     }
+
+    @Override
+    String tableText(Connection conn, Ident id, String catalog, String schema, String table) {
+        return Ddl.sqlite(conn, table);
+    }
+
+    @Override
+    Ddl.Script nativeSplit(Connection conn, Ident id, String catalog, String schema,
+                           String table) {
+        return Ddl.whole(tableText(conn, id, catalog, schema, table));
+    }
+
+    @Override
+    String identityClause() {
+        return "AUTOINCREMENT";
+    }
+
+    @Override
+    boolean indexesForeignKeys() {
+        return false;
+    }
+
+    @Override
+    String viewText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.sqlite(conn, "view", t.name);
+    }
+
+    @Override
+    String triggerText(Connection conn, ObjectDdl.Target t) {
+        return DdlText.sqlite(conn, "trigger", t.name);
+    }
 }
