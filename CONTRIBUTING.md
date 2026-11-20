@@ -147,6 +147,11 @@ Read their setup requirements and select only the relevant tests with
 
 ## Adding a database product
 
+A product supported from now on ships as a profile — YAML, and Groovy where
+the bridge needs it — rather than as new code; see
+[the profile design](docs/dialect-profiles.md), §12. The steps below are what changing one of
+the built-in products takes, and what a product took before profiles.
+
 A product's habits live in one place per layer, and each layer's defaults are
 chosen so that a missing answer is either a compile error or the portable
 path. Start each file from the product it most resembles; Db2, the most recent

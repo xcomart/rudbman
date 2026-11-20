@@ -1,9 +1,11 @@
 # User dialect profiles — design
 
-**Status: draft, settled before the code.** Nothing here is implemented yet.
-This document fixes the file format, the resolution rules, the scripting
-surface and the trust model so that the phases at the end can land one at a
-time without reopening them.
+**Status: phase 1 implemented; the rest settled before the code.** Profiles
+resolve and export in `rudbman-sql` and read and write as YAML in
+`rudbman-core`; nothing loads them from disk yet. This document fixes the file
+format, the resolution rules, the scripting surface, the trust model and how
+the application ships profiles of its own, so that the phases at the end can
+land one at a time without reopening them.
 
 ## 1. Goal
 
@@ -18,8 +20,9 @@ answers written as data, on top of one of those built-in implementations.
 
 ### Non-goals
 
-- **Built-ins stay in code.** They are checked against real servers by the
-  container suites, and a profile cannot replace or shadow one.
+- **The built-ins that exist stay in code.** They are checked against real
+  servers by the container suites, and a profile cannot replace or shadow one.
+  A product supported from now on ships as a profile instead (§12).
 - **No scripting in the editor's hot path.** The lexer and statement splitter
   run on every keystroke in Rust; a profile only chooses among the rule sets
   they already have.
@@ -117,10 +120,10 @@ sql:
   catalog_first: true
   uses_catalogs: true
 
-  block_family: { psm: { begin: not_atomic, routines: psm } }
-                                # plsql | tsql | psm: { begin: transaction |
-                                #   not_atomic | unless_transaction,
-                                #   routines: psm | plsql | unknown }
+  blocks:                       # merged field by field
+    language: psm               # plsql | tsql | psm
+    begin: not_atomic           # psm only: transaction | not_atomic | unless_transaction
+    routines: psm               # psm only: psm | plsql | unknown
   routine_layout: mysql         # mysql | oracle | mssql | db2 | other
   client: mysql                 # psql | mysql | sqlcmd | sqlplus | clp | sqlite | plain
 
@@ -139,7 +142,8 @@ sql:
     named_reference_columns: true
     column_rename: change       # rename_column | alter_rename_to | change | sp_rename
     attrs: restate              # clauses | restate | modify_changed | type_with_null | rebuild
-    constraints: { per_kind: { check: CHECK } }   # named | per_kind: {check} | rebuild
+    constraints: per_kind       # named | per_kind | rebuild
+    check_drop: CHECK           # per_kind only: the word a check constraint's DROP takes
     table_rename: rename_to     # rename_to | rename_table | sp_rename
     reorg: false
   unsupported_reasons:          # Unsupported -> the sentence a refused edit gives
@@ -156,8 +160,8 @@ sql:
   connect_timeout_property: connectTimeout     # or null
 ```
 
-The enumerated values (`block_family`, `routine_layout`, `client`, the
-`alter` and `drops` spellings) select behaviour that is code in rudbman-sql.
+The enumerated values (`blocks`, `routine_layout`, `client`, the `alter` and
+`drops` spellings) select behaviour that is code in rudbman-sql.
 A product whose grammar needs a rule none of them has is a built-in to add,
 not a profile.
 
@@ -333,14 +337,20 @@ open session and its credentials. So:
 
 ## 8. Changes by component
 
-### rudbman-sql
+### rudbman-sql and rudbman-core (phase 1, implemented)
 
-- `ProfileVendor`: a `Vendor` holding the parsed profile and a pointer to its
-  base's `Vendor`; every method answers from the profile and asks the base
-  otherwise. The YAML types (`serde`) live beside it.
-- The registry grows a runtime half. `Dialect::ALL` stays the built-ins;
-  loaded profiles are leaked to `'static` and registered once, and
-  `Dialect::from_id` searches built-ins first, then profiles.
+- What a profile *means* is `rudbman_sql::dialect::profile`, which keeps the
+  crate's rule of no dependencies: `ProfileSpec` is a parsed profile,
+  `resolve` turns a set of them into dialects (bases among the set or the
+  built-ins, cycles, ids, aliases, templates and words checked), and
+  `ProfileSpec::of` exports any dialect. `ProfileVendor` answers from the
+  profile and asks its base otherwise.
+- How a profile is *spelled* is `rudbman_core::dialect_profile`: `parse` and
+  `to_yaml` over `serde_norway`, every key checked and an unknown one reported
+  with its line. The `bridge` half is read and kept, not yet applied.
+- The registry has a runtime half. `Dialect::ALL` stays the built-ins;
+  `profile::install` registers resolved profiles, leaked to `'static`, and
+  `Dialect::from_id` searches built-ins first, then them.
 - `DialectId` gains `Profile`, and `Dialect`'s identity becomes its canonical
   name rather than its id. `DdlError::Unsupported` and
   `DmlError::NoEmptyInsert` carry the `Dialect` rather than a `DialectId`, so a
@@ -402,10 +412,11 @@ open session and its credentials. So:
 
 ## 10. Phases
 
-1. **rudbman-sql profiles** — `ProfileVendor`, the `sql` half, `base` chains,
-   export and the round-trip test. No application change yet.
-2. **Loading and the driver manager** — the directory, the picker, states and
-   errors, export, eight locales.
+1. **rudbman-sql profiles** — `ProfileVendor`, the `sql` half and its YAML,
+   `base` chains, export and the round-trip tests. Done; no application change.
+2. **Loading, shipped profiles and the driver manager** — the directory, the
+   start-up sync of the profiles the application ships (§12) and of their
+   driver definitions, the picker, states and errors, export, eight locales.
 3. **Bridge profiles** — `OPEN_SESSION`'s `profile`, `Vendor.of`, the `bridge`
    half's data keys.
 4. **Groovy hooks** — API version 1, the runtime download, the allow list and
@@ -429,3 +440,35 @@ container suites from phase 3 on.
 - **Script hooks for internal types.** §5.2 leaves out the DDL-reconstruction
   hooks. Whether to publish them depends on how often a profile needs them,
   which phase 4 will show.
+
+## 12. Products the application ships as profiles
+
+A database product supported from now on is not a new `dialect/<product>.rs`
+and `<Product>Vendor.java`: it is a profile, and a Groovy script where its
+bridge needs one, shipped with the application. The built-ins of today stay in
+code (§1).
+
+- **In the repository** the shipped profiles sit in `dialects/` at the root,
+  each `<id>.yml` with its `<id>.groovy` beside it, and are compiled into the
+  binary, the way the locales are. A shipped profile is tested like a built-in:
+  the round trip, and the container suites against a server of its product.
+- **A driver definition.** A shipped profile may carry a `driver` section —
+  its class, Maven coordinate, URL template, port and icon — so that a product
+  reaches the driver manager without a built-in of its own in `profile.rs`.
+- **Reaching the configuration directory.** Installers differ by platform and
+  package manager, so the application does this itself, on every start:
+  1. `<config>/dialects/shipped.json` records, for each shipped file, the hash
+     of the content the application last wrote there.
+  2. A shipped file the directory has never been offered is written, and
+     recorded. Its driver definition, if it has one, is offered to
+     `drivers.json` the same way, once — `offered_builtins`' rule.
+  3. A shipped file the user deleted is not written again: it is recorded, and
+     absent.
+  4. A shipped file the user has not changed — its hash is the recorded one —
+     is replaced by a newer shipped version, and the record moves with it.
+  5. A shipped file the user has changed is left as the user has it; the
+     newer shipped version is written beside it as `<id>.yml.new` (or
+     `.groovy.new`) and the driver manager says so.
+- **Trust.** A script the application wrote itself is allowed by its hash as
+  it is written; one the user then edits is the user's script, and asks (§6).
+
