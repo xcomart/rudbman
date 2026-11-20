@@ -2,7 +2,10 @@ package comart.rudbman.bridge.meta;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
  * Product-name matching, which is the one part of the vendor-specific paths a
@@ -10,13 +13,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 class DialectTest {
 
+    /**
+     * What each product's driver reports as its name, one for every product
+     * the bridge has a vendor for. A product added to {@link Dialect} without
+     * one here fails {@link #recognizesEveryProductItHasAVendorFor}.
+     */
+    private static final Map<Dialect, String> REPORTED = Map.of(
+            Dialect.H2, "H2",
+            Dialect.POSTGRESQL, "PostgreSQL",
+            Dialect.MYSQL, "MySQL",
+            Dialect.MARIADB, "MariaDB",
+            Dialect.ORACLE, "Oracle",
+            Dialect.SQLSERVER, "Microsoft SQL Server",
+            Dialect.SQLITE, "SQLite",
+            Dialect.DB2, "DB2/LINUXX8664");
+
     @Test
-    void recognizesTheProductsWithVendorPaths() {
-        assertEquals(Dialect.H2, Dialect.byProductName("H2"));
-        assertEquals(Dialect.POSTGRESQL, Dialect.byProductName("PostgreSQL"));
-        assertEquals(Dialect.ORACLE, Dialect.byProductName("Oracle"));
-        assertEquals(Dialect.MYSQL, Dialect.byProductName("MySQL"));
-        assertEquals(Dialect.SQLSERVER, Dialect.byProductName("Microsoft SQL Server"));
+    void recognizesEveryProductItHasAVendorFor() {
+        for (Dialect d : Dialect.values()) {
+            if (d == Dialect.OTHER) {
+                continue;
+            }
+            String name = REPORTED.get(d);
+            assertNotNull(name, d + " has no reported product name to test");
+            assertEquals(d, Dialect.byProductName(name), name);
+        }
     }
 
     @Test

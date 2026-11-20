@@ -136,17 +136,11 @@ mod tests {
     /// asks the server to execute it.
     #[test]
     fn nothing_is_analyzed() {
-        for dialect in [
-            Dialect::POSTGRES,
-            Dialect::MYSQL,
-            Dialect::MARIADB,
-            Dialect::H2,
-            Dialect::SQLITE,
-            Dialect::ORACLE,
-            Dialect::MSSQL,
-            Dialect::GENERIC,
-        ] {
-            let plan = explain(dialect, &format!("  {SQL}\n")).unwrap();
+        for &dialect in Dialect::ALL {
+            // Db2 has no plan to read; see `db2_has_no_plan_to_read`.
+            let Some(plan) = explain(dialect, &format!("  {SQL}\n")) else {
+                continue;
+            };
             for statement in plan.before.iter().chain([&plan.plan]).chain(&plan.after) {
                 let upper = statement.to_ascii_uppercase();
                 assert!(!upper.contains("ANALYZE"), "{statement}");

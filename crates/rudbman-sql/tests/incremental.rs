@@ -132,15 +132,7 @@ fn multi_line_constructs_agree() {
 fn every_dialect_agrees_with_itself() {
     let script = "-- header\nselect a, 'b;c', \"d\", `e`, [f], $g$h\ni$g$, 0x1f, ?, :p, @v\n\
                   from t /* note\n   note */ where x -- tail\n;\n# hash\nselect 2";
-    for dialect in [
-        Dialect::GENERIC,
-        Dialect::H2,
-        Dialect::POSTGRES,
-        Dialect::MYSQL,
-        Dialect::SQLITE,
-        Dialect::ORACLE,
-        Dialect::MSSQL,
-    ] {
+    for &dialect in Dialect::ALL {
         assert_agrees(script, &dialect);
     }
 }

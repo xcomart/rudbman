@@ -565,19 +565,14 @@ mod tests {
     /// pages by statement or already has cursors on the server.
     #[test]
     fn only_sql_server_reads_by_server_cursor() {
-        for d in [
-            Dialect::GENERIC,
-            Dialect::H2,
-            Dialect::POSTGRES,
-            Dialect::MYSQL,
-            Dialect::MARIADB,
-            Dialect::SQLITE,
-            Dialect::ORACLE,
-            Dialect::DB2,
-        ] {
-            assert!(!d.reads_by_server_cursor(), "{}", d.name());
+        for &d in Dialect::ALL {
+            assert_eq!(
+                d.reads_by_server_cursor(),
+                d == Dialect::MSSQL,
+                "{}",
+                d.name()
+            );
         }
-        assert!(Dialect::MSSQL.reads_by_server_cursor());
     }
 
     /// A scope is entered by the part the product names it by, quoted, and

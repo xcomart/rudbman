@@ -197,41 +197,29 @@ fn nested_block_comments() {
     );
 }
 
-/// Hex literals everywhere but Oracle.
+/// Hex literals everywhere but Oracle and Db2, where `0xff` is a zero
+/// followed by a word.
 #[test]
 fn hex_literals() {
-    for d in [
-        Dialect::MYSQL,
-        Dialect::H2,
-        Dialect::MSSQL,
-        Dialect::SQLITE,
-        Dialect::POSTGRES,
-        Dialect::GENERIC,
-    ] {
-        assert_eq!(
-            kinds("0xdeadBEEF", &d)[0],
-            (TokenKind::Number, "0xdeadBEEF".into()),
-            "{}",
-            d.name()
-        );
+    for &d in Dialect::ALL {
+        if d == Dialect::ORACLE || d == Dialect::DB2 {
+            assert_eq!(kinds("0xff", &d).len(), 2, "{}", d.name());
+        } else {
+            assert_eq!(
+                kinds("0xdeadBEEF", &d)[0],
+                (TokenKind::Number, "0xdeadBEEF".into()),
+                "{}",
+                d.name()
+            );
+        }
     }
-    assert_eq!(kinds("0xff", &Dialect::ORACLE).len(), 2);
 }
 
 /// Every dialect's bind-parameter spellings, and only its own.
 #[test]
 fn bind_parameters() {
     // `?` is universal: it is what JDBC speaks.
-    for d in [
-        Dialect::GENERIC,
-        Dialect::H2,
-        Dialect::POSTGRES,
-        Dialect::MYSQL,
-        Dialect::MARIADB,
-        Dialect::SQLITE,
-        Dialect::ORACLE,
-        Dialect::MSSQL,
-    ] {
+    for &d in Dialect::ALL {
         assert_eq!(
             kinds("where a = ?", &d).last().unwrap(),
             &(TokenKind::Parameter, "?".into()),
@@ -334,16 +322,7 @@ fn dialect_specific_types() {
 fn nothing_panics_on_anything() {
     let soup = "select 'a''b', \"c\", `d`, [e], $$f$$, E'g\\'', 0x1f, ?, $1, :p, @v, a->>'b', \
                 #x, -- c\n/* /* n */ */ 1.5e-3, ±";
-    for d in [
-        Dialect::GENERIC,
-        Dialect::H2,
-        Dialect::POSTGRES,
-        Dialect::MYSQL,
-        Dialect::MARIADB,
-        Dialect::SQLITE,
-        Dialect::ORACLE,
-        Dialect::MSSQL,
-    ] {
+    for &d in Dialect::ALL {
         let tokens = lex(soup, &d);
         let mut at = 0;
         for t in &tokens {

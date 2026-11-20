@@ -553,17 +553,7 @@ mod tests {
 
     #[test]
     fn aggregate_functions_complete_on_every_dialect_without_replacing_arguments() {
-        for dialect in [
-            Dialect::GENERIC,
-            Dialect::H2,
-            Dialect::POSTGRES,
-            Dialect::MYSQL,
-            Dialect::MARIADB,
-            Dialect::SQLITE,
-            Dialect::ORACLE,
-            Dialect::MSSQL,
-            Dialect::DB2,
-        ] {
+        for &dialect in Dialect::ALL {
             for name in ["COUNT", "SUM", "AVG", "MIN", "MAX"] {
                 let source = format!("SELECT {}(*)", name.to_lowercase());
                 let caret = 7 + name.len() - 1;

@@ -46,14 +46,11 @@ fn a_comment_before_a_write_does_not_hide_it() {
 fn a_plain_read_is_paged_and_anything_that_cuts_its_own_rows_is_not() {
     use crate::query::statements::pageable_body;
 
-    for dialect in [
-        Dialect::H2,
-        Dialect::POSTGRES,
-        Dialect::MYSQL,
-        Dialect::MARIADB,
-        Dialect::SQLITE,
-        Dialect::DB2,
-    ] {
+    // Every dialect that pages by statement.
+    for &dialect in Dialect::ALL
+        .iter()
+        .filter(|dialect| dialect.page_clause(1, 0).is_some())
+    {
         let name = dialect.name();
         for (sql, body) in [
             ("select * from t", "select * from t"),
@@ -162,15 +159,10 @@ fn sql_server_reads_plain_selects_through_a_server_cursor() {
     }
 
     // Every other dialect keeps the driver's default result set.
-    for dialect in [
-        Dialect::GENERIC,
-        Dialect::H2,
-        Dialect::POSTGRES,
-        Dialect::MYSQL,
-        Dialect::MARIADB,
-        Dialect::SQLITE,
-        Dialect::ORACLE,
-    ] {
+    for &dialect in Dialect::ALL
+        .iter()
+        .filter(|dialect| **dialect != Dialect::MSSQL)
+    {
         assert!(
             !server_cursor_read("select * from t", &dialect),
             "{}",

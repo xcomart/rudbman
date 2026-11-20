@@ -841,43 +841,45 @@ macro_rules! server {
     };
 }
 
+/// One test per product for a suite that runs against each of them, named
+/// `<name>::<product>`, so that a filter on the product's name still selects
+/// every test of its server, the way CI runs Db2's on their own.
+///
+/// The list here is the one list of products a shared suite runs on: a
+/// product added to [`Product`] is added here, and every shared suite then
+/// runs against it.
+macro_rules! on_every_product {
+    ($name:ident => $suite:ident) => {
+        on_products!($name => $suite:
+            postgres Postgres,
+            mysql MySql,
+            mariadb MariaDb,
+            mssql MsSql,
+            oracle Oracle,
+            db2 Db2,
+        );
+    };
+}
+
+/// [`on_every_product`] for a suite only some products run: the ones listed.
+macro_rules! on_products {
+    ($name:ident => $suite:ident: $($test:ident $product:ident),+ $(,)?) => {
+        mod $name {
+            use super::*;
+            $(
+                #[test]
+                fn $test() {
+                    let server = server!(Product::$product);
+                    $suite(&server);
+                }
+            )+
+        }
+    };
+}
+
 // --- CREATE TABLE ----------------------------------------------------------
 
-#[test]
-fn postgres_creates_a_table_with_its_keys_and_references() {
-    let server = server!(Product::Postgres);
-    create_with_constraints(&server);
-}
-
-#[test]
-fn mysql_creates_a_table_with_its_keys_and_references() {
-    let server = server!(Product::MySql);
-    create_with_constraints(&server);
-}
-
-#[test]
-fn mariadb_creates_a_table_with_its_keys_and_references() {
-    let server = server!(Product::MariaDb);
-    create_with_constraints(&server);
-}
-
-#[test]
-fn mssql_creates_a_table_with_its_keys_and_references() {
-    let server = server!(Product::MsSql);
-    create_with_constraints(&server);
-}
-
-#[test]
-fn oracle_creates_a_table_with_its_keys_and_references() {
-    let server = server!(Product::Oracle);
-    create_with_constraints(&server);
-}
-
-#[test]
-fn db2_creates_a_table_with_its_keys_and_references() {
-    let server = server!(Product::Db2);
-    create_with_constraints(&server);
-}
+on_every_product!(creates_a_table_with_its_keys_and_references => create_with_constraints);
 
 /// `plan_create` with every clause it can write, read back out of the
 /// catalog.
@@ -1164,41 +1166,7 @@ fn reference_without_columns(server: &Server) {
 
 // --- adding, dropping and renaming a column --------------------------------
 
-#[test]
-fn postgres_adds_drops_and_renames_a_column() {
-    let server = server!(Product::Postgres);
-    add_drop_rename(&server);
-}
-
-#[test]
-fn mysql_adds_drops_and_renames_a_column() {
-    let server = server!(Product::MySql);
-    add_drop_rename(&server);
-}
-
-#[test]
-fn mariadb_adds_drops_and_renames_a_column() {
-    let server = server!(Product::MariaDb);
-    add_drop_rename(&server);
-}
-
-#[test]
-fn mssql_adds_drops_and_renames_a_column() {
-    let server = server!(Product::MsSql);
-    add_drop_rename(&server);
-}
-
-#[test]
-fn oracle_adds_drops_and_renames_a_column() {
-    let server = server!(Product::Oracle);
-    add_drop_rename(&server);
-}
-
-#[test]
-fn db2_adds_drops_and_renames_a_column() {
-    let server = server!(Product::Db2);
-    add_drop_rename(&server);
-}
+on_every_product!(adds_drops_and_renames_a_column => add_drop_rename);
 
 /// One batch that adds, renames and drops, in the order §7.10 fixes.
 fn add_drop_rename(server: &Server) {
@@ -1287,35 +1255,13 @@ fn add_drop_rename(server: &Server) {
 
 // --- type, nullability and default -----------------------------------------
 
-#[test]
-fn postgres_changes_a_type_a_nullability_and_a_default() {
-    let server = server!(Product::Postgres);
-    attribute_changes(&server);
-}
-
-#[test]
-fn mysql_changes_a_type_a_nullability_and_a_default() {
-    let server = server!(Product::MySql);
-    attribute_changes(&server);
-}
-
-#[test]
-fn mariadb_changes_a_type_a_nullability_and_a_default() {
-    let server = server!(Product::MariaDb);
-    attribute_changes(&server);
-}
-
-#[test]
-fn oracle_changes_a_type_a_nullability_and_a_default() {
-    let server = server!(Product::Oracle);
-    attribute_changes(&server);
-}
-
-#[test]
-fn db2_changes_a_type_a_nullability_and_a_default() {
-    let server = server!(Product::Db2);
-    attribute_changes(&server);
-}
+on_products!(changes_a_type_a_nullability_and_a_default => attribute_changes:
+    postgres Postgres,
+    mysql MySql,
+    mariadb MariaDb,
+    oracle Oracle,
+    db2 Db2,
+);
 
 /// Every attribute change the generator can write, in one batch: nullability
 /// both ways, a default set and a default dropped, and a type retyped.
@@ -2097,17 +2043,13 @@ fn oracle_modify_names_only_what_changed_because_restating_is_an_error() {
 
 // --- dropping constraints --------------------------------------------------
 
-#[test]
-fn postgres_drops_a_constraint_of_every_kind() {
-    let server = server!(Product::Postgres);
-    drop_every_constraint(&server);
-}
-
-#[test]
-fn mysql_drops_a_constraint_of_every_kind() {
-    let server = server!(Product::MySql);
-    drop_every_constraint(&server);
-}
+on_products!(drops_a_constraint_of_every_kind => drop_every_constraint:
+    postgres Postgres,
+    mysql MySql,
+    mssql MsSql,
+    oracle Oracle,
+    db2 Db2,
+);
 
 /// The test that split the dialect in two, and the reason `DialectId::MariaDb`
 /// exists.
@@ -2132,24 +2074,6 @@ fn mysql_drops_a_constraint_of_every_kind() {
 #[test]
 fn mariadb_drops_a_constraint_of_every_kind() {
     let server = server!(Product::MariaDb);
-    drop_every_constraint(&server);
-}
-
-#[test]
-fn mssql_drops_a_constraint_of_every_kind() {
-    let server = server!(Product::MsSql);
-    drop_every_constraint(&server);
-}
-
-#[test]
-fn oracle_drops_a_constraint_of_every_kind() {
-    let server = server!(Product::Oracle);
-    drop_every_constraint(&server);
-}
-
-#[test]
-fn db2_drops_a_constraint_of_every_kind() {
-    let server = server!(Product::Db2);
     drop_every_constraint(&server);
 }
 
@@ -2299,41 +2223,7 @@ fn drop_every_constraint(server: &Server) {
 
 // --- renaming the table ----------------------------------------------------
 
-#[test]
-fn postgres_renames_a_table() {
-    let server = server!(Product::Postgres);
-    rename_table(&server);
-}
-
-#[test]
-fn mysql_renames_a_table() {
-    let server = server!(Product::MySql);
-    rename_table(&server);
-}
-
-#[test]
-fn mariadb_renames_a_table() {
-    let server = server!(Product::MariaDb);
-    rename_table(&server);
-}
-
-#[test]
-fn mssql_renames_a_table() {
-    let server = server!(Product::MsSql);
-    rename_table(&server);
-}
-
-#[test]
-fn oracle_renames_a_table() {
-    let server = server!(Product::Oracle);
-    rename_table(&server);
-}
-
-#[test]
-fn db2_renames_a_table() {
-    let server = server!(Product::Db2);
-    rename_table(&server);
-}
+on_every_product!(renames_a_table => rename_table);
 
 /// `ALTER TABLE t RENAME TO n` — the same statement on four of the five, and
 /// `sp_rename` on the fifth. Whichever it is, §7.10 puts it last in a batch so
@@ -3156,35 +3046,7 @@ impl Drop for DropOnExit<'_> {
     }
 }
 
-#[test]
-fn postgres_lists_each_routine_once_and_quotes_its_ddl() {
-    routines(&server!(Product::Postgres));
-}
-
-#[test]
-fn mysql_lists_each_routine_once_and_quotes_its_ddl() {
-    routines(&server!(Product::MySql));
-}
-
-#[test]
-fn mariadb_lists_each_routine_once_and_quotes_its_ddl() {
-    routines(&server!(Product::MariaDb));
-}
-
-#[test]
-fn mssql_lists_each_routine_once_and_quotes_its_ddl() {
-    routines(&server!(Product::MsSql));
-}
-
-#[test]
-fn oracle_lists_each_routine_once_and_quotes_its_ddl() {
-    routines(&server!(Product::Oracle));
-}
-
-#[test]
-fn db2_lists_each_routine_once_and_quotes_its_ddl() {
-    routines(&server!(Product::Db2));
-}
+on_every_product!(lists_each_routine_once_and_quotes_its_ddl => routines);
 
 /// One function and one procedure: each listed under its own kind only, and
 /// each one's `CREATE` read back from the server and laid out.
@@ -3377,15 +3239,10 @@ fn postgres_drops_each_overload_and_a_trigger_through_its_table() {
     routine_and_trigger_drops(&server!(Product::Postgres));
 }
 
-#[test]
-fn mysql_drops_a_routine_and_a_trigger_by_name() {
-    routine_and_trigger_drops(&server!(Product::MySql));
-}
-
-#[test]
-fn mariadb_drops_a_routine_and_a_trigger_by_name() {
-    routine_and_trigger_drops(&server!(Product::MariaDb));
-}
+on_products!(drops_a_routine_and_a_trigger_by_name => routine_and_trigger_drops:
+    mysql MySql,
+    mariadb MariaDb,
+);
 
 #[test]
 fn mssql_drops_a_routine_and_a_trigger_inside_their_database() {
@@ -3685,35 +3542,7 @@ fn mariadb_lists_its_sequences_under_the_database() {
 
 // --- every kind of object ----------------------------------------------------
 
-#[test]
-fn postgres_lists_and_quotes_every_kind_of_object() {
-    every_kind(&server!(Product::Postgres));
-}
-
-#[test]
-fn mysql_lists_and_quotes_every_kind_of_object() {
-    every_kind(&server!(Product::MySql));
-}
-
-#[test]
-fn mariadb_lists_and_quotes_every_kind_of_object() {
-    every_kind(&server!(Product::MariaDb));
-}
-
-#[test]
-fn mssql_lists_and_quotes_every_kind_of_object() {
-    every_kind(&server!(Product::MsSql));
-}
-
-#[test]
-fn oracle_lists_and_quotes_every_kind_of_object() {
-    every_kind(&server!(Product::Oracle));
-}
-
-#[test]
-fn db2_lists_and_quotes_every_kind_of_object() {
-    every_kind(&server!(Product::Db2));
-}
+on_every_product!(lists_and_quotes_every_kind_of_object => every_kind);
 
 /// A table, a view, a sequence and a trigger, each listed by the request the
 /// explorer's folder sends and each answered with its own `CREATE` — the

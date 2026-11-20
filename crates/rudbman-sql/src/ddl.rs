@@ -1432,16 +1432,7 @@ mod tests {
     use super::*;
 
     /// Every dialect, so a test can say what each of them makes of one input.
-    const ALL: [Dialect; 8] = [
-        Dialect::GENERIC,
-        Dialect::H2,
-        Dialect::POSTGRES,
-        Dialect::MYSQL,
-        Dialect::MARIADB,
-        Dialect::SQLITE,
-        Dialect::ORACLE,
-        Dialect::MSSQL,
-    ];
+    const ALL: &[Dialect] = Dialect::ALL;
 
     /// An alter against `orders`, whose name needs no quoting anywhere but
     /// Oracle-style dialects — so tests that are not about quoting use a table
@@ -1640,23 +1631,23 @@ mod tests {
         );
     }
 
-    /// Dropping a column is the one statement every product spells alike.
+    /// Dropping a column is the one statement every product spells alike;
+    /// Db2 follows it with the `REORG` a dropped column leaves pending.
     #[test]
     fn drop_column_is_universal() {
         let mut alter = orders();
         alter.drops.push("legacy".to_string());
 
-        for dialect in ALL {
-            assert_eq!(
-                sql(&alter, &dialect),
-                [format!(
-                    "ALTER TABLE {} DROP COLUMN {}",
-                    dialect.qualify(["orders"]),
-                    dialect.quote_ident("legacy")
-                )],
-                "{}",
-                dialect.name()
-            );
+        for &dialect in ALL {
+            let table = dialect.qualify(["orders"]);
+            let mut expected = vec![format!(
+                "ALTER TABLE {table} DROP COLUMN {}",
+                dialect.quote_ident("legacy")
+            )];
+            if dialect == Dialect::DB2 {
+                expected.push(format!("CALL SYSPROC.ADMIN_CMD('REORG TABLE {table}')"));
+            }
+            assert_eq!(sql(&alter, &dialect), expected, "{}", dialect.name());
         }
     }
 
@@ -2641,7 +2632,7 @@ mod tests {
         // Everyone else resolves the omitted list, and goes on writing the
         // bare clause. Everyone else is not MariaDB, which inherited the
         // refusal along with the grammar.
-        for dialect in ALL {
+        for &dialect in ALL {
             if matches!(dialect.id(), DialectId::MySql | DialectId::MariaDb) {
                 continue;
             }
@@ -2731,7 +2722,7 @@ mod tests {
             .constraints
             .push(TableConstraint::primary_key(["id"]));
 
-        for dialect in ALL {
+        for &dialect in ALL {
             assert_eq!(
                 create_sql(&create, &dialect),
                 [
