@@ -36,6 +36,7 @@
 
 #![warn(missing_docs)]
 
+pub mod dialect_profile;
 pub mod known_hosts;
 pub mod paths;
 pub mod profile;

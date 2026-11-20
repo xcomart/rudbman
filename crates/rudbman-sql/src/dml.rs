@@ -90,7 +90,7 @@
 
 use std::fmt;
 
-use crate::dialect::{Dialect, DialectId};
+use crate::dialect::Dialect;
 
 /// What kind of value a [`DmlValue`]'s text spells.
 ///
@@ -348,7 +348,7 @@ pub enum DmlError {
     /// [`plan_edits`].
     NoEmptyInsert {
         /// The dialect that cannot express it.
-        dialect: DialectId,
+        dialect: Dialect,
     },
 }
 
@@ -382,7 +382,7 @@ impl fmt::Display for DmlError {
             DmlError::NoEmptyInsert { dialect } => write!(
                 f,
                 "an inserted row sets no columns, and {} has no syntax for that",
-                dialect.as_str()
+                dialect.name()
             ),
         }
     }
@@ -546,9 +546,7 @@ fn empty_insert(table: &str, edits: &TableEdits, dialect: &Dialect) -> Result<St
     dialect
         .vendor()
         .empty_insert(table, first_column.as_deref())
-        .ok_or(DmlError::NoEmptyInsert {
-            dialect: dialect.id(),
-        })
+        .ok_or(DmlError::NoEmptyInsert { dialect: *dialect })
 }
 
 /// Appends ` WHERE k = ? [AND ...]` and the key values behind it.
@@ -776,7 +774,7 @@ mod tests {
         assert_eq!(
             plan_edits(&edits, &Dialect::ORACLE),
             Err(DmlError::NoEmptyInsert {
-                dialect: DialectId::Oracle
+                dialect: Dialect::ORACLE
             })
         );
         // One column set to its default leaves every other to its own.

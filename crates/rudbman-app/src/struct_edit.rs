@@ -904,7 +904,7 @@ impl std::error::Error for PlanError {}
 
 #[cfg(test)]
 mod tests {
-    use rudbman_sql::{DialectId, Unsupported};
+    use rudbman_sql::Unsupported;
 
     use super::*;
 
@@ -1275,7 +1275,7 @@ mod tests {
         assert_eq!(
             error,
             PlanError::Ddl(DdlError::Unsupported {
-                dialect: DialectId::Sqlite,
+                dialect: Dialect::SQLITE,
                 what: Unsupported::ColumnType,
                 column: Some("qty".to_string()),
             })
@@ -1284,7 +1284,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             DdlError::Unsupported {
-                dialect: DialectId::Sqlite,
+                dialect: Dialect::SQLITE,
                 what: Unsupported::ColumnType,
                 column: Some("qty".to_string()),
             }

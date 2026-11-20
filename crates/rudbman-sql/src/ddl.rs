@@ -207,7 +207,7 @@
 
 use std::fmt;
 
-use crate::dialect::{Dialect, DialectId};
+use crate::dialect::Dialect;
 
 /// One column, as the catalog holds it or as the user wants it.
 ///
@@ -618,6 +618,17 @@ pub enum Unsupported {
     ReferenceWithoutColumns,
 }
 
+impl Unsupported {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::ColumnType,
+        Self::Nullability,
+        Self::Default,
+        Self::ConstraintDrop,
+        Self::ReferenceWithoutColumns,
+    ];
+}
+
 /// Why an alter could not be turned into statements.
 ///
 /// Most variants are a caller mistake — a table with no name, a change list
@@ -684,7 +695,7 @@ pub enum DdlError {
     /// documentation](self).
     Unsupported {
         /// The dialect that cannot express it.
-        dialect: DialectId,
+        dialect: Dialect,
         /// What could not be expressed.
         what: Unsupported,
         /// The column it was asked of, where one is involved.
@@ -748,7 +759,7 @@ impl fmt::Display for DdlError {
                         "write a foreign key that does not name the columns it references"
                     }
                 };
-                let vendor = dialect.dialect().vendor();
+                let vendor = dialect.vendor();
                 let reason = vendor
                     .unsupported_reason(*what)
                     .unwrap_or("this product has no ALTER TABLE form for it");
@@ -1091,7 +1102,7 @@ fn table_constraint(
             }
             if referenced_columns.is_empty() && style.named_reference_columns {
                 return Err(DdlError::Unsupported {
-                    dialect: dialect.id(),
+                    dialect: *dialect,
                     what: Unsupported::ReferenceWithoutColumns,
                     // No column: the clause is refused as a whole, and naming
                     // one of the several it may cover would point at the wrong
@@ -1215,7 +1226,7 @@ fn change_attributes(
     // rename, if there is one, comes after all of them.
     let column = dialect.quote_ident(&from.name);
     let unsupported = |what| DdlError::Unsupported {
-        dialect: dialect.id(),
+        dialect: *dialect,
         what,
         column: Some(from.name.clone()),
     };
@@ -1403,7 +1414,7 @@ fn drop_constraint(
         },
         DropStyle::Rebuild => {
             return Err(DdlError::Unsupported {
-                dialect: dialect.id(),
+                dialect: *dialect,
                 what: Unsupported::ConstraintDrop,
                 column: None,
             });
@@ -1430,6 +1441,7 @@ fn quote_literal(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dialect::DialectId;
 
     /// Every dialect, so a test can say what each of them makes of one input.
     const ALL: &[Dialect] = Dialect::ALL;
@@ -1975,7 +1987,7 @@ mod tests {
         assert_eq!(
             error,
             DdlError::Unsupported {
-                dialect: DialectId::MsSql,
+                dialect: Dialect::MSSQL,
                 what: Unsupported::Default,
                 column: Some("qty".to_string()),
             }
@@ -2000,7 +2012,7 @@ mod tests {
             assert_eq!(
                 plan_alter(&alter, &Dialect::SQLITE),
                 Err(DdlError::Unsupported {
-                    dialect: DialectId::Sqlite,
+                    dialect: Dialect::SQLITE,
                     what,
                     column: Some("qty".to_string()),
                 })
@@ -2008,7 +2020,7 @@ mod tests {
         }
 
         let message = DdlError::Unsupported {
-            dialect: DialectId::Sqlite,
+            dialect: Dialect::SQLITE,
             what: Unsupported::ColumnType,
             column: Some("qty".to_string()),
         }
@@ -2104,7 +2116,7 @@ mod tests {
         assert_eq!(
             plan_alter(&alter, &Dialect::SQLITE),
             Err(DdlError::Unsupported {
-                dialect: DialectId::Sqlite,
+                dialect: Dialect::SQLITE,
                 what: Unsupported::ConstraintDrop,
                 column: None,
             })
@@ -2184,7 +2196,7 @@ mod tests {
         assert_eq!(
             error,
             DdlError::Unsupported {
-                dialect: DialectId::MariaDb,
+                dialect: Dialect::MARIADB,
                 what: Unsupported::ReferenceWithoutColumns,
                 column: None,
             }
@@ -2615,7 +2627,7 @@ mod tests {
         assert_eq!(
             error,
             DdlError::Unsupported {
-                dialect: DialectId::MySql,
+                dialect: Dialect::MYSQL,
                 what: Unsupported::ReferenceWithoutColumns,
                 // The clause is refused whole: it may cover several columns,
                 // and naming one of them would point at the wrong half of it.

@@ -45,6 +45,7 @@ mod mssql;
 mod mysql;
 mod oracle;
 mod postgres;
+pub mod profile;
 mod sqlite;
 mod vendor;
 
@@ -90,18 +91,27 @@ pub enum DialectId {
     /// everything this crate asks about except the page clause's minimum
     /// version.
     Db2,
+    /// A user's [profile](profile), on top of one of the above. Every profile
+    /// has this id; what tells two apart is their [`Dialect::name`].
+    Profile,
 }
 
 impl DialectId {
     /// The canonical `dialect` string for this variant.
     ///
-    /// Round-trips through [`Dialect::from_id`].
+    /// Round-trips through [`Dialect::from_id`] for a built-in. A profile's
+    /// string is its own name, which its id does not carry: this answers
+    /// `"profile"` for it.
     pub fn as_str(self) -> &'static str {
+        if self == Self::Profile {
+            return "profile";
+        }
         self.dialect().name()
     }
 
-    /// The registered dialect with this id, or [`Dialect::GENERIC`] for one
-    /// that is missing from [`Dialect::ALL`].
+    /// The built-in dialect with this id, or [`Dialect::GENERIC`] for one that
+    /// is missing from [`Dialect::ALL`] — and for [`DialectId::Profile`], which
+    /// names no one dialect.
     pub fn dialect(self) -> Dialect {
         Dialect::ALL
             .iter()
@@ -244,7 +254,7 @@ pub struct Dialect {
 
 impl fmt::Debug for Dialect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Dialect").field(&self.id()).finish()
+        f.debug_tuple("Dialect").field(&self.name()).finish()
     }
 }
 
@@ -255,10 +265,11 @@ impl Default for Dialect {
 }
 
 impl PartialEq for Dialect {
-    /// Two dialects are equal when they are the same dialect; everything else
-    /// is a function of the id.
+    /// Two dialects are equal when they are the same dialect: the same
+    /// canonical name, which is unique among built-ins and profiles alike. The
+    /// id would not do, since every profile has the same one.
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id()
+        self.name() == other.name()
     }
 }
 
@@ -321,9 +332,10 @@ impl Dialect {
     /// the spellings people write by hand: each product's
     /// [`aliases`](Vendor::aliases) — `postgresql`, `pgsql` and `pg` all mean
     /// [`DialectId::Postgres`], and `sqlserver` and `tsql` both mean
-    /// [`DialectId::MsSql`]. Anything else is [`Self::GENERIC`]. `mariadb` is
-    /// *not* among MySQL's: it names [`DialectId::MariaDb`], which is a
-    /// dialect of its own.
+    /// [`DialectId::MsSql`]. After the built-ins come the [installed
+    /// profiles](profile::install), by name and alias. Anything else is
+    /// [`Self::GENERIC`]. `mariadb` is *not* among MySQL's: it names
+    /// [`DialectId::MariaDb`], which is a dialect of its own.
     pub fn from_id(id: &str) -> Self {
         let id = id.trim();
         // A dozen products with a few spellings each, all short: a linear scan
@@ -340,6 +352,7 @@ impl Dialect {
                         .iter()
                         .any(|alias| alias.eq_ignore_ascii_case(id))
             })
+            .or_else(|| profile::find(id))
             .unwrap_or(Self::GENERIC)
     }
 
