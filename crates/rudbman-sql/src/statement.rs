@@ -63,8 +63,8 @@
 //! [`holds_procedural_block`] tells a caller the pieces would be fragments,
 //! so it can send the text whole instead.
 
-use crate::block::{Blocks, Semicolon, TRANSACTION_WORDS, VERDICT_REACH, Verdict};
-use crate::dialect::{Dialect, DialectId};
+use crate::block::{Blocks, Family, Semicolon, TRANSACTION_WORDS, VERDICT_REACH, Verdict};
+use crate::dialect::Dialect;
 use crate::lexer::{Lexer, TokenKind};
 
 /// One statement's place in the script, in bytes.
@@ -381,7 +381,7 @@ pub fn holds_procedural_block(source: &str, dialect: &Dialect) -> bool {
             }
             // A T-SQL routine runs to the end of its batch, with or without a
             // `BEGIN`: nothing in it says where its body stops.
-            return dialect.id() == DialectId::MsSql
+            return dialect.vendor().block_family() == Family::MsSql
                 && ["PROC", "PROCEDURE", "FUNCTION", "TRIGGER"]
                     .iter()
                     .any(|word| is(index, word));

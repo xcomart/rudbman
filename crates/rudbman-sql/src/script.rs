@@ -91,7 +91,7 @@ use std::fmt;
 use std::ops::Range;
 
 use crate::block::{Blocks, Semicolon, VERDICT_REACH, Verdict};
-use crate::dialect::{Dialect, DialectId};
+use crate::dialect::Dialect;
 use crate::lexer::{Lexer, LineState, Token, TokenKind};
 use crate::statement::{holds_procedural_block, split_statements};
 
@@ -230,7 +230,7 @@ impl std::error::Error for ScriptError {}
 
 /// Whose conventions a script is read by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Client {
+pub(crate) enum Client {
     Psql,
     Mysql,
     Sqlcmd,
@@ -241,16 +241,8 @@ enum Client {
 }
 
 impl Client {
-    const fn of(dialect: &Dialect) -> Self {
-        match dialect.id() {
-            DialectId::Postgres => Self::Psql,
-            DialectId::MySql | DialectId::MariaDb => Self::Mysql,
-            DialectId::MsSql => Self::Sqlcmd,
-            DialectId::Oracle => Self::SqlPlus,
-            DialectId::Db2 => Self::Clp,
-            DialectId::Sqlite => Self::Sqlite,
-            DialectId::H2 | DialectId::Generic => Self::Plain,
-        }
+    fn of(dialect: &Dialect) -> Self {
+        dialect.vendor().client()
     }
 }
 

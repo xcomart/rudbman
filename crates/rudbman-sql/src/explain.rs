@@ -27,7 +27,7 @@
 //! those *executes* the statement to measure it, and a plan of an `UPDATE`
 //! asked for in order to see what it would touch must not touch anything.
 
-use crate::dialect::{Dialect, DialectId};
+use crate::dialect::Dialect;
 
 /// The statements that read one statement's plan, in the order they are sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,61 +45,31 @@ pub struct Explain {
     pub shown: String,
 }
 
-/// The statements that read `sql`'s plan on `dialect`, or `None` where this
-/// crate does not know how to ask without setting something up first.
-///
-/// `sql` is one statement, without its terminating semicolon.
-///
-/// * PostgreSQL, MySQL, MariaDB and H2 — `EXPLAIN <sql>`.
-/// * SQLite — `EXPLAIN QUERY PLAN <sql>`, the readable plan rather than the
-///   virtual machine's program, which is what a bare `EXPLAIN` lists.
-/// * Oracle — `EXPLAIN PLAN FOR <sql>`, then the rows
-///   `DBMS_XPLAN.DISPLAY()` formats out of `PLAN_TABLE`. The first statement
-///   writes the plan into that table, which every Oracle since 10g provides as
-///   a temporary table private to the session.
-/// * SQL Server — `SET SHOWPLAN_TEXT ON`, the statement, `SET SHOWPLAN_TEXT
-///   OFF`. While the option is on the server answers with plans and executes
-///   nothing, which is why the last one has to go out even when the plan
-///   fails.
-/// * Db2 — `None`. Its `EXPLAIN` writes into a set of explain tables that
-///   have to be created beforehand, and reads nothing back.
-/// * Anything else — `EXPLAIN <sql>`, the most common spelling, and the
-///   database's own refusal when it is not this one's.
-pub fn explain(dialect: Dialect, sql: &str) -> Option<Explain> {
-    let sql = sql.trim();
-    let prefixed = |word: &str| {
+impl Explain {
+    /// `word` and the statement after it, whose result sets are the plan:
+    /// the one-statement form most products answer, with nothing to set up
+    /// and nothing to put back.
+    pub(crate) fn prefixed(word: &str, sql: &str) -> Self {
         let plan = format!("{word} {sql}");
-        Explain {
+        Self {
             before: Vec::new(),
             shown: plan.clone(),
             plan,
             after: Vec::new(),
         }
-    };
-    Some(match dialect.id() {
-        DialectId::Sqlite => prefixed("EXPLAIN QUERY PLAN"),
-        DialectId::Oracle => {
-            let write = format!("EXPLAIN PLAN FOR {sql}");
-            Explain {
-                before: vec![write.clone()],
-                plan: "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())".to_string(),
-                after: Vec::new(),
-                shown: write,
-            }
-        }
-        DialectId::MsSql => Explain {
-            before: vec!["SET SHOWPLAN_TEXT ON".to_string()],
-            plan: sql.to_string(),
-            after: vec!["SET SHOWPLAN_TEXT OFF".to_string()],
-            shown: format!("SET SHOWPLAN_TEXT ON; {sql}"),
-        },
-        DialectId::Db2 => return None,
-        DialectId::Generic
-        | DialectId::H2
-        | DialectId::Postgres
-        | DialectId::MySql
-        | DialectId::MariaDb => prefixed("EXPLAIN"),
-    })
+    }
+}
+
+/// The statements that read `sql`'s plan on `dialect`, or `None` where this
+/// crate does not know how to ask without setting something up first.
+///
+/// `sql` is one statement, without its terminating semicolon. Each product's
+/// file says how it is asked: most prefix the statement with `EXPLAIN`, SQLite
+/// with `EXPLAIN QUERY PLAN`, Oracle writes the plan into `PLAN_TABLE` and
+/// reads it back, SQL Server switches `SHOWPLAN_TEXT` on and off around it,
+/// and Db2 is not asked at all.
+pub fn explain(dialect: Dialect, sql: &str) -> Option<Explain> {
+    dialect.vendor().explain(sql.trim())
 }
 
 #[cfg(test)]

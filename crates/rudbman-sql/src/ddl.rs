@@ -748,27 +748,11 @@ impl fmt::Display for DdlError {
                         "write a foreign key that does not name the columns it references"
                     }
                 };
-                let reason = match (dialect, what) {
-                    (DialectId::MsSql, Unsupported::Default) => {
-                        "SQL Server holds a default as a separately named constraint rather than \
-                         a column attribute, and the catalog does not report that name, so there \
-                         is nothing to drop and re-add"
-                    }
-                    (
-                        DialectId::MySql | DialectId::MariaDb,
-                        Unsupported::ReferenceWithoutColumns,
-                    ) => {
-                        "this product resolves no reference on its own, so the columns of the \
-                         parent's key have to be spelled out, where the others read an omitted \
-                         list as that table's own primary key"
-                    }
-                    (DialectId::Sqlite, _) => {
-                        "SQLite has no ALTER TABLE form for it, and the table would have to be \
-                         rebuilt — a new table, a copy of every row, a drop and a rename"
-                    }
-                    _ => "this product has no ALTER TABLE form for it",
-                };
-                write!(f, "{} cannot {action}", product(*dialect))?;
+                let vendor = dialect.dialect().vendor();
+                let reason = vendor
+                    .unsupported_reason(*what)
+                    .unwrap_or("this product has no ALTER TABLE form for it");
+                write!(f, "{} cannot {action}", vendor.product())?;
                 if let Some(column) = column {
                     write!(f, " of column `{column}`")?;
                 }
@@ -780,29 +764,9 @@ impl fmt::Display for DdlError {
 
 impl std::error::Error for DdlError {}
 
-/// The product's name as a person writes it, for a message about that product.
-///
-/// [`DialectId::as_str`] is deliberately the lower-case `drivers.json` spelling
-/// and round-trips through [`Dialect::from_id`]; a sentence that named the
-/// product twice, once as `mssql` and once as SQL Server, would be reading a
-/// configuration key aloud.
-const fn product(dialect: DialectId) -> &'static str {
-    match dialect {
-        DialectId::Generic => "generic SQL",
-        DialectId::H2 => "H2",
-        DialectId::Postgres => "PostgreSQL",
-        DialectId::MySql => "MySQL",
-        DialectId::MariaDb => "MariaDB",
-        DialectId::Sqlite => "SQLite",
-        DialectId::Oracle => "Oracle",
-        DialectId::MsSql => "SQL Server",
-        DialectId::Db2 => "Db2",
-    }
-}
-
 /// How a column rename is spelled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ColumnRename {
+pub(crate) enum ColumnRename {
     /// `ALTER TABLE t RENAME COLUMN a TO b`: PostgreSQL, Oracle, SQLite,
     /// generic.
     RenameColumn,
@@ -820,7 +784,7 @@ enum ColumnRename {
 
 /// How a column's type, nullability and default are changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AttrStyle {
+pub(crate) enum AttrStyle {
     /// One independent clause per attribute, one statement each: PostgreSQL,
     /// H2, generic.
     Clauses,
@@ -837,7 +801,7 @@ enum AttrStyle {
 
 /// How a constraint is dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DropStyle {
+pub(crate) enum DropStyle {
     /// `DROP CONSTRAINT n`, whatever the kind.
     Named,
     /// One spelling per kind: the MySQL family, which has no generic form for
@@ -861,7 +825,7 @@ enum DropStyle {
 
 /// How the table itself is renamed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TableRename {
+pub(crate) enum TableRename {
     /// `ALTER TABLE t RENAME TO n`.
     RenameTo,
     /// `RENAME TABLE t TO n`: Db2, whose `ALTER TABLE` has no rename clause.
@@ -873,26 +837,26 @@ enum TableRename {
 /// The per-dialect spellings of one `ALTER TABLE`, and the two disagreements a
 /// `CREATE TABLE` runs into.
 ///
-/// A flat record, one static per dialect, in the shape and for the reason
-/// [`Syntax`](crate::Syntax) is one: every place the products disagree is
-/// listed once, so adding a dialect is adding a row rather than editing a
-/// branch in each emitter. That is why
+/// A flat record, one row per dialect in that dialect's own file, in the shape
+/// and for the reason [`Syntax`](crate::Syntax) is one: every place the
+/// products disagree is listed once, so adding a dialect is adding a row
+/// rather than editing a branch in each emitter. That is why
 /// [`named_reference_columns`](AlterStyle::named_reference_columns) is a field
 /// here rather than a `DialectId::MySql` test at the one site that reads it —
 /// a reader looking for "where do the products differ" should find all of it
 /// in one record, including the rows a `CREATE` cares about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AlterStyle {
+pub(crate) struct AlterStyle {
     /// The keyword that adds a column: `ADD COLUMN`, or the bare `ADD` that
     /// Oracle and SQL Server require.
-    add: &'static str,
+    pub(crate) add: &'static str,
     /// `DEFAULT` precedes `NOT NULL` inside a column definition.
     ///
     /// Oracle, whose grammar puts the default in the datatype clause, ahead of
     /// the inline constraints. Everyone else documents the reverse. One of the
     /// two fields [`plan_create`] reads: a column definition is the same
     /// fragment inside a `CREATE TABLE` as it is after an `ADD`.
-    default_first: bool,
+    pub(crate) default_first: bool,
     /// A `REFERENCES` clause has to name the columns it references.
     ///
     /// MySQL and MariaDB, which resolve no reference on their own and answer
@@ -900,15 +864,15 @@ struct AlterStyle {
     /// product reads as the parent's own primary key. The other field
     /// [`plan_create`] reads, and the one that turns into
     /// [`Unsupported::ReferenceWithoutColumns`].
-    named_reference_columns: bool,
+    pub(crate) named_reference_columns: bool,
     /// How a column rename is spelled.
-    column_rename: ColumnRename,
+    pub(crate) column_rename: ColumnRename,
     /// How a column's attributes are changed.
-    attrs: AttrStyle,
+    pub(crate) attrs: AttrStyle,
     /// How a constraint is dropped.
-    constraints: DropStyle,
+    pub(crate) constraints: DropStyle,
     /// How the table is renamed.
-    table_rename: TableRename,
+    pub(crate) table_rename: TableRename,
     /// A changed type, a changed nullability or a dropped column leaves the
     /// table in *reorg pending*, and the batch ends with the `REORG` that
     /// clears it.
@@ -922,12 +886,12 @@ struct AlterStyle {
     /// not need it, but telling that apart would mean reading the type text
     /// this module passes through unread, and an unneeded `REORG` costs time
     /// where a missing one costs the table.
-    reorg: bool,
+    pub(crate) reorg: bool,
 }
 
 impl AlterStyle {
-    /// Standard SQL, and what the rows below start from.
-    const GENERIC: Self = Self {
+    /// Standard SQL, and what each product's row starts from.
+    pub(crate) const STANDARD: Self = Self {
         add: "ADD COLUMN",
         default_first: false,
         named_reference_columns: false,
@@ -937,90 +901,6 @@ impl AlterStyle {
         table_rename: TableRename::RenameTo,
         reorg: false,
     };
-
-    /// PostgreSQL: the standard form throughout.
-    const POSTGRES: Self = Self::GENERIC;
-
-    /// H2: standard except that a rename is a clause of `ALTER COLUMN`.
-    const H2: Self = Self {
-        column_rename: ColumnRename::AlterRenameTo,
-        ..Self::GENERIC
-    };
-
-    /// MySQL: `CHANGE`/`MODIFY COLUMN` restate the definition, each kind of
-    /// constraint has its own `DROP`, and a reference names its columns.
-    const MYSQL: Self = Self {
-        named_reference_columns: true,
-        column_rename: ColumnRename::Change,
-        attrs: AttrStyle::Restate,
-        constraints: DropStyle::PerKind { check: "CHECK" },
-        ..Self::GENERIC
-    };
-
-    /// MariaDB: MySQL's row with one word changed.
-    ///
-    /// The fork kept the grammar down to `CHANGE COLUMN` and the reference it
-    /// will not resolve, and parted company at the check constraint alone —
-    /// `ALTER TABLE t DROP CHECK c` is SQLSTATE 42000 on a MariaDB 11, which
-    /// spells it `DROP CONSTRAINT c` and has since 10.2.22. Both spellings are
-    /// exclusive to their product, so this is a row rather than a widened
-    /// MySQL one: MySQL 8.0.16 through 8.0.18 have no `DROP CONSTRAINT` to
-    /// share.
-    const MARIADB: Self = Self {
-        constraints: DropStyle::PerKind {
-            check: "CONSTRAINT",
-        },
-        ..Self::MYSQL
-    };
-
-    /// SQLite: adds, drops and renames only.
-    const SQLITE: Self = Self {
-        attrs: AttrStyle::Rebuild,
-        constraints: DropStyle::Rebuild,
-        ..Self::GENERIC
-    };
-
-    /// Oracle: a bare `ADD`, the default ahead of `NOT NULL`, and a `MODIFY`
-    /// that names only what changed.
-    const ORACLE: Self = Self {
-        add: "ADD",
-        default_first: true,
-        attrs: AttrStyle::ModifyChanged,
-        ..Self::GENERIC
-    };
-
-    /// SQL Server: a bare `ADD`, `sp_rename` for both renames, and an
-    /// `ALTER COLUMN` that carries type and nullability together.
-    const MSSQL: Self = Self {
-        add: "ADD",
-        column_rename: ColumnRename::SpRename,
-        attrs: AttrStyle::TypeWithNull,
-        table_rename: TableRename::SpRename,
-        ..Self::GENERIC
-    };
-
-    /// Db2: the standard clauses, `RENAME TABLE` for the table, and a
-    /// `REORG` after the changes that need one.
-    const DB2: Self = Self {
-        table_rename: TableRename::RenameTable,
-        reorg: true,
-        ..Self::GENERIC
-    };
-
-    /// The row for `dialect`.
-    const fn of(dialect: DialectId) -> &'static Self {
-        match dialect {
-            DialectId::Generic => &Self::GENERIC,
-            DialectId::H2 => &Self::H2,
-            DialectId::Postgres => &Self::POSTGRES,
-            DialectId::MySql => &Self::MYSQL,
-            DialectId::MariaDb => &Self::MARIADB,
-            DialectId::Sqlite => &Self::SQLITE,
-            DialectId::Oracle => &Self::ORACLE,
-            DialectId::MsSql => &Self::MSSQL,
-            DialectId::Db2 => &Self::DB2,
-        }
-    }
 }
 
 /// Turns one table's staged structure edits into the statements that apply
@@ -1060,7 +940,7 @@ pub fn plan_alter(alter: &TableAlter, dialect: &Dialect) -> Result<Vec<String>, 
         return Err(DdlError::NoTable);
     }
     let table = dialect.qualify(alter.table.iter().map(String::as_str));
-    let style = AlterStyle::of(dialect.id());
+    let style = dialect.vendor().alter_style();
 
     let mut batch = Vec::new();
     for constraint in &alter.drop_constraints {
@@ -1146,7 +1026,7 @@ pub fn plan_create(create: &TableCreate, dialect: &Dialect) -> Result<Vec<String
         return Err(DdlError::NoColumns);
     }
     let table = dialect.qualify(create.table.iter().map(String::as_str));
-    let style = AlterStyle::of(dialect.id());
+    let style = dialect.vendor().alter_style();
 
     let mut items = Vec::with_capacity(create.columns.len() + create.constraints.len());
     for column in &create.columns {

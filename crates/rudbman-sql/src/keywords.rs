@@ -1,4 +1,5 @@
-//! The reserved-word tables, one pair per dialect.
+//! The reserved-word tables: the common pair here, and one pair per dialect in
+//! that dialect's own file under `dialect/`.
 //!
 //! Every table is a `&[&str]` of ASCII-uppercase words sorted in byte order, and
 //! every lookup is a binary search with an ASCII-case-insensitive comparison, so
@@ -216,491 +217,6 @@ const COMMON_TYPES: &[&str] = &[
     "ZONE",
 ];
 
-/// PostgreSQL-only keywords.
-const POSTGRES_KEYWORDS: &[&str] = &[
-    "ABORT",
-    "ALWAYS",
-    "ANALYSE",
-    "ANALYZE",
-    "ARRAY",
-    "ASYMMETRIC",
-    "ATTACH",
-    "CONCURRENTLY",
-    "CONFLICT",
-    "COPY",
-    "DEFERRABLE",
-    "DEFERRED",
-    "DO",
-    "ENUM",
-    "EXCLUDE",
-    "EXTENSION",
-    "FREEZE",
-    "GENERATED",
-    "ILIKE",
-    "IMMEDIATE",
-    "IMMUTABLE",
-    "INHERITS",
-    "INITIALLY",
-    "ISNULL",
-    "LANGUAGE",
-    "LATERAL",
-    "LEAKPROOF",
-    "LIMIT",
-    "LISTEN",
-    "MATERIALIZED",
-    "NOTHING",
-    "NOTIFY",
-    "NOTNULL",
-    "OFFSET",
-    "ORDINALITY",
-    "OVERLAPS",
-    "OWNER",
-    "PARALLEL",
-    "PLACING",
-    "POLICY",
-    "RECURSIVE",
-    "REFRESH",
-    "REINDEX",
-    "RETURNING",
-    "RETURNS",
-    "ROLE",
-    "SETOF",
-    "SIMILAR",
-    "STABLE",
-    "STORED",
-    "STRICT",
-    "SYMMETRIC",
-    "TABLESAMPLE",
-    "TABLESPACE",
-    "UNLOGGED",
-    "VACUUM",
-    "VARIADIC",
-    "VERBOSE",
-    "VOLATILE",
-    "WITHIN",
-];
-
-/// PostgreSQL-only type names, including the geometric and range families.
-const POSTGRES_TYPES: &[&str] = &[
-    "BIGSERIAL",
-    "BOX",
-    "BYTEA",
-    "CIDR",
-    "CIRCLE",
-    "DATERANGE",
-    "FLOAT4",
-    "FLOAT8",
-    "INET",
-    "INT2",
-    "INT4",
-    "INT4RANGE",
-    "INT8",
-    "INT8RANGE",
-    "JSON",
-    "JSONB",
-    "LINE",
-    "LSEG",
-    "MACADDR",
-    "MACADDR8",
-    "MONEY",
-    "NUMRANGE",
-    "OID",
-    "PATH",
-    "POINT",
-    "POLYGON",
-    "SERIAL",
-    "SERIAL2",
-    "SERIAL4",
-    "SERIAL8",
-    "SMALLSERIAL",
-    "TSQUERY",
-    "TSRANGE",
-    "TSTZRANGE",
-    "TSVECTOR",
-    "UUID",
-    "VARBIT",
-    "XML",
-];
-
-/// MySQL and MariaDB keywords.
-///
-/// The two share this table: MariaDB is a fork that kept MySQL's grammar, and
-/// the words it added on its own are not ones people highlight-check.
-const MYSQL_KEYWORDS: &[&str] = &[
-    "AUTO_INCREMENT",
-    "BINLOG",
-    "CHANGE",
-    "CHARSET",
-    "CHECKSUM",
-    "DELAYED",
-    "DESCRIBE",
-    "DISTINCTROW",
-    "DIV",
-    "DUAL",
-    "DUPLICATE",
-    "ENGINE",
-    "FLUSH",
-    "FORCE",
-    "FULLTEXT",
-    "HIGH_PRIORITY",
-    "IGNORE",
-    "INFILE",
-    "KEYS",
-    "KILL",
-    "LIMIT",
-    "LOAD",
-    "LOCK",
-    "LOW_PRIORITY",
-    "MOD",
-    "MODIFY",
-    "OFFSET",
-    "OPTIMIZE",
-    "OUTFILE",
-    "PURGE",
-    "QUICK",
-    "RECURSIVE",
-    "REGEXP",
-    "REPEAT",
-    "REQUIRE",
-    "RLIKE",
-    "SEPARATOR",
-    "SHOW",
-    "SIGNED",
-    "SPATIAL",
-    "SQL_BIG_RESULT",
-    "SQL_CALC_FOUND_ROWS",
-    "SQL_SMALL_RESULT",
-    "STRAIGHT_JOIN",
-    "UNLOCK",
-    "UNSIGNED",
-    "USE",
-    "XOR",
-    "ZEROFILL",
-];
-
-/// MySQL and MariaDB type names.
-const MYSQL_TYPES: &[&str] = &[
-    "ENUM",
-    "GEOMETRY",
-    "JSON",
-    "LINESTRING",
-    "LONGBLOB",
-    "LONGTEXT",
-    "MEDIUMBLOB",
-    "MEDIUMINT",
-    "MEDIUMTEXT",
-    "MULTILINESTRING",
-    "MULTIPOINT",
-    "MULTIPOLYGON",
-    "POINT",
-    "POLYGON",
-    "TINYBLOB",
-    "TINYTEXT",
-    "YEAR",
-];
-
-/// Oracle keywords, SQL and PL/SQL together.
-///
-/// The PL/SQL words (`LOOP`, `EXCEPTION`, `PACKAGE`, `ELSIF`) are here even
-/// though [`crate::split_statements`] does not understand PL/SQL blocks: the
-/// splitter's limitation is about `;`, and someone reading a package body still
-/// wants it colored.
-const ORACLE_KEYWORDS: &[&str] = &[
-    "BODY",
-    "BULK",
-    "COLLECT",
-    "CONNECT",
-    "CONNECT_BY_ROOT",
-    "DBMS_OUTPUT",
-    "ELSIF",
-    "EXCEPTION",
-    "EXCLUSIVE",
-    "EXIT",
-    "FORALL",
-    "LEVEL",
-    "LOOP",
-    "MERGE",
-    "MINUS",
-    "NOCOMPRESS",
-    "NOCYCLE",
-    "NOWAIT",
-    "OUT",
-    "PACKAGE",
-    "PCTFREE",
-    "PIVOT",
-    "PRAGMA",
-    "PRIOR",
-    "PURGE",
-    "RAISE",
-    "RECORD",
-    "REF",
-    "ROWNUM",
-    "SHARE",
-    "SIBLINGS",
-    "START",
-    "STORAGE",
-    "SYSDATE",
-    "SYSTIMESTAMP",
-    "TABLESPACE",
-    "UNPIVOT",
-    "VARRAY",
-];
-
-/// Oracle type names.
-const ORACLE_TYPES: &[&str] = &[
-    "BFILE",
-    "BINARY_DOUBLE",
-    "BINARY_FLOAT",
-    "LONG",
-    "NCLOB",
-    "NUMBER",
-    "NVARCHAR2",
-    "PLS_INTEGER",
-    "RAW",
-    "ROWID",
-    "SIMPLE_INTEGER",
-    "UROWID",
-    "VARCHAR2",
-    "XMLTYPE",
-];
-
-/// SQL Server keywords, including the table hints of `WITH (...)`.
-///
-/// `NOLOCK`, `READPAST`, `TABLOCK` and the rest are not reserved words in the
-/// grammar, but they appear only in that one position and coloring them as
-/// keywords is what every other tool does.
-const MSSQL_KEYWORDS: &[&str] = &[
-    "APPLY",
-    "BREAK",
-    "BROWSE",
-    "BULK",
-    "CATCH",
-    "CLUSTERED",
-    "COMPUTE",
-    "CONTINUE",
-    "DBCC",
-    "DENY",
-    "DISK",
-    "EXEC",
-    "FILLFACTOR",
-    "GOTO",
-    "HOLDLOCK",
-    "IDENTITY",
-    "IDENTITY_INSERT",
-    "INCLUDE",
-    "MERGE",
-    "NOCOUNT",
-    "NOLOCK",
-    "NONCLUSTERED",
-    "OFFSET",
-    "OPENQUERY",
-    "OPENROWSET",
-    "OUTPUT",
-    "PAGLOCK",
-    "PERSISTED",
-    "PIVOT",
-    "PRINT",
-    "RAISERROR",
-    "READPAST",
-    "READUNCOMMITTED",
-    "RECOMPILE",
-    "ROWCOUNT",
-    "ROWGUIDCOL",
-    "ROWLOCK",
-    "SERIALIZABLE",
-    "SNAPSHOT",
-    "TABLOCK",
-    "TABLOCKX",
-    "TEXTIMAGE_ON",
-    "THROW",
-    "TOP",
-    "TRY",
-    "UNPIVOT",
-    "UPDLOCK",
-    "WAITFOR",
-    "XLOCK",
-];
-
-/// SQL Server type names.
-const MSSQL_TYPES: &[&str] = &[
-    "DATETIME2",
-    "DATETIMEOFFSET",
-    "GEOGRAPHY",
-    "GEOMETRY",
-    "HIERARCHYID",
-    "IMAGE",
-    "MONEY",
-    "NTEXT",
-    "SMALLDATETIME",
-    "SMALLMONEY",
-    "SQL_VARIANT",
-    "SYSNAME",
-    "UNIQUEIDENTIFIER",
-    "XML",
-];
-
-/// Db2 keywords, SQL and SQL PL together.
-///
-/// The SQL PL words (`ELSEIF`, `HANDLER`, `LEAVE`, `SIGNAL`) are here for the
-/// reason Oracle's PL/SQL words are: a procedure body is read in the editor
-/// even though the splitter does not understand its blocks. `REORG` and
-/// `RUNSTATS` are commands rather than SQL, and are here because a Db2 user
-/// sends them through `SYSPROC.ADMIN_CMD` often enough to read them colored.
-const DB2_KEYWORDS: &[&str] = &[
-    "ATOMIC",
-    "CALL",
-    "CONCURRENT",
-    "CONTINUE",
-    "DATA",
-    "DETERMINISTIC",
-    "DO",
-    "EACH",
-    "ELSEIF",
-    "EXCLUSIVE",
-    "EXIT",
-    "GENERATED",
-    "GET",
-    "GLOBAL",
-    "HANDLER",
-    "IDENTITY",
-    "IMMEDIATE",
-    "INCLUDE",
-    "INOUT",
-    "ITERATE",
-    "LANGUAGE",
-    "LEAVE",
-    "LIMIT",
-    "LOCK",
-    "LOOP",
-    "MERGE",
-    "MODE",
-    "MODIFIES",
-    "NOCACHE",
-    "NOCYCLE",
-    "OFFSET",
-    "OPTIMIZE",
-    "ORGANIZE",
-    "OUT",
-    "READS",
-    "REFERENCING",
-    "REORG",
-    "REPEAT",
-    "RESIGNAL",
-    "RESULT",
-    "RETURNS",
-    "RUNSTATS",
-    "SIGNAL",
-    "SPECIFIC",
-    "SQL",
-    "SQLSTATE",
-    "STATEMENT",
-    "SYSIBM",
-    "TABLESPACE",
-    "UNTIL",
-    "VARIABLE",
-    "VOLATILE",
-];
-
-/// Db2 type names.
-const DB2_TYPES: &[&str] = &[
-    "DBCLOB",
-    "DECFLOAT",
-    "GRAPHIC",
-    "LONG",
-    "NCLOB",
-    "VARGRAPHIC",
-    "XML",
-];
-
-/// SQLite keywords.
-const SQLITE_KEYWORDS: &[&str] = &[
-    "ABORT",
-    "ANALYZE",
-    "ATTACH",
-    "AUTOINCREMENT",
-    "CONFLICT",
-    "DEFERRABLE",
-    "DEFERRED",
-    "DETACH",
-    "DO",
-    "EXCLUSIVE",
-    "FAIL",
-    "GLOB",
-    "IGNORE",
-    "IMMEDIATE",
-    "INDEXED",
-    "INSTEAD",
-    "ISNULL",
-    "LIMIT",
-    "MATCH",
-    "NOTHING",
-    "NOTNULL",
-    "OFFSET",
-    "PLAN",
-    "PRAGMA",
-    "QUERY",
-    "RAISE",
-    "RECURSIVE",
-    "REGEXP",
-    "REINDEX",
-    "RETURNING",
-    "VACUUM",
-    "VIRTUAL",
-    "WITHOUT",
-];
-
-/// SQLite type names.
-///
-/// Short on purpose: SQLite's declared types are free text mapped onto five
-/// storage classes, and the names people write — `INTEGER`, `TEXT`, `REAL`,
-/// `BLOB`, `NUMERIC` — are all in [`COMMON_TYPES`] already. `ROWID` is here for
-/// `WITHOUT ROWID` tables.
-const SQLITE_TYPES: &[&str] = &["ROWID"];
-
-/// H2 keywords.
-const H2_KEYWORDS: &[&str] = &[
-    "ARRAY",
-    "ASYMMETRIC",
-    "CURRENT_CATALOG",
-    "CURRENT_PATH",
-    "CURRENT_ROLE",
-    "CURRENT_SCHEMA",
-    "DAY",
-    "GROUPS",
-    "HOUR",
-    "ILIKE",
-    "INTERSECTS",
-    "LIMIT",
-    "LOCALTIME",
-    "LOCALTIMESTAMP",
-    "MINUS",
-    "MINUTE",
-    "MONTH",
-    "OFFSET",
-    "QUALIFY",
-    "REGEXP",
-    "ROWNUM",
-    "SECOND",
-    "SYMMETRIC",
-    "SYSTEM_USER",
-    "TOP",
-    "UESCAPE",
-    "VALUE",
-    "YEAR",
-    "_ROWID_",
-];
-
-/// H2 type names.
-const H2_TYPES: &[&str] = &[
-    "ENUM",
-    "GEOMETRY",
-    "IDENTITY",
-    "JAVA_OBJECT",
-    "JSON",
-    "UUID",
-    "VARCHAR_IGNORECASE",
-];
-
 /// The two tables a dialect adds on top of the common ones.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WordTables {
@@ -710,7 +226,8 @@ pub(crate) struct WordTables {
     pub(crate) types: &'static [&'static str],
 }
 
-/// The dialect-specific tables, in the order of [`crate::DialectId`].
+/// What a dialect adds on top of the common tables; each product's file holds
+/// its own pair.
 impl WordTables {
     pub(crate) fn completions(self) -> impl Iterator<Item = &'static str> {
         COMMON_KEYWORDS
@@ -726,42 +243,6 @@ impl WordTables {
         keywords: &[],
         types: &[],
     };
-    /// PostgreSQL.
-    pub(crate) const POSTGRES: Self = Self {
-        keywords: POSTGRES_KEYWORDS,
-        types: POSTGRES_TYPES,
-    };
-    /// MySQL and MariaDB.
-    pub(crate) const MYSQL: Self = Self {
-        keywords: MYSQL_KEYWORDS,
-        types: MYSQL_TYPES,
-    };
-    /// Oracle.
-    pub(crate) const ORACLE: Self = Self {
-        keywords: ORACLE_KEYWORDS,
-        types: ORACLE_TYPES,
-    };
-    /// SQL Server.
-    pub(crate) const MSSQL: Self = Self {
-        keywords: MSSQL_KEYWORDS,
-        types: MSSQL_TYPES,
-    };
-    /// Db2.
-    pub(crate) const DB2: Self = Self {
-        keywords: DB2_KEYWORDS,
-        types: DB2_TYPES,
-    };
-    /// SQLite.
-    pub(crate) const SQLITE: Self = Self {
-        keywords: SQLITE_KEYWORDS,
-        types: SQLITE_TYPES,
-    };
-    /// H2.
-    pub(crate) const H2: Self = Self {
-        keywords: H2_KEYWORDS,
-        types: H2_TYPES,
-    };
-
     /// Whether `word` is a reserved word in this dialect.
     pub(crate) fn is_keyword(&self, word: &str) -> bool {
         contains(COMMON_KEYWORDS, word) || contains(self.keywords, word)
@@ -811,30 +292,25 @@ fn cmp_upper_ascii(a: &str, b: &str) -> Ordering {
 mod tests {
     use super::*;
 
-    /// Every table this module hands to [`contains`].
-    const ALL: &[(&str, &[&str])] = &[
-        ("COMMON_KEYWORDS", COMMON_KEYWORDS),
-        ("COMMON_TYPES", COMMON_TYPES),
-        ("POSTGRES_KEYWORDS", POSTGRES_KEYWORDS),
-        ("POSTGRES_TYPES", POSTGRES_TYPES),
-        ("MYSQL_KEYWORDS", MYSQL_KEYWORDS),
-        ("MYSQL_TYPES", MYSQL_TYPES),
-        ("ORACLE_KEYWORDS", ORACLE_KEYWORDS),
-        ("ORACLE_TYPES", ORACLE_TYPES),
-        ("MSSQL_KEYWORDS", MSSQL_KEYWORDS),
-        ("MSSQL_TYPES", MSSQL_TYPES),
-        ("DB2_KEYWORDS", DB2_KEYWORDS),
-        ("DB2_TYPES", DB2_TYPES),
-        ("SQLITE_KEYWORDS", SQLITE_KEYWORDS),
-        ("SQLITE_TYPES", SQLITE_TYPES),
-        ("H2_KEYWORDS", H2_KEYWORDS),
-        ("H2_TYPES", H2_TYPES),
-    ];
+    /// Every table [`contains`] is handed: the common pair and each
+    /// registered product's.
+    fn all() -> Vec<(String, &'static [&'static str])> {
+        let mut all = vec![
+            ("COMMON_KEYWORDS".to_string(), COMMON_KEYWORDS),
+            ("COMMON_TYPES".to_string(), COMMON_TYPES),
+        ];
+        for dialect in crate::Dialect::ALL {
+            let words = dialect.vendor().words();
+            all.push((format!("{} keywords", dialect.name()), words.keywords));
+            all.push((format!("{} types", dialect.name()), words.types));
+        }
+        all
+    }
 
     /// The binary search is only correct on a sorted, duplicate-free table.
     #[test]
     fn tables_are_sorted_and_unique() {
-        for (name, table) in ALL {
+        for (name, table) in all() {
             for pair in table.windows(2) {
                 assert_eq!(
                     cmp_upper_ascii(pair[0], pair[1]),
@@ -850,8 +326,8 @@ mod tests {
     /// The length guard in [`contains`] must not reject a real entry.
     #[test]
     fn no_entry_exceeds_the_length_guard() {
-        for (name, table) in ALL {
-            for word in *table {
+        for (name, table) in all() {
+            for word in table {
                 assert!(word.len() <= 24, "{name}: {word:?} is too long to be found");
                 assert!(
                     word.is_ascii() && *word == word.to_ascii_uppercase(),
@@ -864,8 +340,8 @@ mod tests {
     /// Every entry is findable, in any case, and near-misses are not.
     #[test]
     fn lookup_is_case_insensitive() {
-        for (_, table) in ALL {
-            for word in *table {
+        for (_, table) in all() {
+            for word in table {
                 assert!(contains(table, word));
                 assert!(contains(table, &word.to_ascii_lowercase()));
             }

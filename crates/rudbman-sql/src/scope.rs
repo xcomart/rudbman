@@ -46,7 +46,9 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::dialect::{Dialect, DialectId};
+use crate::block::Family;
+use crate::dialect::Dialect;
+use crate::ident::Folding;
 use crate::lexer::{Lexer, Token, TokenKind};
 
 /// Where a statement puts something: the catalog and the schema its name is
@@ -457,7 +459,7 @@ fn holds_a_name(sql: &str, tokens: &[Token], i: usize, dialect: &Dialect) -> boo
         }
     }
     // SQL Server's `@sequence_name = N'…'`.
-    dialect.id() == DialectId::MsSql
+    dialect.vendor().block_family() == Family::MsSql
         && i >= 2
         && text(i - 1) == "="
         && text(i - 2).eq_ignore_ascii_case("@sequence_name")
@@ -677,25 +679,19 @@ fn is_name(kind: TokenKind) -> bool {
 }
 
 /// The products whose qualifier, in a two-part name, is the database.
-const fn catalog_first(dialect: &Dialect) -> bool {
-    matches!(dialect.id(), DialectId::MySql | DialectId::MariaDb)
+fn catalog_first(dialect: &Dialect) -> bool {
+    dialect.vendor().catalog_first()
 }
 
 /// The products with a `USE` that changes the database.
-const fn uses_catalogs(dialect: &Dialect) -> bool {
-    matches!(
-        dialect.id(),
-        DialectId::MySql | DialectId::MariaDb | DialectId::MsSql
-    )
+fn uses_catalogs(dialect: &Dialect) -> bool {
+    dialect.vendor().uses_catalogs()
 }
 
 /// The products that store names as written and compare them without regard
 /// to case.
-const fn case_insensitive(dialect: &Dialect) -> bool {
-    matches!(
-        dialect.id(),
-        DialectId::MySql | DialectId::MariaDb | DialectId::MsSql | DialectId::Sqlite
-    )
+fn case_insensitive(dialect: &Dialect) -> bool {
+    dialect.vendor().case_insensitive_names()
 }
 
 /// A name as the catalog stores it: unquoted and unescaped when it was
@@ -710,12 +706,10 @@ fn stored(text: &str, kind: TokenKind, dialect: &Dialect) -> String {
             _ => inner.replace("\"\"", "\""),
         };
     }
-    match dialect.id() {
-        DialectId::Postgres => text.to_lowercase(),
-        DialectId::Generic | DialectId::H2 | DialectId::Oracle | DialectId::Db2 => {
-            text.to_uppercase()
-        }
-        _ => text.to_string(),
+    match dialect.vendor().folding() {
+        Folding::Lower => text.to_lowercase(),
+        Folding::Upper => text.to_uppercase(),
+        Folding::Preserve => text.to_string(),
     }
 }
 

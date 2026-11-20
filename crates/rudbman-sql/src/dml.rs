@@ -534,38 +534,21 @@ fn insert(
 }
 
 /// The dialect's way of saying "a row of nothing but defaults".
+///
+/// Each product's [`empty_insert`](crate::dialect::Vendor::empty_insert) says
+/// how; the table's first column is offered for a product that has to name
+/// one.
 fn empty_insert(table: &str, edits: &TableEdits, dialect: &Dialect) -> Result<String, DmlError> {
-    match dialect.id() {
-        // The MySQL family rejects `DEFAULT VALUES` and spells it with two
-        // empty lists. MariaDB is named beside MySQL rather than left to the
-        // fallback below: it inherited the refusal along with the grammar, and
-        // the arm it would otherwise fall into writes the form neither takes.
-        DialectId::MySql | DialectId::MariaDb => Ok(format!("INSERT INTO {table} () VALUES ()")),
-        // Oracle has neither form. Its `INSERT INTO t VALUES (DEFAULT, ...)`
-        // needs one `DEFAULT` per column, and a column without a default is a
-        // different statement again — a shape only the catalog could build, and
-        // wrongly at that, since a NOT NULL column with no default has no valid
-        // row to insert here at all.
-        DialectId::Oracle => Err(DmlError::NoEmptyInsert {
-            dialect: DialectId::Oracle,
-        }),
-        // Db2 answers SQL0104N for `DEFAULT VALUES` and has no empty lists
-        // either, but it takes the keyword `DEFAULT` as a value, and every
-        // column a statement leaves out gets its default anyway — so one
-        // column set to its default is a row of nothing but defaults, without
-        // the catalog having to be asked which columns have one.
-        DialectId::Db2 => match edits.columns.first() {
-            Some(column) => Ok(format!(
-                "INSERT INTO {table} ({}) VALUES (DEFAULT)",
-                dialect.quote_ident(column)
-            )),
-            None => Err(DmlError::NoEmptyInsert {
-                dialect: DialectId::Db2,
-            }),
-        },
-        // The standard form: PostgreSQL, SQLite, H2, SQL Server, and generic.
-        _ => Ok(format!("INSERT INTO {table} DEFAULT VALUES")),
-    }
+    let first_column = edits
+        .columns
+        .first()
+        .map(|column| dialect.quote_ident(column));
+    dialect
+        .vendor()
+        .empty_insert(table, first_column.as_deref())
+        .ok_or(DmlError::NoEmptyInsert {
+            dialect: dialect.id(),
+        })
 }
 
 /// Appends ` WHERE k = ? [AND ...]` and the key values behind it.

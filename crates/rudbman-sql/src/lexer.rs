@@ -267,7 +267,7 @@ impl LineState {
     /// two `"..."` is depends on the dialect, hence the argument. Useful to an
     /// editor that wants to fold a block comment or dim a line inside one
     /// without lexing it first.
-    pub const fn carried_kind(self, dialect: &Dialect) -> Option<TokenKind> {
+    pub fn carried_kind(self, dialect: &Dialect) -> Option<TokenKind> {
         match self.0 {
             Carry::None => None,
             Carry::BlockComment(_) => Some(TokenKind::Comment),
@@ -278,7 +278,7 @@ impl LineState {
 }
 
 /// Whether a quoting form yields a string or a quoted identifier here.
-const fn quote_token_kind(quote: QuoteKind, dialect: &Dialect) -> TokenKind {
+fn quote_token_kind(quote: QuoteKind, dialect: &Dialect) -> TokenKind {
     match quote {
         QuoteKind::Single | QuoteKind::SingleEscaped => TokenKind::String,
         // The one form whose meaning is a dialect question: MySQL reads `"..."`

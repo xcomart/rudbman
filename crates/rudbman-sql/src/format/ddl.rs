@@ -2,7 +2,7 @@
 //! object panel's DDL tab shows.
 
 use super::{Item, Segment, UPPER, cmp_ignore_case, format_segment, items, needs_space, segments};
-use crate::dialect::{Dialect, DialectId};
+use crate::dialect::Dialect;
 use crate::lexer::{TokenKind, lex};
 
 /// One level of indentation.
@@ -309,7 +309,7 @@ pub fn format_ddl(source: &str, dialect: &Dialect) -> String {
 
 /// How a routine's body is written, as far as laying it out goes.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Family {
+pub(crate) enum Family {
     /// MySQL and MariaDB: the body follows the characteristics unmarked.
     MySql,
     /// PL/SQL: `IS` or `AS`, declarations, then the block.
@@ -326,13 +326,7 @@ enum Family {
 
 impl Family {
     fn of(dialect: &Dialect) -> Self {
-        match dialect.id() {
-            DialectId::MySql | DialectId::MariaDb => Family::MySql,
-            DialectId::Oracle => Family::Oracle,
-            DialectId::MsSql => Family::MsSql,
-            DialectId::Db2 => Family::Db2,
-            _ => Family::Other,
-        }
+        dialect.vendor().routine_layout()
     }
 }
 

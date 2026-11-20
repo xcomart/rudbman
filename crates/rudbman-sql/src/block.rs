@@ -119,7 +119,7 @@
 //! or to SQL\*Plus's `/`, which is where a client that counts nothing would
 //! have run it.
 
-use crate::dialect::{Dialect, DialectId};
+use crate::dialect::Dialect;
 use crate::lexer::TokenKind;
 
 /// What may follow a leading `BEGIN` that starts a transaction rather than a
@@ -428,7 +428,7 @@ enum Guess {
 
 /// Whose rules the words are read by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Family {
+pub(crate) enum Family {
     /// PL/SQL.
     Oracle,
     /// T-SQL.
@@ -446,7 +446,7 @@ enum Family {
 /// What a body may be written in besides SQL/PSM, outside Oracle and SQL
 /// Server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Routines {
+pub(crate) enum Routines {
     /// Nothing else: MySQL, PostgreSQL, SQLite, H2.
     Psm,
     /// PL/SQL: MariaDB under `sql_mode=ORACLE`, and Db2.
@@ -459,7 +459,7 @@ enum Routines {
 /// What a statement that starts with `BEGIN` is, outside Oracle and SQL
 /// Server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BeginRule {
+pub(crate) enum BeginRule {
     /// A transaction, always: PostgreSQL, SQLite, H2.
     Transaction,
     /// A block only as `BEGIN NOT ATOMIC`: MySQL and MariaDB.
@@ -471,31 +471,8 @@ enum BeginRule {
 
 impl Family {
     /// The family `dialect` belongs to.
-    const fn of(dialect: &Dialect) -> Self {
-        match dialect.id() {
-            DialectId::Oracle => Self::Oracle,
-            DialectId::MsSql => Self::MsSql,
-            DialectId::MySql => Self::Psm {
-                begin: BeginRule::NotAtomic,
-                routines: Routines::Psm,
-            },
-            DialectId::MariaDb => Self::Psm {
-                begin: BeginRule::NotAtomic,
-                routines: Routines::PlSql,
-            },
-            DialectId::Db2 => Self::Psm {
-                begin: BeginRule::UnlessTransaction,
-                routines: Routines::PlSql,
-            },
-            DialectId::Generic => Self::Psm {
-                begin: BeginRule::UnlessTransaction,
-                routines: Routines::Unknown,
-            },
-            DialectId::Postgres | DialectId::Sqlite | DialectId::H2 => Self::Psm {
-                begin: BeginRule::Transaction,
-                routines: Routines::Psm,
-            },
-        }
+    fn of(dialect: &Dialect) -> Self {
+        dialect.vendor().block_family()
     }
 }
 
@@ -1300,6 +1277,7 @@ fn any(word: &str, set: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dialect::DialectId;
     use crate::lexer::Lexer;
 
     /// The SQL of each statement of `script`, as [`Blocks`] cuts it.

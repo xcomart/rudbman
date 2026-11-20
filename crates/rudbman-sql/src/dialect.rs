@@ -1,20 +1,52 @@
-//! Which SQL a buffer is written in, and the handful of lexical rules that
-//! answer to it.
+//! Which SQL a buffer is written in, and everything this crate answers
+//! differently for it.
 //!
-//! A [`Dialect`] is a copyable token — an id plus two pointers into the static
-//! word tables and one into a static [`Syntax`] record — so passing one around
-//! costs nothing and there is no registry to initialize. [`Dialect::from_id`]
-//! takes the string in `DriverDef::dialect` (architecture document §8) and
-//! answers with a dialect, falling back to [`DialectId::Generic`] for anything it
-//! does not know: a driver definition is a hand-editable JSON file, and an
-//! unrecognized dialect should degrade to plain SQL rather than fail.
+//! A [`Dialect`] is a copyable pointer to one product's [`Vendor`]
+//! implementation, so passing one around costs nothing and there is no
+//! registry to initialize. [`Dialect::from_id`] takes the string in
+//! `DriverDef::dialect` (architecture document §8) and answers with a dialect,
+//! falling back to [`DialectId::Generic`] for anything it does not know: a
+//! driver definition is a hand-editable JSON file, and an unrecognized dialect
+//! should degrade to plain SQL rather than fail.
+//!
+//! Each product lives in a file of its own under `dialect/`: its [`Syntax`]
+//! row, its word tables, its completion functions, its `ALTER TABLE`
+//! spellings, and the [`Vendor`] implementation that answers everything else.
+//! The code that lexes, splits, formats and writes SQL asks the dialect what
+//! to do rather than testing which product it is.
+//!
+//! # Adding a product
+//!
+//! 1. Write `dialect/<product>.rs`, a unit struct and its [`Vendor`]
+//!    implementation, starting from the file of the closest product. Every
+//!    method without a default has to be answered, so the compiler lists what
+//!    is left to decide.
+//! 2. Register it in this file: a [`DialectId`] variant, a `mod` line, a
+//!    `Dialect` constant and an entry in [`Dialect::ALL`], which is what
+//!    [`Dialect::from_id`] searches.
+//! 3. Run the crate's tests. Those that hold for every product iterate over
+//!    [`Dialect::ALL`]: names and aliases unique and round-tripping, word
+//!    tables sorted.
 //!
 //! [`Syntax`] is deliberately a flat record of `bool`s rather than a set of
-//! methods on an enum. It is the whole list of places where the vendors disagree
-//! at the *lexical* level, in one screen, and adding a dialect means adding one
-//! row rather than editing a dozen `match` arms.
+//! methods. It is the whole list of places where the vendors disagree at the
+//! *lexical* level, in one screen, and each product's row says in one place
+//! which of them it takes.
 
-use crate::keywords::WordTables;
+use std::fmt;
+
+mod db2;
+mod generic;
+mod h2;
+mod mariadb;
+mod mssql;
+mod mysql;
+mod oracle;
+mod postgres;
+mod sqlite;
+mod vendor;
+
+pub(crate) use vendor::Vendor;
 
 /// The SQL dialects rudbman distinguishes.
 ///
@@ -22,10 +54,13 @@ use crate::keywords::WordTables;
 /// is one of them, and was not always: it read as an alias for
 /// [`DialectId::MySql`] until a container test sent MySQL's
 /// `ALTER TABLE t DROP CHECK c` to a MariaDB 11 and got SQLSTATE 42000 back.
-/// The fork kept MySQL's *lexical* rules to the letter — this file's [`Syntax`]
+/// The fork kept MySQL's *lexical* rules to the letter — MySQL's [`Syntax`]
 /// row and its word tables are shared, not copied — and differs in exactly one
 /// spelling of the [`ddl`](crate::ddl) table, which is a row that record can
 /// hold only if MariaDB has an id to hold it under.
+///
+/// Each variant is answered by one product's file under `dialect/`; adding a
+/// variant is the second step of adding a product (module documentation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DialectId {
     /// Plain SQL: the common word tables and nothing vendor-specific.
@@ -59,18 +94,18 @@ impl DialectId {
     /// The canonical `dialect` string for this variant.
     ///
     /// Round-trips through [`Dialect::from_id`].
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Generic => "generic",
-            Self::H2 => "h2",
-            Self::Postgres => "postgres",
-            Self::MySql => "mysql",
-            Self::MariaDb => "mariadb",
-            Self::Sqlite => "sqlite",
-            Self::Oracle => "oracle",
-            Self::MsSql => "mssql",
-            Self::Db2 => "db2",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.dialect().name()
+    }
+
+    /// The registered dialect with this id, or [`Dialect::GENERIC`] for one
+    /// that is missing from [`Dialect::ALL`].
+    pub fn dialect(self) -> Dialect {
+        Dialect::ALL
+            .iter()
+            .copied()
+            .find(|dialect| dialect.id() == self)
+            .unwrap_or(Dialect::GENERIC)
     }
 }
 
@@ -162,7 +197,10 @@ impl Syntax {
     /// The conservative base every dialect starts from: standard SQL and nothing
     /// else. `?` parameters are not a field because every dialect has them —
     /// this crate is only ever handed SQL on its way to a JDBC driver.
-    const BASE: Self = Self {
+    ///
+    /// Each product's row in its own file is this one with the rules it
+    /// takes switched.
+    pub(crate) const BASE: Self = Self {
         hash_line_comment: false,
         dash_dash_needs_space: false,
         nested_block_comments: false,
@@ -178,86 +216,13 @@ impl Syntax {
         at_parameters: false,
         hash_identifiers: false,
     };
-
-    /// Standard SQL, and the fallback for an unknown dialect id.
-    const GENERIC: Self = Self::BASE;
-
-    /// H2: backticks and `$$` from its compatibility modes, `:name` parameters.
-    const H2: Self = Self {
-        backtick_identifiers: true,
-        dollar_quotes: true,
-        ..Self::BASE
-    };
-
-    /// PostgreSQL: dollar quotes, `E'...'`, nested block comments, `$1`.
-    const POSTGRES: Self = Self {
-        nested_block_comments: true,
-        e_strings: true,
-        dollar_quotes: true,
-        numbered_parameters: true,
-        colon_parameters: false,
-        ..Self::BASE
-    };
-
-    /// MySQL and MariaDB: `#` comments, the `-- ` rule, backslash escapes,
-    /// backticks, `"..."` as a string, `@vars`.
-    ///
-    /// One row for two dialects rather than two identical ones. The fork's
-    /// disagreement with MySQL is a `DROP` spelling, and nothing a lexer can
-    /// see.
-    const MYSQL: Self = Self {
-        hash_line_comment: true,
-        dash_dash_needs_space: true,
-        backslash_escapes: true,
-        double_quoted_strings: true,
-        backtick_identifiers: true,
-        colon_parameters: false,
-        at_parameters: true,
-        ..Self::BASE
-    };
-
-    /// SQLite: every quoting form it accepts for compatibility, `:name` and
-    /// `@name` parameters.
-    const SQLITE: Self = Self {
-        backtick_identifiers: true,
-        bracket_identifiers: true,
-        at_parameters: true,
-        ..Self::BASE
-    };
-
-    /// Oracle: no hex literals, `#` inside identifiers, `:name` binds.
-    const ORACLE: Self = Self {
-        hex_literals: false,
-        hash_identifiers: true,
-        ..Self::BASE
-    };
-
-    /// SQL Server: `[...]` identifiers, `@variables`, `#temp` tables, nested
-    /// block comments.
-    const MSSQL: Self = Self {
-        nested_block_comments: true,
-        bracket_identifiers: true,
-        colon_parameters: false,
-        at_parameters: true,
-        hash_identifiers: true,
-        ..Self::BASE
-    };
-
-    /// Db2: nested block comments, no hex literals, `#` inside identifiers,
-    /// and `:name` host variables.
-    const DB2: Self = Self {
-        nested_block_comments: true,
-        hex_literals: false,
-        hash_identifiers: true,
-        ..Self::BASE
-    };
 }
 
-/// A dialect: an id, its lexical rules, and its word tables.
+/// A dialect: a pointer to one product's [`Vendor`] implementation.
 ///
 /// Copyable and cheap to build, so callers are free to construct one per call
 /// rather than hold it. `Dialect` is what every entry point in this crate takes,
-/// and the only thing that makes the lexer's answers vendor-specific.
+/// and the only thing that makes the crate's answers vendor-specific.
 ///
 /// ```
 /// use rudbman_sql::{Dialect, DialectId};
@@ -269,14 +234,16 @@ impl Syntax {
 /// // An unknown id is not an error; it is generic SQL.
 /// assert_eq!(Dialect::from_id("cockroach").id(), DialectId::Generic);
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Dialect {
-    /// Which dialect this is.
-    id: DialectId,
-    /// The lexical rules, borrowed from the statics above.
-    syntax: &'static Syntax,
-    /// The dialect-specific halves of the word tables.
-    words: WordTables,
+    /// The product's answers.
+    vendor: &'static dyn Vendor,
+}
+
+impl fmt::Debug for Dialect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Dialect").field(&self.id()).finish()
+    }
 }
 
 impl Default for Dialect {
@@ -286,10 +253,10 @@ impl Default for Dialect {
 }
 
 impl PartialEq for Dialect {
-    /// Two dialects are equal when they are the same dialect; the tables are a
-    /// function of the id.
+    /// Two dialects are equal when they are the same dialect; everything else
+    /// is a function of the id.
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.id() == other.id()
     }
 }
 
@@ -298,119 +265,100 @@ impl Eq for Dialect {}
 impl Dialect {
     /// Standard SQL.
     pub const GENERIC: Self = Self {
-        id: DialectId::Generic,
-        syntax: &Syntax::GENERIC,
-        words: WordTables::NONE,
+        vendor: &generic::Generic,
     };
     /// H2.
-    pub const H2: Self = Self {
-        id: DialectId::H2,
-        syntax: &Syntax::H2,
-        words: WordTables::H2,
-    };
+    pub const H2: Self = Self { vendor: &h2::H2 };
     /// PostgreSQL.
     pub const POSTGRES: Self = Self {
-        id: DialectId::Postgres,
-        syntax: &Syntax::POSTGRES,
-        words: WordTables::POSTGRES,
+        vendor: &postgres::Postgres,
     };
     /// MySQL.
     pub const MYSQL: Self = Self {
-        id: DialectId::MySql,
-        syntax: &Syntax::MYSQL,
-        words: WordTables::MYSQL,
+        vendor: &mysql::MySql,
     };
-    /// MariaDB, which borrows MySQL's lexis and its words and keeps only its
-    /// own id — the id is what the [`ddl`](crate::ddl) table hangs its one
-    /// differing spelling on.
+    /// MariaDB, which borrows MySQL's lexis and its words and parts company in
+    /// a few spellings.
     pub const MARIADB: Self = Self {
-        id: DialectId::MariaDb,
-        syntax: &Syntax::MYSQL,
-        words: WordTables::MYSQL,
+        vendor: &mariadb::MariaDb,
     };
     /// SQLite.
     pub const SQLITE: Self = Self {
-        id: DialectId::Sqlite,
-        syntax: &Syntax::SQLITE,
-        words: WordTables::SQLITE,
+        vendor: &sqlite::Sqlite,
     };
     /// Oracle Database.
     pub const ORACLE: Self = Self {
-        id: DialectId::Oracle,
-        syntax: &Syntax::ORACLE,
-        words: WordTables::ORACLE,
+        vendor: &oracle::Oracle,
     };
     /// Microsoft SQL Server.
     pub const MSSQL: Self = Self {
-        id: DialectId::MsSql,
-        syntax: &Syntax::MSSQL,
-        words: WordTables::MSSQL,
+        vendor: &mssql::MsSql,
     };
     /// IBM Db2.
-    pub const DB2: Self = Self {
-        id: DialectId::Db2,
-        syntax: &Syntax::DB2,
-        words: WordTables::DB2,
-    };
+    pub const DB2: Self = Self { vendor: &db2::Db2 };
+
+    /// Every dialect this crate knows, standard SQL first.
+    ///
+    /// The registry: [`Self::from_id`] searches it, and the tests that hold
+    /// for every product iterate over it.
+    pub const ALL: &'static [Self] = &[
+        Self::GENERIC,
+        Self::H2,
+        Self::POSTGRES,
+        Self::MYSQL,
+        Self::MARIADB,
+        Self::SQLITE,
+        Self::ORACLE,
+        Self::MSSQL,
+        Self::DB2,
+    ];
 
     /// Resolve the `dialect` field of a driver definition.
     ///
     /// Case-insensitive, tolerant of surrounding whitespace, and forgiving of
-    /// the spellings people write by hand: `postgresql`, `pgsql` and `pg` all
-    /// mean [`DialectId::Postgres`], and `sqlserver` and `tsql` both mean
+    /// the spellings people write by hand: each product's
+    /// [`aliases`](Vendor::aliases) — `postgresql`, `pgsql` and `pg` all mean
+    /// [`DialectId::Postgres`], and `sqlserver` and `tsql` both mean
     /// [`DialectId::MsSql`]. Anything else is [`Self::GENERIC`]. `mariadb` is
-    /// *not* among them any more: it names [`DialectId::MariaDb`], which is a
+    /// *not* among MySQL's: it names [`DialectId::MariaDb`], which is a
     /// dialect of its own.
     pub fn from_id(id: &str) -> Self {
         let id = id.trim();
-        // Two dozen candidates at most, all short: a linear scan of
-        // `eq_ignore_ascii_case` beats anything that would allocate a lowercase
-        // copy first.
-        const ALIASES: &[(&str, Dialect)] = &[
-            ("generic", Dialect::GENERIC),
-            ("sql", Dialect::GENERIC),
-            ("ansi", Dialect::GENERIC),
-            ("h2", Dialect::H2),
-            ("postgres", Dialect::POSTGRES),
-            ("postgresql", Dialect::POSTGRES),
-            ("pgsql", Dialect::POSTGRES),
-            ("pg", Dialect::POSTGRES),
-            ("mysql", Dialect::MYSQL),
-            ("mariadb", Dialect::MARIADB),
-            ("sqlite", Dialect::SQLITE),
-            ("sqlite3", Dialect::SQLITE),
-            ("oracle", Dialect::ORACLE),
-            ("mssql", Dialect::MSSQL),
-            ("sqlserver", Dialect::MSSQL),
-            ("tsql", Dialect::MSSQL),
-            ("db2", Dialect::DB2),
-        ];
-        for (name, dialect) in ALIASES {
-            if id.eq_ignore_ascii_case(name) {
-                return *dialect;
-            }
-        }
-        Self::GENERIC
+        // A dozen products with a few spellings each, all short: a linear scan
+        // of `eq_ignore_ascii_case` beats anything that would allocate a
+        // lowercase copy first.
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|dialect| {
+                let vendor = dialect.vendor;
+                vendor.name().eq_ignore_ascii_case(id)
+                    || vendor
+                        .aliases()
+                        .iter()
+                        .any(|alias| alias.eq_ignore_ascii_case(id))
+            })
+            .unwrap_or(Self::GENERIC)
     }
 
     /// Which dialect this is.
-    pub const fn id(self) -> DialectId {
-        self.id
+    pub fn id(self) -> DialectId {
+        self.vendor.id()
     }
 
     /// The canonical `dialect` string, as it would appear in `drivers.json`.
-    pub const fn name(self) -> &'static str {
-        self.id.as_str()
+    pub fn name(self) -> &'static str {
+        self.vendor.name()
     }
 
     /// The lexical rules the lexer branches on.
-    pub const fn syntax(self) -> &'static Syntax {
-        self.syntax
+    pub fn syntax(self) -> &'static Syntax {
+        self.vendor.syntax()
     }
 
     /// Whether `word` is a reserved word here. ASCII-case-insensitive.
     pub fn is_keyword(&self, word: &str) -> bool {
-        self.words.is_keyword(word)
+        self.vendor.words().is_keyword(word)
     }
 
     /// Whether `word` is a type name here. ASCII-case-insensitive.
@@ -418,52 +366,38 @@ impl Dialect {
     /// Checked *after* [`Self::is_keyword`] by the lexer, so a word in both
     /// tables is highlighted as a keyword.
     pub fn is_type(&self, word: &str) -> bool {
-        self.words.is_type(word)
+        self.vendor.words().is_type(word)
     }
 
     /// Keywords and type names offered by SQL completion, in uppercase.
     /// A word shared by the common and vendor tables may occur twice.
     pub fn completion_words(self) -> impl Iterator<Item = &'static str> {
-        self.words.completions()
+        self.vendor.words().completions()
     }
 
     /// The clause that cuts one page out of an ordered `SELECT`: `limit` rows,
     /// after skipping `offset`.
     ///
     /// Appended after any `ORDER BY`, as the last clause of the statement.
-    /// Db2 takes the standard `OFFSET … ROWS FETCH FIRST … ROWS ONLY`, which
-    /// Db2 for LUW has had since 11.1 and the IBM i and z/OS members spell the
-    /// same way, where `LIMIT` is a later addition on two of the three.
     /// `None` where this crate will not write one, which is a refusal rather
-    /// than an oversight: Oracle has `OFFSET … FETCH` only from 12c on and
-    /// `ROWNUM` before it, SQL Server's `OFFSET … FETCH` is an error without an
-    /// `ORDER BY` and absent before 2012, and plain SQL has no clause every
-    /// product accepts. A caller that gets `None` has to page some other way —
-    /// the data pane keeps the statement's cursor open and fetches from it.
+    /// than an oversight: the products that answer it say why in their own
+    /// file. A caller that gets `None` has to page some other way — the data
+    /// pane keeps the statement's cursor open and fetches from it.
     pub fn page_clause(self, limit: u64, offset: u64) -> Option<String> {
-        match self.id {
-            DialectId::H2
-            | DialectId::Postgres
-            | DialectId::MySql
-            | DialectId::MariaDb
-            | DialectId::Sqlite => Some(format!("LIMIT {limit} OFFSET {offset}")),
-            DialectId::Db2 => Some(format!(
-                "OFFSET {offset} ROWS FETCH FIRST {limit} ROWS ONLY"
-            )),
-            DialectId::Generic | DialectId::Oracle | DialectId::MsSql => None,
-        }
+        self.vendor.page_clause(limit, offset)
     }
 
     /// Whether a grid that has no [`Self::page_clause`] reads its rows through
     /// a server-side cursor rather than the driver's default result set.
     ///
-    /// SQL Server only. Its driver streams a default result set until anything
-    /// else runs on the connection, then reads the rest of it into memory; a
-    /// server cursor fetches one batch per round trip and holds no locks
-    /// between fetches. Oracle's cursors are server-side already, and the
-    /// others page by statement.
+    /// SQL Server only; its file says why.
     pub fn reads_by_server_cursor(self) -> bool {
-        self.id == DialectId::MsSql
+        self.vendor.reads_by_server_cursor()
+    }
+
+    /// The product's answers to everything else this crate asks.
+    pub(crate) fn vendor(self) -> &'static dyn Vendor {
+        self.vendor
     }
 }
 
@@ -471,22 +405,43 @@ impl Dialect {
 mod tests {
     use super::*;
 
-    /// Every canonical name resolves back to the dialect it names.
+    /// Every canonical name and every alias resolves back to the dialect it
+    /// names, and every id back to its registered dialect.
     #[test]
     fn canonical_ids_round_trip() {
-        for d in [
-            Dialect::GENERIC,
-            Dialect::H2,
-            Dialect::POSTGRES,
-            Dialect::MYSQL,
-            Dialect::MARIADB,
-            Dialect::SQLITE,
-            Dialect::ORACLE,
-            Dialect::MSSQL,
-            Dialect::DB2,
-        ] {
+        for &d in Dialect::ALL {
             assert_eq!(Dialect::from_id(d.name()), d, "{}", d.name());
+            assert_eq!(d.id().dialect(), d, "{}", d.name());
+            assert_eq!(d.id().as_str(), d.name());
+            for alias in d.vendor().aliases() {
+                assert_eq!(Dialect::from_id(alias), d, "{alias}");
+            }
         }
+    }
+
+    /// No two registered products share an id, a name or an alias, so which
+    /// one a spelling resolves to does not depend on the registry's order.
+    #[test]
+    fn every_dialect_is_registered_once() {
+        let mut ids = Vec::new();
+        let mut spellings = Vec::new();
+        for &d in Dialect::ALL {
+            ids.push(d.id());
+            spellings.push(d.name().to_ascii_lowercase());
+            spellings.extend(d.vendor().aliases().iter().map(|a| a.to_ascii_lowercase()));
+        }
+        let (id_count, spelling_count) = (ids.len(), spellings.len());
+        ids.sort();
+        ids.dedup();
+        spellings.sort();
+        spellings.dedup();
+        assert_eq!(ids.len(), id_count, "an id is registered twice");
+        assert_eq!(
+            spellings.len(),
+            spelling_count,
+            "a spelling names two products"
+        );
+        assert_eq!(Dialect::ALL[0], Dialect::GENERIC);
     }
 
     /// MariaDB is its own dialect and borrows MySQL's lexis: everything a

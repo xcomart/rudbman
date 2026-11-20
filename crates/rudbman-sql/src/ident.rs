@@ -82,11 +82,11 @@
 
 use std::borrow::Cow;
 
-use crate::dialect::{Dialect, DialectId};
+use crate::dialect::Dialect;
 
 /// What a server does to an identifier that reaches it unquoted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Folding {
+pub(crate) enum Folding {
     /// Folded to upper case: Oracle, H2, and the SQL standard.
     Upper,
     /// Folded to lower case: PostgreSQL.
@@ -198,15 +198,7 @@ impl Dialect {
 
     /// What this dialect does to an unquoted identifier.
     fn folding(&self) -> Folding {
-        match self.id() {
-            DialectId::Generic | DialectId::H2 | DialectId::Oracle | DialectId::Db2 => {
-                Folding::Upper
-            }
-            DialectId::Postgres => Folding::Lower,
-            DialectId::MySql | DialectId::MariaDb | DialectId::MsSql | DialectId::Sqlite => {
-                Folding::Preserve
-            }
-        }
+        self.vendor().folding()
     }
 }
 

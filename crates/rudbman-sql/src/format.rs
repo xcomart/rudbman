@@ -66,7 +66,7 @@ use std::collections::HashMap;
 use crate::dialect::Dialect;
 use crate::lexer::{LineState, TokenKind, lex, lex_line};
 
-mod ddl;
+pub(crate) mod ddl;
 
 pub use ddl::format_ddl;
 
