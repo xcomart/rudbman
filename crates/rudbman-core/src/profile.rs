@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rudbkit_core::TunnelConfig;
+use rudbkit_core::products::{self, Product};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
@@ -627,129 +628,91 @@ impl Default for DriverDef {
 /// Dialect id for a database the SQL layer has no special knowledge of.
 const DIALECT_GENERIC: &str = "generic";
 
-/// One built-in driver definition, in the shape the table below is written in.
+/// One built-in driver definition: a product of [`rudbkit_core::products`],
+/// with what this application chooses for it.
 ///
-/// A struct rather than a tuple so that eight string columns cannot be
+/// A struct rather than a tuple so that the string columns cannot be
 /// transposed by accident.
 struct BuiltinDriver {
     /// Value of [`DriverDef::id`].
     id: &'static str,
-    /// Value of [`DriverDef::name`].
-    name: &'static str,
+    /// The product: the class, Maven artifact, URL template, default port and
+    /// dialect it is defined with, and its name.
+    product: Product,
+    /// Value of [`DriverDef::name`] where it is not the product's own.
+    name: Option<&'static str>,
     /// Value of [`DriverDef::icon`]; every built-in has one.
     icon: &'static str,
-    /// Value of [`DriverDef::class`].
-    class: &'static str,
-    /// Value of [`DriverDef::maven`]; every built-in is downloadable.
-    maven: &'static str,
-    /// Value of [`DriverDef::url_template`].
-    url_template: &'static str,
-    /// Value of [`DriverDef::default_port`].
-    default_port: Option<u16>,
-    /// Value of [`DriverDef::dialect`].
-    dialect: &'static str,
+    /// The driver version [`DriverDef::maven`] names; every built-in is
+    /// downloadable.
+    version: &'static str,
 }
 
 /// Built-in driver definitions, in the order the picker shows them.
 ///
-/// The Maven coordinates pin a version that was current when this list was
-/// written; they are a starting point for the downloader, not a requirement.
-/// Users edit `drivers.json` to move to another version or to add a driver that
-/// is not here.
+/// The versions pin a driver that was current when this list was written;
+/// they are a starting point for the downloader, not a requirement. Users edit
+/// `drivers.json` to move to another version or to add a driver that is not
+/// here.
 const BUILTIN_DRIVERS: &[BuiltinDriver] = &[
     BuiltinDriver {
         id: "h2",
-        name: "H2",
+        // The server URL, under the product's short name: an embedded H2 file
+        // is opened by editing it into `jdbc:h2:file:/path/to/db`, which the
+        // connection editor allows.
+        product: products::H2_SERVER,
+        name: Some("H2"),
         icon: "h2",
-        class: "org.h2.Driver",
-        maven: "com.h2database:h2:2.3.232",
-        // The server URL: an embedded H2 file is opened by editing this into
-        // `jdbc:h2:file:/path/to/db`, which the connection editor allows.
-        url_template: "jdbc:h2:tcp://{host}:{port}/{database}",
-        default_port: Some(9092),
-        dialect: "h2",
+        version: "2.3.232",
     },
     BuiltinDriver {
         id: "postgresql",
-        name: "PostgreSQL",
+        product: products::POSTGRESQL,
+        name: None,
         icon: "postgresql",
-        class: "org.postgresql.Driver",
-        maven: "org.postgresql:postgresql:42.7.4",
-        url_template: "jdbc:postgresql://{host}:{port}/{database}",
-        default_port: Some(5432),
-        dialect: "postgres",
+        version: "42.7.4",
     },
     BuiltinDriver {
         id: "mysql",
-        name: "MySQL",
+        product: products::MYSQL,
+        name: None,
         icon: "mysql",
-        class: "com.mysql.cj.jdbc.Driver",
-        maven: "com.mysql:mysql-connector-j:9.1.0",
-        url_template: "jdbc:mysql://{host}:{port}/{database}",
-        default_port: Some(3306),
-        dialect: "mysql",
+        version: "9.1.0",
     },
     BuiltinDriver {
         id: "mariadb",
-        name: "MariaDB",
+        product: products::MARIADB,
+        name: None,
         icon: "mariadb",
-        class: "org.mariadb.jdbc.Driver",
-        maven: "org.mariadb.jdbc:mariadb-java-client:3.5.1",
-        url_template: "jdbc:mariadb://{host}:{port}/{database}",
-        default_port: Some(3306),
-        // MariaDB read as `mysql` until a server disagreed: the fork spells a
-        // check-constraint drop `DROP CONSTRAINT` where MySQL spells it
-        // `DROP CHECK`, and answers a syntax error for MySQL's. It has a
-        // dialect of its own now, which is MySQL's in every other spelling.
-        dialect: "mariadb",
+        version: "3.5.1",
     },
     BuiltinDriver {
         id: "sqlite",
-        name: "SQLite",
+        product: products::SQLITE,
+        name: None,
         icon: "sqlite",
-        class: "org.sqlite.JDBC",
-        maven: "org.xerial:sqlite-jdbc:3.47.1.0",
-        // SQLite is a file, not a service: no host, no port.
-        url_template: "jdbc:sqlite:{file}",
-        default_port: None,
-        dialect: "sqlite",
+        version: "3.47.1.0",
     },
     BuiltinDriver {
         id: "oracle-thin",
-        name: "Oracle Thin",
+        product: products::ORACLE_THIN,
+        name: None,
         icon: "oracle",
-        class: "oracle.jdbc.OracleDriver",
-        maven: "com.oracle.database.jdbc:ojdbc11:23.6.0.24.10",
-        // The service-name form; the older SID form is `@//{host}:{port}:{sid}`.
-        url_template: "jdbc:oracle:thin:@//{host}:{port}/{service}",
-        default_port: Some(1521),
-        dialect: "oracle",
+        version: "23.6.0.24.10",
     },
     BuiltinDriver {
         id: "mssql",
-        name: "Microsoft SQL Server",
+        product: products::MSSQL,
+        name: None,
         icon: "mssql",
-        class: "com.microsoft.sqlserver.jdbc.SQLServerDriver",
-        maven: "com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11",
-        // Semicolon-separated properties, not a path: that is this driver's URL
-        // grammar, not a typo.
-        url_template: "jdbc:sqlserver://{host}:{port};databaseName={database}",
-        default_port: Some(1433),
-        dialect: "mssql",
+        version: "12.8.1.jre11",
     },
     BuiltinDriver {
         id: "db2",
-        name: "IBM Db2",
+        product: products::DB2,
+        name: None,
         icon: "db2",
-        class: "com.ibm.db2.jcc.DB2Driver",
-        // IBM's JCC, the type 4 driver: the one Maven Central carries, and the
-        // same JAR for Db2 on Linux, UNIX and Windows, z/OS and IBM i.
-        maven: "com.ibm.db2:jcc:12.1.5.0",
-        // The database is the one the server catalogs, not a schema: a schema
-        // is picked in the explorer after connecting, like everywhere else.
-        url_template: "jdbc:db2://{host}:{port}/{database}",
-        default_port: Some(50000),
-        dialect: "db2",
+        version: "12.1.5.0",
     },
 ];
 
@@ -781,14 +744,14 @@ impl DriverDef {
             .iter()
             .map(|builtin| Self {
                 id: builtin.id.to_string(),
-                name: builtin.name.to_string(),
+                name: builtin.name.unwrap_or(builtin.product.name).to_string(),
                 icon: Some(builtin.icon.to_string()),
-                class: builtin.class.to_string(),
+                class: builtin.product.class.to_string(),
                 jars: Vec::new(),
-                maven: Some(builtin.maven.to_string()),
-                url_template: builtin.url_template.to_string(),
-                default_port: builtin.default_port,
-                dialect: builtin.dialect.to_string(),
+                maven: Some(builtin.product.maven(builtin.version)),
+                url_template: builtin.product.url_template.to_string(),
+                default_port: builtin.product.default_port,
+                dialect: builtin.product.dialect.to_string(),
                 // The custom comment queries stay off: every product in this
                 // table has a driver that answers `REMARKS` or a vendor query
                 // the bridge already knows, so a built-in that shipped one
