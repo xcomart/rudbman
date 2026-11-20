@@ -1686,6 +1686,16 @@ A driver definition:
 `dialect` selects `rudbman-sql`'s keyword set, identifier quoting rules, DDL
 generator and paging syntax (`ROWNUM` vs `LIMIT` vs `FETCH FIRST`).
 
+Each dialect is one file, `crates/rudbman-sql/src/dialect/<product>.rs`: its
+lexical rules, word tables, completion functions and `ALTER TABLE` spellings,
+and the `Vendor` implementation that answers everything else the crate asks
+per product — name folding, paging, plans, empty inserts, how statements and
+scripts are split. The lexer, splitter, formatter and SQL writers ask the
+dialect rather than testing which product it is. A new product is a new file
+plus its registration in `dialect.rs` (an id, a constant and an entry in
+`Dialect::ALL`); the trait has no default for any answer that is not safe to
+assume, so the compiler lists what is left to decide.
+
 The built-in definitions are H2, PostgreSQL, MySQL, MariaDB, SQLite, Oracle
 Thin, SQL Server and IBM Db2. They are written to `drivers.json` the first
 time, and afterwards the file is taken at its word — a deleted built-in stays
