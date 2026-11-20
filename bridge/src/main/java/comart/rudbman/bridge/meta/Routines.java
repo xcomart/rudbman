@@ -71,7 +71,7 @@ public final class Routines {
     private static final Logger LOG = Logger.getLogger(Routines.class.getName());
 
     /** ojdbc's fixed {@code REMARKS}; see {@link #remarks}. */
-    private static final Pattern ORACLE_REMARKS = Pattern.compile(
+    static final Pattern ORACLE_REMARKS = Pattern.compile(
             "(?i)(standalone|packaged) (procedure|function)( or function)?");
 
     /** SQL Server's {@code name;number}; see the class documentation. */
@@ -98,7 +98,7 @@ public final class Routines {
 
         Params params = collect("getProcedureColumns", () ->
                 dbm.getProcedureColumns(catalog, schema, name, null), true);
-        boolean numbered = Dialect.of(dbm) == Dialect.SQLSERVER;
+        boolean numbered = Dialect.of(dbm).vendor().numbersProcedures();
         Set<String> functions = numbered ? Set.of() : functionKeys(dbm, catalog, schema, name);
 
         JsonArray arr = new JsonArray();
@@ -144,7 +144,7 @@ public final class Routines {
                 arr.add(o);
             }
         }
-        return identified(dbm, req, arr);
+        return Dialect.of(dbm).vendor().identifyOverloads(dbm, req, arr);
     }
 
     /**
@@ -165,7 +165,7 @@ public final class Routines {
 
         Params params = collect("getFunctionColumns", () ->
                 dbm.getFunctionColumns(catalog, schema, name, null), false);
-        boolean numbered = Dialect.of(dbm) == Dialect.SQLSERVER;
+        boolean numbered = Dialect.of(dbm).vendor().numbersProcedures();
 
         JsonArray arr = new JsonArray();
         ResultSet listed;
@@ -207,7 +207,7 @@ public final class Routines {
                 arr.add(o);
             }
         }
-        return identified(dbm, req, arr);
+        return Dialect.of(dbm).vendor().identifyOverloads(dbm, req, arr);
     }
 
     /**
@@ -225,9 +225,9 @@ public final class Routines {
      * as they were; a drop then names the routine without its arguments, which
      * the server refuses when the name is overloaded rather than guessing.
      */
-    private static JsonArray identified(DatabaseMetaData dbm, JsonObject req, JsonArray items) {
+    static JsonArray postgresOverloads(DatabaseMetaData dbm, JsonObject req, JsonArray items) {
         String name = Json.str(req, "name");
-        if (name == null || items.isEmpty() || Dialect.of(dbm) != Dialect.POSTGRESQL) {
+        if (name == null || items.isEmpty()) {
             return items;
         }
         String schema = Json.str(req, "schema");
@@ -303,11 +303,7 @@ public final class Routines {
      * which says nothing about the routine and is not a comment anyone wrote.
      */
     private static String remarks(DatabaseMetaData dbm, String remarks) {
-        if (remarks != null && Dialect.of(dbm) == Dialect.ORACLE
-                && ORACLE_REMARKS.matcher(remarks.trim()).matches()) {
-            return null;
-        }
-        return remarks;
+        return Dialect.of(dbm).vendor().routineRemarks(remarks);
     }
 
     /** One routine's place: catalog, schema and name, absent parts empty. */

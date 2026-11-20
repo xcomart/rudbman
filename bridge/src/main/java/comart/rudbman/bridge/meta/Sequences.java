@@ -47,7 +47,7 @@ public final class Sequences {
      * {@code CACHE} and {@code REMARKS}.
      * Source: H2 2.x documentation, "Information Schema - SEQUENCES".
      */
-    private static final String H2_SQL = "SELECT * FROM INFORMATION_SCHEMA.SEQUENCES";
+    static final String H2_SQL = "SELECT * FROM INFORMATION_SCHEMA.SEQUENCES";
 
     /**
      * PostgreSQL exposes the standard view. It lists only sequences the current
@@ -55,7 +55,7 @@ public final class Sequences {
      * fact rather than a missing one.
      * Source: PostgreSQL documentation, "The Information Schema - sequences".
      */
-    private static final String POSTGRESQL_SQL = "SELECT * FROM information_schema.sequences";
+    static final String POSTGRESQL_SQL = "SELECT * FROM information_schema.sequences";
 
     /**
      * PostgreSQL 10's {@code pg_sequences}, which also has the cache size and
@@ -65,7 +65,7 @@ public final class Sequences {
      * its table. Before 10 the query fails and the standard view answers.
      * Source: PostgreSQL documentation, "pg_sequences".
      */
-    private static final String POSTGRESQL_CATALOG_SQL = "SELECT current_database()"
+    static final String POSTGRESQL_CATALOG_SQL = "SELECT current_database()"
             + " AS sequence_catalog, s.schemaname AS sequence_schema,"
             + " s.sequencename AS sequence_name, s.data_type::text AS data_type,"
             + " s.start_value, s.min_value AS minimum_value, s.max_value AS maximum_value,"
@@ -87,7 +87,7 @@ public final class Sequences {
      * null and {@code LAST_NUMBER} feeds {@code current_value}.
      * Source: Oracle Database Reference, "ALL_SEQUENCES".
      */
-    private static final String ORACLE_SQL = "SELECT * FROM ALL_SEQUENCES";
+    static final String ORACLE_SQL = "SELECT * FROM ALL_SEQUENCES";
 
     /**
      * The same, less the {@code ISEQ$$} sequences Oracle 12c makes for identity
@@ -96,7 +96,7 @@ public final class Sequences {
      * one answers.
      * Source: Oracle Database Reference, "ALL_TAB_IDENTITY_COLS".
      */
-    private static final String ORACLE_OWN_SQL = "SELECT s.* FROM ALL_SEQUENCES s"
+    static final String ORACLE_OWN_SQL = "SELECT s.* FROM ALL_SEQUENCES s"
             + " WHERE NOT EXISTS (SELECT 1 FROM ALL_TAB_IDENTITY_COLS i"
             + " WHERE i.OWNER = s.SEQUENCE_OWNER AND i.SEQUENCE_NAME = s.SEQUENCE_NAME)";
 
@@ -112,7 +112,7 @@ public final class Sequences {
      * does not, so it is trimmed here, where the filter below reads it.
      * Source: Db2 12.1 documentation, "SYSCAT.SEQUENCES catalog view".
      */
-    private static final String DB2_SQL = "SELECT RTRIM(s.SEQSCHEMA) AS SEQUENCE_SCHEMA,"
+    static final String DB2_SQL = "SELECT RTRIM(s.SEQSCHEMA) AS SEQUENCE_SCHEMA,"
             + " s.SEQNAME AS SEQUENCE_NAME,"
             + " CASE WHEN d.TYPENAME = 'DECIMAL'"
             + " THEN 'DECIMAL(' || VARCHAR(s.PRECISION) || ', 0)' ELSE d.TYPENAME END"
@@ -168,16 +168,17 @@ public final class Sequences {
      * @return the sequence list, empty when the product has no sequences
      */
     public static JsonArray of(Connection conn, DatabaseMetaData dbm, JsonObject req) {
-        Dialect dialect = Dialect.of(dbm);
-        if (dialect == Dialect.MARIADB) {
-            return mariadb(conn, Ident.of(dbm), req);
+        Vendor vendor = Dialect.of(dbm).vendor();
+        JsonArray own = vendor.sequences(conn, Ident.of(dbm), req);
+        if (own != null) {
+            return own;
         }
         String catalog = Json.str(req, "catalog");
         String schema = Json.str(req, "schema");
         String name = Json.str(req, "name");
         // The first query the server answers is the one used; a later one is
         // the older catalog a server without the first still has.
-        for (String sql : sqlFor(dialect, Ident.of(dbm), catalog)) {
+        for (String sql : vendor.sequenceQueries(Ident.of(dbm), catalog)) {
             JsonArray answered = Attempt.<JsonArray>run(conn, sql, st -> {
                 JsonArray arr = new JsonArray();
                 try (ResultSet rs = st.executeQuery(sql)) {
@@ -199,24 +200,13 @@ public final class Sequences {
         return new JsonArray();
     }
 
-    private static List<String> sqlFor(Dialect dialect, Ident id, String catalog) {
-        switch (dialect) {
-            case H2:         return List.of(H2_SQL);
-            case POSTGRESQL: return List.of(POSTGRESQL_CATALOG_SQL, POSTGRESQL_SQL);
-            case ORACLE:     return List.of(ORACLE_OWN_SQL, ORACLE_SQL);
-            case SQLSERVER:  return List.of(sqlServer(id, catalog));
-            case DB2:        return List.of(DB2_SQL);
-            default:         return List.of();
-        }
-    }
-
     /**
      * SQL Server's {@code sys.sequences}, which is per database: a catalog other
      * than the session's is read through its three-part name. The values are
      * {@code sql_variant}, cast to text for the driver to hand over.
      * Source: SQL Server documentation, "sys.sequences".
      */
-    private static String sqlServer(Ident id, String catalog) {
+    static String sqlServer(Ident id, String catalog) {
         boolean other = catalog != null && !catalog.isEmpty();
         String db = other ? id.q(catalog) + "." : "";
         return "SELECT " + (other ? Ident.literal(catalog) : "DB_NAME()") + " AS SEQUENCE_CATALOG,"
@@ -243,7 +233,7 @@ public final class Sequences {
      * read - a privilege granted on the schema listing but not on the sequence -
      * is still listed, with its options null.
      */
-    private static JsonArray mariadb(Connection conn, Ident id, JsonObject req) {
+    static JsonArray mariadb(Connection conn, Ident id, JsonObject req) {
         String database = Json.str(req, "catalog");
         if (database == null || database.isEmpty()) {
             database = Json.str(req, "schema");

@@ -13,7 +13,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,9 +104,9 @@ final class Comments {
      * is kept.
      * Source: Oracle Database Reference, "ALL_TAB_COMMENTS" / "ALL_COL_COMMENTS".
      */
-    private static final String ORACLE_TABLES =
+    static final String ORACLE_TABLES =
             "SELECT OWNER, TABLE_NAME, COMMENTS FROM ALL_TAB_COMMENTS WHERE ";
-    private static final String ORACLE_COLUMNS =
+    static final String ORACLE_COLUMNS =
             "SELECT OWNER, TABLE_NAME, COLUMN_NAME, COMMENTS FROM ALL_COL_COMMENTS WHERE ";
 
     /**
@@ -135,14 +134,14 @@ final class Comments {
      * text.
      * Source: SQL Server documentation, "sys.extended_properties".
      */
-    private static final String SQLSERVER_TABLES =
+    static final String SQLSERVER_TABLES =
             "SELECT s.name, o.name, CAST(ep.value AS nvarchar(4000)) "
             + "FROM sys.extended_properties ep "
             + "JOIN sys.objects o ON o.object_id = ep.major_id "
             + "JOIN sys.schemas s ON s.schema_id = o.schema_id "
             + "WHERE ep.class = 1 AND ep.minor_id = 0 "
             + "AND ep.name = 'MS_Description' AND o.type IN ('U', 'V')";
-    private static final String SQLSERVER_COLUMNS =
+    static final String SQLSERVER_COLUMNS =
             "SELECT s.name, o.name, c.name, CAST(ep.value AS nvarchar(4000)) "
             + "FROM sys.extended_properties ep "
             + "JOIN sys.objects o ON o.object_id = ep.major_id "
@@ -163,11 +162,11 @@ final class Comments {
      * {@code TABLE_SCHEMA} holds.
      * Source: MySQL 8.0 Reference Manual, "The INFORMATION_SCHEMA TABLES Table".
      */
-    private static final String MYSQL_TABLES =
+    static final String MYSQL_TABLES =
             "SELECT TABLE_SCHEMA, TABLE_NAME, "
             + "CASE WHEN TABLE_TYPE = 'VIEW' THEN NULL ELSE TABLE_COMMENT END "
             + "FROM information_schema.TABLES WHERE TABLE_SCHEMA = ";
-    private static final String MYSQL_COLUMNS =
+    static final String MYSQL_COLUMNS =
             "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COLUMN_COMMENT "
             + "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ";
 
@@ -178,8 +177,8 @@ final class Comments {
      * - and writing one would mean escaping the backslash for MySQL's own string
      * parser as well.
      */
-    private static final String ANSI_ESCAPE = " ESCAPE '\\'";
-    private static final String NO_ESCAPE = "";
+    static final String ANSI_ESCAPE = " ESCAPE '\\'";
+    static final String NO_ESCAPE = "";
 
     /** The JDBC table type, and the placeholder MySQL reports as a view's comment. */
     private static final String VIEW = "VIEW";
@@ -205,8 +204,8 @@ final class Comments {
      */
     static void tables(Connection conn, DatabaseMetaData dbm, JsonObject req, JsonArray items,
                        String custom) {
-        Dialect dialect = Dialect.of(dbm);
-        if (dialect.isMySqlFamily()) {
+        Vendor vendor = Dialect.of(dbm).vendor();
+        if (vendor.marksViewsInRemarks()) {
             unmarkViews(items);
         }
         if (!anyMissing(items)) {
@@ -220,13 +219,13 @@ final class Comments {
             }
             return;
         }
-        if (!enriches(dialect)) {
+        if (!vendor.hidesComments()) {
             return;
         }
         Attempt.on(conn, "table comments", c -> {
-            Map<String, String> found = tableComments(c, dialect, req);
+            Map<String, String> found = vendor.tableComments(c, req);
             for (JsonObject o : missing(items)) {
-                fill(o, found.get(key(owner(dialect, o), Json.str(o, "name"))));
+                fill(o, found.get(key(owner(vendor, o), Json.str(o, "name"))));
             }
             return null;
         }, null);
@@ -243,7 +242,7 @@ final class Comments {
      */
     static void columns(Connection conn, DatabaseMetaData dbm, JsonObject req, JsonArray items,
                         String custom) {
-        Dialect dialect = Dialect.of(dbm);
+        Vendor vendor = Dialect.of(dbm).vendor();
         if (!anyMissing(items)) {
             return;
         }
@@ -255,13 +254,13 @@ final class Comments {
             }
             return;
         }
-        if (!enriches(dialect)) {
+        if (!vendor.hidesComments()) {
             return;
         }
         Attempt.on(conn, "column comments", c -> {
-            Map<String, String> found = columnComments(c, dialect, req);
+            Map<String, String> found = vendor.columnComments(c, req);
             for (JsonObject o : missing(items)) {
-                fill(o, found.get(key(owner(dialect, o),
+                fill(o, found.get(key(owner(vendor, o),
                         Json.str(o, "table"), Json.str(o, "name"))));
             }
             return null;
@@ -294,86 +293,8 @@ final class Comments {
         }
     }
 
-    /** @return whether this product hides comments the server is holding */
-    private static boolean enriches(Dialect dialect) {
-        return dialect == Dialect.ORACLE || dialect == Dialect.SQLSERVER
-                || dialect.isMySqlFamily();
-    }
-
-    // ----------------------------------------------------------------- queries
-
-    /** @return table comments, keyed by owner and table name */
-    private static Map<String, String> tableComments(Connection conn, Dialect dialect,
-                                                     JsonObject req) throws SQLException {
-        Filter schema = Filter.of(req, "schema", "schema_pattern");
-        Filter table = Filter.of(req, "table", "table_pattern");
-        StringBuilder sql = new StringBuilder();
-        List<String> args = new ArrayList<>();
-        switch (dialect) {
-            case ORACLE:
-                sql.append(ORACLE_TABLES);
-                owner(sql, args, schema);
-                table.append(sql, args, "TABLE_NAME", ANSI_ESCAPE);
-                break;
-            case SQLSERVER:
-                if (elsewhere(conn, req)) {
-                    return Collections.emptyMap();
-                }
-                sql.append(SQLSERVER_TABLES);
-                schema.append(sql, args, "s.name", ANSI_ESCAPE);
-                table.append(sql, args, "o.name", ANSI_ESCAPE);
-                break;
-            case MYSQL:
-            case MARIADB:
-                sql.append(MYSQL_TABLES);
-                database(sql, args, req);
-                table.append(sql, args, "TABLE_NAME", NO_ESCAPE);
-                break;
-            default:
-                return Collections.emptyMap();
-        }
-        return read(conn, sql.toString(), args, 2);
-    }
-
-    /** @return column comments, keyed by owner, table name and column name */
-    private static Map<String, String> columnComments(Connection conn, Dialect dialect,
-                                                      JsonObject req) throws SQLException {
-        Filter schema = Filter.of(req, "schema", "schema_pattern");
-        Filter table = Filter.of(req, "table", "table_pattern");
-        Filter column = Filter.of(req, "column", "column_pattern");
-        StringBuilder sql = new StringBuilder();
-        List<String> args = new ArrayList<>();
-        switch (dialect) {
-            case ORACLE:
-                sql.append(ORACLE_COLUMNS);
-                owner(sql, args, schema);
-                table.append(sql, args, "TABLE_NAME", ANSI_ESCAPE);
-                column.append(sql, args, "COLUMN_NAME", ANSI_ESCAPE);
-                break;
-            case SQLSERVER:
-                if (elsewhere(conn, req)) {
-                    return Collections.emptyMap();
-                }
-                sql.append(SQLSERVER_COLUMNS);
-                schema.append(sql, args, "s.name", ANSI_ESCAPE);
-                table.append(sql, args, "o.name", ANSI_ESCAPE);
-                column.append(sql, args, "c.name", ANSI_ESCAPE);
-                break;
-            case MYSQL:
-            case MARIADB:
-                sql.append(MYSQL_COLUMNS);
-                database(sql, args, req);
-                table.append(sql, args, "TABLE_NAME", NO_ESCAPE);
-                column.append(sql, args, "COLUMN_NAME", NO_ESCAPE);
-                break;
-            default:
-                return Collections.emptyMap();
-        }
-        return read(conn, sql.toString(), args, 3);
-    }
-
     /** Appends Oracle's mandatory owner predicate. */
-    private static void owner(StringBuilder sql, List<String> args, Filter schema) {
+    static void oracleOwner(StringBuilder sql, List<String> args, Filter schema) {
         if (schema.absent()) {
             sql.append(ORACLE_CURRENT_SCHEMA);
         } else {
@@ -383,7 +304,7 @@ final class Comments {
     }
 
     /** Appends the MySQL database predicate the two queries open with. */
-    private static void database(StringBuilder sql, List<String> args, JsonObject req) {
+    static void mysqlDatabase(StringBuilder sql, List<String> args, JsonObject req) {
         String catalog = Json.str(req, "catalog");
         if (catalog == null || catalog.isEmpty()) {
             // No catalog filter means "whatever this session is connected to",
@@ -402,7 +323,7 @@ final class Comments {
      *         user's session - so a cross-database request is answered without
      *         enrichment rather than with the wrong database's comments.
      */
-    private static boolean elsewhere(Connection conn, JsonObject req) throws SQLException {
+    static boolean elsewhere(Connection conn, JsonObject req) throws SQLException {
         String catalog = Json.str(req, "catalog");
         return catalog != null && !catalog.isEmpty() && !catalog.equals(conn.getCatalog());
     }
@@ -414,8 +335,8 @@ final class Comments {
      *             the column after them
      * @return the non-blank comments, keyed by those columns
      */
-    private static Map<String, String> read(Connection conn, String sql, List<String> args,
-                                            int keys) throws SQLException {
+    static Map<String, String> read(Connection conn, String sql, List<String> args, int keys)
+            throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (int i = 0; i < args.size(); i++) {
                 ps.setString(i + 1, args.get(i));
@@ -560,8 +481,8 @@ final class Comments {
      *         and MariaDB put the database in {@code TABLE_CAT} and leave
      *         {@code TABLE_SCHEM} null; Oracle and SQL Server name a schema.
      */
-    private static String owner(Dialect dialect, JsonObject o) {
-        return Json.str(o, dialect.isMySqlFamily() ? "catalog" : "schema");
+    private static String owner(Vendor vendor, JsonObject o) {
+        return Json.str(o, vendor.catalogIsSchema() ? "catalog" : "schema");
     }
 
     /** Writes a comment into a row, leaving a blank one as the JSON null it was. */
@@ -609,7 +530,7 @@ final class Comments {
      * an exact name or as a JDBC search pattern - the two need different SQL, and
      * by the time the value is a bare string the difference is gone.
      */
-    private static final class Filter {
+    static final class Filter {
 
         private final String value;
         private final boolean pattern;

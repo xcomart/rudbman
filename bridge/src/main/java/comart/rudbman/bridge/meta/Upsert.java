@@ -38,7 +38,7 @@ public final class Upsert {
      * @return whether an upsert statement can be built for it
      */
     public static boolean supported(Dialect dialect) {
-        return dialect != Dialect.OTHER;
+        return dialect.vendor().upserts();
     }
 
     /**
@@ -59,18 +59,7 @@ public final class Upsert {
             throw new IllegalArgumentException("no portable upsert for " + dialect);
         }
         List<String> updates = nonKeyColumns(columns, keys);
-        switch (dialect) {
-            case POSTGRESQL:
-            case SQLITE:
-                return onConflict(id, qualified, columns, keys, updates);
-            case MYSQL:
-            case MARIADB:
-                return onDuplicateKey(id, qualified, columns, keys, updates);
-            case H2:
-                return h2Merge(id, qualified, columns, keys);
-            default:
-                return merge(dialect, id, qualified, columns, keys, updates);
-        }
+        return dialect.vendor().upsert(id, qualified, columns, keys, updates);
     }
 
     /** @return the columns that are not part of the conflict key, in order */
@@ -124,7 +113,7 @@ public final class Upsert {
                 + placeholders(columns.size()) + ")";
     }
 
-    private static String onConflict(Ident id, String qualified, List<String> columns,
+    static String onConflict(Ident id, String qualified, List<String> columns,
                                      List<String> keys, List<String> updates) {
         StringBuilder sb = new StringBuilder(insertHead(id, qualified, columns));
         sb.append(" ON CONFLICT (").append(columnList(id, keys)).append(')');
@@ -141,7 +130,7 @@ public final class Upsert {
         return sb.toString();
     }
 
-    private static String onDuplicateKey(Ident id, String qualified, List<String> columns,
+    static String onDuplicateKey(Ident id, String qualified, List<String> columns,
                                          List<String> keys, List<String> updates) {
         StringBuilder sb = new StringBuilder(insertHead(id, qualified, columns));
         sb.append(" ON DUPLICATE KEY UPDATE ");
@@ -159,7 +148,7 @@ public final class Upsert {
      * H2's own {@code MERGE}: the key is named directly and the row is a plain
      * {@code VALUES} list, so no source alias and no match clauses are needed.
      */
-    private static String h2Merge(Ident id, String qualified, List<String> columns,
+    static String h2Merge(Ident id, String qualified, List<String> columns,
                                   List<String> keys) {
         return "MERGE INTO " + qualified + " (" + columnList(id, columns) + ") KEY ("
                 + columnList(id, keys) + ") VALUES (" + placeholders(columns.size()) + ")";
@@ -176,16 +165,16 @@ public final class Upsert {
      * <p>Key columns are never assigned in {@code WHEN MATCHED}: Oracle rejects
      * updating a column that the {@code ON} clause joins on.
      */
-    private static String merge(Dialect dialect, Ident id, String qualified, List<String> columns,
-                                List<String> keys, List<String> updates) {
+    static String merge(Ident id, String qualified, List<String> columns, List<String> keys,
+                        List<String> updates, boolean fromDual, boolean terminated) {
         String src = "s";
         String dst = "d";
         StringBuilder sb = new StringBuilder("MERGE INTO ").append(qualified).append(' ');
-        if (dialect != Dialect.ORACLE) {
+        if (!fromDual) {
             sb.append("AS ");
         }
         sb.append(dst).append(" USING ");
-        if (dialect == Dialect.ORACLE) {
+        if (fromDual) {
             sb.append("(SELECT ");
             for (int i = 0; i < columns.size(); i++) {
                 sb.append(i == 0 ? "" : ", ").append("? AS ").append(id.q(columns.get(i)));
@@ -218,7 +207,7 @@ public final class Upsert {
             sb.append(i == 0 ? "" : ", ").append(src).append('.').append(id.q(columns.get(i)));
         }
         sb.append(')');
-        if (dialect == Dialect.SQLSERVER) {
+        if (terminated) {
             sb.append(';');
         }
         return sb.toString();

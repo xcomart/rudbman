@@ -22,23 +22,44 @@ import java.util.Locale;
 public enum Dialect {
 
     /** H2, product name {@code "H2"}. */
-    H2,
+    H2(new H2Vendor()),
     /** PostgreSQL and wire-compatible forks that keep the product name. */
-    POSTGRESQL,
+    POSTGRESQL(new PostgresVendor()),
     /** MySQL. */
-    MYSQL,
+    MYSQL(new MySqlVendor()),
     /** MariaDB. Reported separately from MySQL because only MariaDB has sequences. */
-    MARIADB,
+    MARIADB(new MariaDbVendor()),
     /** Oracle Database. */
-    ORACLE,
+    ORACLE(new OracleVendor()),
     /** Microsoft SQL Server. */
-    SQLSERVER,
+    SQLSERVER(new SqlServerVendor()),
     /** SQLite. */
-    SQLITE,
+    SQLITE(new SqliteVendor()),
     /** IBM Db2. */
-    DB2,
+    DB2(new Db2Vendor()),
     /** Anything unrecognized. Only portable, standard-JDBC paths may be used. */
-    OTHER;
+    OTHER(new PortableVendor());
+
+    /**
+     * The order products are tried in. MariaDB must be tested before MySQL:
+     * the MariaDB server reports "MariaDB" but several MySQL-compatible builds
+     * put both words in the string, and the sequence support hangs on which
+     * one is really there.
+     */
+    private static final Dialect[] DETECTION = {
+        MARIADB, MYSQL, POSTGRESQL, ORACLE, SQLSERVER, SQLITE, H2, DB2,
+    };
+
+    private final Vendor vendor;
+
+    Dialect(Vendor vendor) {
+        this.vendor = vendor;
+    }
+
+    /** @return everything the bridge does differently for this product */
+    public Vendor vendor() {
+        return vendor;
+    }
 
     /**
      * Identifies the product behind a connection.
@@ -71,32 +92,10 @@ public enum Dialect {
             return OTHER;
         }
         String n = productName.toLowerCase(Locale.ROOT);
-        // MariaDB must be tested before MySQL: the MariaDB server reports
-        // "MariaDB" but several MySQL-compatible builds put both words in the
-        // string, and the sequence support hangs on which one is really there.
-        if (n.contains("mariadb")) {
-            return MARIADB;
-        }
-        if (n.contains("mysql")) {
-            return MYSQL;
-        }
-        if (n.contains("postgresql") || n.contains("postgres")) {
-            return POSTGRESQL;
-        }
-        if (n.contains("oracle")) {
-            return ORACLE;
-        }
-        if (n.contains("microsoft sql server") || n.contains("sql server")) {
-            return SQLSERVER;
-        }
-        if (n.contains("sqlite")) {
-            return SQLITE;
-        }
-        if (n.startsWith("h2")) {
-            return H2;
-        }
-        if (n.contains("db2")) {
-            return DB2;
+        for (Dialect d : DETECTION) {
+            if (d.vendor.names(n)) {
+                return d;
+            }
         }
         return OTHER;
     }

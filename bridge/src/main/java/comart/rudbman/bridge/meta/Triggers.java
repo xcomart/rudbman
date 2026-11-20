@@ -45,7 +45,7 @@ public final class Triggers {
      * 8, update 16, truncate 32, instead 64.
      * Source: PostgreSQL source, {@code include/catalog/pg_trigger.h}.
      */
-    private static final String POSTGRESQL_SQL = "SELECT current_database(), n.nspname,"
+    static final String POSTGRESQL_SQL = "SELECT current_database(), n.nspname,"
             + " t.tgname, c.relname,"
             + " CASE WHEN t.tgtype & 2 <> 0 THEN 'BEFORE' WHEN t.tgtype & 64 <> 0"
             + " THEN 'INSTEAD OF' ELSE 'AFTER' END,"
@@ -62,7 +62,7 @@ public final class Triggers {
             + " WHERE NOT t.tgisinternal";
 
     /** MySQL and MariaDB: the database is the catalog, and every trigger is enabled. */
-    private static final String MYSQL_SQL = "SELECT TRIGGER_SCHEMA, NULL, TRIGGER_NAME,"
+    static final String MYSQL_SQL = "SELECT TRIGGER_SCHEMA, NULL, TRIGGER_NAME,"
             + " EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION, ACTION_ORIENTATION,"
             + " NULL, NULL FROM information_schema.TRIGGERS WHERE 1 = 1";
 
@@ -70,7 +70,7 @@ public final class Triggers {
      * The SQL standard view, with H2's {@code REMARKS}; also the attempt made on
      * a product this bridge does not recognize.
      */
-    private static final String STANDARD_SQL = "SELECT TRIGGER_CATALOG, TRIGGER_SCHEMA,"
+    static final String STANDARD_SQL = "SELECT TRIGGER_CATALOG, TRIGGER_SCHEMA,"
             + " TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION,"
             + " ACTION_ORIENTATION, NULL, %s FROM INFORMATION_SCHEMA.TRIGGERS WHERE 1 = 1";
 
@@ -80,7 +80,7 @@ public final class Triggers {
      * below. A trigger on a schema or the database has no table.
      * Source: Oracle Database Reference, "ALL_TRIGGERS".
      */
-    private static final String ORACLE_SQL = "SELECT NULL, OWNER, TRIGGER_NAME, TABLE_NAME,"
+    static final String ORACLE_SQL = "SELECT NULL, OWNER, TRIGGER_NAME, TABLE_NAME,"
             + " TRIGGER_TYPE, TRIGGERING_EVENT, NULL,"
             + " CASE WHEN STATUS = 'ENABLED' THEN 'Y' ELSE 'N' END, NULL"
             + " FROM ALL_TRIGGERS WHERE OWNER = ";
@@ -95,7 +95,7 @@ public final class Triggers {
      * blank-padded to eight characters.
      * Source: Db2 12.1 documentation, "SYSCAT.TRIGGERS catalog view".
      */
-    private static final String DB2_SQL = "SELECT CAST(NULL AS VARCHAR(1)), RTRIM(TRIGSCHEMA),"
+    static final String DB2_SQL = "SELECT CAST(NULL AS VARCHAR(1)), RTRIM(TRIGSCHEMA),"
             + " TRIGNAME, TABNAME,"
             + " CASE TRIGTIME WHEN 'B' THEN 'BEFORE' WHEN 'I' THEN 'INSTEAD OF'"
             + " ELSE 'AFTER' END,"
@@ -133,74 +133,15 @@ public final class Triggers {
         String catalog = blank(Json.str(req, "catalog"));
         String schema = blank(Json.str(req, "schema"));
         String name = blank(Json.str(req, "name"));
-        if (dialect == Dialect.SQLITE) {
-            return sqlite(conn, name);
+        Vendor vendor = dialect.vendor();
+        JsonArray own = vendor.triggers(conn, name);
+        if (own != null) {
+            return own;
         }
 
         StringBuilder sql = new StringBuilder();
         List<String> args = new ArrayList<>();
-        switch (dialect) {
-            case POSTGRESQL:
-                sql.append(POSTGRESQL_SQL);
-                filter(sql, args, "n.nspname", schema);
-                filter(sql, args, "t.tgname", name);
-                sql.append(" ORDER BY 2, 3");
-                break;
-            case MYSQL:
-            case MARIADB:
-                sql.append(MYSQL_SQL);
-                filter(sql, args, "TRIGGER_SCHEMA", catalog != null ? catalog : schema);
-                filter(sql, args, "TRIGGER_NAME", name);
-                sql.append(" ORDER BY 1, 3");
-                break;
-            case SQLSERVER: {
-                // sys.triggers is per database; a catalog other than the
-                // session's is read through its own three-part names.
-                String db = catalog == null ? "" : id.q(catalog) + ".";
-                sql.append("SELECT ").append(catalog == null ? "DB_NAME()" : "?")
-                        .append(", s.name, tr.name, o.name,")
-                        .append(" CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF'")
-                        .append(" ELSE 'AFTER' END, te.type_desc, 'STATEMENT',")
-                        .append(" CASE WHEN tr.is_disabled = 1 THEN 'N' ELSE 'Y' END, NULL")
-                        .append(" FROM ").append(db).append("sys.triggers tr")
-                        .append(" JOIN ").append(db).append("sys.objects o")
-                        .append(" ON o.object_id = tr.parent_id")
-                        .append(" JOIN ").append(db).append("sys.schemas s")
-                        .append(" ON s.schema_id = o.schema_id")
-                        .append(" JOIN ").append(db).append("sys.trigger_events te")
-                        .append(" ON te.object_id = tr.object_id")
-                        .append(" WHERE tr.parent_class = 1");
-                if (catalog != null) {
-                    args.add(catalog);
-                }
-                filter(sql, args, "s.name", schema);
-                filter(sql, args, "tr.name", name);
-                sql.append(" ORDER BY 2, 3");
-                break;
-            }
-            case DB2:
-                sql.append(DB2_SQL);
-                filter(sql, args, "TRIGSCHEMA", schema);
-                filter(sql, args, "TRIGNAME", name);
-                sql.append(" ORDER BY 2, 3");
-                break;
-            case ORACLE:
-                sql.append(ORACLE_SQL).append(DdlText.owner(schema));
-                if (schema != null) {
-                    args.add(schema);
-                }
-                filter(sql, args, "TRIGGER_NAME", name);
-                sql.append(" ORDER BY 3");
-                break;
-            default:
-                sql.append(String.format(STANDARD_SQL,
-                        dialect == Dialect.H2 ? "REMARKS" : "NULL"));
-                filter(sql, args, "TRIGGER_SCHEMA", schema);
-                filter(sql, args, "TRIGGER_NAME", name);
-                sql.append(" ORDER BY 2, 3");
-        }
-
-        boolean oracle = dialect == Dialect.ORACLE;
+        vendor.triggerQuery(sql, args, id, catalog, schema, name);
         return Attempt.on(conn, "triggers", c -> {
             Map<String, JsonObject> merged = new LinkedHashMap<>();
             try (PreparedStatement ps = c.prepareStatement(sql.toString())) {
@@ -213,9 +154,7 @@ public final class Triggers {
                         for (int i = 0; i < r.length; i++) {
                             r[i] = rs.getString(i + 1);
                         }
-                        if (oracle) {
-                            oracleType(r);
-                        }
+                        vendor.triggerRow(r);
                         String key = r[0] + '\0' + r[1] + '\0' + r[2] + '\0' + r[3];
                         JsonObject o = merged.get(key);
                         if (o == null) {
@@ -239,7 +178,7 @@ public final class Triggers {
     }
 
     /** Splits Oracle's {@code TRIGGER_TYPE} into timing and level, in place. */
-    private static void oracleType(String[] r) {
+    static void oracleType(String[] r) {
         String type = r[4] == null ? "" : r[4].trim().toUpperCase(Locale.ROOT);
         if (type.endsWith(" EACH ROW")) {
             r[4] = type.substring(0, type.length() - " EACH ROW".length());
@@ -256,7 +195,7 @@ public final class Triggers {
     }
 
     /** SQLite: timing and event read off the statement, row-level always. */
-    private static JsonArray sqlite(Connection conn, String name) {
+    static JsonArray sqlite(Connection conn, String name) {
         return Attempt.on(conn, "sqlite_master triggers", c -> {
             JsonArray arr = new JsonArray();
             String sql = SQLITE_SQL + (name != null ? " AND name = ?" : "") + " ORDER BY name";
@@ -300,7 +239,7 @@ public final class Triggers {
         return o;
     }
 
-    private static void filter(StringBuilder sql, List<String> args, String column, String value) {
+    static void filter(StringBuilder sql, List<String> args, String column, String value) {
         if (value != null) {
             sql.append(" AND ").append(column).append(" = ?");
             args.add(value);

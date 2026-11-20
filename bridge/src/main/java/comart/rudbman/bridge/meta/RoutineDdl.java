@@ -106,40 +106,10 @@ public final class RoutineDdl {
      */
     private static String nativeDdl(Connection conn, Dialect dialect, Ident id, String catalog,
                                     String schema, String name, boolean function) {
-        switch (dialect) {
-            case MYSQL:
-            case MARIADB: {
-                String qualified = id.qualify(catalog, schema, name);
-                String first = function ? "FUNCTION" : "PROCEDURE";
-                String other = function ? "PROCEDURE" : "FUNCTION";
-                String text = Attempt.<String>run(conn, "SHOW CREATE " + first,
-                        st -> mysqlShowCreate(st, first, qualified), null);
-                return text != null ? text : Attempt.<String>run(conn, "SHOW CREATE " + other,
-                        st -> mysqlShowCreate(st, other, qualified), null);
-            }
-            case POSTGRESQL:
-                return Attempt.<String>on(conn, "pg_get_functiondef",
-                        c -> postgres(c, schema, name), null);
-            case ORACLE: {
-                String text = DdlText.oracleSource(conn, schema, name,
-                        function ? "FUNCTION" : "PROCEDURE");
-                return text != null ? text : DdlText.oracleSource(conn, schema, name,
-                        function ? "PROCEDURE" : "FUNCTION");
-            }
-            case SQLSERVER:
-                return DdlText.sqlServerDefinition(conn,
-                        id.qualify(catalog, schema, unnumbered(name)));
-            case DB2:
-                return Attempt.<String>on(conn, "SYSCAT.ROUTINES",
-                        c -> db2(c, schema, name), null);
-            case H2:
-                return DdlText.h2Script(conn, id, schema, "ALIAS", name);
-            default:
-                return null;
-        }
+        return dialect.vendor().routineText(conn, id, catalog, schema, name, function);
     }
 
-    private static String mysqlShowCreate(Statement st, String keyword, String qualified)
+    static String mysqlShowCreate(Statement st, String keyword, String qualified)
             throws SQLException {
         try (ResultSet rs = st.executeQuery("SHOW CREATE " + keyword + " " + qualified)) {
             // Column 1 is the name, 2 the sql_mode and 3 the CREATE text, under
@@ -159,7 +129,7 @@ public final class RoutineDdl {
      * which they are. An older server fails the query and falls through to the
      * catalog layer.
      */
-    private static String postgres(Connection conn, String schema, String name)
+    static String postgres(Connection conn, String schema, String name)
             throws SQLException {
         boolean scoped = schema != null && !schema.isEmpty();
         String sql = "SELECT pg_catalog.pg_get_functiondef(p.oid)"
@@ -187,7 +157,7 @@ public final class RoutineDdl {
     }
 
     /** {@code SYSCAT.ROUTINES.TEXT} is the whole {@code CREATE} statement. */
-    private static String db2(Connection conn, String schema, String name) throws SQLException {
+    static String db2(Connection conn, String schema, String name) throws SQLException {
         boolean scoped = schema != null && !schema.isEmpty();
         String sql = "SELECT TEXT FROM SYSCAT.ROUTINES WHERE ROUTINESCHEMA = "
                 + (scoped ? "?" : "CURRENT SCHEMA") + " AND ROUTINENAME = ? ORDER BY SPECIFICNAME";
@@ -223,7 +193,7 @@ public final class RoutineDdl {
     private static String fromCatalog(Connection conn, DatabaseMetaData dbm, Dialect dialect,
                                       Ident id, String catalog, String schema, String name,
                                       boolean function) throws SQLException {
-        String owner = dialect.isMySqlFamily() ? catalog : schema;
+        String owner = dialect.vendor().catalogIsSchema() ? catalog : schema;
         boolean scoped = owner != null && !owner.isEmpty();
         String body = Attempt.<String>on(conn, "INFORMATION_SCHEMA.ROUTINES", c -> {
             String sql = "SELECT ROUTINE_DEFINITION FROM INFORMATION_SCHEMA.ROUTINES"
@@ -300,7 +270,7 @@ public final class RoutineDdl {
     // ---------------------------------------------------------------- text
 
     /** SQL Server's procedure numbering: {@code getProcedures} reports {@code P;1}. */
-    private static String unnumbered(String name) {
+    static String unnumbered(String name) {
         return name.replaceFirst(";\\d+$", "");
     }
 

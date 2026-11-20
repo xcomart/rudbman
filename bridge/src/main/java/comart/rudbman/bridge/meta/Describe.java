@@ -127,7 +127,7 @@ public final class Describe {
      */
     private static JsonArray catalogs(Connection conn, DatabaseMetaData dbm) throws SQLException {
         JsonArray arr = new JsonArray();
-        if (Dialect.of(dbm) == Dialect.POSTGRESQL) {
+        if (Dialect.of(dbm).vendor().seesOnlyItsCatalog()) {
             String current = conn.getCatalog();
             if (current != null && !current.isEmpty()) {
                 JsonObject o = new JsonObject();

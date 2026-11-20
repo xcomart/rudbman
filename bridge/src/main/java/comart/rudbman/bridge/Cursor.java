@@ -101,7 +101,8 @@ public final class Cursor {
         // name answers nothing - so passed on, it would only ever turn the
         // query pane's key lookup up empty. Dropped, the catalog is what the
         // explorer has for the same table: none.
-        boolean catalogs = Dialect.of(session.connection().getMetaData()) != Dialect.DB2;
+        boolean catalogs = Dialect.of(session.connection().getMetaData()).vendor()
+                .resultCatalogsResolve();
         colTypes = new int[n];
         colPrecision = new int[n];
         JsonArray arr = new JsonArray();

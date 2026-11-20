@@ -472,7 +472,7 @@ public final class ExtractJob extends Jobs.Job {
      */
     private static boolean overridingSystemValue(DatabaseMetaData dbm, Dialect dialect, Obj o)
             throws SQLException {
-        if (dialect != Dialect.POSTGRESQL && dialect != Dialect.H2) {
+        if (!dialect.vendor().overridesSystemValue()) {
             return false;
         }
         for (Ddl.DataColumn c : Ddl.dataColumns(dbm, o.catalog, o.schema, o.name)) {
