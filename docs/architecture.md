@@ -606,6 +606,8 @@ comart.rudbman.bridge/
 ├── codec/BatchWriter    the §4.6 encoder
 ├── meta/Describe.java   DatabaseMetaData lookups → JSON
 ├── meta/Ddl.java        DDL reconstruction (per dialect)
+├── meta/Vendor.java     what the bridge does differently per product; one
+│                        meta/<Product>Vendor.java each, held by its Dialect constant
 ├── job/Jobs.java        shared frame for job threads, progress and cancellation (§6). Introduced in M4
 ├── job/ExtractJob.java  script extraction (§6, M4)
 ├── job/BackupJob.java   §6, M6
@@ -1698,6 +1700,13 @@ connection code, ask the dialect rather than testing which product it is. A new 
 plus its registration in `dialect.rs` (an id, a constant and an entry in
 `Dialect::ALL`); the trait has no default for any answer that is not safe to
 assume, so the compiler lists what is left to decide.
+
+The bridge has the same arrangement on the Java side:
+`bridge/.../meta/<Product>Vendor.java`, held by the product's `Dialect`
+constant, answers what the catalog readers, DDL reconstruction, literals,
+scripts and backup job do differently per product. Its defaults are the
+portable path an unrecognized product already gets, which every caller has
+to stay useful under, so a new product overrides only where it differs.
 
 The built-in definitions are H2, PostgreSQL, MySQL, MariaDB, SQLite, Oracle
 Thin, SQL Server and IBM Db2. They are written to `drivers.json` the first

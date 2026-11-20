@@ -663,7 +663,10 @@ src/main/java/comart/rudbman/bridge/
     ├── Sequences.java     sequences, per-product catalog queries
     ├── Ddl.java           native DDL, and reverse generation as the fallback
     ├── Comments.java      comment repair for tables and columns
-    ├── Dialect.java       product name → the vendor paths that apply
+    ├── Dialect.java       product name → the product's Vendor
+    ├── Vendor.java        everything done differently per product, OTHER's way by default
+    ├── *Vendor.java       one product each: H2, Postgres, MySql, MariaDb, Oracle,
+    │                      SqlServer, Sqlite, Db2, and Portable for an unknown one
     ├── Ident.java         identifier quoting, only where it is needed
     ├── Upsert.java        the per-product spelling of "insert or update"
     ├── Attempt.java       savepoint-fenced query that is allowed to fail
