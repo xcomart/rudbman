@@ -524,6 +524,25 @@ driver:
   url_template: URL template
   default_port: Default port
   dialect: Dialect
+  # The dialect picker: the built-in dialects, then every profile of
+  # <config>/dialects. A profile is a YAML file that describes a database
+  # product on top of another dialect; %{file} is its file name, never
+  # translated. The product names of the built-ins are not translated either.
+  dialect_generic: "Generic SQL"
+  dialect_profile: "%{name} — profile %{file}"
+  dialect_profile_failed: "%{file} — profile that did not load"
+  dialect_unknown: "%{name} — unknown"
+  dialect_profile_hint: "A profile on %{base}, read from %{path}."
+  dialect_profile_failed_hint: "%{path} did not load, so this driver uses generic SQL: %{error}"
+  dialect_profile_pending: "A newer version of this profile came with rudbman and waits beside it as %{files}. Take what you want of it into the profile, then delete it."
+  dialect_unknown_hint: "No dialect or profile is called “%{name}”, so this driver uses generic SQL."
+  dialect_profiles_problem: "The dialect profiles could not all be read: %{error}"
+  dialect_export: "Export…"
+  dialect_folder: "Open folder"
+  dialect_exported: "The dialect was written to %{path}."
+  dialect_export_failed: "The dialect could not be exported: %{error}"
+  dialect_folder_failed: "The profiles folder could not be opened: %{error}"
+  dialect_failed_row: "profile did not load"
   maven: Maven coordinate
   jars: JAR files
   add_jar: Add a JAR…

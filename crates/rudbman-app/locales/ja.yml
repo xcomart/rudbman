@@ -355,6 +355,21 @@ driver:
   url_template: URL テンプレート
   default_port: 既定のポート
   dialect: 方言
+  dialect_generic: "汎用 SQL"
+  dialect_profile: "%{name} — プロファイル %{file}"
+  dialect_profile_failed: "%{file} — 読み込めなかったプロファイル"
+  dialect_unknown: "%{name} — 不明"
+  dialect_profile_hint: "%{base} をベースにしたプロファイルです。%{path} から読み込みました。"
+  dialect_profile_failed_hint: "%{path} を読み込めなかったため、このドライバーは汎用 SQL を使います: %{error}"
+  dialect_profile_pending: "rudbman に同梱された新しい版のプロファイルが %{files} として隣にあります。必要な内容をプロファイルに取り込んでから削除してください。"
+  dialect_unknown_hint: "「%{name}」という方言もプロファイルもないため、このドライバーは汎用 SQL を使います。"
+  dialect_profiles_problem: "方言プロファイルをすべては読み込めませんでした: %{error}"
+  dialect_export: "エクスポート…"
+  dialect_folder: "フォルダーを開く"
+  dialect_exported: "方言を %{path} に書き出しました。"
+  dialect_export_failed: "方言をエクスポートできませんでした: %{error}"
+  dialect_folder_failed: "プロファイルのフォルダーを開けませんでした: %{error}"
+  dialect_failed_row: "プロファイルを読み込めません"
   maven: Maven 座標
   jars: JAR ファイル
   add_jar: JAR を追加…

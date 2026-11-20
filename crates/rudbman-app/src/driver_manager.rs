@@ -40,6 +40,7 @@
 
 use rugpui::SmoothScrollExt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -48,16 +49,19 @@ use gpui::{
     MouseButton, MouseUpEvent, PathPromptOptions, Render, ScrollHandle, SharedString, Task, Window,
     div, prelude::*, px,
 };
-use rudbman_core::{DriverDef, DriverStore, drivers_dir};
+use rudbman_core::dialects::{self, Report};
+use rudbman_core::{DriverDef, DriverStore, dialects_dir, drivers_dir};
 use rudbman_jdbc::{BridgeErrorKind, DriverProbe, Error as JdbcError};
+use rudbman_sql::Dialect;
 use rugpui::{
     Button, ButtonVariant, Checkbox, DraggedThumb, Scrollbar, ScrollbarAxis, ScrollbarState,
-    TextInput, Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
+    Select, TextInput, Theme, form_row, hide_later, hide_now, scroll_to, scrolled, theme,
 };
 
 use crate::app_settings;
 use crate::connection::{self, ConnectError};
 use crate::i18n::ts;
+use crate::icons;
 use crate::maven::{self, Cancel, Coordinate, DownloadError, Progress};
 
 /// Element id of the driver list's overlay scroll indicator.
@@ -96,6 +100,10 @@ mod tab {
     pub const PORT: isize = 430;
     /// SQL dialect id.
     pub const DIALECT: isize = 440;
+    /// "Export…", beside the dialect.
+    pub const EXPORT_DIALECT: isize = 441;
+    /// "Open folder", beside it.
+    pub const DIALECT_FOLDER: isize = 442;
     /// Maven coordinate.
     pub const MAVEN: isize = 450;
     /// The download button beside the coordinate.
@@ -231,6 +239,17 @@ pub(crate) fn download_failure(error: DownloadError) -> SharedString {
     }
 }
 
+/// What the `dialect` a definition names is to the picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Choice {
+    /// A dialect built into the SQL layer.
+    Builtin(Dialect),
+    /// The profile at this place among the report's entries, loaded or not.
+    Profile(usize),
+    /// Neither: generic SQL, until a profile of that name appears.
+    Unknown,
+}
+
 /// A download in flight.
 struct Download {
     /// What is being fetched, for the message.
@@ -275,8 +294,14 @@ pub struct DriverManager {
     url_template_input: Entity<TextInput>,
     /// Port the connection editor pre-fills; blank for a file-backed database.
     port_input: Entity<TextInput>,
-    /// SQL dialect id.
-    dialect_input: Entity<TextInput>,
+    /// The selected driver's SQL dialect, as `drivers.json` spells it: a
+    /// built-in's name, a profile's id, or whatever the file says.
+    dialect: String,
+    /// Whether the dialect list is open.
+    dialect_open: bool,
+    /// What loading the dialect profiles came to, read again each time the
+    /// manager or the dialect list opens.
+    profiles: Arc<Report>,
     /// Maven coordinate, `group:artifact:version`.
     maven_input: Entity<TextInput>,
     /// Query answering table comments the driver leaves blank.
@@ -336,7 +361,11 @@ impl DriverManager {
                 tab::URL_TEMPLATE,
             ),
             port_input: field(cx, "5432".into(), tab::PORT),
-            dialect_input: field(cx, "postgres".into(), tab::DIALECT),
+            dialect: String::new(),
+            dialect_open: false,
+            // Read again here rather than taken from start-up, so that a
+            // profile edited since needs no restart (§7 of the design).
+            profiles: dialects::reload(),
             maven_input: field(cx, "org.postgresql:postgresql:42.7.4".into(), tab::MAVEN),
             table_comments_input: field(
                 cx,
@@ -375,7 +404,8 @@ impl DriverManager {
                 .unwrap_or_default(),
             cx,
         );
-        set_text(&self.dialect_input, driver.dialect, cx);
+        self.dialect = driver.dialect;
+        self.dialect_open = false;
         set_text(&self.maven_input, driver.maven.unwrap_or_default(), cx);
         set_text(&self.table_comments_input, driver.table_comments_sql, cx);
         set_text(&self.column_comments_input, driver.column_comments_sql, cx);
@@ -402,13 +432,9 @@ impl DriverManager {
             // A blank port is a database with no port, which is what SQLite and
             // an embedded H2 are; it is not zero.
             default_port: port.parse::<u16>().ok().filter(|port| *port > 0),
-            dialect: {
-                let dialect = text(&self.dialect_input, cx);
-                if dialect.is_empty() {
-                    "generic".to_string()
-                } else {
-                    dialect
-                }
+            dialect: match self.dialect.trim() {
+                "" => Dialect::GENERIC.name().to_string(),
+                dialect => dialect.to_string(),
             },
             maven: Some(text(&self.maven_input, cx)).filter(|text| !text.is_empty()),
             // The statements are kept whatever their flags say: a user who
@@ -708,6 +734,11 @@ impl DriverManager {
 
     /// `Escape`, one layer at a time.
     pub fn escape(&mut self, cx: &mut Context<Self>) {
+        if self.dialect_open {
+            self.dialect_open = false;
+            cx.notify();
+            return;
+        }
         if self.confirming {
             self.confirming = false;
             cx.notify();
@@ -857,11 +888,20 @@ impl DriverManager {
                     SharedString::from(driver.name.clone())
                 };
                 // A driver with no JAR cannot open anything, and that is the one
-                // fact about it worth carrying in a one-line row.
-                let subtitle = if driver.jars.is_empty() {
+                // fact about it worth carrying in a one-line row — with a
+                // dialect profile that did not load, which leaves it on
+                // generic SQL.
+                let jars = if driver.jars.is_empty() {
                     ts!("driver.no_jar")
                 } else {
                     ts!("driver.jar_count", count = driver.jars.len())
+                };
+                let failed = self.profile_failure(driver).is_some();
+                let warning = driver.jars.is_empty() || failed;
+                let subtitle = if failed {
+                    SharedString::from(format!("{jars} · {}", ts!("driver.dialect_failed_row")))
+                } else {
+                    jars
                 };
                 let this = this.clone();
                 div()
@@ -888,7 +928,7 @@ impl DriverManager {
                     .child(
                         div()
                             .text_size(rugpui::scaled(10., cx))
-                            .text_color(if driver.jars.is_empty() {
+                            .text_color(if warning {
                                 chrome.danger
                             } else {
                                 chrome.text_muted
@@ -1281,6 +1321,313 @@ impl DriverManager {
             .children(progress)
     }
 
+    /// What the dialect a definition names is to the picker.
+    fn choice_of(&self, dialect: &str) -> Choice {
+        if dialect.trim().is_empty() {
+            return Choice::Builtin(Dialect::GENERIC);
+        }
+        // `find` searches the registered profiles too; only a built-in's row is
+        // wanted here, a profile's is the report's.
+        if let Some(found) = Dialect::find(dialect)
+            && Dialect::ALL.contains(&found)
+        {
+            return Choice::Builtin(found);
+        }
+        match self.profiles.find(dialect) {
+            Some(at) => Choice::Profile(at),
+            None => Choice::Unknown,
+        }
+    }
+
+    /// The picker's rows, each with the value picking it stores: the
+    /// built-ins, every profile, and the definition's own value when it is
+    /// neither — so that opening the list never loses it.
+    fn dialect_choices(&self) -> Vec<(Option<String>, SharedString)> {
+        let mut choices: Vec<(Option<String>, SharedString)> = Dialect::ALL
+            .iter()
+            .map(|&dialect| (Some(dialect.name().to_string()), builtin_label(dialect)))
+            .collect();
+        for entry in &self.profiles.entries {
+            let file = format!("{}.yml", entry.id);
+            let label = match entry.failure() {
+                None => ts!(
+                    "driver.dialect_profile",
+                    name = entry.label().to_string(),
+                    file = file
+                ),
+                Some(_) => ts!("driver.dialect_profile_failed", file = file),
+            };
+            choices.push((Some(entry.id.clone()), label));
+        }
+        if self.choice_of(&self.dialect) == Choice::Unknown {
+            choices.push((
+                None,
+                ts!(
+                    "driver.dialect_unknown",
+                    name = self.dialect.trim().to_string()
+                ),
+            ));
+        }
+        choices
+    }
+
+    /// The label of the row the definition's dialect is.
+    fn dialect_label(&self) -> SharedString {
+        match self.choice_of(&self.dialect) {
+            Choice::Builtin(dialect) => builtin_label(dialect),
+            Choice::Profile(at) => {
+                let entry = &self.profiles.entries[at];
+                let file = format!("{}.yml", entry.id);
+                match entry.failure() {
+                    None => ts!(
+                        "driver.dialect_profile",
+                        name = entry.label().to_string(),
+                        file = file
+                    ),
+                    Some(_) => ts!("driver.dialect_profile_failed", file = file),
+                }
+            }
+            Choice::Unknown => {
+                ts!(
+                    "driver.dialect_unknown",
+                    name = self.dialect.trim().to_string()
+                )
+            }
+        }
+    }
+
+    /// The dialect the definition's dialect is, where it is one that loaded.
+    fn chosen_dialect(&self) -> Option<Dialect> {
+        match self.choice_of(&self.dialect) {
+            Choice::Builtin(dialect) => Some(dialect),
+            Choice::Profile(at) => self.profiles.entries[at].dialect(),
+            Choice::Unknown => None,
+        }
+    }
+
+    /// Why the profile `driver`'s dialect names did not load, when it names
+    /// one that did not.
+    fn profile_failure(&self, driver: &DriverDef) -> Option<&str> {
+        match self.choice_of(&driver.dialect) {
+            Choice::Profile(at) => self.profiles.entries[at].failure(),
+            Choice::Builtin(_) | Choice::Unknown => None,
+        }
+    }
+
+    /// Stores the picked row's value; the row of a value that is neither a
+    /// built-in nor a profile keeps it as it was.
+    fn pick_dialect(&mut self, value: Option<String>, cx: &mut Context<Self>) {
+        if let Some(value) = value {
+            self.dialect = value;
+        }
+        self.dialect_open = false;
+        self.collect(cx);
+        cx.notify();
+    }
+
+    /// Opens or closes the dialect list; opening reads the profiles again, so
+    /// a file edited with the manager open shows without closing it.
+    fn toggle_dialects(&mut self, open: bool, cx: &mut Context<Self>) {
+        if open {
+            self.profiles = dialects::reload();
+        }
+        self.dialect_open = open;
+        cx.notify();
+    }
+
+    /// Writes the chosen dialect out as a profile with every key filled in,
+    /// where the user says — the profiles' folder to begin with — and reads
+    /// the profiles again, so that a copy saved there is in the list at once.
+    fn export_dialect(&mut self, cx: &mut Context<Self>) {
+        let Some(dialect) = self.chosen_dialect() else {
+            return;
+        };
+        let directory = match dialects_dir() {
+            Ok(directory) => directory,
+            Err(error) => {
+                let error = format!("{error:#}");
+                self.report(ts!("driver.dialect_export_failed", error = error), true, cx);
+                return;
+            }
+        };
+        // Where the export is suggested to go; a folder that cannot be made
+        // only means the prompt opens somewhere else.
+        let _ = std::fs::create_dir_all(&directory);
+        let text = dialects::export(dialect);
+        let suggested = format!("{}-copy.yml", dialect.name());
+        let prompt = cx.prompt_for_new_path(&directory, Some(&suggested));
+        cx.spawn(async move |manager, cx| {
+            let path = match prompt.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    log::warn!("the save dialog could not be opened: {error:#}");
+                    return;
+                }
+            };
+            let written = rudbman_core::paths::write_atomic(&path, text.as_bytes());
+            manager
+                .update(cx, |manager, cx| match written {
+                    Ok(()) => {
+                        manager.profiles = dialects::reload();
+                        let path = path.display().to_string();
+                        manager.report(ts!("driver.dialect_exported", path = path), false, cx);
+                    }
+                    Err(error) => {
+                        let error = format!("{error:#}");
+                        manager.report(
+                            ts!("driver.dialect_export_failed", error = error),
+                            true,
+                            cx,
+                        );
+                    }
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Opens the profiles' folder in the system's file manager, making it
+    /// first: a user about to write their first profile has none yet.
+    fn open_dialects_folder(&mut self, cx: &mut Context<Self>) {
+        let made = dialects_dir().and_then(|directory| {
+            std::fs::create_dir_all(&directory)
+                .map(|()| directory.clone())
+                .map_err(|error| anyhow::anyhow!("{}: {error}", directory.display()))
+        });
+        match made {
+            Ok(directory) => cx.open_with_system(&directory),
+            Err(error) => {
+                let error = format!("{error:#}");
+                self.report(ts!("driver.dialect_folder_failed", error = error), true, cx);
+            }
+        }
+    }
+
+    /// The dialect picker, its two buttons, and what the chosen dialect is:
+    /// the profile's file and base, why it did not load, an update waiting
+    /// beside it, or a name that is no dialect at all.
+    fn render_dialect(&self, chrome: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let this = cx.entity();
+        let choices = self.dialect_choices();
+        let values: Vec<Option<String>> = choices.iter().map(|(value, _)| value.clone()).collect();
+        let labels: Vec<SharedString> = choices.into_iter().map(|(_, label)| label).collect();
+
+        let select = Select::new("driver-dialect")
+            .chevron_icon(icons::CHEVRON_DOWN)
+            .options(labels)
+            .selected(Some(self.dialect_label()))
+            .open(self.dialect_open)
+            .tab_index(tab::DIALECT)
+            .on_select({
+                let this = this.clone();
+                // By index: the labels are translated, the values are not.
+                move |index, _label, _window, cx| {
+                    let Some(value) = values.get(index).cloned() else {
+                        return;
+                    };
+                    this.update(cx, |manager, cx| manager.pick_dialect(value, cx));
+                }
+            })
+            .on_open_change({
+                let this = this.clone();
+                move |open, _window, cx| {
+                    this.update(cx, |manager, cx| manager.toggle_dialects(open, cx));
+                }
+            });
+
+        let export = {
+            let this = this.clone();
+            Button::new("driver-export-dialect", ts!("driver.dialect_export"))
+                .variant(ButtonVariant::Secondary)
+                .disabled(self.chosen_dialect().is_none())
+                .tab_index(tab::EXPORT_DIALECT)
+                .on_click(move |_, _window, cx| {
+                    this.update(cx, |manager, cx| manager.export_dialect(cx));
+                })
+        };
+        let folder = Button::new("driver-dialect-folder", ts!("driver.dialect_folder"))
+            .variant(ButtonVariant::Secondary)
+            .tab_index(tab::DIALECT_FOLDER)
+            .on_click(move |_, _window, cx| {
+                this.update(cx, |manager, cx| manager.open_dialects_folder(cx));
+            });
+
+        // What is worth a line under the picker, worst first.
+        let mut notes: Vec<(SharedString, bool)> = Vec::new();
+        match self.choice_of(&self.dialect) {
+            Choice::Builtin(_) => {}
+            Choice::Profile(at) => {
+                let entry = &self.profiles.entries[at];
+                let path = entry.path.display().to_string();
+                match entry.failure() {
+                    Some(error) => notes.push((
+                        ts!(
+                            "driver.dialect_profile_failed_hint",
+                            path = path,
+                            error = error.to_string()
+                        ),
+                        true,
+                    )),
+                    None => notes.push((
+                        ts!(
+                            "driver.dialect_profile_hint",
+                            base = entry.base.clone().unwrap_or_default(),
+                            path = path
+                        ),
+                        false,
+                    )),
+                }
+                if !entry.pending.is_empty() {
+                    let files = entry
+                        .pending
+                        .iter()
+                        .map(|path| file_name_of(path))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    notes.push((ts!("driver.dialect_profile_pending", files = files), false));
+                }
+            }
+            Choice::Unknown => notes.push((
+                ts!(
+                    "driver.dialect_unknown_hint",
+                    name = self.dialect.trim().to_string()
+                ),
+                true,
+            )),
+        }
+        if !self.profiles.problems.is_empty() {
+            let error = self.profiles.problems.join("; ");
+            notes.push((ts!("driver.dialect_profiles_problem", error = error), true));
+        }
+        let notes = notes.into_iter().map(|(text, danger)| {
+            div()
+                .text_size(rugpui::TextSize::Xs.size(cx))
+                .text_color(if danger {
+                    chrome.danger
+                } else {
+                    chrome.text_muted
+                })
+                .child(text)
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(div().flex_1().min_w_0().child(select))
+                    .child(export)
+                    .child(folder),
+            )
+            .children(notes)
+    }
+
     /// One custom comment query: the box that switches it on, the statement,
     /// and the contract the statement has to keep.
     ///
@@ -1360,6 +1707,7 @@ impl DriverManager {
         let class_row = self.render_class_row(chrome, cx);
         let jars = self.render_jars(chrome, cx);
         let maven = self.render_maven(chrome, cx);
+        let dialect = self.render_dialect(chrome, cx);
         let table_comments = self.render_comment_query(true, cx);
         let column_comments = self.render_comment_query(false, cx);
 
@@ -1395,10 +1743,7 @@ impl DriverManager {
                         form_row(ts!("driver.default_port"), self.port_input.clone())
                             .label_width(self.label_width),
                     )
-                    .child(
-                        form_row(ts!("driver.dialect"), self.dialect_input.clone())
-                            .label_width(self.label_width),
-                    )
+                    .child(form_row(ts!("driver.dialect"), dialect).label_width(self.label_width))
                     .child(form_row(ts!("driver.maven"), maven).label_width(self.label_width))
                     .child(form_row(ts!("driver.jars"), jars).label_width(self.label_width))
                     .child(
@@ -1627,6 +1972,16 @@ fn unique_id(prefix: &str, store: &DriverStore) -> String {
     }
 }
 
+/// A built-in's row in the dialect picker: the product's own name, which is
+/// not translated, except for generic SQL, which is no product's.
+fn builtin_label(dialect: Dialect) -> SharedString {
+    if dialect == Dialect::GENERIC {
+        ts!("driver.dialect_generic")
+    } else {
+        SharedString::new_static(dialect.product())
+    }
+}
+
 /// The last component of a path, for a message that names a file.
 fn file_name_of(path: &std::path::Path) -> String {
     path.file_name()
@@ -1718,6 +2073,75 @@ mod tests {
                 manager.read(cx).table_comments_input.read(cx).content(),
                 query
             );
+        });
+    }
+
+    /// The dialect picker lists the built-ins and every profile, stores a
+    /// profile by its id, and never loses a value that is neither.
+    #[gpui::test]
+    fn the_dialect_picker_offers_profiles_and_keeps_what_it_does_not_know(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("tidb.yml"),
+            "api: 1\nname: TiDB\nbase: mysql\n",
+        )
+        .expect("write");
+        std::fs::write(
+            dir.path().join("broken.yml"),
+            "api: 1\nname: B\nbase: nowhere\n",
+        )
+        .expect("write");
+        let manager = manager_over(Vec::new(), cx);
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| {
+                // This directory's profiles rather than whatever is on this
+                // machine; nothing is registered, the picker reads the report.
+                manager.profiles = Arc::new(dialects::load_from(dir.path()));
+                manager.fill_form(cx);
+            });
+        });
+
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| {
+                assert_eq!(manager.choice_of(""), Choice::Builtin(Dialect::GENERIC));
+                assert_eq!(
+                    manager.choice_of(" PostgreSQL"),
+                    Choice::Builtin(Dialect::POSTGRES),
+                    "an alias is the built-in's row"
+                );
+                let values: Vec<Option<String>> = manager
+                    .dialect_choices()
+                    .into_iter()
+                    .map(|(value, _)| value)
+                    .collect();
+                assert_eq!(values.len(), Dialect::ALL.len() + 2, "{values:?}");
+                assert!(values.contains(&Some("tidb".to_string())));
+                assert!(values.contains(&Some("broken".to_string())));
+
+                manager.pick_dialect(Some("tidb".to_string()), cx);
+                assert_eq!(manager.current().expect("H2").dialect, "tidb");
+                assert!(
+                    manager.chosen_dialect().is_some(),
+                    "a loaded profile exports"
+                );
+
+                manager.pick_dialect(Some("broken".to_string()), cx);
+                let driver = manager.current().cloned().expect("H2");
+                assert!(
+                    manager.profile_failure(&driver).is_some(),
+                    "shown on its row"
+                );
+                assert_eq!(manager.chosen_dialect(), None, "nothing to export");
+
+                // A value a hand-edited file holds stays as it was, row and all.
+                manager.dialect = "informix".to_string();
+                let last = manager.dialect_choices().pop().expect("a row");
+                assert_eq!(last.0, None);
+                manager.pick_dialect(None, cx);
+                assert_eq!(manager.current().expect("H2").dialect, "informix");
+            });
         });
     }
 
@@ -2057,6 +2481,25 @@ mod tests {
             ts!("driver.column_comments"),
             ts!("driver.use_column_comments"),
             ts!("driver.column_comments_hint"),
+            ts!("driver.dialect_generic"),
+            ts!("driver.dialect_profile", name = "TiDB", file = "tidb.yml"),
+            ts!("driver.dialect_profile_failed", file = "tidb.yml"),
+            ts!("driver.dialect_unknown", name = "x"),
+            ts!("driver.dialect_profile_hint", base = "mysql", path = "p"),
+            ts!(
+                "driver.dialect_profile_failed_hint",
+                path = "p",
+                error = "e"
+            ),
+            ts!("driver.dialect_profile_pending", files = "tidb.yml.new"),
+            ts!("driver.dialect_unknown_hint", name = "x"),
+            ts!("driver.dialect_profiles_problem", error = "e"),
+            ts!("driver.dialect_export"),
+            ts!("driver.dialect_folder"),
+            ts!("driver.dialect_exported", path = "p"),
+            ts!("driver.dialect_export_failed", error = "e"),
+            ts!("driver.dialect_folder_failed", error = "e"),
+            ts!("driver.dialect_failed_row"),
         ] {
             assert!(!label.is_empty(), "empty label");
             assert!(

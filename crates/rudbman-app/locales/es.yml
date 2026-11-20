@@ -355,6 +355,21 @@ driver:
   url_template: Plantilla de URL
   default_port: Puerto predeterminado
   dialect: Dialecto
+  dialect_generic: "SQL genérico"
+  dialect_profile: "%{name} — perfil %{file}"
+  dialect_profile_failed: "%{file} — perfil que no se cargó"
+  dialect_unknown: "%{name} — desconocido"
+  dialect_profile_hint: "Un perfil basado en %{base}, leído de %{path}."
+  dialect_profile_failed_hint: "%{path} no se cargó, así que este controlador usa SQL genérico: %{error}"
+  dialect_profile_pending: "Una versión más reciente de este perfil llegó con rudbman y espera a su lado como %{files}. Incorpore al perfil lo que necesite y luego elimínela."
+  dialect_unknown_hint: "No hay ningún dialecto ni perfil llamado «%{name}», así que este controlador usa SQL genérico."
+  dialect_profiles_problem: "No se pudieron leer todos los perfiles de dialecto: %{error}"
+  dialect_export: "Exportar…"
+  dialect_folder: "Abrir carpeta"
+  dialect_exported: "El dialecto se escribió en %{path}."
+  dialect_export_failed: "No se pudo exportar el dialecto: %{error}"
+  dialect_folder_failed: "No se pudo abrir la carpeta de perfiles: %{error}"
+  dialect_failed_row: "el perfil no se cargó"
   maven: Coordenada Maven
   jars: Archivos JAR
   add_jar: Añadir un JAR…

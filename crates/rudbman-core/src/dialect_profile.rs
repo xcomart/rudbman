@@ -8,7 +8,8 @@
 //! lost.
 //!
 //! The `bridge` half is read and kept as it stands, for the bridge to take
-//! when it learns profiles; nothing here applies it.
+//! when it learns profiles; nothing here applies it. The `driver` section is
+//! the driver definition a profile brings to the driver manager (§12).
 
 use std::fmt;
 
@@ -20,6 +21,8 @@ use rudbman_sql::dialect::profile::{
 use rudbman_sql::{RoutineDrop, SchemaDrop, TableTruncate, TriggerDrop, Unsupported};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::DriverDef;
+
 /// The version of the format this build reads and writes.
 pub const API: u32 = 1;
 
@@ -30,6 +33,62 @@ pub struct ProfileFile {
     pub spec: ProfileSpec,
     /// The `bridge` half, untouched.
     pub bridge: Option<serde_norway::Value>,
+    /// The driver definition the profile brings, if it brings one.
+    pub driver: Option<ProfileDriver>,
+}
+
+impl ProfileFile {
+    /// The script `bridge.script` names, as the file spells it.
+    pub fn script(&self) -> Option<&str> {
+        self.bridge.as_ref()?.get("script")?.as_str()
+    }
+}
+
+/// A profile's `driver` section: what a driver definition of its product
+/// starts as, so that the product reaches the driver manager without a
+/// built-in definition in code.
+///
+/// The definition's id and `dialect` are the profile's id; the rest is here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileDriver {
+    /// The definition's name, when it is not the profile's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The driver class.
+    pub class: String,
+    /// The Maven coordinate the downloader fetches, `group:artifact:version`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maven: Option<String>,
+    /// The URL template, with the connection editor's `{holes}`.
+    pub url_template: String,
+    /// The port the connection editor fills in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_port: Option<u16>,
+    /// The icon, an asset stem such as `mysql`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+impl ProfileDriver {
+    /// The definition of the profile `id`, named `profile_name` unless the
+    /// section names it.
+    pub fn definition(&self, id: &str, profile_name: &str) -> DriverDef {
+        DriverDef {
+            id: id.to_string(),
+            name: self
+                .name
+                .clone()
+                .unwrap_or_else(|| profile_name.to_string()),
+            icon: self.icon.clone(),
+            class: self.class.clone(),
+            maven: self.maven.clone(),
+            url_template: self.url_template.clone(),
+            default_port: self.default_port,
+            dialect: id.to_string(),
+            ..DriverDef::default()
+        }
+    }
 }
 
 /// Why a profile file could not be read.
@@ -90,9 +149,11 @@ pub fn parse(id: &str, text: &str) -> Result<ProfileFile, ParseError> {
         });
     }
     let bridge = file.bridge.clone();
+    let driver = file.driver.clone();
     Ok(ProfileFile {
         spec: file.into_spec(),
         bridge,
+        driver,
     })
 }
 
@@ -127,6 +188,8 @@ struct YamlProfile {
     sql: Option<YamlSql>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bridge: Option<serde_norway::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    driver: Option<ProfileDriver>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -581,6 +644,7 @@ impl YamlProfile {
             aliases: spec.aliases.clone(),
             sql: (!empty).then_some(sql),
             bridge: None,
+            driver: None,
         }
     }
 }
@@ -619,6 +683,12 @@ sql:
     default: TiDB keeps no default here
 bridge:
   script: tidb.groovy
+driver:
+  class: com.mysql.cj.jdbc.Driver
+  maven: com.mysql:mysql-connector-j:9.1.0
+  url_template: \"jdbc:mysql://{host}:{port}/{database}\"
+  default_port: 4000
+  icon: mysql
 ";
 
     /// The format of the design document, read and loaded.
@@ -629,7 +699,20 @@ bridge:
         assert_eq!(file.spec.aliases, ["pingcap"]);
         assert_eq!(file.spec.explain, Some(None), "null is kept as null");
         assert_eq!(file.spec.empty_insert, None, "a key left out stays out");
-        assert!(file.bridge.is_some(), "the bridge half is kept");
+        assert_eq!(
+            file.script(),
+            Some("tidb.groovy"),
+            "the bridge half is kept"
+        );
+        let driver = file
+            .driver
+            .as_ref()
+            .expect("the driver section")
+            .definition("tidb", "TiDB");
+        assert_eq!(driver.id, "tidb");
+        assert_eq!(driver.name, "TiDB", "named after the profile");
+        assert_eq!(driver.dialect, "tidb", "a definition of the profile's own");
+        assert_eq!(driver.default_port, Some(4000));
 
         let (_, loaded) = resolve(vec![("tidb".to_string(), file.spec)]).remove(0);
         let tidb = loaded.expect("loads");

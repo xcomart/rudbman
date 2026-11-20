@@ -1,8 +1,10 @@
 # User dialect profiles — design
 
-**Status: phase 1 implemented; the rest settled before the code.** Profiles
-resolve and export in `rudbman-sql` and read and write as YAML in
-`rudbman-core`; nothing loads them from disk yet. This document fixes the file
+**Status: phases 1 and 2 implemented; the rest settled before the code.**
+Profiles resolve and export in `rudbman-sql`, read and write as YAML in
+`rudbman-core`, load from `<config>/dialects` at start-up, and are picked and
+exported in the driver manager; the bridge does not read them yet. This
+document fixes the file
 format, the resolution rules, the scripting surface, the trust model and how
 the application ships profiles of its own, so that the phases at the end can
 land one at a time without reopening them.
@@ -58,7 +60,7 @@ answer.
 | Location | `<config>/dialects/*.yml`, where `<config>` is the application's configuration directory (`~/.config/rudbman` on Linux). Scripts sit beside them and are named relative to the YAML file. |
 | Id | The file stem, lower-case ASCII letters, digits, `-` and `_`. |
 | Reserved ids | Every built-in id and alias (`generic`, `h2`, `postgres`, `postgresql`, `pg`, `mysql`, `mariadb`, `sqlite`, `oracle`, `mssql`, `sqlserver`, `tsql`, `db2`, ...). A profile with one of them is refused: to change a built-in, write a profile with that `base` and point the driver at it. |
-| Matching | By the driver definition's `dialect` field, not by its display name. A display name is the user's to change, and one product can have several definitions (rudbgen's H2 embedded and server). The driver manager's dialect picker lists the built-ins and then every loaded profile by its `name`. |
+| Matching | By the driver definition's `dialect` field, not by its display name. A display name is the user's to change, and one product can have several definitions (rudbgen's H2 embedded and server). The driver manager's dialect picker lists the built-ins and then every profile by its `name` and file, one that failed marked as such. |
 | Fallback | A `dialect` naming no built-in and no loaded profile is generic SQL, as today (`Dialect::from_id`). A profile that fails to load is reported (§7) and its drivers get generic SQL until it is fixed. |
 
 `api: 1` is required in every profile. A later format raises it; an
@@ -243,6 +245,24 @@ What a key cannot say — a literal computed from a JDBC type, a counter
 derived from the source's catalog, a catalog row rewritten in place — is a
 hook for the script, or the base's.
 
+### 4.4 `driver`: the definition it brings
+
+```yaml
+driver:
+  name: TiDB                    # optional; the profile's name otherwise
+  class: com.mysql.cj.jdbc.Driver
+  maven: com.mysql:mysql-connector-j:9.1.0   # optional
+  url_template: "jdbc:mysql://{host}:{port}/{database}"
+  default_port: 4000            # optional; none for a file-backed database
+  icon: mysql                   # optional; an icon the application has
+```
+
+A driver definition of the profile's product, its id and `dialect` the
+profile's id. It is offered to `drivers.json` once, the way a built-in
+definition released since the file was written is (§12): the user may change
+it or delete it, and a deleted one is not offered again. Only a profile that
+loads offers one.
+
 ## 5. Groovy hooks
 
 ### 5.1 Where they run
@@ -359,15 +379,30 @@ open session and its credentials. So:
   round trip: every built-in, exported and loaded back as a profile on
   `generic`, answers every `Vendor` method the way the built-in does.
 
-### rudbman-app
+### rudbman-core and rudbman-app (phase 2, implemented)
 
-- Load `<config>/dialects` at start-up and when the driver manager opens;
-  keep the per-file results for display.
-- The driver manager's dialect field becomes a picker of built-ins and
-  profiles, with each profile's state, the export action and the trust
-  dialog. Every new string is added in all eight locales.
-- Sessions are opened with the resolved `bridge` half of the profile, and the
-  path of the Groovy runtime when it has a script (§5.3).
+- `rudbman_core::dialects` loads `<config>/dialects` — `load_from` reads and
+  resolves, `reload` registers what loaded and keeps a `Report` of every
+  file's state — at start-up (`start_up`, before the first window) and again
+  when the driver manager or its dialect list opens. A reload whose directory
+  has not changed since the last keeps the last, so opening the list leaks
+  nothing.
+- `start_up` first brings in the shipped files by §12's rules
+  (`sync_shipped`). The build script of `rudbman-core` compiles in the
+  repository's `dialects/` as `dialects::SHIPPED`.
+- A loaded profile's `driver` section is offered to `drivers.json` with the
+  built-ins, recorded in the same `offered_builtins` list: once, and a
+  definition deleted stays deleted.
+- The driver manager's dialect field is a picker of the built-ins and every
+  profile, which keeps a value that is neither as its own row. Under it: the
+  profile's base and file, why it did not load, a `.new` waiting beside it,
+  or that the value names nothing. A definition on a failed profile says so
+  on its row. **Export…** writes the chosen dialect as a profile (the
+  profiles' folder suggested), and **Open folder** opens that folder. Every
+  string is in all eight locales.
+- Still to come: the trust dialog (phase 4), and sessions opened with the
+  resolved `bridge` half of the profile and the path of the Groovy runtime
+  when it has a script (§5.3, phase 3).
 
 ### Bridge
 
@@ -450,7 +485,8 @@ code (§1).
 
 - **In the repository** the shipped profiles sit in `dialects/` at the root,
   each `<id>.yml` with its `<id>.groovy` beside it, and are compiled into the
-  binary, the way the locales are. A shipped profile is tested like a built-in:
+  binary, the way the locales are. There are none yet; `rudbman-core`'s tests
+  load every one there is. A shipped profile is tested like a built-in:
   the round trip, and the container suites against a server of its product.
 - **A driver definition.** A shipped profile may carry a `driver` section —
   its class, Maven coordinate, URL template, port and icon — so that a product

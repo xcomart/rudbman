@@ -355,6 +355,21 @@ driver:
   url_template: URL 模板
   default_port: 默认端口
   dialect: 方言
+  dialect_generic: "通用 SQL"
+  dialect_profile: "%{name} — 配置文件 %{file}"
+  dialect_profile_failed: "%{file} — 未能加载的配置文件"
+  dialect_unknown: "%{name} — 未知"
+  dialect_profile_hint: "基于 %{base} 的配置文件，读取自 %{path}。"
+  dialect_profile_failed_hint: "%{path} 未能加载，因此此驱动使用通用 SQL：%{error}"
+  dialect_profile_pending: "rudbman 附带的此配置文件的新版本以 %{files} 放在它旁边。请把需要的内容合并到配置文件中，然后删除它。"
+  dialect_unknown_hint: "没有名为“%{name}”的方言或配置文件，因此此驱动使用通用 SQL。"
+  dialect_profiles_problem: "未能读取全部方言配置文件：%{error}"
+  dialect_export: "导出…"
+  dialect_folder: "打开文件夹"
+  dialect_exported: "已将方言写入 %{path}。"
+  dialect_export_failed: "无法导出方言：%{error}"
+  dialect_folder_failed: "无法打开配置文件夹：%{error}"
+  dialect_failed_row: "配置文件未能加载"
   maven: Maven 坐标
   jars: JAR 文件
   add_jar: 添加 JAR…

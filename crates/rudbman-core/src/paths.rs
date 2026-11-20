@@ -17,7 +17,8 @@
 //! [`settings_file`], [`connections_file`], [`drivers_file`],
 //! [`known_hosts_file`]. What has no fixed number of members gets a
 //! subdirectory instead: [`ui_themes_dir`], [`editor_themes_dir`],
-//! [`snippets_dir`], [`drivers_dir`] and [`erd_layouts_dir`].
+//! [`snippets_dir`], [`drivers_dir`], [`erd_layouts_dir`] and
+//! [`dialects_dir`].
 
 use std::ffi::OsString;
 use std::fs;
@@ -57,6 +58,9 @@ const SNIPPETS_DIR_NAME: &str = "snippets";
 
 /// Name of the directory holding saved ERD box positions.
 const ERD_DIR_NAME: &str = "erd";
+
+/// Name of the directory holding dialect profiles.
+const DIALECTS_DIR_NAME: &str = "dialects";
 
 /// Byte order mark that Windows editors readily prepend to UTF-8 files.
 const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -198,6 +202,19 @@ pub fn erd_layouts_dir() -> Result<PathBuf> {
     Ok(config_dir()?.join(ERD_DIR_NAME))
 }
 
+/// Directory holding dialect profiles (`dialects`).
+///
+/// One `<id>.yml` per profile, with any script it names beside it, and the
+/// record of the files the application ships there (`shipped.json`); see
+/// [`crate::dialects`] and `docs/dialect-profiles.md`.
+///
+/// # Errors
+///
+/// Fails when no home directory can be determined for the current user.
+pub fn dialects_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join(DIALECTS_DIR_NAME))
+}
+
 /// Build a unique temporary path next to `path`.
 ///
 /// Keeping the temporary file in the same directory guarantees that the final
@@ -287,7 +304,7 @@ mod tests {
     #[test]
     fn config_paths_share_the_config_directory() {
         let dir = config_dir().expect("config dir");
-        let cases: [(PathBuf, &str); 9] = [
+        let cases: [(PathBuf, &str); 10] = [
             (settings_file().expect("settings"), SETTINGS_FILE_NAME),
             (
                 connections_file().expect("connections"),
@@ -306,6 +323,7 @@ mod tests {
             (drivers_dir().expect("driver jars"), DRIVERS_DIR_NAME),
             (snippets_dir().expect("snippets"), SNIPPETS_DIR_NAME),
             (erd_layouts_dir().expect("erd layouts"), ERD_DIR_NAME),
+            (dialects_dir().expect("dialects"), DIALECTS_DIR_NAME),
         ];
         for (path, name) in cases {
             assert_eq!(

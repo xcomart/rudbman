@@ -355,6 +355,21 @@ driver:
   url_template: Modèle d’URL
   default_port: Port par défaut
   dialect: Dialecte
+  dialect_generic: "SQL générique"
+  dialect_profile: "%{name} — profil %{file}"
+  dialect_profile_failed: "%{file} — profil qui n’a pas pu être chargé"
+  dialect_unknown: "%{name} — inconnu"
+  dialect_profile_hint: "Un profil fondé sur %{base}, lu depuis %{path}."
+  dialect_profile_failed_hint: "%{path} n’a pas pu être chargé : ce pilote utilise donc le SQL générique. %{error}"
+  dialect_profile_pending: "Une version plus récente de ce profil est arrivée avec rudbman et attend à côté sous le nom %{files}. Reportez-en ce qui vous intéresse dans le profil, puis supprimez-la."
+  dialect_unknown_hint: "Aucun dialecte ni profil ne s’appelle « %{name} » : ce pilote utilise donc le SQL générique."
+  dialect_profiles_problem: "Les profils de dialecte n’ont pas tous pu être lus : %{error}"
+  dialect_export: "Exporter…"
+  dialect_folder: "Ouvrir le dossier"
+  dialect_exported: "Le dialecte a été écrit dans %{path}."
+  dialect_export_failed: "Le dialecte n’a pas pu être exporté : %{error}"
+  dialect_folder_failed: "Le dossier des profils n’a pas pu être ouvert : %{error}"
+  dialect_failed_row: "profil non chargé"
   maven: Coordonnée Maven
   jars: Fichiers JAR
   add_jar: Ajouter un JAR…

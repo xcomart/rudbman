@@ -792,7 +792,8 @@ pub struct DriverStore {
     #[serde(default)]
     drivers: Vec<DriverDef>,
     /// Ids of the built-in definitions this file has already been offered,
-    /// whether or not it still holds them.
+    /// whether or not it still holds them — and of the definitions dialect
+    /// profiles bring (`docs/dialect-profiles.md`, §12), by the same rule.
     ///
     /// The difference between a built-in the user deleted and one released
     /// after the file was written: both are absent from
@@ -809,10 +810,15 @@ fn first_builtins() -> Vec<String> {
 }
 
 impl Default for DriverStore {
-    /// The built-in definitions, which is what a machine without a
-    /// `drivers.json` starts from.
+    /// The built-in definitions and those of the loaded dialect profiles,
+    /// which is what a machine without a `drivers.json` starts from.
     fn default() -> Self {
-        let drivers = DriverDef::builtins();
+        let mut drivers = DriverDef::builtins();
+        for driver in crate::dialects::current().drivers() {
+            if !drivers.iter().any(|known| known.id == driver.id) {
+                drivers.push(driver);
+            }
+        }
         Self {
             offered_builtins: drivers.iter().map(|driver| driver.id.clone()).collect(),
             drivers,
@@ -851,26 +857,29 @@ impl DriverStore {
         };
         let mut store: Self = serde_json::from_slice(strip_bom(&data))
             .with_context(|| format!("failed to parse drivers from {}", path.display()))?;
-        store.offer_new_builtins();
+        let mut offer = DriverDef::builtins();
+        offer.extend(crate::dialects::current().drivers());
+        store.offer(offer);
         Ok(store)
     }
 
-    /// Appends every built-in this store has not been offered, and records
-    /// that it has been.
+    /// Appends every definition of `offer` this store has not been offered,
+    /// and records that it has been: the built-ins, and the definitions the
+    /// loaded dialect profiles bring.
     ///
     /// Nothing is written back here: the next save records it, and until then
-    /// every load offers the same built-ins again and arrives at the same list.
-    /// A definition of the user's own that already took a built-in's id keeps
-    /// it — the id is what a connection profile refers to, and the user's is
-    /// the definition those profiles were made with.
-    fn offer_new_builtins(&mut self) {
-        for builtin in DriverDef::builtins() {
-            if self.offered_builtins.contains(&builtin.id) {
+    /// every load offers the same definitions again and arrives at the same
+    /// list. A definition of the user's own that already took an offered id
+    /// keeps it — the id is what a connection profile refers to, and the
+    /// user's is the definition those profiles were made with.
+    fn offer(&mut self, offer: Vec<DriverDef>) {
+        for driver in offer {
+            if self.offered_builtins.contains(&driver.id) {
                 continue;
             }
-            self.offered_builtins.push(builtin.id.clone());
-            if self.get(&builtin.id).is_none() {
-                self.drivers.push(builtin);
+            self.offered_builtins.push(driver.id.clone());
+            if self.get(&driver.id).is_none() {
+                self.drivers.push(driver);
             }
         }
     }
@@ -1487,6 +1496,35 @@ mod tests {
         let again = DriverStore::load_from(&path).expect("reload");
         let ids: Vec<&str> = again.drivers().iter().map(|d| d.id.as_str()).collect();
         assert_eq!(ids, ["postgresql"]);
+    }
+
+    /// A dialect profile's driver definition is offered once, by the
+    /// built-ins' rule: deleted, it stays deleted, and a definition of the
+    /// user's own under its id is kept.
+    #[test]
+    fn a_profiles_driver_is_offered_once() {
+        let tidb = DriverDef {
+            id: "tidb".to_string(),
+            name: "TiDB".to_string(),
+            dialect: "tidb".to_string(),
+            ..DriverDef::default()
+        };
+        let mut store = DriverStore::default();
+        store.offer(vec![tidb.clone()]);
+        assert_eq!(store.get("tidb"), Some(&tidb));
+
+        store.remove("tidb");
+        store.offer(vec![tidb.clone()]);
+        assert_eq!(store.get("tidb"), None, "deleted stays deleted");
+
+        let mut mine = DriverStore::default();
+        mine.upsert(DriverDef {
+            id: "tidb".to_string(),
+            name: "My TiDB".to_string(),
+            ..DriverDef::default()
+        });
+        mine.offer(vec![tidb]);
+        assert_eq!(mine.get("tidb").expect("kept").name, "My TiDB");
     }
 
     /// A definition of the user's own that took a new built-in's id is the one

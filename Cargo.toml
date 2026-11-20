@@ -74,6 +74,11 @@ serde_json = "1"
 # manifest gives: of the maintained `serde_yaml` forks it is the one whose
 # libyaml binding still receives releases.
 serde_norway = "0.9"
+# The record of the dialect profiles the application ships into the
+# configuration directory, and later the scripts the user has allowed, are
+# SHA-256 hashes (`docs/dialect-profiles.md`, §6 and §12). Already in the build
+# through the TLS and SSH stacks.
+sha2 = "0.11"
 uuid = { version = "1", features = ["v4", "serde"] }
 # The explorer filter's "matches the expression" condition. Already in the
 # tree through the editor's crates, so this adds a name, not a build.

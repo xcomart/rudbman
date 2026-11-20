@@ -337,6 +337,13 @@ impl Dialect {
     /// [`Self::GENERIC`]. `mariadb` is *not* among MySQL's: it names
     /// [`DialectId::MariaDb`], which is a dialect of its own.
     pub fn from_id(id: &str) -> Self {
+        Self::find(id).unwrap_or(Self::GENERIC)
+    }
+
+    /// The dialect `id` names, as [`Self::from_id`] reads it, or `None` where
+    /// that would fall back to [`Self::GENERIC`] — for a picker that has to
+    /// tell a definition naming generic SQL from one naming nothing it knows.
+    pub fn find(id: &str) -> Option<Self> {
         let id = id.trim();
         // A dozen products with a few spellings each, all short: a linear scan
         // of `eq_ignore_ascii_case` beats anything that would allocate a
@@ -353,7 +360,6 @@ impl Dialect {
                         .any(|alias| alias.eq_ignore_ascii_case(id))
             })
             .or_else(|| profile::find(id))
-            .unwrap_or(Self::GENERIC)
     }
 
     /// Which dialect this is.
@@ -364,6 +370,12 @@ impl Dialect {
     /// The canonical `dialect` string, as it would appear in `drivers.json`.
     pub fn name(self) -> &'static str {
         self.vendor.name()
+    }
+
+    /// The product's name as a person writes it (`SQL Server` where
+    /// [`Self::name`] is `mssql`), for a picker or a message.
+    pub fn product(self) -> &'static str {
+        self.vendor.product()
     }
 
     /// The lexical rules the lexer branches on.
@@ -513,6 +525,9 @@ mod tests {
         assert_eq!(Dialect::from_id("informix"), Dialect::GENERIC);
         assert_eq!(Dialect::from_id(""), Dialect::GENERIC);
         assert_eq!(Dialect::default(), Dialect::GENERIC);
+        // `find` tells the fallback from generic SQL named.
+        assert_eq!(Dialect::find("informix"), None);
+        assert_eq!(Dialect::find(" Generic"), Some(Dialect::GENERIC));
     }
 
     /// The word tables are wired to the right dialect.

@@ -400,6 +400,14 @@ pub(super) fn run() {
     // of thousands of files and nothing this early depends on it.
     std::thread::spawn(update::clean_leftovers);
 
+    // The dialect profiles of the configuration directory, the ones this
+    // build ships brought into it first, registered before anything asks
+    // `Dialect::from_id` — a restored workspace reopens query panes, whose
+    // highlighting is a dialect's, before the first window is drawn. A
+    // handful of small files; a profile that fails is reported and skipped,
+    // never fatal. See `rudbman_core::dialects`.
+    rudbman_core::dialects::start_up();
+
     // The icon set has to be installed before the app runs: `svg()` resolves
     // every path through this source, and the default one answers `None`.
     // `LastWindowClosed` rather than the default, which is this only away from

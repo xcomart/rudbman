@@ -355,6 +355,21 @@ driver:
   url_template: URL-Vorlage
   default_port: Standardport
   dialect: Dialekt
+  dialect_generic: "Generisches SQL"
+  dialect_profile: "%{name} — Profil %{file}"
+  dialect_profile_failed: "%{file} — Profil, das nicht geladen wurde"
+  dialect_unknown: "%{name} — unbekannt"
+  dialect_profile_hint: "Ein Profil auf Basis von %{base}, gelesen aus %{path}."
+  dialect_profile_failed_hint: "%{path} wurde nicht geladen, daher verwendet dieser Treiber generisches SQL: %{error}"
+  dialect_profile_pending: "Eine neuere Version dieses Profils wurde mit rudbman ausgeliefert und liegt daneben als %{files}. Übernehmen Sie daraus, was Sie brauchen, und löschen Sie sie dann."
+  dialect_unknown_hint: "Es gibt keinen Dialekt und kein Profil namens „%{name}“, daher verwendet dieser Treiber generisches SQL."
+  dialect_profiles_problem: "Die Dialektprofile konnten nicht alle gelesen werden: %{error}"
+  dialect_export: "Exportieren…"
+  dialect_folder: "Ordner öffnen"
+  dialect_exported: "Der Dialekt wurde nach %{path} geschrieben."
+  dialect_export_failed: "Der Dialekt konnte nicht exportiert werden: %{error}"
+  dialect_folder_failed: "Der Profilordner konnte nicht geöffnet werden: %{error}"
+  dialect_failed_row: "Profil nicht geladen"
   maven: Maven-Koordinate
   jars: JAR-Dateien
   add_jar: JAR hinzufügen…
