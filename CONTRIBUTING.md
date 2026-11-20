@@ -145,6 +145,50 @@ OS-keychain, Maven Central and real-bastion SSH tests are ignored by default.
 Read their setup requirements and select only the relevant tests with
 `--ignored`. The normal SSH suites start loopback servers.
 
+## Adding a database product
+
+A product's habits live in one place per layer, and each layer's defaults are
+chosen so that a missing answer is either a compile error or the portable
+path. Start each file from the product it most resembles; Db2, the most recent
+addition, touches every step below.
+
+1. **Product facts** — add a `Product` to `rudbkit-core/src/products.rs` in
+   [rudbkit](https://github.com/xcomart/rudbkit), and to its `ALL`. Push it to
+   rudbkit's `dev`, then move every `rudbkit-*` entry in this repository's
+   root `Cargo.toml` to that commit.
+2. **SQL dialect** — write `crates/rudbman-sql/src/dialect/<product>.rs`, a
+   unit struct and its `Vendor` implementation, and register it in
+   `dialect.rs`: a `DialectId` variant, a `mod` line, a `Dialect` constant and
+   an entry in `Dialect::ALL`. Every trait method without a default has to be
+   answered, so the compiler lists what is left. The tests that hold for every
+   dialect iterate `Dialect::ALL` and include the new one by themselves.
+   A product whose command-line client reads scripts its own way also needs a
+   `Client` in `script.rs`.
+3. **Bridge** — write `bridge/src/main/java/comart/rudbman/bridge/meta/<Product>Vendor.java`,
+   a subclass of `Vendor` that overrides what differs from the portable path,
+   and give it a `Dialect` constant and a place in `Dialect`'s detection
+   order, more specific product names first. A connection property the driver
+   needs before the product is known goes in `Session.java`, by driver class.
+4. **Built-in driver** — add a `BuiltinDriver` at the end of
+   `BUILTIN_DRIVERS` in `crates/rudbman-core/src/profile.rs`: its id, its
+   product, its icon and the driver version to download. Leave
+   `FIRST_BUILTINS` alone: `offered_builtins` offers the new definition once
+   to an existing `drivers.json`.
+5. **Container checks** — a service in `docker/compose.yml` on a port that
+   does not shadow a developer's own server; a `Product` variant in
+   `crates/rudbman-jdbc/tests/containers.rs`, whose exhaustive matches ask for
+   its URL variable, driver class and JAR; a line in `on_every_product!`, so
+   every shared suite runs against it; tests of its own, named after it, for
+   what only it does; its driver in `bridge/build.gradle`'s `drivers`; its URL
+   in `.github/workflows/ci.yml`, in a job of its own if its image is large;
+   and a product in `BackupRoundTripTest` with its client's restore command and
+   `src/test/resources/roundtrip/<short>-setup.sql` and `-catalog.sql`.
+6. **Documents** — the product lists in `README.md`, `docs/architecture.md`,
+   `docs/status.md` and `bridge/README.md`.
+
+rudbgen takes the same product in four smaller steps; see its contribution
+guide.
+
 ## Change guidelines
 
 - Preserve SQL dialect differences. Cover identifier quoting, nulls, keys and
