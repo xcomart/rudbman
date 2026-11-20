@@ -11,6 +11,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::{DropSpelling, RoutineDrop, SchemaDrop, TableTruncate};
 use crate::script::Client;
 
 /// IBM Db2.
@@ -133,6 +134,15 @@ const ALTER: AlterStyle = AlterStyle {
     ..AlterStyle::STANDARD
 };
 
+/// `RESTRICT` on a schema, `IMMEDIATE` on a truncate, and a routine by its
+/// specific name.
+const DROPS: DropSpelling = DropSpelling {
+    schema: SchemaDrop::SchemaRestrict,
+    truncate: TableTruncate::Immediate,
+    routines: RoutineDrop::Specific,
+    ..DropSpelling::STANDARD
+};
+
 impl Vendor for Db2 {
     fn id(&self) -> DialectId {
         DialectId::Db2
@@ -224,5 +234,17 @@ impl Vendor for Db2 {
 
     fn alter_style(&self) -> &'static AlterStyle {
         &ALTER
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DROPS
+    }
+
+    fn enter_scope(&self, _catalog: Option<&str>, schema: Option<&str>) -> Option<String> {
+        schema.map(|schema| format!("SET SCHEMA {schema}"))
+    }
+
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        None
     }
 }

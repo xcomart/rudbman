@@ -35,6 +35,8 @@
 
 use std::fmt;
 
+use crate::removal::DropSpelling;
+
 mod db2;
 mod generic;
 mod h2;
@@ -395,6 +397,34 @@ impl Dialect {
         self.vendor.reads_by_server_cursor()
     }
 
+    /// How the explorer's `DROP` and `TRUNCATE` are spelled here.
+    pub fn drop_spelling(self) -> &'static DropSpelling {
+        self.vendor.drop_spelling()
+    }
+
+    /// The statement that makes `catalog` or `schema` current, so that the
+    /// names a script leaves unqualified land in it: `USE` where the scope is
+    /// a catalog, the product's current-schema statement elsewhere.
+    ///
+    /// `None` where the product has one scope, and where the part it needs is
+    /// missing or blank. The names are quoted here.
+    pub fn enter_scope(self, catalog: Option<&str>, schema: Option<&str>) -> Option<String> {
+        let named = |part: Option<&str>| {
+            part.map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(|name| self.quote_ident(name).into_owned())
+        };
+        self.vendor
+            .enter_scope(named(catalog).as_deref(), named(schema).as_deref())
+    }
+
+    /// The property this product's driver reads a login timeout from, in
+    /// milliseconds, beside the standard `loginTimeout` in seconds; `None`
+    /// where that one is enough.
+    pub fn connect_timeout_property(self) -> Option<&'static str> {
+        self.vendor.connect_timeout_property()
+    }
+
     /// The product's answers to everything else this crate asks.
     pub(crate) fn vendor(self) -> &'static dyn Vendor {
         self.vendor
@@ -548,5 +578,49 @@ mod tests {
             assert!(!d.reads_by_server_cursor(), "{}", d.name());
         }
         assert!(Dialect::MSSQL.reads_by_server_cursor());
+    }
+
+    /// A scope is entered by the part the product names it by, quoted, and
+    /// a blank part names nothing.
+    #[test]
+    fn enter_scope_uses_the_part_the_product_needs() {
+        let cases = [
+            (Dialect::MYSQL, Some("USE `app db`")),
+            (Dialect::MARIADB, Some("USE `app db`")),
+            (Dialect::MSSQL, Some("USE \"app db\"")),
+            (Dialect::POSTGRES, Some("SET search_path TO \"Sales\"")),
+            (
+                Dialect::ORACLE,
+                Some("ALTER SESSION SET CURRENT_SCHEMA = \"Sales\""),
+            ),
+            (Dialect::H2, Some("SET SCHEMA \"Sales\"")),
+            (Dialect::DB2, Some("SET SCHEMA \"Sales\"")),
+            (Dialect::SQLITE, None),
+            (Dialect::GENERIC, None),
+        ];
+        for (d, expected) in cases {
+            assert_eq!(
+                d.enter_scope(Some(" app db "), Some("Sales")).as_deref(),
+                expected,
+                "{}",
+                d.name()
+            );
+        }
+        assert_eq!(Dialect::MYSQL.enter_scope(Some("  "), Some("s")), None);
+        assert_eq!(Dialect::POSTGRES.enter_scope(Some("c"), None), None);
+    }
+
+    /// Only the drivers that ignore `loginTimeout` get a property of their
+    /// own.
+    #[test]
+    fn connect_timeout_properties() {
+        for &d in Dialect::ALL {
+            let expected = match d.id() {
+                DialectId::MySql | DialectId::MariaDb => Some("connectTimeout"),
+                DialectId::Oracle => Some("oracle.net.CONNECT_TIMEOUT"),
+                _ => None,
+            };
+            assert_eq!(d.connect_timeout_property(), expected, "{}", d.name());
+        }
     }
 }

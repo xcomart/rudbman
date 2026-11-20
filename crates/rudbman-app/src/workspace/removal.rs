@@ -21,7 +21,7 @@
 
 use gpui::Subscription;
 use rudbman_jdbc::DescribeRequest;
-use rudbman_sql::{Dialect, DialectId};
+use rudbman_sql::{Dialect, RoutineDrop};
 use rugpui::TextInput;
 
 use super::*;
@@ -147,7 +147,9 @@ fn looked_up_kind(removal: Removal, node: &NodeId) -> Option<DropKind> {
 /// lookup: SQLite is the one product with no routines to drop.
 fn applies(dialect: &Dialect, removal: Removal, node: &NodeId) -> bool {
     match looked_up_kind(removal, node) {
-        Some(DropKind::Procedure | DropKind::Function) => dialect.id() != DialectId::Sqlite,
+        Some(DropKind::Procedure | DropKind::Function) => {
+            dialect.drop_spelling().routines != RoutineDrop::None
+        }
         Some(_) => true,
         None => statement(dialect, removal, node, false).is_some(),
     }
@@ -236,14 +238,15 @@ fn identified(dialect: &Dialect, removal: Removal, node: &NodeId, found: &[Found
     if found.is_empty() {
         return drop_statement(dialect, &target).into_iter().collect();
     }
-    let oracle = dialect.id() == DialectId::Oracle;
+    // The driver files a packaged routine under its package as the catalog.
+    let packaged = dialect.drop_spelling().routines == RoutineDrop::Packaged;
     let mut statements: Vec<String> = Vec::new();
     for found in found {
         let identity = Identity {
             arguments: found.arguments.as_deref(),
             routine_kind: found.routine_kind.as_deref(),
             specific_name: found.specific_name.as_deref(),
-            package: found.catalog.as_deref().filter(|_| oracle),
+            package: found.catalog.as_deref().filter(|_| packaged),
             table: found.table.as_deref(),
         };
         if let Some(statement) = drop_statement(dialect, &DropTarget { identity, ..target })

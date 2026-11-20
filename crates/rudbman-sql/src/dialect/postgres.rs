@@ -7,6 +7,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::{DropSpelling, RoutineDrop, TriggerDrop};
 use crate::script::Client;
 
 /// PostgreSQL.
@@ -149,6 +150,15 @@ const FUNCTIONS: &[&str] = &[
     "TO_DATE",
 ];
 
+/// A database can be dropped, a routine is one overload of its name, and a
+/// trigger is named by its table.
+const DROPS: DropSpelling = DropSpelling {
+    database: true,
+    routines: RoutineDrop::Overloaded,
+    triggers: TriggerDrop::OnTable,
+    ..DropSpelling::STANDARD
+};
+
 impl Vendor for Postgres {
     fn id(&self) -> DialectId {
         DialectId::Postgres
@@ -233,5 +243,17 @@ impl Vendor for Postgres {
     /// The standard form throughout.
     fn alter_style(&self) -> &'static AlterStyle {
         &AlterStyle::STANDARD
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DROPS
+    }
+
+    fn enter_scope(&self, _catalog: Option<&str>, schema: Option<&str>) -> Option<String> {
+        schema.map(|schema| format!("SET search_path TO {schema}"))
+    }
+
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        None
     }
 }

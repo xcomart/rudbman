@@ -7,6 +7,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::{DropSpelling, RoutineDrop, SchemaDrop, TableTruncate};
 use crate::script::Client;
 
 /// SQLite.
@@ -89,6 +90,14 @@ const ALTER: AlterStyle = AlterStyle {
     attrs: AttrStyle::Rebuild,
     constraints: DropStyle::Rebuild,
     ..AlterStyle::STANDARD
+};
+
+/// No schema, no `TRUNCATE` and no routines.
+const DROPS: DropSpelling = DropSpelling {
+    schema: SchemaDrop::None,
+    truncate: TableTruncate::DeleteAll,
+    routines: RoutineDrop::None,
+    ..DropSpelling::STANDARD
 };
 
 impl Vendor for Sqlite {
@@ -183,5 +192,18 @@ impl Vendor for Sqlite {
             "SQLite has no ALTER TABLE form for it, and the table would have to be \
              rebuilt — a new table, a copy of every row, a drop and a rename",
         )
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DROPS
+    }
+
+    /// One database, one scope.
+    fn enter_scope(&self, _catalog: Option<&str>, _schema: Option<&str>) -> Option<String> {
+        None
+    }
+
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        None
     }
 }

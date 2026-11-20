@@ -10,6 +10,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::{DropSpelling, SchemaDrop};
 use crate::script::Client;
 
 /// MySQL.
@@ -144,6 +145,14 @@ pub(super) const ALTER: AlterStyle = AlterStyle {
     ..AlterStyle::STANDARD
 };
 
+/// The schema level is the database, and the server's databases can be
+/// dropped.
+const DROPS: DropSpelling = DropSpelling {
+    schema: SchemaDrop::Database,
+    database: true,
+    ..DropSpelling::STANDARD
+};
+
 impl Vendor for MySql {
     fn id(&self) -> DialectId {
         DialectId::MySql
@@ -235,5 +244,18 @@ impl Vendor for MySql {
             ),
             _ => None,
         }
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DROPS
+    }
+
+    fn enter_scope(&self, catalog: Option<&str>, _schema: Option<&str>) -> Option<String> {
+        catalog.map(|catalog| format!("USE {catalog}"))
+    }
+
+    /// Connector/J ignores `loginTimeout` and takes `connectTimeout`.
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        Some("connectTimeout")
     }
 }

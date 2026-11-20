@@ -511,12 +511,7 @@ fn apply_login_timeout(spec: &mut rudbman_jdbc::ConnectionSpec, dialect: &str, s
     }
     spec.login_timeout_s = seconds;
     let millis = (u64::from(seconds) * 1000).to_string();
-    let property = match dialect {
-        "mysql" | "mariadb" => Some("connectTimeout"),
-        "oracle" => Some("oracle.net.CONNECT_TIMEOUT"),
-        _ => None,
-    };
-    if let Some(property) = property {
+    if let Some(property) = rudbman_sql::Dialect::from_id(dialect).connect_timeout_property() {
         spec.props.entry(property.to_string()).or_insert(millis);
     }
 }

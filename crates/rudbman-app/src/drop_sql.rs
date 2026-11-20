@@ -49,8 +49,12 @@
 //! - Everywhere else a routine's and a trigger's name is unique in its schema,
 //!   and the plain `DROP FUNCTION`, `DROP PROCEDURE` or `DROP TRIGGER` is it.
 //!   SQLite has no routines.
+//!
+//! Which of these a product does is its [`Dialect::drop_spelling`] row, kept
+//! with the rest of that product's answers in `rudbman-sql`; this module only
+//! writes what the row says.
 
-use rudbman_sql::{Dialect, DialectId};
+use rudbman_sql::{Dialect, RoutineDrop, SchemaDrop, TableTruncate, TriggerDrop};
 
 use crate::builder_sql::table_parts;
 
@@ -140,7 +144,7 @@ impl<'a> DropTarget<'a> {
 /// inside a package, and a PostgreSQL trigger whose table the lookup did not
 /// find. The menu leaves the row out where it can tell in advance.
 pub fn drop_statement(dialect: &Dialect, target: &DropTarget<'_>) -> Option<String> {
-    let id = dialect.id();
+    let spelling = dialect.drop_spelling();
     let quote = |name: &str| dialect.quote_ident(name).into_owned();
     let object = |keyword: &str| format!("DROP {keyword} {}", qualified(dialect, target));
     match target.kind {
@@ -154,36 +158,20 @@ pub fn drop_statement(dialect: &Dialect, target: &DropTarget<'_>) -> Option<Stri
         DropKind::Sequence => Some(in_database(dialect, target.catalog, object("SEQUENCE"))),
         DropKind::Schema => {
             let name = quote(target.name);
-            match id {
-                DialectId::Sqlite => None,
-                // A schema is a user there, and the user is what goes.
-                DialectId::Oracle => Some(format!("DROP USER {name}")),
-                // `RESTRICT` is not optional on Db2.
-                DialectId::Db2 => Some(format!("DROP SCHEMA {name} RESTRICT")),
-                // The schema level of the MySQL family is the database.
-                DialectId::MySql | DialectId::MariaDb => Some(format!("DROP DATABASE {name}")),
-                DialectId::MsSql => Some(in_database(
-                    dialect,
-                    target.catalog,
-                    format!("DROP SCHEMA {name}"),
-                )),
-                DialectId::Generic | DialectId::H2 | DialectId::Postgres => {
-                    Some(format!("DROP SCHEMA {name}"))
-                }
-            }
+            let statement = match spelling.schema {
+                SchemaDrop::None => return None,
+                SchemaDrop::Schema => format!("DROP SCHEMA {name}"),
+                SchemaDrop::SchemaRestrict => format!("DROP SCHEMA {name} RESTRICT"),
+                SchemaDrop::User => format!("DROP USER {name}"),
+                SchemaDrop::Database => format!("DROP DATABASE {name}"),
+            };
+            Some(in_database(dialect, target.catalog, statement))
         }
         DropKind::Function | DropKind::Procedure => routine(dialect, target),
         DropKind::Trigger => trigger(dialect, target),
-        DropKind::Database => match id {
-            DialectId::Postgres | DialectId::MySql | DialectId::MariaDb | DialectId::MsSql => {
-                Some(format!("DROP DATABASE {}", quote(target.name)))
-            }
-            DialectId::Generic
-            | DialectId::H2
-            | DialectId::Sqlite
-            | DialectId::Oracle
-            | DialectId::Db2 => None,
-        },
+        DropKind::Database => spelling
+            .database
+            .then(|| format!("DROP DATABASE {}", quote(target.name))),
     }
 }
 
@@ -202,10 +190,10 @@ pub fn truncate_statement(
         dialect,
         &DropTarget::new(DropKind::Table, catalog, schema, name),
     );
-    match dialect.id() {
-        DialectId::Sqlite => format!("DELETE FROM {table}"),
-        DialectId::Db2 => format!("TRUNCATE TABLE {table} IMMEDIATE"),
-        _ => format!("TRUNCATE TABLE {table}"),
+    match dialect.drop_spelling().truncate {
+        TableTruncate::Truncate => format!("TRUNCATE TABLE {table}"),
+        TableTruncate::Immediate => format!("TRUNCATE TABLE {table} IMMEDIATE"),
+        TableTruncate::DeleteAll => format!("DELETE FROM {table}"),
     }
 }
 
@@ -214,7 +202,7 @@ pub fn truncate_statement(
 /// [`table_parts`] everywhere but a SQL Server table in a named catalog, which
 /// takes the three-part name; see the module documentation.
 fn qualified(dialect: &Dialect, target: &DropTarget<'_>) -> String {
-    if dialect.id() == DialectId::MsSql
+    if dialect.drop_spelling().in_catalog
         && target.kind == DropKind::Table
         && let (Some(catalog), Some(schema)) = (present(target.catalog), present(target.schema))
     {
@@ -256,55 +244,46 @@ fn routine(dialect: &Dialect, target: &DropTarget<'_>) -> Option<String> {
         (None, _) => "FUNCTION",
     };
     let name = qualified(dialect, target);
-    match dialect.id() {
-        DialectId::Sqlite => None,
-        DialectId::H2 => Some(format!("DROP ALIAS {name}")),
-        DialectId::Postgres => Some(match identity.arguments {
+    let statement = match dialect.drop_spelling().routines {
+        RoutineDrop::None => return None,
+        RoutineDrop::Alias => format!("DROP ALIAS {name}"),
+        RoutineDrop::Overloaded => match identity.arguments {
             // An aggregate over no arguments is written with a star.
             Some("") if keyword == "AGGREGATE" => format!("DROP AGGREGATE {name}(*)"),
             Some(arguments) => format!("DROP {keyword} {name}({arguments})"),
             None => format!("DROP {keyword} {name}"),
-        }),
-        DialectId::Db2 => Some(match present(identity.specific_name) {
+        },
+        RoutineDrop::Specific => match present(identity.specific_name) {
             Some(specific) => format!(
                 "DROP SPECIFIC {keyword} {}",
                 sibling(dialect, target, specific)
             ),
             None => format!("DROP {keyword} {name}"),
-        }),
-        DialectId::Oracle if present(identity.package).is_some() => None,
-        DialectId::MsSql => Some(in_database(
-            dialect,
-            target.catalog,
-            format!("DROP {keyword} {name}"),
-        )),
-        DialectId::Oracle | DialectId::MySql | DialectId::MariaDb | DialectId::Generic => {
-            Some(format!("DROP {keyword} {name}"))
-        }
-    }
+        },
+        RoutineDrop::Packaged if present(identity.package).is_some() => return None,
+        RoutineDrop::Packaged | RoutineDrop::Named => format!("DROP {keyword} {name}"),
+    };
+    Some(in_database(dialect, target.catalog, statement))
 }
 
 /// A trigger's `DROP`: by its table on PostgreSQL, by its own name elsewhere.
 fn trigger(dialect: &Dialect, target: &DropTarget<'_>) -> Option<String> {
-    match dialect.id() {
-        DialectId::Postgres => {
+    let statement = match dialect.drop_spelling().triggers {
+        TriggerDrop::OnTable => {
             let table = present(target.identity.table)?;
-            Some(format!(
+            format!(
                 "DROP TRIGGER {} ON {}",
                 dialect.quote_ident(target.name),
                 sibling(dialect, target, table)
-            ))
+            )
         }
-        DialectId::MsSql => Some(in_database(
-            dialect,
-            target.catalog,
-            format!("DROP TRIGGER {}", qualified(dialect, target)),
-        )),
-        _ => Some(format!("DROP TRIGGER {}", qualified(dialect, target))),
-    }
+        TriggerDrop::Named => format!("DROP TRIGGER {}", qualified(dialect, target)),
+    };
+    Some(in_database(dialect, target.catalog, statement))
 }
 
-/// `statement`, run inside `catalog` on SQL Server and unchanged elsewhere.
+/// `statement`, run inside `catalog` where a drop has to say which database
+/// its object sits in — SQL Server — and unchanged elsewhere.
 ///
 /// The statement is passed to that database's own `sp_executesql` as an
 /// `N'…'` literal, its quotes doubled, so it runs there without moving the
@@ -312,7 +291,7 @@ fn trigger(dialect: &Dialect, target: &DropTarget<'_>) -> Option<String> {
 /// database.
 fn in_database(dialect: &Dialect, catalog: Option<&str>, statement: String) -> String {
     match catalog.filter(|catalog| !catalog.is_empty()) {
-        Some(catalog) if dialect.id() == DialectId::MsSql => format!(
+        Some(catalog) if dialect.drop_spelling().in_catalog => format!(
             "EXEC {}.sys.sp_executesql N'{}'",
             dialect.quote_ident(catalog),
             statement.replace('\'', "''")

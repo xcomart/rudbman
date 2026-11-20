@@ -7,6 +7,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::{DropSpelling, RoutineDrop, SchemaDrop};
 use crate::script::Client;
 
 /// Oracle Database.
@@ -119,6 +120,13 @@ const ALTER: AlterStyle = AlterStyle {
     ..AlterStyle::STANDARD
 };
 
+/// A schema is a user, and a packaged routine belongs to its package.
+const DROPS: DropSpelling = DropSpelling {
+    schema: SchemaDrop::User,
+    routines: RoutineDrop::Packaged,
+    ..DropSpelling::STANDARD
+};
+
 impl Vendor for Oracle {
     fn id(&self) -> DialectId {
         DialectId::Oracle
@@ -212,5 +220,18 @@ impl Vendor for Oracle {
 
     fn alter_style(&self) -> &'static AlterStyle {
         &ALTER
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DROPS
+    }
+
+    fn enter_scope(&self, _catalog: Option<&str>, schema: Option<&str>) -> Option<String> {
+        schema.map(|schema| format!("ALTER SESSION SET CURRENT_SCHEMA = {schema}"))
+    }
+
+    /// The thin driver ignores `loginTimeout`.
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        Some("oracle.net.CONNECT_TIMEOUT")
     }
 }

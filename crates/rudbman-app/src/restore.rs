@@ -44,8 +44,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use rudbman_jdbc::{Canceller, Error as JdbcError, Session, StatementSpec};
 use rudbman_sql::{
-    Dialect, DialectId, ScopeMove, ScriptError, ScriptSplitter, ScriptStatement, creates_scope,
-    move_scope, same_name, statement_scope,
+    Dialect, ScopeMove, ScriptError, ScriptSplitter, ScriptStatement, creates_scope, move_scope,
+    same_name, statement_scope,
 };
 
 use crate::connection::{SessionHandle, SiblingSession};
@@ -610,26 +610,7 @@ fn failure(line: usize, sql: &str, message: String) -> Failure {
 /// a catalog, the current schema on the others. `None` for SQLite, which has
 /// one scope, and for a scope with nothing to name.
 pub fn enter_scope(dialect: &Dialect, scope: &Scope) -> Option<String> {
-    let named = |part: &Option<String>| {
-        part.as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(|name| dialect.quote_ident(name).into_owned())
-    };
-    match dialect.id() {
-        DialectId::MySql | DialectId::MariaDb | DialectId::MsSql => {
-            named(&scope.catalog).map(|catalog| format!("USE {catalog}"))
-        }
-        DialectId::Postgres => {
-            named(&scope.schema).map(|schema| format!("SET search_path TO {schema}"))
-        }
-        DialectId::Oracle => named(&scope.schema)
-            .map(|schema| format!("ALTER SESSION SET CURRENT_SCHEMA = {schema}")),
-        DialectId::H2 | DialectId::Db2 => {
-            named(&scope.schema).map(|schema| format!("SET SCHEMA {schema}"))
-        }
-        DialectId::Sqlite | DialectId::Generic => None,
-    }
+    dialect.enter_scope(scope.catalog.as_deref(), scope.schema.as_deref())
 }
 
 /// How the bytes of a script are text.

@@ -13,6 +13,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::DropSpelling;
 use crate::script::Client;
 
 /// One database product's answers to everything this crate asks per product.
@@ -117,4 +118,22 @@ pub(crate) trait Vendor: Send + Sync {
     fn unsupported_reason(&self, _what: Unsupported) -> Option<&'static str> {
         None
     }
+
+    /// How the explorer's `DROP` and `TRUNCATE` are spelled.
+    fn drop_spelling(&self) -> &'static DropSpelling;
+
+    // Sessions.
+
+    /// The statement that makes a scope current, so that the names a script
+    /// leaves unqualified land in it, or `None` where the product has one
+    /// scope or the part it needs is missing.
+    ///
+    /// `catalog` and `schema` are already quoted for this product, and present
+    /// only when they name something.
+    fn enter_scope(&self, catalog: Option<&str>, schema: Option<&str>) -> Option<String>;
+
+    /// The property this product's driver reads a login timeout from, in
+    /// milliseconds, beside the `loginTimeout` in seconds that pgjdbc,
+    /// mssql-jdbc and IBM's JCC read; `None` where that one is enough.
+    fn connect_timeout_property(&self) -> Option<&'static str>;
 }

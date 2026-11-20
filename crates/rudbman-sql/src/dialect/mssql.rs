@@ -7,6 +7,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::DropSpelling;
 use crate::script::Client;
 
 /// Microsoft SQL Server.
@@ -127,6 +128,14 @@ const ALTER: AlterStyle = AlterStyle {
     ..AlterStyle::STANDARD
 };
 
+/// A database can be dropped, and every drop says which database its object
+/// sits in.
+const DROPS: DropSpelling = DropSpelling {
+    database: true,
+    in_catalog: true,
+    ..DropSpelling::STANDARD
+};
+
 impl Vendor for MsSql {
     fn id(&self) -> DialectId {
         DialectId::MsSql
@@ -231,5 +240,17 @@ impl Vendor for MsSql {
             ),
             _ => None,
         }
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DROPS
+    }
+
+    fn enter_scope(&self, catalog: Option<&str>, _schema: Option<&str>) -> Option<String> {
+        catalog.map(|catalog| format!("USE {catalog}"))
+    }
+
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        None
     }
 }

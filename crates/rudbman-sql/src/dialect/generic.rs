@@ -11,6 +11,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::DropSpelling;
 use crate::script::Client;
 
 /// Standard SQL.
@@ -100,5 +101,18 @@ impl Vendor for Generic {
 
     fn alter_style(&self) -> &'static AlterStyle {
         &AlterStyle::STANDARD
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DropSpelling::STANDARD
+    }
+
+    /// Plain SQL has no statement for it.
+    fn enter_scope(&self, _catalog: Option<&str>, _schema: Option<&str>) -> Option<String> {
+        None
+    }
+
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        None
     }
 }

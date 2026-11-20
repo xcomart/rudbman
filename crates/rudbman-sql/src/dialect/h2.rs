@@ -7,6 +7,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::{DropSpelling, RoutineDrop};
 use crate::script::Client;
 
 /// H2.
@@ -90,6 +91,12 @@ const ALTER: AlterStyle = AlterStyle {
     ..AlterStyle::STANDARD
 };
 
+/// H2 calls every routine an alias.
+const DROPS: DropSpelling = DropSpelling {
+    routines: RoutineDrop::Alias,
+    ..DropSpelling::STANDARD
+};
+
 impl Vendor for H2 {
     fn id(&self) -> DialectId {
         DialectId::H2
@@ -169,5 +176,17 @@ impl Vendor for H2 {
 
     fn alter_style(&self) -> &'static AlterStyle {
         &ALTER
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        &DROPS
+    }
+
+    fn enter_scope(&self, _catalog: Option<&str>, schema: Option<&str>) -> Option<String> {
+        schema.map(|schema| format!("SET SCHEMA {schema}"))
+    }
+
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        None
     }
 }

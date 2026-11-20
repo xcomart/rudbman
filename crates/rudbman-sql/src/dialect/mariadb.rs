@@ -12,6 +12,7 @@ use crate::explain::Explain;
 use crate::format::ddl::Family as Layout;
 use crate::ident::Folding;
 use crate::keywords::WordTables;
+use crate::removal::DropSpelling;
 use crate::script::Client;
 
 /// MariaDB.
@@ -116,5 +117,18 @@ impl Vendor for MariaDb {
 
     fn unsupported_reason(&self, what: Unsupported) -> Option<&'static str> {
         MySql.unsupported_reason(what)
+    }
+
+    fn drop_spelling(&self) -> &'static DropSpelling {
+        MySql.drop_spelling()
+    }
+
+    fn enter_scope(&self, catalog: Option<&str>, schema: Option<&str>) -> Option<String> {
+        MySql.enter_scope(catalog, schema)
+    }
+
+    /// MariaDB Connector/J reads Connector/J's property.
+    fn connect_timeout_property(&self) -> Option<&'static str> {
+        MySql.connect_timeout_property()
     }
 }

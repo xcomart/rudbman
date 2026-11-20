@@ -164,6 +164,7 @@ pub mod explain;
 pub mod format;
 pub mod ident;
 pub mod lexer;
+pub mod removal;
 pub mod scope;
 pub mod script;
 pub mod state;
@@ -183,6 +184,7 @@ pub use dml::{
 pub use explain::{Explain, explain};
 pub use format::{format_ddl, format_sql};
 pub use lexer::{Lexer, LineState, Token, TokenKind, lex, lex_line};
+pub use removal::{DropSpelling, RoutineDrop, SchemaDrop, TableTruncate, TriggerDrop};
 pub use scope::{ScopeMove, ScopeName, creates_scope, move_scope, same_name, statement_scope};
 pub use script::{
     ScriptError, ScriptErrorKind, ScriptSplitter, ScriptStatement, ScriptUnit,
