@@ -40,6 +40,9 @@ menu:
   drop_table: "删除表（DROP）…"
   drop_view: "删除视图（DROP）…"
   drop_sequence: "删除序列（DROP）…"
+  drop_procedure: "删除存储过程（DROP）…"
+  drop_function: "删除函数（DROP）…"
+  drop_trigger: "删除触发器（DROP）…"
   drop_schema: "删除模式（DROP）…"
   drop_database: "删除数据库（DROP）…"
   drop_objects: "删除所选对象（DROP，%{count} 个）…"
@@ -964,6 +967,7 @@ removal:
   drop_run: 删除
   truncate_run: 清空
   read_only: "此连接为只读，无法删除或清空。"
+  not_droppable: "%{names}：找不到可删除的对象。它已不存在，或属于某个程序包，只能随程序包一起删除。"
   dropped: "已删除。已执行的语句：%{count} 条"
   truncated: "已清空。已执行的语句：%{count} 条"
   failed: "未删除任何内容：%{error}"

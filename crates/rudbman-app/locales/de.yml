@@ -40,6 +40,9 @@ menu:
   drop_table: "Tabelle löschen (DROP)…"
   drop_view: "Sicht löschen (DROP)…"
   drop_sequence: "Sequenz löschen (DROP)…"
+  drop_procedure: "Prozedur löschen (DROP)…"
+  drop_function: "Funktion löschen (DROP)…"
+  drop_trigger: "Trigger löschen (DROP)…"
   drop_schema: "Schema löschen (DROP)…"
   drop_database: "Datenbank löschen (DROP)…"
   drop_objects: "Ausgewählte Objekte löschen (DROP, %{count})…"
@@ -964,6 +967,7 @@ removal:
   drop_run: Löschen
   truncate_run: Leeren
   read_only: "Diese Verbindung ist schreibgeschützt: Hier lässt sich nichts löschen oder leeren."
+  not_droppable: "%{names}: Nichts zu löschen gefunden. Das Objekt existiert nicht mehr oder gehört zu einem Paket und lässt sich nur mit diesem löschen."
   dropped: "Gelöscht. Ausgeführte Anweisungen: %{count}"
   truncated: "Geleert. Ausgeführte Anweisungen: %{count}"
   failed: "Nichts wurde entfernt: %{error}"

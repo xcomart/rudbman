@@ -40,6 +40,9 @@ menu:
   drop_table: "Supprimer la table (DROP)…"
   drop_view: "Supprimer la vue (DROP)…"
   drop_sequence: "Supprimer la séquence (DROP)…"
+  drop_procedure: "Supprimer la procédure (DROP)…"
+  drop_function: "Supprimer la fonction (DROP)…"
+  drop_trigger: "Supprimer le déclencheur (DROP)…"
   drop_schema: "Supprimer le schéma (DROP)…"
   drop_database: "Supprimer la base de données (DROP)…"
   drop_objects: "Supprimer les objets sélectionnés (DROP, %{count})…"
@@ -964,6 +967,7 @@ removal:
   drop_run: Supprimer
   truncate_run: Vider
   read_only: "Cette connexion est en lecture seule : rien ne peut y être supprimé ni vidé."
+  not_droppable: "%{names} : rien à supprimer. L’objet n’existe plus, ou il appartient à un paquetage et ne peut être supprimé qu’avec lui."
   dropped: "Supprimé. Instructions exécutées : %{count}"
   truncated: "Vidé. Instructions exécutées : %{count}"
   failed: "Rien n’a été supprimé : %{error}"

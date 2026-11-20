@@ -128,6 +128,52 @@ fn a_table_is_dropped_only_once_its_name_is_typed_back(cx: &mut gpui::TestAppCon
         .unwrap();
 }
 
+/// A routine is looked up before it is asked about, and dropped the way its
+/// product names one: on H2 every routine is an alias.
+#[gpui::test]
+fn a_routine_is_looked_up_and_dropped_the_way_its_product_names_it(cx: &mut gpui::TestAppContext) {
+    let (window, connection) = workspace_over_h2_with(
+        "removal-drop-routine",
+        &["create alias PUBLIC.F_ABS for 'java.lang.Math.abs(int)'"],
+        cx,
+    );
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let routine = NodeId::Object {
+        connection,
+        scope: public(),
+        folder: Folder::Procedures,
+        name: "F_ABS".to_string(),
+    };
+    window
+        .update(&mut cx, |workspace, _window, _cx| {
+            assert_eq!(count(workspace, connection, "call PUBLIC.F_ABS(-1)"), Ok(1));
+        })
+        .unwrap();
+
+    let rows = menu_rows(window, &routine, &mut cx);
+    activate(&rows, "menu.drop_procedure", &mut cx);
+    window
+        .update(&mut cx, |workspace, _window, _cx| {
+            let question = workspace.removal.as_ref().expect("the question is open");
+            assert_eq!(question.statements, ["DROP ALIAS PUBLIC.F_ABS"]);
+            assert_eq!(question.phrase, "F_ABS");
+        })
+        .unwrap();
+
+    type_phrase(window, "F_ABS", &mut cx);
+    answer(window, true, &mut cx);
+    window
+        .update(&mut cx, |workspace, _window, _cx| {
+            assert!(workspace.removal.is_none());
+            assert!(
+                count(workspace, connection, "call PUBLIC.F_ABS(-1)").is_err(),
+                "the alias is still there"
+            );
+        })
+        .unwrap();
+}
+
 /// Cancel and `Escape` both put the question away, and nothing is sent.
 #[gpui::test]
 fn turning_the_question_down_sends_nothing(cx: &mut gpui::TestAppContext) {

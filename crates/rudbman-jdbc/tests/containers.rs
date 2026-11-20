@@ -3370,6 +3370,262 @@ fn routines(server: &Server) {
     }
 }
 
+// --- dropping routines and triggers ----------------------------------------
+
+#[test]
+fn postgres_drops_each_overload_and_a_trigger_through_its_table() {
+    routine_and_trigger_drops(&server!(Product::Postgres));
+}
+
+#[test]
+fn mysql_drops_a_routine_and_a_trigger_by_name() {
+    routine_and_trigger_drops(&server!(Product::MySql));
+}
+
+#[test]
+fn mariadb_drops_a_routine_and_a_trigger_by_name() {
+    routine_and_trigger_drops(&server!(Product::MariaDb));
+}
+
+#[test]
+fn mssql_drops_a_routine_and_a_trigger_inside_their_database() {
+    routine_and_trigger_drops(&server!(Product::MsSql));
+}
+
+#[test]
+fn oracle_drops_a_routine_and_a_trigger_and_keeps_a_package_whole() {
+    routine_and_trigger_drops(&server!(Product::Oracle));
+}
+
+#[test]
+fn db2_drops_each_overload_by_its_specific_name() {
+    routine_and_trigger_drops(&server!(Product::Db2));
+}
+
+/// What the explorer's drop of a routine or a trigger asks the catalog, and
+/// the statements it writes from the answer, sent to the real server.
+///
+/// The statements are spelled here the way `rudbman-app`'s `drop_sql` writes
+/// them — this crate cannot reach that module — so this is the servers' half
+/// of its tests: each lookup answers what the spelling needs, and each product
+/// takes the spelling. PostgreSQL and Db2 overload a function's name and are
+/// given two; PostgreSQL drops a trigger through its table; Oracle lists a
+/// packaged routine under its package, which the drop leaves alone.
+///
+/// MySQL wants `SUPER` for a trigger while binary logging is on, as it does for
+/// a function, so the trigger half runs there only where the server allows it.
+fn routine_and_trigger_drops(server: &Server) {
+    let product = server.product;
+    let table = server.table("drop_t");
+    server.exec(&format!("create table {table} (id int)"));
+    let routine = server.fresh("drop_r");
+    let trigger = server.fresh("drop_trg");
+    let schema = server.schema.clone().unwrap_or_default();
+    let catalog = server.catalog.clone().unwrap_or_default();
+    let mut cleanup: Vec<DropOnExit<'_>> = Vec::new();
+    let mut later = |drop: String| cleanup.push(DropOnExit { server, drop });
+
+    // The routine, as a function or a procedure, and the trigger.
+    let (kind, creates, trigger_create): (&str, Vec<String>, String) = match product {
+        Product::Postgres => {
+            let fires = server.fresh("drop_tf");
+            later(format!("drop function if exists {fires}()"));
+            server.exec(&format!(
+                "create function {fires}() returns trigger language plpgsql \
+                 as $$ begin return new; end $$"
+            ));
+            (
+                "functions",
+                vec![
+                    format!(
+                        "create function {routine}(a int) returns int language sql as 'select a'"
+                    ),
+                    format!(
+                        "create function {routine}(a int, b text) returns int \
+                         language sql as 'select a'"
+                    ),
+                ],
+                format!(
+                    "create trigger {trigger} before insert on {table} \
+                     for each row execute function {fires}()"
+                ),
+            )
+        }
+        Product::MySql | Product::MariaDb => (
+            "procedures",
+            vec![format!("create procedure {routine}() select 1")],
+            format!(
+                "create trigger {trigger} before insert on {table} for each row set new.id = new.id"
+            ),
+        ),
+        Product::MsSql => (
+            "procedures",
+            vec![format!(
+                "create procedure {schema}.{routine} as begin select 1 end"
+            )],
+            format!(
+                "create trigger {schema}.{trigger} on {schema}.{table} after insert \
+                 as begin set nocount on end"
+            ),
+        ),
+        Product::Oracle => (
+            "functions",
+            vec![format!(
+                "create or replace function {routine}(a number) return number is \
+                 begin return a; end;"
+            )],
+            format!(
+                "create or replace trigger {trigger} before insert on {table} \
+                 for each row begin null; end;"
+            ),
+        ),
+        Product::Db2 => (
+            "functions",
+            vec![
+                format!("create function {routine}(a int) returns int language sql return a"),
+                format!(
+                    "create function {routine}(a int, b int) returns int language sql \
+                     return a + b"
+                ),
+            ],
+            format!(
+                "create trigger {trigger} no cascade before insert on {table} \
+                 referencing new as n for each row set n.id = n.id"
+            ),
+        ),
+    };
+    for create in &creates {
+        server.exec(create);
+    }
+    let keyword = if kind == "functions" {
+        "function"
+    } else {
+        "procedure"
+    };
+    later(match product {
+        Product::Postgres => format!("drop function if exists {routine}(int)"),
+        _ => format!("drop {keyword} {routine}"),
+    });
+    later(match product {
+        Product::Postgres => format!("drop function if exists {routine}(int, text)"),
+        _ => format!("drop {keyword} {routine}"),
+    });
+    let has_trigger = match server
+        .session
+        .execute(&StatementSpec::new(trigger_create.clone()))
+    {
+        Ok(_) => true,
+        Err(error) if product == Product::MySql && error.to_string().contains("SUPER") => {
+            println!("skipped the trigger half: MySQL wants SUPER for it here: {error}");
+            false
+        }
+        Err(error) => panic!("{product:?}: {trigger_create}: {error}"),
+    };
+
+    let found = |kind: &str, name: &str| -> Vec<serde_json::Map<String, serde_json::Value>> {
+        let mut request = DescribeRequest::new(kind).with_name(name);
+        request.catalog = server.catalog.clone();
+        request.schema = server.schema.clone();
+        server
+            .session
+            .describe(&request)
+            .unwrap_or_else(|error| panic!("{product:?}: describe {kind} {name}: {error}"))
+            .items
+            .into_iter()
+            .filter(|item| item.get("name").and_then(serde_json::Value::as_str) == Some(name))
+            .collect()
+    };
+
+    // The routine: one statement per overload, as `drop_sql` writes it.
+    let routines = found(kind, &routine);
+    assert_eq!(routines.len(), creates.len(), "{product:?}: {routines:?}");
+    let drops: Vec<String> = match product {
+        Product::Postgres => {
+            let mut arguments: Vec<String> = routines
+                .iter()
+                .map(|item| {
+                    assert_eq!(
+                        item.get("routine_kind").and_then(serde_json::Value::as_str),
+                        Some("f"),
+                        "{item:?}"
+                    );
+                    string(item, "arguments")
+                })
+                .collect();
+            arguments.sort();
+            assert_eq!(arguments, ["a integer", "a integer, b text"]);
+            arguments
+                .iter()
+                .map(|arguments| format!("DROP FUNCTION {schema}.{routine}({arguments})"))
+                .collect()
+        }
+        Product::Db2 => {
+            let specifics: Vec<String> = routines
+                .iter()
+                .map(|item| string(item, "specific_name"))
+                .collect();
+            assert_ne!(specifics[0], specifics[1], "{routines:?}");
+            specifics
+                .iter()
+                .map(|specific| format!("DROP SPECIFIC FUNCTION {schema}.{specific}"))
+                .collect()
+        }
+        Product::MsSql => vec![format!(
+            "EXEC {catalog}.sys.sp_executesql N'DROP PROCEDURE {schema}.{routine}'"
+        )],
+        Product::MySql | Product::MariaDb => {
+            vec![format!("DROP PROCEDURE {catalog}.{routine}")]
+        }
+        Product::Oracle => vec![format!("DROP FUNCTION {schema}.{routine}")],
+    };
+    server.run(&drops);
+    assert!(
+        found(kind, &routine).is_empty(),
+        "{product:?}: {drops:?} left the routine"
+    );
+
+    // The trigger: through its table on PostgreSQL, by its name elsewhere.
+    if has_trigger {
+        let triggers = found("triggers", &trigger);
+        assert_eq!(triggers.len(), 1, "{product:?}: {triggers:?}");
+        assert!(
+            string(&triggers[0], "table").eq_ignore_ascii_case(&table),
+            "{product:?}: {triggers:?}"
+        );
+        let drop = match product {
+            Product::Postgres => format!("DROP TRIGGER {trigger} ON {schema}.{table}"),
+            Product::MsSql => {
+                format!("EXEC {catalog}.sys.sp_executesql N'DROP TRIGGER {schema}.{trigger}'")
+            }
+            Product::MySql | Product::MariaDb => format!("DROP TRIGGER {catalog}.{trigger}"),
+            Product::Oracle | Product::Db2 => format!("DROP TRIGGER {schema}.{trigger}"),
+        };
+        server.run(std::slice::from_ref(&drop));
+        assert!(
+            found("triggers", &trigger).is_empty(),
+            "{product:?}: {drop} left the trigger"
+        );
+    }
+
+    // Oracle files a packaged routine under its package, the catalog of the
+    // listing, which is what keeps it out of a drop of its own.
+    if product == Product::Oracle {
+        let package = server.fresh("drop_pkg");
+        let member = server.fresh("drop_pm");
+        later(format!("drop package {package}"));
+        server.exec(&format!(
+            "create or replace package {package} as procedure {member}; end;"
+        ));
+        server.exec(&format!(
+            "create or replace package body {package} as procedure {member} is \
+             begin null; end; end;"
+        ));
+        let members = found("procedures", &member);
+        assert_eq!(members.len(), 1, "{members:?}");
+        assert_eq!(string(&members[0], "catalog"), package);
+    }
+}
+
 // --- sequences -------------------------------------------------------------
 
 /// A MariaDB sequence, asked for the way the explorer asks: the database as

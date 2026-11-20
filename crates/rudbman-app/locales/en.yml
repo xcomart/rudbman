@@ -89,6 +89,11 @@ menu:
   drop_table: "Drop table…"
   drop_view: "Drop view…"
   drop_sequence: "Drop sequence…"
+  # A routine or a trigger. Each overload of a routine's name, and on PostgreSQL
+  # each table a trigger of that name fires on, is a statement of its own.
+  drop_procedure: "Drop procedure…"
+  drop_function: "Drop function…"
+  drop_trigger: "Drop trigger…"
   drop_schema: "Drop schema…"
   # A catalog, on the products that call it a database (MySQL, SQL Server…).
   drop_database: "Drop database…"
@@ -1552,6 +1557,9 @@ removal:
   drop_run: Drop
   truncate_run: Truncate
   read_only: "This connection is read-only: nothing can be dropped or truncated on it."
+  # Instead of the question, when a routine or trigger the menu named has
+  # nothing left to drop. `names` is the names, comma-separated.
+  not_droppable: "Nothing to drop for %{names}: it is no longer there, or it belongs to a package and can only be dropped with the package."
   # Toasts once the statements have run. `count` is how many ran.
   dropped: "Dropped. Statements run: %{count}"
   truncated: "Truncated. Statements run: %{count}"

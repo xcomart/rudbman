@@ -47,7 +47,8 @@ does; this page is the short version.
 ## Installing
 
 Download the build for your platform from
-[Releases](https://github.com/xcomart/rudbman/releases). **No JDK needed** —
+[Releases](https://github.com/xcomart/rudbman/releases): Windows, macOS and
+Linux, each for x86-64 (`x86_64-…`) and ARM64 (`aarch64-…`). **No JDK needed** —
 every download carries a Java runtime built with `jlink`, and rudbman uses the
 one next to its executable.
 
@@ -60,7 +61,8 @@ one next to its executable.
 
   winget downloads the `…-setup.exe` described below from the GitHub release,
   checks it against the SHA256 recorded in its manifest and installs it for
-  the current user. A new release reaches winget once its manifest is merged
+  the current user, the native ARM64 build on ARM64 Windows. A new release
+  reaches winget once its manifest is merged
   into [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs), so
   it can trail the GitHub release by a day or two.
 
@@ -76,8 +78,8 @@ one next to its executable.
 
   Either way the executable is self-signed at best, so SmartScreen may say
   "Windows protected your PC"; choose **More info → Run anyway**.
-- **macOS** — on an Apple Silicon Mac, the project's Homebrew tap installs it
-  with one command:
+- **macOS** — on a Mac, Apple Silicon or Intel, the project's Homebrew tap
+  installs it with one command:
 
   ```sh
   brew install --cask xcomart/tap/rudbman
@@ -128,8 +130,19 @@ one next to its executable.
   (add it to start rudbman from a shell too). The binary needs glibc 2.35 or
   newer: Ubuntu 22.04, Debian 12 and later, or a distribution built on them,
   MX Linux 23 among them. The script checks for it and for the system
-  libraries rudbman needs — libxcb, xkbcommon with its X11 half and an EGL or
-  Vulkan loader — and prints the command that installs any that are missing.
+  libraries rudbman needs — libxcb and an EGL or Vulkan loader, which desktop
+  installs have; xkbcommon is built into the binary — and prints the command
+  that installs any that are missing.
+
+  Each release also carries an AppImage,
+  `rudbman-v<version>-<arch>-unknown-linux-gnu.AppImage`: the same program in
+  one file that runs where it is, with nothing to install. Make it
+  executable and start it. It needs the same glibc and system libraries as
+  the archive, plus FUSE to mount itself — the `fuse3` package, which desktop
+  installs of those distributions include; without FUSE, start it with
+  `--appimage-extract-and-run`. It adds no launcher to the application
+  menu; a tool such as Gear Lever or AppImageLauncher does that. When rudbman updates itself it replaces the AppImage
+  file, so keep the file somewhere you can write to.
 
 The bundled runtime is always used when it is there. A copy without one, such
 as a build from source, takes the runtime `RUDBMAN_JAVA_HOME` points at, then

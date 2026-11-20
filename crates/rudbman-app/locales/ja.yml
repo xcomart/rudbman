@@ -40,6 +40,9 @@ menu:
   drop_table: "テーブルを削除 (DROP)…"
   drop_view: "ビューを削除 (DROP)…"
   drop_sequence: "シーケンスを削除 (DROP)…"
+  drop_procedure: "プロシージャーを削除 (DROP)…"
+  drop_function: "関数を削除 (DROP)…"
+  drop_trigger: "トリガーを削除 (DROP)…"
   drop_schema: "スキーマを削除 (DROP)…"
   drop_database: "データベースを削除 (DROP)…"
   drop_objects: "選択したオブジェクトを削除 (DROP、%{count} 件)…"
@@ -964,6 +967,7 @@ removal:
   drop_run: 削除
   truncate_run: 空にする
   read_only: "読み取り専用の接続のため、削除も TRUNCATE もできません。"
+  not_droppable: "%{names}: 削除できる対象が見つかりません。すでに存在しないか、パッケージに属していてパッケージごとにしか削除できません。"
   dropped: "削除しました。実行した文: %{count} 件"
   truncated: "空にしました。実行した文: %{count} 件"
   failed: "何も削除されませんでした: %{error}"

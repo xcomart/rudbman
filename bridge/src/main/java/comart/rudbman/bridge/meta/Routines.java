@@ -1,10 +1,13 @@
 package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import comart.rudbman.bridge.Json;
 
+import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
@@ -58,6 +61,10 @@ import java.util.regex.Pattern;
  * function, {@code P;1} for a procedure. Each list keeps its own kind there,
  * and the number - no part of any name a user typed, and not needed to find the
  * routine again - is taken off.
+ *
+ * <p>On PostgreSQL a request that names one routine also gets, on each
+ * overload, what a {@code DROP} needs to pick it out of the others; see
+ * {@link #identified}.
  */
 public final class Routines {
 
@@ -137,7 +144,7 @@ public final class Routines {
                 arr.add(o);
             }
         }
-        return arr;
+        return identified(dbm, req, arr);
     }
 
     /**
@@ -200,7 +207,71 @@ public final class Routines {
                 arr.add(o);
             }
         }
-        return arr;
+        return identified(dbm, req, arr);
+    }
+
+    /**
+     * PostgreSQL only, and only when the request names one routine: each
+     * overload's {@code arguments} - the list
+     * {@code pg_get_function_identity_arguments} writes, which is what a
+     * {@code DROP} needs to pick one overload out of several - and its
+     * {@code routine_kind}, {@code prokind}'s letter: {@code f} function,
+     * {@code p} procedure, {@code a} aggregate, {@code w} window function.
+     *
+     * <p>The join key is the specific name, which pgjdbc writes as
+     * {@code proname || '_' || oid} in both lists. A server older than 11 has
+     * no {@code prokind}, and no procedures, and says the rest with
+     * {@code proisagg} and {@code proiswindow}. A failed query leaves the items
+     * as they were; a drop then names the routine without its arguments, which
+     * the server refuses when the name is overloaded rather than guessing.
+     */
+    private static JsonArray identified(DatabaseMetaData dbm, JsonObject req, JsonArray items) {
+        String name = Json.str(req, "name");
+        if (name == null || items.isEmpty() || Dialect.of(dbm) != Dialect.POSTGRESQL) {
+            return items;
+        }
+        String schema = Json.str(req, "schema");
+        boolean scoped = schema != null && !schema.isEmpty();
+        Connection conn;
+        try {
+            conn = dbm.getConnection();
+        } catch (SQLException e) {
+            LOG.log(Level.FINE, "no connection behind the metadata", e);
+            return items;
+        }
+        Map<String, String[]> found = Attempt.on(conn, "routine identities", c -> {
+            String kind = c.getMetaData().getDatabaseMajorVersion() >= 11
+                    ? "p.prokind::text"
+                    : "CASE WHEN p.proisagg THEN 'a' WHEN p.proiswindow THEN 'w' ELSE 'f' END";
+            String sql = "SELECT p.proname || '_' || p.oid,"
+                    + " pg_catalog.pg_get_function_identity_arguments(p.oid), " + kind
+                    + " FROM pg_catalog.pg_proc p"
+                    + " JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+                    + " WHERE p.proname = ?"
+                    + (scoped ? " AND n.nspname = ?" : "");
+            Map<String, String[]> out = new HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, name);
+                if (scoped) {
+                    ps.setString(2, schema);
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.put(rs.getString(1), new String[] {rs.getString(2), rs.getString(3)});
+                    }
+                }
+            }
+            return out;
+        }, Map.of());
+        for (JsonElement element : items) {
+            JsonObject o = element.getAsJsonObject();
+            String[] identity = found.get(Json.str(o, "specific_name"));
+            if (identity != null) {
+                o.addProperty("arguments", identity[0] == null ? "" : identity[0]);
+                o.addProperty("routine_kind", identity[1]);
+            }
+        }
+        return items;
     }
 
     /**

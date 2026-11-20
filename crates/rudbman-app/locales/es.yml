@@ -40,6 +40,9 @@ menu:
   drop_table: "Eliminar tabla (DROP)…"
   drop_view: "Eliminar vista (DROP)…"
   drop_sequence: "Eliminar secuencia (DROP)…"
+  drop_procedure: "Eliminar procedimiento (DROP)…"
+  drop_function: "Eliminar función (DROP)…"
+  drop_trigger: "Eliminar disparador (DROP)…"
   drop_schema: "Eliminar esquema (DROP)…"
   drop_database: "Eliminar base de datos (DROP)…"
   drop_objects: "Eliminar los objetos seleccionados (DROP, %{count})…"
@@ -964,6 +967,7 @@ removal:
   drop_run: Eliminar
   truncate_run: Vaciar
   read_only: "Esta conexión es de solo lectura: no se puede eliminar ni vaciar nada en ella."
+  not_droppable: "%{names}: no se encontró nada que eliminar. Ya no existe, o pertenece a un paquete y solo puede eliminarse junto con él."
   dropped: "Eliminado. Sentencias ejecutadas: %{count}"
   truncated: "Vaciado. Sentencias ejecutadas: %{count}"
   failed: "No se eliminó nada: %{error}"

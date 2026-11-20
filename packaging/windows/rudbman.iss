@@ -43,6 +43,12 @@
 #ifndef OutputBaseFilename
   #define OutputBaseFilename "rudbman-setup"
 #endif
+; Which Windows the payload is built for, as an Inno Setup architecture
+; identifier: the release workflow passes /DArch=arm64 for the
+; aarch64-pc-windows-msvc build and leaves the x64 default otherwise.
+#ifndef Arch
+  #define Arch "x64compatible"
+#endif
 
 [Setup]
 ; This GUID is a published identifier, not an implementation detail. Inno
@@ -74,12 +80,13 @@ DefaultDirName={autopf}\rudbman
 ; {autoprograms} directly rather than going through {group}.
 DisableProgramGroupPage=yes
 
-; gpui renders through DirectX and the build only targets x86_64-pc-windows-msvc;
-; there is no 32-bit or ARM artifact to fall back to. x64compatible rather than
-; x64 so the installer also runs under the x64 emulation layer on ARM64
-; Windows, where the same binaries do work.
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; The release workflow builds this script twice, once per Windows target, and
+; {#Arch} says which. The x64 build says x64compatible rather than x64, so its
+; installer also runs under the x64 emulation layer on ARM64 Windows, where
+; the same binaries do work; the arm64 build installs on ARM64 alone. Both
+; share the AppId above, so installing either one replaces the other.
+ArchitecturesAllowed={#Arch}
+ArchitecturesInstallIn64BitMode={#Arch}
 
 ; The payload is a jlink runtime plus a JAR plus the executable — tens of
 ; megabytes of highly compressible files, and solid compression pays for

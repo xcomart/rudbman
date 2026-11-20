@@ -212,9 +212,10 @@ fn a_tree_menu_offers_what_its_node_can_answer(cx: &mut gpui::TestAppContext) {
 
             // A routine is an object and not a relation: `SELECT * FROM` a
             // procedure is not a statement, so those rows are absent rather
-            // than grayed. Its name can still be copied.
+            // than grayed. Its name can still be copied, and it can be
+            // dropped.
             let mut expected = name_copy_labels();
-            expected.extend(scope_labels());
+            expected.extend(scope_labels_with(&["menu.drop_procedure"]));
             assert_eq!(
                 context_menu::labels(&workspace.explorer_rows(&routine, cx)),
                 expected,
