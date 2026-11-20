@@ -1688,10 +1688,13 @@ generator and paging syntax (`ROWNUM` vs `LIMIT` vs `FETCH FIRST`).
 
 Each dialect is one file, `crates/rudbman-sql/src/dialect/<product>.rs`: its
 lexical rules, word tables, completion functions and `ALTER TABLE` spellings,
-and the `Vendor` implementation that answers everything else the crate asks
-per product — name folding, paging, plans, empty inserts, how statements and
-scripts are split. The lexer, splitter, formatter and SQL writers ask the
-dialect rather than testing which product it is. A new product is a new file
+and the `Vendor` implementation that answers everything else asked per
+product — name folding, paging, plans, empty inserts, how statements and
+scripts are split, how the explorer spells a `DROP` or `TRUNCATE`
+(`DropSpelling`), the statement a restore enters its scope with, and the
+property a driver reads its login timeout from. The lexer, splitter,
+formatter and SQL writers, and the application's explorer, restore and
+connection code, ask the dialect rather than testing which product it is. A new product is a new file
 plus its registration in `dialect.rs` (an id, a constant and an entry in
 `Dialect::ALL`); the trait has no default for any answer that is not safe to
 assume, so the compiler lists what is left to decide.
