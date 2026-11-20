@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Collections;
 import java.util.HashSet;
@@ -20,6 +21,12 @@ import java.util.Set;
  * writes DDL and runs jobs asks {@code dialect.vendor()} what to do rather
  * than testing which product it is, so a product's habits are read in one
  * file.
+ *
+ * <p>The backup job's own steps - which objects a plan leaves out, how a
+ * sequence's or an identity's position is carried, how rows go into an
+ * identity column - still test the dialect in {@code BackupJob}: they work on
+ * the job's plan objects, and move here with a design of their own. A product
+ * the job does not name gets the standard path there.
  *
  * <p>Every method's default is what the bridge does for {@link Dialect#OTHER}:
  * the portable, standard-JDBC path. That is safe by the rule every caller
@@ -543,6 +550,128 @@ public abstract class Vendor {
      */
     boolean cacheOfOneIsNoCache() {
         return false;
+    }
+
+    // --------------------------------------------------------------- literals
+
+    /**
+     * The product's own spelling of one column of the current row, ahead of
+     * the general rules; see {@code Literals.literal}.
+     *
+     * @param rs   the result set, positioned on a row
+     * @param i    the column
+     * @param type the column's {@link java.sql.Types} code
+     * @return the literal, or {@code null} to leave the column to the general
+     *         rules; {@code null} by default
+     * @throws SQLException if the driver fails
+     */
+    public String literal(ResultSet rs, int i, int type) throws SQLException {
+        return null;
+    }
+
+    /**
+     * Whether a {@code BIT} column wider than one bit holds a number, written
+     * {@code b'1010'}, rather than a truth value.
+     *
+     * @return {@code false} by default
+     */
+    public boolean bitsAreNumbers() {
+        return false;
+    }
+
+    /**
+     * Whether a truth value is written {@code 1}/{@code 0}, for a product with
+     * no boolean type.
+     *
+     * @return {@code false} by default: {@code TRUE}/{@code FALSE}
+     */
+    public boolean booleansAreNumbers() {
+        return false;
+    }
+
+    /**
+     * A character value as a literal.
+     *
+     * @param s        the value
+     * @param national whether the column is one of the national character types
+     * @param type     the column's {@link java.sql.Types} code
+     * @param rs       the result set, for what else the column says of itself
+     * @param i        the column
+     * @return the literal; the standard quoted form by default
+     * @throws SQLException if the driver fails
+     */
+    public String stringLiteral(String s, boolean national, int type, ResultSet rs, int i)
+            throws SQLException {
+        return Ident.literal(s);
+    }
+
+    /**
+     * @param hex the bytes, as {@link Ident#hex} spells them
+     * @return the binary literal; the standard {@code X'…'} by default, which
+     *         a product that is not recognized may not take
+     */
+    public String hexLiteral(String hex) {
+        return "X'" + hex + "'";
+    }
+
+    // ---------------------------------------------------------------- scripts
+
+    /** Whose command-line client a script is written for. */
+    public enum ScriptClient {
+        /** Nothing to mark: a body is one token, or the client reads it whole. */
+        PLAIN,
+        /** {@code mysql}: {@code DELIMITER ;;} around a body. */
+        MYSQL,
+        /** SQL*Plus and SQLcl: a {@code /} on its own line after PL/SQL. */
+        SQLPLUS,
+        /** {@code sqlcmd}: {@code GO} around a statement alone in its batch. */
+        SQLCMD,
+        /** Db2's command line processor: its {@code --#SET TERMINATOR}. */
+        CLP,
+    }
+
+    /** @return the client a script is written for; {@link ScriptClient#PLAIN} by default */
+    public ScriptClient scriptClient() {
+        return ScriptClient.PLAIN;
+    }
+
+    /**
+     * Whether {@code DROP} takes {@code IF EXISTS}.
+     *
+     * @return {@code false} by default, so that a missing object fails loudly
+     */
+    public boolean dropsIfExists() {
+        return false;
+    }
+
+    /**
+     * @return what follows a {@code DROP TABLE} to take the foreign keys that
+     *         point at it along; nothing by default
+     */
+    public String dropTableCascade() {
+        return "";
+    }
+
+    /**
+     * Takes one foreign key off a table that may not exist yet, so that the
+     * tables can be dropped in any order.
+     *
+     * @param qualified the table, qualified and quoted
+     * @param key       the constraint, quoted
+     * @return the statement, terminated, or {@code null} where the product
+     *         needs no such step
+     */
+    public String dropForeignKey(String qualified, String key) {
+        return "ALTER TABLE " + qualified + " DROP CONSTRAINT " + key + ";";
+    }
+
+    /**
+     * Whether an {@code INSERT} takes several rows in one {@code VALUES}.
+     *
+     * @return {@code true} by default
+     */
+    public boolean multiRowValues() {
+        return true;
     }
 
     // ---------------------------------------------------------------- extract

@@ -1,5 +1,6 @@
 package comart.rudbman.bridge.meta;
 
+import java.sql.ResultSet;
 import java.sql.Connection;
 import java.util.List;
 
@@ -92,5 +93,51 @@ final class Db2Vendor extends Vendor {
     @Override
     boolean cacheOfOneIsNoCache() {
         return true;
+    }
+
+    /** A string holding line breaks is written in {@link #lines pieces}. */
+    @Override
+    public String stringLiteral(String s, boolean national, int type, ResultSet rs, int i) {
+        if (s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0) {
+            return lines(s);
+        }
+        return Ident.literal(s);
+    }
+
+    /**
+     * {@code X'…'} is a character string {@code FOR BIT DATA} there, which a
+     * {@code BINARY}, {@code VARBINARY} or {@code BLOB} column refuses;
+     * {@code BX'…'} is a binary string.
+     */
+    @Override
+    public String hexLiteral(String hex) {
+        return "BX'" + hex + "'";
+    }
+
+    @Override
+    public ScriptClient scriptClient() {
+        return ScriptClient.CLP;
+    }
+
+    /**
+     * A Db2 string holding line breaks, as pieces joined around
+     * {@code CHR(10)} and {@code CHR(13)}: the command line processor reads a
+     * statement over several lines as one, a blank where each break was, and
+     * would put that blank into the value.
+     */
+    private static String lines(String s) {
+        StringBuilder sb = new StringBuilder();
+        StringBuilder piece = new StringBuilder();
+        for (int k = 0; k < s.length(); k++) {
+            char ch = s.charAt(k);
+            if (ch == '\n' || ch == '\r') {
+                sb.append(Ident.literal(piece.toString())).append(" || CHR(")
+                        .append(ch == '\n' ? 10 : 13).append(") || ");
+                piece.setLength(0);
+            } else {
+                piece.append(ch);
+            }
+        }
+        return sb.append(Ident.literal(piece.toString())).toString();
     }
 }

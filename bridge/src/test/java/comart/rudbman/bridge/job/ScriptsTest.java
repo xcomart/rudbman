@@ -1,6 +1,9 @@
 package comart.rudbman.bridge.job;
 
 import comart.rudbman.bridge.meta.Dialect;
+
+import java.sql.SQLException;
+import java.sql.Types;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -58,13 +61,15 @@ class ScriptsTest {
     }
 
     @Test
-    void mysqlStringsEscapeBackslashesAndNul() {
-        assertEquals("'a\\\\b''c\\0'", Literals.mysqlLiteral("a\\b'c\0"));
+    void mysqlStringsEscapeBackslashesAndNul() throws SQLException {
+        assertEquals("'a\\\\b''c\\0'", Dialect.MYSQL.vendor()
+                .stringLiteral("a\\b'c\0", false, Types.VARCHAR, null, 0));
     }
 
     @Test
-    void db2StringsSpellTheirLineBreaks() {
-        assertEquals("'a' || CHR(10) || 'b' || CHR(13) || ''", Literals.db2Lines("a\nb\r"));
+    void db2StringsSpellTheirLineBreaks() throws SQLException {
+        assertEquals("'a' || CHR(10) || 'b' || CHR(13) || ''", Dialect.DB2.vendor()
+                .stringLiteral("a\nb\r", false, Types.VARCHAR, null, 0));
     }
 
     @Test

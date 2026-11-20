@@ -222,6 +222,20 @@ public final class Ident {
     }
 
     /**
+     * @param b the bytes
+     * @return their upper-case hexadecimal spelling, with no prefix: the body
+     *         every product's binary literal shares
+     */
+    public static String hex(byte[] b) {
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (byte x : b) {
+            sb.append(Character.forDigit((x >> 4) & 0xf, 16))
+                    .append(Character.forDigit(x & 0xf, 16));
+        }
+        return sb.toString().toUpperCase(Locale.ROOT);
+    }
+
+    /**
      * Renders a SQL string literal.
      *
      * @param s the text, must not be {@code null}

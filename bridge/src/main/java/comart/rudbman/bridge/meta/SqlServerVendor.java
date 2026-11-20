@@ -2,6 +2,7 @@ package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonObject;
 
+import java.sql.ResultSet;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -208,5 +209,41 @@ final class SqlServerVendor extends Vendor {
     @Override
     boolean createsWithoutCatalog() {
         return true;
+    }
+
+    @Override
+    public boolean booleansAreNumbers() {
+        return true;
+    }
+
+    /**
+     * A plain literal is in the database's code page: text outside it -
+     * Hangul in a Latin1 collation - would arrive as question marks.
+     * {@code N'…'} is Unicode.
+     */
+    @Override
+    public String stringLiteral(String s, boolean national, int type, ResultSet rs, int i) {
+        return "N" + Ident.literal(s);
+    }
+
+    @Override
+    public String hexLiteral(String hex) {
+        return "0x" + hex;
+    }
+
+    @Override
+    public ScriptClient scriptClient() {
+        return ScriptClient.SQLCMD;
+    }
+
+    @Override
+    public boolean dropsIfExists() {
+        return true;
+    }
+
+    @Override
+    public String dropForeignKey(String qualified, String key) {
+        return "IF OBJECT_ID(" + Ident.literal(qualified) + ", 'U') IS NOT NULL"
+                + " ALTER TABLE " + qualified + " DROP CONSTRAINT IF EXISTS " + key + ";";
     }
 }

@@ -45,19 +45,8 @@ final class Scripts {
      * @return the {@code DROP}, with {@code IF EXISTS} where the product has it
      */
     static String dropStatement(Dialect dialect, String keyword, String qualified) {
-        boolean ifExists;
-        switch (dialect) {
-            case ORACLE:
-            case DB2:
-            case OTHER:
-                ifExists = false;
-                break;
-            default:
-                ifExists = true;
-        }
-        // Oracle's own way past the foreign keys that point at a table.
-        String cascade = dialect == Dialect.ORACLE && "TABLE".equals(keyword)
-                ? " CASCADE CONSTRAINTS" : "";
+        boolean ifExists = dialect.vendor().dropsIfExists();
+        String cascade = "TABLE".equals(keyword) ? dialect.vendor().dropTableCascade() : "";
         return "DROP " + keyword + " " + (ifExists ? "IF EXISTS " : "") + qualified + cascade
                 + ";";
     }
@@ -73,22 +62,7 @@ final class Scripts {
      * @return the statement, terminated, or {@code null}
      */
     static String dropForeignKey(Dialect dialect, String qualified, String key) {
-        switch (dialect) {
-            case MYSQL:
-            case MARIADB:
-            case ORACLE:
-            case SQLITE:
-                return null;
-            case SQLSERVER:
-                return "IF OBJECT_ID(" + Ident.literal(qualified) + ", 'U') IS NOT NULL"
-                        + " ALTER TABLE " + qualified + " DROP CONSTRAINT IF EXISTS " + key + ";";
-            case POSTGRESQL:
-            case H2:
-                return "ALTER TABLE IF EXISTS " + qualified + " DROP CONSTRAINT IF EXISTS "
-                        + key + ";";
-            default:
-                return "ALTER TABLE " + qualified + " DROP CONSTRAINT " + key + ";";
-        }
+        return dialect.vendor().dropForeignKey(qualified, key);
     }
 
     /**
@@ -124,14 +98,13 @@ final class Scripts {
         String body = text.strip();
         boolean procedural = "function".equals(kind) || "procedure".equals(kind)
                 || "trigger".equals(kind);
-        switch (dialect) {
+        switch (dialect.vendor().scriptClient()) {
             case MYSQL:
-            case MARIADB:
                 if (procedural) {
                     return "DELIMITER ;;\n" + withoutTerminator(body) + ";;\nDELIMITER ;";
                 }
                 return terminated(body);
-            case ORACLE:
+            case SQLPLUS:
                 if ("package".equals(kind)) {
                     // DBMS_METADATA already ends every unit in a slash.
                     return body;
@@ -140,12 +113,12 @@ final class Scripts {
                     return terminated(body) + "\n/";
                 }
                 return terminated(body);
-            case SQLSERVER:
+            case SQLCMD:
                 if (!"sequence".equals(kind)) {
                     return "GO\n" + body + "\nGO";
                 }
                 return terminated(body);
-            case DB2:
+            case CLP:
                 if (procedural) {
                     return "--#SET TERMINATOR @\n" + db2Terminated(withoutTerminator(body))
                             + "\n--#SET TERMINATOR ;";
@@ -223,7 +196,7 @@ final class Scripts {
         // Oracle has no multi-row VALUES clause; asking for one there would
         // produce a script that cannot run, so the request is clamped rather
         // than honored into a broken file.
-        int batchRows = dialect == Dialect.ORACLE ? 1 : insertBatchRows;
+        int batchRows = dialect.vendor().multiRowValues() ? insertBatchRows : 1;
 
         List<String> tuples = new ArrayList<>(batchRows);
         long sinceSync = 0;

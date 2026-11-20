@@ -2,6 +2,8 @@ package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonArray;
 
+import java.sql.SQLException;
+import java.sql.ResultSet;
 import java.sql.Connection;
 import java.util.List;
 
@@ -59,5 +61,54 @@ final class SqliteVendor extends Vendor {
     @Override
     String triggerText(Connection conn, ObjectDdl.Target t) {
         return DdlText.sqlite(conn, "trigger", t.name);
+    }
+
+    /** Every value by what it is stored as; see {@link #stored}. */
+    @Override
+    public String literal(ResultSet rs, int i, int type) throws SQLException {
+        return stored(rs, i);
+    }
+
+    @Override
+    public boolean booleansAreNumbers() {
+        return true;
+    }
+
+    @Override
+    public boolean dropsIfExists() {
+        return true;
+    }
+
+    @Override
+    public String dropForeignKey(String qualified, String key) {
+        return null;
+    }
+
+    /**
+     * A SQLite value by what it is stored as, not by the column's declared
+     * type, which SQLite does not hold its values to: an INTEGER column may
+     * keep text, and writing that text as a number - or a number as text -
+     * would change the value, or break the statement.
+     */
+    private static String stored(ResultSet rs, int i) throws SQLException {
+        Object v = rs.getObject(i);
+        if (v == null || rs.wasNull()) {
+            return "NULL";
+        }
+        if (v instanceof Integer || v instanceof Long) {
+            return v.toString();
+        }
+        if (v instanceof Double || v instanceof Float) {
+            double d = ((Number) v).doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) {
+                // SQLite has no literal for these; 9e999 is its own infinity.
+                return Double.isNaN(d) ? "NULL" : d > 0 ? "9e999" : "-9e999";
+            }
+            return Double.toString(d);
+        }
+        if (v instanceof byte[]) {
+            return "X'" + Ident.hex((byte[]) v) + "'";
+        }
+        return Ident.literal(v.toString());
     }
 }

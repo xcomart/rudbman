@@ -127,4 +127,20 @@ final class PostgresVendor extends Vendor {
     String triggerText(Connection conn, ObjectDdl.Target t) {
         return ObjectDdl.postgresTrigger(conn, t);
     }
+
+    /** {@code bytea}'s hex input form. */
+    @Override
+    public String hexLiteral(String hex) {
+        return "'\\x" + hex + "'";
+    }
+
+    @Override
+    public boolean dropsIfExists() {
+        return true;
+    }
+
+    @Override
+    public String dropForeignKey(String qualified, String key) {
+        return "ALTER TABLE IF EXISTS " + qualified + " DROP CONSTRAINT IF EXISTS " + key + ";";
+    }
 }

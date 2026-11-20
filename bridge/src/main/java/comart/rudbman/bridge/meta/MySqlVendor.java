@@ -2,6 +2,8 @@ package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonObject;
 
+import java.sql.Types;
+import java.sql.ResultSet;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -167,5 +169,66 @@ class MySqlVendor extends Vendor {
     @Override
     String triggerText(Connection conn, ObjectDdl.Target t) {
         return ObjectDdl.show(conn, "TRIGGER", t, 3);
+    }
+
+    /** {@code BIT(n)} is n bits: {@code BIT(8)} holding 1010 is ten. */
+    @Override
+    public boolean bitsAreNumbers() {
+        return true;
+    }
+
+    @Override
+    public boolean booleansAreNumbers() {
+        return true;
+    }
+
+    /**
+     * The drivers hand a {@code YEAR} over as a {@code DATE}, January 1st of
+     * it, which a {@code YEAR} column refuses; every other string is
+     * {@link #escaped}.
+     */
+    @Override
+    public String stringLiteral(String s, boolean national, int type, ResultSet rs, int i)
+            throws SQLException {
+        if (type == Types.DATE && s.length() >= 4
+                && "YEAR".equalsIgnoreCase(rs.getMetaData().getColumnTypeName(i))) {
+            return s.substring(0, 4);
+        }
+        return escaped(s);
+    }
+
+    @Override
+    public ScriptClient scriptClient() {
+        return ScriptClient.MYSQL;
+    }
+
+    @Override
+    public boolean dropsIfExists() {
+        return true;
+    }
+
+    @Override
+    public String dropForeignKey(String qualified, String key) {
+        return null;
+    }
+
+    /**
+     * A MySQL or MariaDB string literal: a backslash there escapes what follows
+     * it - the rows are read under a mode that keeps it so, see
+     * {@code Ddl.dataPrologue} - and a raw NUL is spelled out, as mysqldump
+     * writes them.
+     */
+    private static String escaped(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 2).append('\'');
+        for (int k = 0; k < s.length(); k++) {
+            char ch = s.charAt(k);
+            switch (ch) {
+                case '\\': sb.append("\\\\"); break;
+                case '\'':  sb.append("''"); break;
+                case '\0':  sb.append("\\0"); break;
+                default:    sb.append(ch);
+            }
+        }
+        return sb.append('\'').toString();
     }
 }
