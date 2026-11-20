@@ -1708,6 +1708,11 @@ scripts and backup job do differently per product. Its defaults are the
 portable path an unrecognized product already gets, which every caller has
 to stay useful under, so a new product overrides only where it differs.
 
+Profiles — products a user describes in `<config>/dialects/*.yml` on top of a
+built-in, with Groovy for the bridge's hooks data cannot express — are
+designed in [dialect-profiles.md](dialect-profiles.md) and not implemented
+yet.
+
 The built-in definitions are H2, PostgreSQL, MySQL, MariaDB, SQLite, Oracle
 Thin, SQL Server and IBM Db2. They are written to `drivers.json` the first
 time, and afterwards the file is taken at its word — a deleted built-in stays
