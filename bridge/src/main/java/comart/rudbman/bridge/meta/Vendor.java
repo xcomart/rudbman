@@ -22,12 +22,6 @@ import java.util.Set;
  * than testing which product it is, so a product's habits are read in one
  * file.
  *
- * <p>The backup job's own steps - which objects a plan leaves out, how a
- * sequence's or an identity's position is carried, how rows go into an
- * identity column - still test the dialect in {@code BackupJob}: they work on
- * the job's plan objects, and move here with a design of their own. A product
- * the job does not name gets the standard path there.
- *
  * <p>Every method's default is what the bridge does for {@link Dialect#OTHER}:
  * the portable, standard-JDBC path. That is safe by the rule every caller
  * already keeps - a product the bridge does not recognize must stay useful -
@@ -51,6 +45,11 @@ import java.util.Set;
 public abstract class Vendor {
 
     Vendor() {
+    }
+
+    /** @return whether {@code value} is an integer as a catalog reports one */
+    static boolean integer(String value) {
+        return value != null && value.matches("-?\\d+");
     }
 
     /**
@@ -524,12 +523,13 @@ public abstract class Vendor {
     }
 
     /**
-     * Whether a {@code CREATE} names its object without the database, which
-     * the product refuses there where a lookup accepts it.
+     * Whether a {@code CREATE}, and a {@code DROP} other than of a table,
+     * names its object without the database, which the product refuses there
+     * where a lookup accepts it.
      *
      * @return {@code false} by default
      */
-    boolean createsWithoutCatalog() {
+    public boolean createsWithoutCatalog() {
         return false;
     }
 
@@ -672,6 +672,240 @@ public abstract class Vendor {
      */
     public boolean multiRowValues() {
         return true;
+    }
+
+    // ----------------------------------------------------------------- backup
+
+    /** A table of a backup plan, as the plan names it. */
+    public record Table(String catalog, String schema, String name) {
+    }
+
+    /**
+     * A sequence of a backup plan: its name, and where the source has it -
+     * the value it last handed out, its increment and its start, as the
+     * catalog reported them.
+     */
+    public record Sequence(String catalog, String schema, String name, String value,
+                           String increment, String start) {
+    }
+
+    /**
+     * The statements a table's rows are written between, to let an identity
+     * take the source's values and to put it back as it was. {@link #after}
+     * is asked once the rows are written.
+     */
+    public interface RowFence {
+        /** Nothing around the rows. */
+        RowFence NONE = new RowFence() {
+        };
+
+        /** @return the statements before the rows, terminated */
+        default List<String> before() {
+            return List.of();
+        }
+
+        /**
+         * @return the statements after the rows, terminated
+         * @throws SQLException if the source cannot be read
+         */
+        default List<String> after() throws SQLException {
+            return List.of();
+        }
+    }
+
+    /**
+     * @return the names of the objects an extension owns, which its
+     *         {@code CREATE EXTENSION} brings back and the schema's own would
+     *         collide with; none by default
+     */
+    public Set<String> extensionMembers(Connection conn, String schema) {
+        return new HashSet<>();
+    }
+
+    /**
+     * @return the materialized views the driver lists as the tables that hold
+     *         their rows, which are written as views; none by default
+     */
+    public Set<String> materializedViews(Connection conn, String schema) {
+        return new HashSet<>();
+    }
+
+    /**
+     * @return the names the driver lists as tables that are not tables to
+     *         write, each coming back with an object of its own; none by
+     *         default
+     */
+    public Set<String> tablesNotWritten(Connection conn, String schema) {
+        return new HashSet<>();
+    }
+
+    /**
+     * What a backup creates ahead of its tables - types, domains,
+     * extensions - each with the statement that drops it, or {@code null}.
+     *
+     * @return the pairs, in creation order; none by default
+     */
+    public List<String[]> backupPreamble(Connection conn, Ident id, String catalog,
+                                         String schema) {
+        return List.of();
+    }
+
+    /**
+     * @param names the sequences the plan writes
+     * @return the statements that give those sequences their owning columns
+     *         back, terminated; none by default
+     */
+    public List<String> ownedSequences(Connection conn, Ident id, String schema,
+                                       Set<String> names) {
+        return List.of();
+    }
+
+    /**
+     * @return the views a backup writes after the rows, the ones whose own
+     *         index the rows would have to keep up; none by default
+     */
+    public Set<String> indexViews(Connection conn, String schema) {
+        return Set.of();
+    }
+
+    /**
+     * Whether a routine the driver lists under a catalog is a package's,
+     * which comes back with its package rather than on its own.
+     *
+     * @return {@code false} by default
+     */
+    public boolean packagesRoutines() {
+        return false;
+    }
+
+    /** @return the packages a backup writes, by name; none by default */
+    public List<String> packages(Connection conn, String schema) {
+        return List.of();
+    }
+
+    /**
+     * @param catalog  the backup's catalog, may be {@code null}
+     * @param routines whether the script creates routines
+     * @return what a backup script starts with, after
+     *         {@link #scriptPrologue}; nothing by default
+     */
+    public List<String> backupPrologue(Ident id, String catalog, boolean routines) {
+        return List.of();
+    }
+
+    /**
+     * @param schema   the backup's schema, may be {@code null}
+     * @param routines whether the script creates routines
+     * @param code     whether it creates views, routines or triggers
+     * @return what a backup script ends with, after {@link #scriptEpilogue};
+     *         nothing by default
+     */
+    public List<String> backupEpilogue(String schema, boolean routines, boolean code) {
+        return List.of();
+    }
+
+    /**
+     * A table's script with its identity created where the source's
+     * continues, for a product whose restored identity would otherwise start
+     * over.
+     *
+     * @return the script; {@code script} unchanged by default
+     */
+    public Ddl.Script resumeIdentity(Connection conn, Ident id, String catalog, String schema,
+                                     String table, Ddl.Script script) {
+        return script;
+    }
+
+    /**
+     * @param listed the sequence's current value as the catalog listed it
+     * @return the value a restored sequence has to continue from; {@code listed}
+     *         by default
+     */
+    public String sequenceValue(Connection conn, Ident id, String catalog, String schema,
+                                String name, String listed) {
+        return listed;
+    }
+
+    /**
+     * A sequence's {@code CREATE} with its start where the source resumes.
+     *
+     * @return the text; {@code ddl} unchanged by default
+     */
+    public String resumeSequence(Connection conn, String schema, String name, String ddl) {
+        return ddl;
+    }
+
+    /**
+     * @param kind {@code function}, {@code procedure}, {@code trigger} or
+     *             another object kind
+     * @return the {@code sql_mode} the object was created under, which a
+     *         restore has to create it under again, or {@code null}; {@code null}
+     *         by default
+     */
+    public String sqlMode(Connection conn, String catalog, String name, String kind) {
+        return null;
+    }
+
+    /**
+     * @return each overload of a routine name's own text, for a product whose
+     *         {@code DESCRIBE} answers one; none by default, which keeps the
+     *         text it answered
+     */
+    public List<String> overloadTexts(Connection conn, String schema, String name) {
+        return List.of();
+    }
+
+    /**
+     * @return the statements that drop each overload of a routine name, or
+     *         {@code null} for the one plain {@code DROP}; {@code null} by
+     *         default
+     */
+    public List<String> routineDrops(Connection conn, Ident id, String schema, String name,
+                                     boolean procedure) {
+        return null;
+    }
+
+    /**
+     * What puts the counters back after the rows: sequences where the source
+     * has them, identities and auto-increment marks past the keys handed out.
+     *
+     * @param sequences the sequences the plan writes
+     * @param tables    the tables whose rows it writes
+     * @param data      whether it writes rows at all
+     * @return the statements, terminated; none by default
+     * @throws SQLException if the source cannot be read
+     */
+    public List<String> counters(DatabaseMetaData dbm, Ident id, List<Sequence> sequences,
+                                 List<Table> tables, boolean data) throws SQLException {
+        return List.of();
+    }
+
+    /**
+     * @return the columns whose values come over only as the product's own
+     *         text, read with {@link #textColumn}; none by default
+     */
+    public Set<String> textColumns(Connection conn, String schema, String table) {
+        return Set.of();
+    }
+
+    /**
+     * @param quoted a column of {@link #textColumns}, quoted
+     * @return the select-list item that reads it as text under its own name
+     */
+    public String textColumn(String quoted) {
+        return quoted;
+    }
+
+    /**
+     * @param qualified  the table, qualified and quoted
+     * @param identities the auto-increment columns among those written
+     * @return what the table's rows are written between; {@link RowFence#NONE}
+     *         by default
+     * @throws SQLException if the source cannot be read
+     */
+    public RowFence rowFence(Connection conn, Ident id, String schema, String table,
+                             String qualified, List<String> identities) throws SQLException {
+        return RowFence.NONE;
     }
 
     // ---------------------------------------------------------------- extract

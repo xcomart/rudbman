@@ -99,9 +99,4 @@ public enum Dialect {
         }
         return OTHER;
     }
-
-    /** @return whether this product is MySQL or MariaDB. */
-    public boolean isMySqlFamily() {
-        return this == MYSQL || this == MARIADB;
-    }
 }

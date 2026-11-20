@@ -1,5 +1,8 @@
 package comart.rudbman.bridge.meta;
 
+import java.util.HashSet;
+import java.util.ArrayList;
+import java.sql.SQLException;
 import java.util.Set;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -142,5 +145,84 @@ final class PostgresVendor extends Vendor {
     @Override
     public String dropForeignKey(String qualified, String key) {
         return "ALTER TABLE IF EXISTS " + qualified + " DROP CONSTRAINT IF EXISTS " + key + ";";
+    }
+
+    /** An extension's own objects come back with {@code CREATE EXTENSION}. */
+    @Override
+    public Set<String> extensionMembers(Connection conn, String schema) {
+        return PgSchema.extensionMembers(conn, schema);
+    }
+
+    @Override
+    public List<String[]> backupPreamble(Connection conn, Ident id, String catalog,
+                                         String schema) {
+        return PgSchema.preamble(conn, id, schema);
+    }
+
+    @Override
+    public List<String> ownedSequences(Connection conn, Ident id, String schema,
+                                       Set<String> names) {
+        return PgSchema.ownedSequences(conn, id, schema, names);
+    }
+
+    /** A routine's body is checked when it runs, not when the script makes it. */
+    @Override
+    public List<String> backupPrologue(Ident id, String catalog, boolean routines) {
+        return routines ? List.of("SET check_function_bodies = false;") : List.of();
+    }
+
+    @Override
+    public List<String> backupEpilogue(String schema, boolean routines, boolean code) {
+        return routines ? List.of("RESET check_function_bodies;") : List.of();
+    }
+
+    /**
+     * Every serial's and identity's counter as the source has it, as pg_dump
+     * carries it, then each sequence's.
+     */
+    @Override
+    public List<String> counters(DatabaseMetaData dbm, Ident id, List<Sequence> sequences,
+                                 List<Table> tables, boolean data) throws SQLException {
+        List<String> out = new ArrayList<>();
+        if (data) {
+            Set<String> written = new HashSet<>();
+            for (Sequence s : sequences) {
+                written.add(id.qualify(null, s.schema(), s.name()));
+            }
+            Connection conn = dbm.getConnection();
+            for (Table t : tables) {
+                String qualified = id.qualify(null, t.schema(), t.name());
+                for (Ddl.DataColumn c : Ddl.dataColumns(dbm, t.catalog(), t.schema(), t.name())) {
+                    if (!c.autoIncrement) {
+                        continue;
+                    }
+                    String serial = "pg_catalog.pg_get_serial_sequence(" + Ident.literal(qualified)
+                            + ", " + Ident.literal(c.name) + ")";
+                    // The counter as the source has it, as pg_dump carries it: a
+                    // key handed out and rolled back or deleted is not handed out
+                    // again. A serial's own sequence is in the script already.
+                    String[] state = PgSchema.sequenceState(conn, serial);
+                    if (state != null && written.contains(state[0])) {
+                        continue;
+                    }
+                    if (state != null && state[1] != null && state[1].matches("-?\\d+")) {
+                        out.add("SELECT pg_catalog.setval(" + serial + ", " + state[1] + ", "
+                                + state[2] + ");");
+                        continue;
+                    }
+                    String col = id.q(c.name);
+                    out.add("SELECT pg_catalog.setval(" + serial + ", MAX(" + col + ")) FROM "
+                            + qualified + " HAVING MAX(" + col + ") IS NOT NULL;");
+                }
+            }
+        }
+        for (Sequence s : sequences) {
+            if (integer(s.value())) {
+                out.add("SELECT pg_catalog.setval("
+                        + Ident.literal(id.qualify(null, s.schema(), s.name())) + ", " + s.value()
+                        + ", true);");
+            }
+        }
+        return out;
     }
 }

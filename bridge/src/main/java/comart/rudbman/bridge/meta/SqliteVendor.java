@@ -2,6 +2,13 @@ package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonArray;
 
+import java.util.logging.Logger;
+import java.util.logging.Level;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.ArrayList;
+import java.sql.Statement;
+import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.ResultSet;
 import java.sql.Connection;
@@ -111,4 +118,39 @@ final class SqliteVendor extends Vendor {
         }
         return Ident.literal(v.toString());
     }
+
+    /**
+     * An {@code AUTOINCREMENT} table's high-water mark, which the rows alone
+     * put back no higher than the largest key left, as {@code .dump} has it.
+     */
+    @Override
+    public List<String> counters(DatabaseMetaData dbm, Ident id, List<Sequence> sequences,
+                                 List<Table> tables, boolean data) {
+        List<String> out = new ArrayList<>();
+        if (!data) {
+            return out;
+        }
+        Set<String> names = new HashSet<>();
+        for (Table t : tables) {
+            names.add(t.name());
+        }
+        try (Statement st = dbm.getConnection().createStatement();
+             ResultSet rs = st.executeQuery("SELECT name, seq FROM sqlite_sequence")) {
+            while (rs.next()) {
+                String name = rs.getString(1);
+                if (names.contains(name)) {
+                    out.add("DELETE FROM sqlite_sequence WHERE name = " + Ident.literal(name)
+                            + ";");
+                    out.add("INSERT INTO sqlite_sequence (name, seq) VALUES ("
+                            + Ident.literal(name) + ", " + rs.getLong(2) + ");");
+                }
+            }
+        } catch (SQLException e) {
+            // No AUTOINCREMENT table in the file: no sqlite_sequence either.
+            LOG.log(Level.FINE, "no sqlite_sequence", e);
+        }
+        return out;
+    }
+
+    private static final Logger LOG = Logger.getLogger(SqliteVendor.class.getName());
 }

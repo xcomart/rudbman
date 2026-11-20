@@ -2,6 +2,11 @@ package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonObject;
 
+import java.util.logging.Logger;
+import java.util.logging.Level;
+import java.sql.PreparedStatement;
+import java.sql.DatabaseMetaData;
+import java.math.BigInteger;
 import java.sql.ResultSet;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -207,7 +212,7 @@ final class SqlServerVendor extends Vendor {
 
     /** The database prefix is refused (Msg 166), where a lookup accepts it. */
     @Override
-    boolean createsWithoutCatalog() {
+    public boolean createsWithoutCatalog() {
         return true;
     }
 
@@ -246,4 +251,100 @@ final class SqlServerVendor extends Vendor {
         return "IF OBJECT_ID(" + Ident.literal(qualified) + ", 'U') IS NOT NULL"
                 + " ALTER TABLE " + qualified + " DROP CONSTRAINT IF EXISTS " + key + ";";
     }
+
+    @Override
+    public List<String[]> backupPreamble(Connection conn, Ident id, String catalog,
+                                         String schema) {
+        return SqlServerSchema.aliasTypes(conn, id, catalog, schema);
+    }
+
+    /**
+     * {@code current_value} is the start of a sequence never used, too;
+     * {@code last_used_value} (2017 and newer) tells the two apart.
+     */
+    @Override
+    public String sequenceValue(Connection conn, Ident id, String catalog, String schema,
+                                String name, String listed) {
+        return lastUsed(conn, id.qualify(catalog, schema, name));
+    }
+
+    /**
+     * Each sequence drawn up to where the source has it, then every table's
+     * identity reseeded.
+     */
+    @Override
+    public List<String> counters(DatabaseMetaData dbm, Ident id, List<Sequence> sequences,
+                                 List<Table> tables, boolean data) throws SQLException {
+        List<String> out = new ArrayList<>();
+        int ranges = 0;
+        for (Sequence s : sequences) {
+            String value = s.value();
+            if (!integer(value) || s.increment() == null || !s.increment().matches("-?\\d+")) {
+                continue;
+            }
+            BigInteger last = new BigInteger(value);
+            BigInteger step = new BigInteger(s.increment());
+            BigInteger taken = s.start() != null && s.start().matches("-?\\d+")
+                    && step.signum() != 0 ? last.subtract(new BigInteger(s.start())) : null;
+            if (taken != null && taken.signum() * step.signum() >= 0
+                    && taken.mod(step.abs()).signum() == 0) {
+                // Draw the values the source has handed out: RESTART WITH
+                // would move the sequence's start along with it.
+                String variable = "@range_first" + (++ranges);
+                out.add("DECLARE " + variable + " sql_variant;"
+                        + " EXEC sys.sp_sequence_get_range @sequence_name = N"
+                        + Ident.literal(id.qualify(s.catalog(), s.schema(), s.name()))
+                        + ", @range_size = " + taken.divide(step).add(BigInteger.ONE)
+                        + ", @range_first_value = " + variable + " OUTPUT;");
+            } else {
+                out.add("ALTER SEQUENCE " + id.qualify(null, s.schema(), s.name())
+                        + " RESTART WITH " + last.add(step) + ";");
+            }
+        }
+        if (data) {
+            Connection conn = dbm.getConnection();
+            for (Table t : tables) {
+                String reseed = SqlServerSchema.identityReseed(conn, id, t.catalog(),
+                        id.qualify(t.catalog(), t.schema(), t.name()));
+                if (reseed != null) {
+                    out.add(reseed);
+                }
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public RowFence rowFence(Connection conn, Ident id, String schema, String table,
+                             String qualified, List<String> identities) {
+        if (identities.isEmpty()) {
+            return RowFence.NONE;
+        }
+        return new RowFence() {
+            @Override
+            public List<String> before() {
+                return List.of("SET IDENTITY_INSERT " + qualified + " ON;");
+            }
+
+            @Override
+            public List<String> after() {
+                return List.of("SET IDENTITY_INSERT " + qualified + " OFF;");
+            }
+        };
+    }
+
+    private static String lastUsed(Connection conn, String qualified) {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT CAST(last_used_value AS"
+                + " VARCHAR(40)) FROM sys.sequences WHERE object_id = OBJECT_ID(?)")) {
+            ps.setString(1, qualified);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (SQLException e) {
+            LOG.log(Level.FINE, "no last_used_value for " + qualified, e);
+            return null;
+        }
+    }
+
+    private static final Logger LOG = Logger.getLogger(SqlServerVendor.class.getName());
 }

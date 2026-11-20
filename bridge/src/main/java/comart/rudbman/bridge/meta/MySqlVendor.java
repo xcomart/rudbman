@@ -2,6 +2,10 @@ package comart.rudbman.bridge.meta;
 
 import com.google.gson.JsonObject;
 
+import java.util.logging.Logger;
+import java.util.logging.Level;
+import java.util.Locale;
+import java.sql.PreparedStatement;
 import java.sql.Types;
 import java.sql.ResultSet;
 import java.sql.Connection;
@@ -231,4 +235,51 @@ class MySqlVendor extends Vendor {
         }
         return sb.append('\'').toString();
     }
+
+    /**
+     * {@code SHOW CREATE} writes names without their database, the rows are
+     * qualified by it: the two have to land in the same place.
+     */
+    @Override
+    public List<String> backupPrologue(Ident id, String catalog, boolean routines) {
+        return catalog != null && !catalog.isEmpty() ? List.of("USE " + id.q(catalog) + ";")
+                : List.of();
+    }
+
+    /**
+     * The {@code sql_mode} a MySQL or MariaDB routine or trigger keeps, or
+     * {@code null} for any other object or when it cannot be read.
+     */
+    @Override
+    public String sqlMode(Connection conn, String catalog, String name, String kind) {
+        String sql;
+        switch (kind) {
+            case "function":
+            case "procedure":
+                sql = "SELECT SQL_MODE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ?"
+                        + " AND ROUTINE_NAME = ? AND ROUTINE_TYPE = ?";
+                break;
+            case "trigger":
+                sql = "SELECT SQL_MODE FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ?"
+                        + " AND TRIGGER_NAME = ?";
+                break;
+            default:
+                return null;
+        }
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, catalog);
+            ps.setString(2, name);
+            if (!"trigger".equals(kind)) {
+                ps.setString(3, kind.toUpperCase(Locale.ROOT));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (SQLException e) {
+            LOG.log(Level.FINE, "no sql_mode for " + name, e);
+            return null;
+        }
+    }
+
+    private static final Logger LOG = Logger.getLogger(MySqlVendor.class.getName());
 }

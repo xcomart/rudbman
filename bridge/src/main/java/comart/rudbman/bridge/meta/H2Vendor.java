@@ -141,4 +141,10 @@ final class H2Vendor extends Vendor {
         }
         return null;
     }
+
+    @Override
+    public List<String[]> backupPreamble(Connection conn, Ident id, String catalog,
+                                         String schema) {
+        return Ddl.h2Domains(conn, id, schema);
+    }
 }
