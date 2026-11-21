@@ -370,6 +370,20 @@ driver:
   dialect_export_failed: "无法导出方言：%{error}"
   dialect_folder_failed: "无法打开配置文件夹：%{error}"
   dialect_failed_row: "配置文件未能加载"
+  dialect_script_on: "脚本 %{file} 已获允许，会在此驱动的会话中运行。"
+  dialect_script_off: "脚本 %{file} 已关闭：它是新文件，或在获允许后被修改过。会话使用配置文件的其余部分，不运行该脚本。"
+  dialect_script_allow: "允许脚本…"
+  dialect_script_disallow: "关闭"
+  dialect_script_trust_title: "允许 %{name} 的脚本吗？"
+  dialect_script_trust_file: "脚本：%{file}"
+  dialect_script_trust_path: "路径：%{path}"
+  dialect_script_trust_warning: "脚本以 rudbman 的权限运行：它可以读取和修改你的文件、访问网络，并看到每个打开的连接及其密码。只有在信任其来源时才允许它。"
+  dialect_script_trust_version: "获允许的是文件的这个版本；文件一旦改变，rudbman 会再次询问。"
+  dialect_script_trust_refuse: "保持关闭"
+  dialect_script_trust_confirm: "允许并运行"
+  dialect_script_allowed: "已允许脚本 %{file}；此后打开的会话会运行它。"
+  dialect_script_turned_off: "已关闭脚本 %{file}；此后打开的会话不再运行它。"
+  dialect_script_failed: "无法保存已允许脚本的列表：%{error}"
   maven: Maven 坐标
   jars: JAR 文件
   add_jar: 添加 JAR…

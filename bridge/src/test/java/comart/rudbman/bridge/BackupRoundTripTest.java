@@ -1,5 +1,6 @@
 package comart.rudbman.bridge;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import comart.rudbman.bridge.support.H2;
 import comart.rudbman.bridge.support.SchemaSnapshot;
@@ -75,6 +76,9 @@ class BackupRoundTripTest {
 
     private static final String FILE = "/tmp/rudbman-roundtrip.sql";
 
+    /** The dialect profile backups are taken through; none is the built-in's. */
+    private JsonObject profile;
+
     @TempDir
     Path tmp;
 
@@ -112,8 +116,56 @@ class BackupRoundTripTest {
 
     @Test
     void mariadbBackupRestoresTheSameSchema() throws Exception {
-        roundTrip(mysqlFamily("MARIADB", "ma", "mariadb", "rudbman-test-mariadb",
-                "org.mariadb.jdbc.Driver", "utf8mb4_uca1400_ai_ci"));
+        roundTrip(mariadb());
+    }
+
+    private Product mariadb() {
+        return mysqlFamily("MARIADB", "ma", "mariadb", "rudbman-test-mariadb",
+                "org.mariadb.jdbc.Driver", "utf8mb4_uca1400_ai_ci");
+    }
+
+    /**
+     * MariaDB through a dialect profile on {@code mysql} - its sequences, their
+     * resumption and the counters as the hooks of a Groovy script - backs up
+     * as the built-in does: the round trip holds, and the two backups of one
+     * schema are the same script ({@code docs/dialect-profiles.md}, §9).
+     */
+    @Test
+    void mariadbThroughAProfileBacksUpAsTheBuiltInDoes() throws Exception {
+        Product p = mariadb();
+        profile = mariadbOnMysql();
+        try {
+            roundTrip(p);
+            Path through = backup(p.source, false, "profile.sql");
+            profile = null;
+            Path builtIn = backup(p.source, false, "built-in.sql");
+            same(script(p, builtIn), script(p, through),
+                    "ma: the profile's backup differs from the built-in's");
+        } finally {
+            profile = null;
+        }
+    }
+
+    /** The profile the Rust container suites run MariaDB through, as OPEN_SESSION takes it. */
+    private static JsonObject mariadbOnMysql() throws IOException {
+        Path file = Path.of("..", "crates", "rudbman-jdbc", "tests", "profiles",
+                "mariadb-on-mysql.groovy").toAbsolutePath().normalize();
+        JsonObject sequence = new JsonObject();
+        sequence.addProperty("sql", "SHOW CREATE SEQUENCE {qualified}");
+        sequence.addProperty("column", 2);
+        JsonObject texts = new JsonObject();
+        texts.add("sequence", sequence);
+        JsonObject bridge = new JsonObject();
+        bridge.add("texts", texts);
+        JsonObject script = new JsonObject();
+        script.addProperty("path", file.toString());
+        script.addProperty("text", Files.readString(file, StandardCharsets.UTF_8));
+        JsonObject profile = new JsonObject();
+        profile.addProperty("id", "mariadb-on-mysql");
+        profile.addProperty("base", "mysql");
+        profile.add("bridge", bridge);
+        profile.add("script", script);
+        return profile;
     }
 
     private Product mysqlFamily(String key, String name, String client, String defaultContainer,
@@ -511,6 +563,16 @@ class BackupRoundTripTest {
         open.addProperty("driver_class", at.driver);
         open.addProperty("username", at.user);
         open.addProperty("password", at.password);
+        if (profile != null) {
+            open.add("profile", profile);
+            JsonArray groovy = new JsonArray();
+            String jars = System.getProperty("rudbman.test.groovy");
+            assertTrue(jars != null, "the task sets rudbman.test.groovy");
+            for (String jar : jars.split(java.io.File.pathSeparator)) {
+                groovy.add(jar);
+            }
+            open.add("groovy", groovy);
+        }
         long session = H2.call(Ops.OPEN_SESSION, 0, 0, open).num("session");
         try {
             Path out = tmp.resolve(file);

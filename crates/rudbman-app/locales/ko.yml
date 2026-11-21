@@ -370,6 +370,20 @@ driver:
   dialect_export_failed: "방언을 내보내지 못했습니다: %{error}"
   dialect_folder_failed: "프로필 폴더를 열지 못했습니다: %{error}"
   dialect_failed_row: "프로필을 불러오지 못함"
+  dialect_script_on: "스크립트 %{file}이(가) 허용되어 이 드라이버의 세션에서 실행됩니다."
+  dialect_script_off: "스크립트 %{file}이(가) 꺼져 있습니다. 새 파일이거나 허용한 뒤 바뀌었습니다. 세션은 스크립트 없이 프로필의 나머지만 사용합니다."
+  dialect_script_allow: "스크립트 허용…"
+  dialect_script_disallow: "끄기"
+  dialect_script_trust_title: "%{name}의 스크립트를 허용할까요?"
+  dialect_script_trust_file: "스크립트: %{file}"
+  dialect_script_trust_path: "경로: %{path}"
+  dialect_script_trust_warning: "스크립트는 rudbman의 권한으로 실행됩니다. 파일을 읽고 바꾸며, 네트워크에 접속하고, 열려 있는 모든 연결과 그 비밀번호를 볼 수 있습니다. 출처를 믿을 수 있을 때만 허용하세요."
+  dialect_script_trust_version: "허용되는 것은 이 버전의 파일입니다. 파일이 바뀌면 rudbman이 다시 묻습니다."
+  dialect_script_trust_refuse: "끈 채로 두기"
+  dialect_script_trust_confirm: "허용하고 실행"
+  dialect_script_allowed: "스크립트 %{file}을(를) 허용했습니다. 이제부터 여는 세션에서 실행됩니다."
+  dialect_script_turned_off: "스크립트 %{file}을(를) 껐습니다. 이제부터 여는 세션은 스크립트 없이 동작합니다."
+  dialect_script_failed: "허용한 스크립트 목록을 저장하지 못했습니다: %{error}"
   maven: 메이븐 좌표
   jars: JAR 파일
   add_jar: JAR 추가…

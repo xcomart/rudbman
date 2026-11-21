@@ -10,15 +10,22 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.StringJoiner;
+import java.util.concurrent.ConcurrentHashMap;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -175,7 +182,7 @@ class ProfileVendorTest {
         assertNull(v.dropForeignKey("s.t", "fk"));
         assertSame(Vendor.RowFence.NONE, v.rowFence(h2, id, "PUBLIC", "T", "\"T\"",
                 List.of("ID")));
-        assertEquals(new JsonArray(), v.triggers(h2, null));
+        assertEquals(List.of(), v.triggers(h2, null, null, null));
     }
 
     @Test
@@ -322,7 +329,8 @@ class ProfileVendorTest {
             JsonObject table = JsonParser.parseString(
                     "{\"schema\": \"PUBLIC\", \"table\": \"T\"}").getAsJsonObject();
             assertTrue(v.hidesComments());
-            assertTrue(v.tableComments(h2, table).containsValue("noted"));
+            assertTrue(v.tableComments(h2, Comments.filters(table)).stream()
+                    .anyMatch(row -> "noted".equals(row[2])));
 
             assertEquals("CREATE TABLE PUBLIC.T (T);",
                     v.tableText(h2, id, null, "PUBLIC", "T"));
@@ -333,5 +341,348 @@ class ProfileVendorTest {
         // Without the profile, H2 lists its sequence.
         JsonObject req = JsonParser.parseString("{\"schema\": \"PUBLIC\"}").getAsJsonObject();
         assertEquals(1, Sequences.of(h2, h2.getMetaData(), req).size());
+    }
+
+    // ------------------------------------------------------- scripts (§5)
+
+    /** @return the Groovy runtime's JARs, as the test task hands them over */
+    static List<String> groovy() {
+        String path = System.getProperty("rudbman.test.groovy");
+        assertNotNull(path, "the test task sets rudbman.test.groovy");
+        return List.of(path.split(java.io.File.pathSeparator));
+    }
+
+    /** What the contract tests' scripts were last called with, by hook. */
+    private static final Map<String, Object[]> CALLED = new ConcurrentHashMap<>();
+
+    /**
+     * Called by the contract tests' scripts.
+     *
+     * @param hook the hook the script is
+     * @param args what it was called with
+     */
+    public static void called(String hook, Object[] args) {
+        CALLED.put(hook, args);
+    }
+
+    /** @return a profile of the request's shape, with a script */
+    static JsonObject profile(String base, String bridge, String file, String text) {
+        JsonObject profile = new JsonObject();
+        profile.addProperty("id", "scripted");
+        profile.addProperty("base", base);
+        profile.add("bridge", JsonParser.parseString(bridge).getAsJsonObject());
+        if (text != null) {
+            JsonObject script = new JsonObject();
+            script.addProperty("path", "/profiles/" + file);
+            script.addProperty("text", text);
+            profile.add("script", script);
+        }
+        return profile;
+    }
+
+    private static Vendor scripted(String base, String bridge, String file, String text) {
+        return Profiles.dialect(profile(base, bridge, file, text), groovy()).vendor();
+    }
+
+    /** @return a method named for {@code hook}, with its parameters, and {@code body} */
+    private static String define(String hook, String body) {
+        Method m = ProfileScript.hookMethods().get(hook);
+        StringJoiner params = new StringJoiner(", ");
+        for (int i = 0; i < m.getParameterCount(); i++) {
+            params.add(m.getParameterTypes()[i].getCanonicalName() + " a" + i);
+        }
+        return "def " + hook + "(" + params + ") {\n" + body + "\n}\n";
+    }
+
+    /** @return the documented arguments a hook is called with */
+    private static Object[] arguments(String hook, ResultSet rs) throws SQLException {
+        Vendor.Sequence seq = new Vendor.Sequence("db", "app", "s1", "41", "1", "1");
+        Vendor.Table table = new Vendor.Table("db", "app", "t");
+        switch (hook) {
+            case "literal":
+                return new Object[]{rs, 1, Types.VARCHAR};
+            case "stringLiteral":
+                return new Object[]{"it's", true, Types.NVARCHAR, rs, 1};
+            case "hexLiteral":
+                return new Object[]{"00FF"};
+            case "routineRemarks":
+                return new Object[]{"Standalone procedure or function"};
+            case "sequences":
+                return new Object[]{h2, id, "db", "app", "s1"};
+            case "triggers":
+                return new Object[]{h2, "db", "app", "tr"};
+            case "triggerRow":
+                return new Object[]{new String[9]};
+            case "tableComments":
+                return new Object[]{h2, Map.of("schema", "PUBLIC", "table_pattern", "T%")};
+            case "columnComments":
+                return new Object[]{h2, Map.of("table", "T", "column", "NOTE")};
+            case "extensionMembers":
+            case "materializedViews":
+            case "tablesNotWritten":
+            case "indexViews":
+            case "packages":
+                return new Object[]{h2, "app"};
+            case "backupPreamble":
+                return new Object[]{h2, id, "db", "app"};
+            case "ownedSequences":
+                return new Object[]{h2, id, "app", Set.of("s1")};
+            case "sequenceValue":
+                return new Object[]{h2, id, "db", "app", "s1", "41"};
+            case "resumeSequence":
+                return new Object[]{h2, "app", "s1", "CREATE SEQUENCE s1"};
+            case "sqlMode":
+                return new Object[]{h2, "db", "f", "function"};
+            case "overloadTexts":
+                return new Object[]{h2, "app", "f"};
+            case "routineDrops":
+                return new Object[]{h2, id, "app", "f", true};
+            case "textColumns":
+                return new Object[]{h2, "app", "t"};
+            case "textColumn":
+                return new Object[]{"\"c\""};
+            case "rowFence":
+                return new Object[]{h2, id, "app", "t", "\"t\"", List.of("ID")};
+            case "counters":
+                return new Object[]{h2.getMetaData(), id, List.of(seq), List.of(table), true};
+            default:
+                throw new AssertionError("no contract test for the hook " + hook);
+        }
+    }
+
+    /** What a contract script answers, by its hook's type, and that answer as the hook's. */
+    private static String answer(Method hook) {
+        String type = hook.getGenericReturnType().getTypeName();
+        switch (type) {
+            case "java.lang.String":
+                return "\"${'from'} the script\"";
+            case "java.util.Set<java.lang.String>":
+                return "['from the script']";
+            case "java.util.List<java.lang.String>":
+                return "[\"${'from'} the script\"]";
+            case "java.util.List<java.lang.String[]>":
+                return "[['from', 'the script']]";
+            case "java.util.List<java.util.Map<java.lang.String, java.lang.String>>":
+                return "[[SEQUENCE_NAME: 'from the script']]";
+            case "comart.rudbman.bridge.meta.Vendor$RowFence":
+                return "[before: { ['from the script'] }] as RowFence";
+            case "void":
+                return "a0[8] = 'from the script'";
+            default:
+                throw new AssertionError("no answer for a hook of type " + type);
+        }
+    }
+
+    /** @return {@code out} as it compares: arrays as lists, a row fence as its statements */
+    private static Object compared(Object out) throws SQLException {
+        if (out instanceof Vendor.RowFence) {
+            return compared(((Vendor.RowFence) out).before());
+        }
+        if (out instanceof Object[]) {
+            List<Object> items = new ArrayList<>();
+            for (Object o : (Object[]) out) {
+                items.add(compared(o));
+            }
+            return items;
+        }
+        if (out instanceof List) {
+            List<Object> items = new ArrayList<>();
+            for (Object o : (List<?>) out) {
+                items.add(compared(o));
+            }
+            return items;
+        }
+        return out;
+    }
+
+    private static Object expected(Method hook) {
+        switch (hook.getGenericReturnType().getTypeName()) {
+            case "java.util.Set<java.lang.String>":
+                return Set.of("from the script");
+            case "java.util.List<java.lang.String>":
+            case "comart.rudbman.bridge.meta.Vendor$RowFence":
+                return List.of("from the script");
+            case "java.util.List<java.lang.String[]>":
+                return List.of(List.of("from", "the script"));
+            case "java.util.List<java.util.Map<java.lang.String, java.lang.String>>":
+                return List.of(Map.of("SEQUENCE_NAME", "from the script"));
+            default:
+                return "from the script";
+        }
+    }
+
+    private static Object invoke(Vendor v, Method hook, Object[] args) throws Throwable {
+        try {
+            return hook.invoke(v, args);
+        } catch (InvocationTargetException e) {
+            throw e.getCause();
+        }
+    }
+
+    @Test
+    void everyPublishedHookIsCalledWithItsArgumentsAndAnsweredFrom() throws Throwable {
+        try (Statement st = h2.createStatement(); ResultSet rs = st.executeQuery("SELECT 'x'")) {
+            assertTrue(rs.next());
+            for (Map.Entry<String, Method> e : ProfileScript.hookMethods().entrySet()) {
+                String hook = e.getKey();
+                Method m = e.getValue();
+                String body = "comart.rudbman.bridge.meta.ProfileVendorTest.called('" + hook
+                        + "', [" + params(m) + "] as Object[])\n" + answer(m);
+                Vendor v = scripted("h2", "{}", "answers.groovy", define(hook, body));
+                Object[] args = arguments(hook, rs);
+                CALLED.remove(hook);
+                Object out = invoke(v, m, args);
+                assertArrayEquals(args, CALLED.get(hook), hook + " is called as documented");
+                if (m.getReturnType() == void.class) {
+                    assertEquals("from the script", ((String[]) args[0])[8], hook);
+                } else {
+                    assertEquals(expected(m), compared(out), hook + "'s answer is the script's");
+                    assertTrue(m.getReturnType().isInstance(out), hook + " answers its type");
+                }
+            }
+        }
+    }
+
+    private static String params(Method m) {
+        StringJoiner names = new StringJoiner(", ");
+        for (int i = 0; i < m.getParameterCount(); i++) {
+            names.add("a" + i);
+        }
+        return names.toString();
+    }
+
+    @Test
+    void everyPublishedHookThatThrowsFailsWithTheScriptsLine() throws Throwable {
+        try (Statement st = h2.createStatement(); ResultSet rs = st.executeQuery("SELECT 'x'")) {
+            assertTrue(rs.next());
+            for (Map.Entry<String, Method> e : ProfileScript.hookMethods().entrySet()) {
+                String hook = e.getKey();
+                // The throw is the method's second line.
+                Vendor v = scripted("h2", "{}", "two-words.groovy",
+                        define(hook, "throw new IllegalStateException('broken " + hook + "')"));
+                ScriptFailure failure = assertThrows(ScriptFailure.class,
+                        () -> invoke(v, e.getValue(), arguments(hook, rs)), hook);
+                assertTrue(failure.getMessage().contains("/profiles/two-words.groovy:2: " + hook
+                        + " threw java.lang.IllegalStateException: broken " + hook),
+                        failure.getMessage());
+                assertEquals("script", failure.kind());
+            }
+        }
+    }
+
+    @Test
+    void theScriptComesFirstAndItsBaseIsTheProfilesData() {
+        Vendor v = scripted("h2", "{\"hex_literal\": \"0x{hex}\", \"identity_clause\": \"AUTO\"}",
+                "layered.groovy", "String hexLiteral(String hex) { base.hexLiteral(hex) + ' -- ' + hex }");
+        assertEquals("0x00FF -- 00FF", v.hexLiteral("00FF"));
+        // What the script does not define is the data's, then H2's.
+        assertEquals("AUTO", v.identityClause());
+        assertEquals(Dialect.H2.vendor().textColumn("\"c\""), v.textColumn("\"c\""));
+    }
+
+    @Test
+    void theImportsAndTheRecordsAreThereForAScript() throws SQLException {
+        Vendor v = scripted("generic", "{}", "imports.groovy", ""
+                + "String hexLiteral(String hex) { Ident.literal(hex) + ' ' + Types.VARCHAR }\n"
+                + "List<String> counters(DatabaseMetaData dbm, Ident id, List<Sequence> seqs,\n"
+                + "        List<Table> tables, boolean data) {\n"
+                + "    seqs.collect { it.name() } + tables.collect { it.name() }\n"
+                + "}\n");
+        assertEquals("'00' " + Types.VARCHAR, v.hexLiteral("00"));
+        assertEquals(List.of("s1", "t"), v.counters(h2.getMetaData(), id,
+                List.of(new Vendor.Sequence(null, null, "s1", null, null, null)),
+                List.of(new Vendor.Table(null, null, "t")), true));
+    }
+
+    @Test
+    void aScriptThatDoesNotCompileFailsTheOpenWithItsLine() {
+        ScriptFailure failure = assertThrows(ScriptFailure.class, () -> scripted("h2", "{}",
+                "broken.groovy", "String hexLiteral(String hex) {\n    return 'x' +\n}\n"));
+        assertTrue(failure.getMessage().startsWith("dialect profile scripted: /profiles/broken.groovy:"),
+                failure.getMessage());
+        assertTrue(failure.getMessage().matches("(?s).*broken\\.groovy:3(:\\d+)?: .*"),
+                failure.getMessage());
+    }
+
+    @Test
+    void aHookOfTheWrongShapeFailsTheOpen() {
+        String arity = assertThrows(ScriptFailure.class, () -> scripted("h2", "{}", "arity.groovy",
+                "String hexLiteral(String a, String b) { a }")).getMessage();
+        assertTrue(arity.contains("hexLiteral takes String hexLiteral(String) in API 1"), arity);
+        String type = assertThrows(ScriptFailure.class, () -> scripted("h2", "{}", "type.groovy",
+                "String hexLiteral(int hex) { '' }")).getMessage();
+        assertTrue(type.contains("takes a int as argument 1"), type);
+        String nothing = assertThrows(ScriptFailure.class, () -> scripted("h2", "{}",
+                "void.groovy", "void textColumn(String quoted) { }")).getMessage();
+        assertTrue(nothing.contains("textColumn answers nothing"), nothing);
+        String file = assertThrows(ScriptFailure.class, () -> scripted("h2", "{}", "class.groovy",
+                "class Hooks { String hexLiteral(String hex) { hex } }")).getMessage();
+        assertTrue(file.contains("defines a class, not a script"), file);
+    }
+
+    @Test
+    void anAnswerOfTheWrongTypeFailsTheRequest() {
+        Vendor v = scripted("h2", "{}", "answer.groovy",
+                "def textColumns(Connection conn, String schema, String table) { 42 }");
+        String message = assertThrows(ScriptFailure.class,
+                () -> v.textColumns(h2, "app", "t")).getMessage();
+        assertTrue(message.contains("textColumns answered a java.lang.Integer where API 1 wants"
+                + " Set<String>"), message);
+    }
+
+    @Test
+    void aRowFencesStatementsFailWithTheScriptsLine() throws SQLException {
+        Vendor v = scripted("h2", "{}", "fence.groovy", ""
+                + "RowFence rowFence(Connection c, Ident id, String s, String t, String q,\n"
+                + "        List<String> identities) {\n"
+                + "    [before: { [\"SET IDENTITY_INSERT ${q} ON;\"] },\n"
+                + "     after: { throw new IllegalStateException('no after') }] as RowFence\n"
+                + "}\n");
+        Vendor.RowFence fence = v.rowFence(h2, id, "app", "t", "dbo.t", List.of("ID"));
+        assertEquals(List.of("SET IDENTITY_INSERT dbo.t ON;"), fence.before());
+        String message = assertThrows(ScriptFailure.class, fence::after).getMessage();
+        assertTrue(message.contains("/profiles/fence.groovy:4: rowFence's after threw"), message);
+    }
+
+    @Test
+    void aScriptIsCompiledOncePerProcess() {
+        JsonObject script = new JsonObject();
+        script.addProperty("path", "/profiles/once.groovy");
+        script.addProperty("text", "String hexLiteral(String hex) { hex }");
+        ProfileScript first = ProfileScript.load("a", script, groovy());
+        ProfileScript second = ProfileScript.load("b", script, groovy());
+        assertSame(first.type(), second.type());
+        assertEquals(Set.of("hexLiteral"), first.defined());
+        script.addProperty("text", "String hexLiteral(String hex) { hex + hex }");
+        assertFalse(first.type() == ProfileScript.load("a", script, groovy()).type(),
+                "a changed script is compiled again");
+    }
+
+    @Test
+    void groovyIsNotOnTheBridgesClassPathAndAScriptNeedsItsRuntime() {
+        assertThrows(ClassNotFoundException.class, () -> Class.forName("groovy.lang.Script"));
+        ScriptFailure failure = assertThrows(ScriptFailure.class, () -> Profiles.dialect(
+                profile("h2", "{}", "alone.groovy", "String hexLiteral(String hex) { hex }"),
+                List.of()));
+        assertTrue(failure.getMessage().contains("opened without it"), failure.getMessage());
+    }
+
+    @Test
+    void aHookThatThrowsInsideAnOptionalQueryIsNotSwallowed() {
+        Dialect dialect = Profiles.dialect(profile("h2", "{\"comments\": {\"hides_comments\": true}}",
+                "comments.groovy", "List<String[]> tableComments(Connection c, Map<String, String> req) {\n"
+                        + "    throw new java.sql.SQLException('no comments here')\n}\n"), groovy());
+        Dialect.attach(h2, dialect);
+        try {
+            JsonArray items = JsonParser.parseString("[{\"name\": \"T\", \"remarks\": null}]")
+                    .getAsJsonArray();
+            JsonObject req = JsonParser.parseString("{\"schema\": \"PUBLIC\"}").getAsJsonObject();
+            String message = assertThrows(ScriptFailure.class,
+                    () -> Comments.tables(h2, h2.getMetaData(), req, items, null)).getMessage();
+            assertTrue(message.contains("comments.groovy:2: tableComments threw"
+                    + " java.sql.SQLException: no comments here"), message);
+        } finally {
+            Dialect.detach(h2);
+        }
     }
 }

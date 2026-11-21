@@ -24,7 +24,8 @@ final class SqliteVendor extends Vendor {
 
     /** No trigger catalog: each trigger is read off its statement. */
     @Override
-    JsonArray triggers(Connection conn, String name) {
+    public List<String[]> triggers(Connection conn, String catalog, String schema,
+                                   String name) {
         return Triggers.sqlite(conn, name);
     }
 

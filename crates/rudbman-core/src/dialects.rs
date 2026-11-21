@@ -36,6 +36,15 @@ const PENDING_SUFFIX: &str = ".new";
 /// The record of the shipped files, in the profiles' directory.
 const RECORD_FILE_NAME: &str = "shipped.json";
 
+/// The scripts the user has allowed, in the profiles' directory (§6).
+const ALLOWED_FILE_NAME: &str = "allowed.json";
+
+/// The Groovy runtime a profile's script runs on (§5.3), as Maven Central
+/// names it. It is not bundled: the application downloads it into the drivers
+/// directory the first time a session needs it. `bridge/build.gradle` tests
+/// the bridge against the same version.
+pub const GROOVY_RUNTIME: &str = "org.apache.groovy:groovy:5.0.8";
+
 // ------------------------------------------------------------------ loading
 
 /// What one profile file came to.
@@ -54,8 +63,12 @@ pub struct Entry {
     /// The driver definition the profile brings, if it has a `driver`
     /// section.
     pub driver: Option<DriverDef>,
-    /// The script `bridge.script` names, as written. Nothing runs it yet.
+    /// The script `bridge.script` names, as written.
     pub script: Option<String>,
+    /// The script whose hooks the profile's sessions run, once it has
+    /// loaded: the one its own `bridge.script` names or, failing that, the
+    /// nearest base profile's — and whether the user has allowed it.
+    pub hooks: Option<Script>,
     /// Newer shipped versions of its files, written beside the user's own
     /// (`<file>.new`).
     pub pending: Vec<PathBuf>,
@@ -65,6 +78,22 @@ pub struct Entry {
     /// loaded: its id, the built-in its chain of bases ends in, and its
     /// `bridge` half merged along that chain. See the bridge's `Profiles`.
     pub session: Option<serde_json::Value>,
+}
+
+/// A profile's script (§5), as it stands in the profiles' directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Script {
+    /// Its name in the directory, as `bridge.script` gives it.
+    pub name: String,
+    /// The file.
+    pub path: PathBuf,
+    /// The SHA-256 of what the file holds, in lower-case hex: what
+    /// `allowed.json` records of an allowed script.
+    pub sha256: String,
+    /// Whether sessions run it: the user has allowed this version of it, or
+    /// the application wrote it as it is (§6, §12). Not allowed, the profile
+    /// loads without it.
+    pub allowed: bool,
 }
 
 impl Entry {
@@ -170,6 +199,55 @@ impl Report {
             .collect()
     }
 
+    /// Reads the script of every loaded profile, and puts it in the
+    /// profile's [`Entry::session`] where the user has allowed it.
+    ///
+    /// A script that cannot be read fails its profile: it is part of what
+    /// the profile says, and its hooks silently gone would be settings
+    /// silently lost.
+    fn read_scripts(&mut self, dir: &Path, allowed: &Allowed) {
+        for entry in &mut self.entries {
+            let Some(name) = entry
+                .session
+                .as_ref()
+                .and_then(|session| session["bridge"]["script"].as_str())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let path = dir.join(&name);
+            let text = fs::read(&path)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| {
+                    let sha256 = hash(&bytes);
+                    String::from_utf8(strip_bom(&bytes).to_vec())
+                        .map(|text| (sha256, text))
+                        .map_err(|_| "the file is not UTF-8".to_string())
+                });
+            match text {
+                Err(error) => {
+                    entry.state = State::Failed(format!("bridge.script: {name}: {error}"));
+                    entry.session = None;
+                }
+                Ok((sha256, text)) => {
+                    let ok = allowed.scripts.get(&name) == Some(&sha256);
+                    if ok && let Some(session) = entry.session.as_mut() {
+                        session["script"] = serde_json::json!({
+                            "path": path.display().to_string(),
+                            "text": text,
+                        });
+                    }
+                    entry.hooks = Some(Script {
+                        name,
+                        path,
+                        sha256,
+                        allowed: ok,
+                    });
+                }
+            }
+        }
+    }
+
     /// Fills in [`Entry::session`] of every loaded profile.
     fn merge_sessions(&mut self) {
         for at in 0..self.entries.len() {
@@ -242,6 +320,7 @@ pub fn load_from(dir: &Path) -> Report {
             state: State::Failed(String::new()),
             driver: None,
             script: None,
+            hooks: None,
             pending: Vec::new(),
             bridge: serde_json::json!({}),
             session: None,
@@ -304,9 +383,79 @@ pub fn load_from(dir: &Path) -> Report {
         };
     }
     report.merge_sessions();
+    let allowed = match read_allowed(dir) {
+        Ok(allowed) => allowed,
+        Err(error) => {
+            // Nothing is allowed by a list that cannot be read.
+            report.problems.push(format!("{error:#}"));
+            Allowed::default()
+        }
+    };
+    report.read_scripts(dir, &allowed);
     report
 }
 
+/// Whether a session's profile, as [`Report::session_profile`] or
+/// [`Report::detect_profiles`] gives it, runs a script: what makes the
+/// session need the Groovy runtime.
+pub fn runs_script(session: &serde_json::Value) -> bool {
+    session
+        .get("script")
+        .is_some_and(|script| !script.is_null())
+}
+
+// ------------------------------------------------------------------- trust
+
+/// `allowed.json`: each script the user has allowed, by its name in the
+/// directory, with the SHA-256 of the version allowed (§6).
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Allowed {
+    #[serde(default)]
+    scripts: BTreeMap<String, String>,
+}
+
+/// `dir`'s `allowed.json`; none allows nothing.
+fn read_allowed(dir: &Path) -> Result<Allowed> {
+    let path = dir.join(ALLOWED_FILE_NAME);
+    match read_optional(&path)? {
+        None => Ok(Allowed::default()),
+        Some(bytes) => serde_json::from_slice(strip_bom(&bytes))
+            .with_context(|| format!("failed to parse {}", path.display())),
+    }
+}
+
+fn write_allowed(dir: &Path, allowed: &Allowed) -> Result<()> {
+    let json = serde_json::to_vec_pretty(allowed).context("failed to serialize the allow list")?;
+    write_atomic(&dir.join(ALLOWED_FILE_NAME), &json)
+}
+
+/// Allows `script` as it was read — by the hash it had then, so that a file
+/// changed since is still not run — in the profiles' directory `dir`.
+///
+/// # Errors
+///
+/// Fails when `allowed.json` cannot be read or written.
+pub fn allow_in(dir: &Path, script: &Script) -> Result<()> {
+    let mut allowed = read_allowed(dir)?;
+    allowed
+        .scripts
+        .insert(script.name.clone(), script.sha256.clone());
+    write_allowed(dir, &allowed)
+}
+
+/// Takes the script `name` off the allow list of `dir`: sessions open
+/// without it until it is allowed again.
+///
+/// # Errors
+///
+/// Fails when `allowed.json` cannot be read or written.
+pub fn disallow_in(dir: &Path, name: &str) -> Result<()> {
+    let mut allowed = read_allowed(dir)?;
+    if allowed.scripts.remove(name).is_some() {
+        write_allowed(dir, &allowed)?;
+    }
+    Ok(())
+}
 /// The `*.yml` files of `dir` by id, in id order.
 fn profile_files(dir: &Path) -> io::Result<Vec<(String, PathBuf)>> {
     let mut files = Vec::new();
@@ -513,10 +662,16 @@ pub struct Synced {
 /// A `.new` is removed once the file beside it is the shipped version or the
 /// `.new` itself — the user has taken it.
 ///
+/// A script the application writes is allowed by its hash as it is written
+/// (§12): one written where there was none, and the newer version of one the
+/// user had allowed as it was. A script the user has turned off stays off, and
+/// one the user has changed is the user's, which asks (§6).
+///
 /// # Errors
 ///
-/// Fails when the directory cannot be read or written, or `shipped.json`
-/// cannot be read; nothing is decided from a record that could not be read.
+/// Fails when the directory cannot be read or written, or `shipped.json` or
+/// `allowed.json` cannot be read; nothing is decided from a record that
+/// could not be read.
 pub fn sync_shipped(dir: &Path, shipped: &[Shipped]) -> Result<Synced> {
     let record_path = dir.join(RECORD_FILE_NAME);
     let mut record: Record = match read_optional(&record_path)? {
@@ -524,8 +679,10 @@ pub fn sync_shipped(dir: &Path, shipped: &[Shipped]) -> Result<Synced> {
         Some(bytes) => serde_json::from_slice(strip_bom(&bytes))
             .with_context(|| format!("failed to parse {}", record_path.display()))?,
     };
+    let mut allowed = read_allowed(dir)?;
     let mut synced = Synced::default();
     let mut changed = false;
+    let mut allow_changed = false;
     for file in shipped {
         let path = dir.join(file.name);
         let ours = hash(file.contents);
@@ -541,12 +698,20 @@ pub fn sync_shipped(dir: &Path, shipped: &[Shipped]) -> Result<Synced> {
                 (None, None) => {
                     write_atomic(&path, file.contents)?;
                     on_disk = Some(file.contents.to_vec());
+                    if is_script(file.name) {
+                        allowed.scripts.insert(name.clone(), ours.clone());
+                        allow_changed = true;
+                    }
                     synced.written.push(name);
                 }
                 (Some(_), None) => {}
                 (Some(offered), Some(theirs)) if theirs == *offered => {
                     write_atomic(&path, file.contents)?;
                     on_disk = Some(file.contents.to_vec());
+                    if is_script(file.name) && allowed.scripts.get(&name) == Some(offered) {
+                        allowed.scripts.insert(name.clone(), ours.clone());
+                        allow_changed = true;
+                    }
                     synced.replaced.push(name);
                 }
                 (_, Some(_)) => {
@@ -561,11 +726,19 @@ pub fn sync_shipped(dir: &Path, shipped: &[Shipped]) -> Result<Synced> {
             tidy_pending(&path, &on_disk, file.contents)?;
         }
     }
+    if allow_changed {
+        write_allowed(dir, &allowed)?;
+    }
     if changed {
         let json = serde_json::to_vec_pretty(&record).context("failed to serialize the record")?;
         write_atomic(&record_path, &json)?;
     }
     Ok(synced)
+}
+
+/// Whether a shipped file is a script rather than a profile.
+fn is_script(name: &str) -> bool {
+    !name.ends_with(&format!(".{PROFILE_EXTENSION}"))
 }
 
 /// Removes `<path>.new` once `path` holds the shipped version or the `.new`

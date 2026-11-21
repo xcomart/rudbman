@@ -39,7 +39,7 @@ final class OracleVendor extends Vendor {
     }
 
     @Override
-    String routineRemarks(String remarks) {
+    public String routineRemarks(String remarks) {
         if (remarks != null && ROUTINE_REMARKS.matcher(remarks.trim()).matches()) {
             return null;
         }
@@ -74,7 +74,7 @@ final class OracleVendor extends Vendor {
 
     /** {@code TRIGGER_TYPE} holds timing and level together. */
     @Override
-    void triggerRow(String[] r) {
+    public void triggerRow(String[] r) {
         Triggers.oracleType(r);
     }
 
@@ -84,18 +84,20 @@ final class OracleVendor extends Vendor {
     }
 
     @Override
-    Map<String, String> tableComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> tableComments(Connection conn, Map<String, String> req)
+            throws SQLException {
         Comments.Filter schema = Comments.Filter.of(req, "schema", "schema_pattern");
         Comments.Filter table = Comments.Filter.of(req, "table", "table_pattern");
         StringBuilder sql = new StringBuilder(Comments.ORACLE_TABLES);
         List<String> args = new ArrayList<>();
         Comments.oracleOwner(sql, args, schema);
         table.append(sql, args, "TABLE_NAME", Comments.ANSI_ESCAPE);
-        return Comments.read(conn, sql.toString(), args, 2);
+        return Comments.rows(conn, sql.toString(), args, 3);
     }
 
     @Override
-    Map<String, String> columnComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> columnComments(Connection conn, Map<String, String> req)
+            throws SQLException {
         Comments.Filter schema = Comments.Filter.of(req, "schema", "schema_pattern");
         Comments.Filter table = Comments.Filter.of(req, "table", "table_pattern");
         Comments.Filter column = Comments.Filter.of(req, "column", "column_pattern");
@@ -104,7 +106,7 @@ final class OracleVendor extends Vendor {
         Comments.oracleOwner(sql, args, schema);
         table.append(sql, args, "TABLE_NAME", Comments.ANSI_ESCAPE);
         column.append(sql, args, "COLUMN_NAME", Comments.ANSI_ESCAPE);
-        return Comments.read(conn, sql.toString(), args, 3);
+        return Comments.rows(conn, sql.toString(), args, 4);
     }
 
     @Override

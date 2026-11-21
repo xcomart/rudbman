@@ -35,6 +35,13 @@ tasks.withType(Javadoc).configureEach {
 // the one Java test that talks to the servers.
 configurations {
     drivers
+    // The Groovy runtime a dialect profile's script runs on
+    // (docs/dialect-profiles.md, §5.3). The bridge is compiled without it:
+    // the application downloads it from Maven Central and sends its JAR with
+    // OPEN_SESSION, and the bridge loads it on a class loader of its own. So
+    // it is no dependency of `src`; the tests load it the same way, from the
+    // path the `test` task hands them.
+    groovyRuntime
 }
 
 dependencies {
@@ -59,6 +66,10 @@ dependencies {
     drivers 'com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11'
     drivers 'org.xerial:sqlite-jdbc:3.47.1.0'
     drivers 'com.ibm.db2:jcc:12.1.5.0'
+
+    // The same coordinate as GROOVY_RUNTIME in crates/rudbman-core/src/dialects.rs,
+    // which a test there holds this line to.
+    groovyRuntime 'org.apache.groovy:groovy:5.0.8'
 }
 
 // Resolution *is* the work: a file in the cache is all the Rust tests want.
@@ -68,9 +79,10 @@ dependencies {
 tasks.register('drivers') {
     group = 'verification'
     description = 'Downloads the PostgreSQL, MySQL, MariaDB, Oracle, SQL Server, Db2, and ' +
-        'SQLite JDBC drivers into the Gradle cache, where the Rust container tests ' +
+        'SQLite JDBC drivers, and the Groovy runtime of the dialect-profile suites, into ' +
+        'the Gradle cache, where the Rust container tests ' +
         '(crates/rudbman-jdbc/tests/containers.rs) find them.'
-    def jars = configurations.drivers
+    def jars = configurations.drivers + configurations.groovyRuntime
     inputs.files jars
     doLast {
         jars.each { println it.absolutePath }
@@ -106,6 +118,13 @@ test {
     useJUnitPlatform()
     // The round trip against real servers is a task of its own, below.
     exclude 'comart/rudbman/bridge/BackupRoundTripTest*'
+    // The scripts' tests load Groovy from here, as the bridge does from the
+    // path OPEN_SESSION gives it.
+    def groovyRuntime = configurations.groovyRuntime
+    inputs.files groovyRuntime
+    doFirst {
+        systemProperty 'rudbman.test.groovy', groovyRuntime.asPath
+    }
     testLogging {
         events 'passed', 'skipped', 'failed'
         exceptionFormat 'full'
@@ -128,6 +147,11 @@ tasks.register('backupRoundTrip', Test) {
     }
     // The servers, not the inputs, are what a run checks.
     outputs.upToDateWhen { false }
+    // MariaDB through a dialect profile runs its script on this Groovy.
+    def groovyRuntime = configurations.groovyRuntime
+    doFirst {
+        systemProperty 'rudbman.test.groovy', groovyRuntime.asPath
+    }
     testLogging {
         events 'passed', 'skipped', 'failed'
         exceptionFormat 'full'

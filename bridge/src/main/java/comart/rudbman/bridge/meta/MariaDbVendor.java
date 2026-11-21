@@ -8,6 +8,7 @@ import java.sql.SQLException;
 import java.sql.ResultSet;
 import java.sql.DatabaseMetaData;
 import java.util.List;
+import java.util.Map;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -30,8 +31,9 @@ final class MariaDbVendor extends MySqlVendor {
 
     /** Only MariaDB of the two has sequences, and lists them as tables. */
     @Override
-    JsonArray sequences(Connection conn, Ident id, JsonObject req) {
-        return Sequences.mariadb(conn, id, req);
+    public List<Map<String, String>> sequences(Connection conn, Ident id, String catalog,
+                                               String schema, String name) {
+        return Sequences.mariadb(conn, id, catalog, schema, name);
     }
 
     /** MariaDB's flag is right; only MySQL's needs confirming. */

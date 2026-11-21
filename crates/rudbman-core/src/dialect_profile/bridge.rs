@@ -158,7 +158,8 @@ pub struct BridgeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overrides_system_value: Option<bool>,
 
-    /// The Groovy script beside the profile (§5). Read, not yet run.
+    /// The Groovy script beside the profile (§5), named relative to the
+    /// profiles' folder and inside it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script: Option<String>,
 }
@@ -479,6 +480,9 @@ impl BridgeSpec {
         let template = |key: &str, text: &str, takes: &[&str]| {
             check_holes(text, takes).map_err(|message| (key.to_string(), message))
         };
+        if let Some(script) = &self.script {
+            check_script(script).map_err(|message| ("bridge.script".to_string(), message))?;
+        }
         if let Some(text) = &self.hex_literal {
             template("bridge.hex_literal", text, &["hex"])?;
         }
@@ -576,6 +580,26 @@ fn check_holes(text: &str, takes: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks that a script is named inside the profiles' folder: a relative
+/// path that does not climb out of it (§6 — scripts are read from the
+/// application's own configuration directory and nowhere else).
+fn check_script(name: &str) -> Result<(), String> {
+    use std::path::{Component, Path};
+    let path = Path::new(name);
+    let inside = !name.trim().is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if inside {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{name}` is not a file of the profiles' folder; name the script relative to it, \
+             without `..`"
+        ))
+    }
+}
+
 /// The merged `bridge` half of a profile over its base profile's: a key the
 /// profile gives replaces the base's, except in `comments` and `texts`,
 /// whose own keys replace one by one.
@@ -602,6 +626,21 @@ pub fn merged(base: &serde_json::Value, top: &serde_json::Value) -> serde_json::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_script_is_named_inside_the_profiles_folder() {
+        assert!(check_script("tidb.groovy").is_ok());
+        assert!(check_script("scripts/tidb.groovy").is_ok());
+        for outside in [
+            "../tidb.groovy",
+            "/etc/tidb.groovy",
+            "scripts/../../x",
+            "",
+            "./",
+        ] {
+            assert!(check_script(outside).is_err(), "{outside}");
+        }
+    }
 
     #[test]
     fn holes_are_checked_and_braces_escape() {

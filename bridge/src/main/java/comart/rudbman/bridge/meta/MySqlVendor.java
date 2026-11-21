@@ -67,17 +67,19 @@ class MySqlVendor extends Vendor {
     }
 
     @Override
-    Map<String, String> tableComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> tableComments(Connection conn, Map<String, String> req)
+            throws SQLException {
         Comments.Filter table = Comments.Filter.of(req, "table", "table_pattern");
         StringBuilder sql = new StringBuilder(Comments.MYSQL_TABLES);
         List<String> args = new ArrayList<>();
         Comments.mysqlDatabase(sql, args, req);
         table.append(sql, args, "TABLE_NAME", Comments.NO_ESCAPE);
-        return Comments.read(conn, sql.toString(), args, 2);
+        return Comments.rows(conn, sql.toString(), args, 3);
     }
 
     @Override
-    Map<String, String> columnComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> columnComments(Connection conn, Map<String, String> req)
+            throws SQLException {
         Comments.Filter table = Comments.Filter.of(req, "table", "table_pattern");
         Comments.Filter column = Comments.Filter.of(req, "column", "column_pattern");
         StringBuilder sql = new StringBuilder(Comments.MYSQL_COLUMNS);
@@ -85,7 +87,7 @@ class MySqlVendor extends Vendor {
         Comments.mysqlDatabase(sql, args, req);
         table.append(sql, args, "TABLE_NAME", Comments.NO_ESCAPE);
         column.append(sql, args, "COLUMN_NAME", Comments.NO_ESCAPE);
-        return Comments.read(conn, sql.toString(), args, 3);
+        return Comments.rows(conn, sql.toString(), args, 4);
     }
 
     @Override

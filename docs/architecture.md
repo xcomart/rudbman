@@ -1850,7 +1850,7 @@ The full build is orchestrated in one place, `.github/workflows/release.yml`:
 jlink --add-modules \
     java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,\
     java.security.jgss,java.security.sasl,java.management,java.logging,\
-    jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
+    java.desktop,jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
     --strip-debug --strip-native-commands --no-header-files --no-man-pages --compress=2 \
     --output runtime/
 ```
@@ -1866,6 +1866,10 @@ arrived in JDK 21 and errors out on the JDK 17 the release pins.
 - `java.naming` is JNDI/LDAP authentication
 - `java.security.jgss`/`sasl` are Kerberos integrated authentication
 - `java.transaction.xa` is referenced at load time by XA-capable drivers
+- `java.desktop` is for the Groovy runtime a dialect profile's script runs on
+  (`docs/dialect-profiles.md`, §5.3): Groovy's meta-classes read every class
+  through `java.beans`, and without it the first script fails with
+  `NoClassDefFoundError: java/beans/BeanInfo`
 - `--strip-native-commands` drops the launcher binaries (`java`, `keytool`,
   …). rudbman never runs them — the JVM is loaded in-process through the
   shared library (`bin/server/jvm.dll` / `lib/server/libjvm.*`, §4.1,
@@ -1874,9 +1878,9 @@ arrived in JDK 21 and errors out on the JDK 17 the release pins.
   `java.exe` exits 1, which is flagged as `Validation-Executable-Error`
 
 A missing module only shows up as a `NoClassDefFoundError` at connect time.
-The release build checks that the image's `MODULES` include `jdk.charsets` and
-`jdk.unsupported` (§10.3); the per-driver container tests run on a full JDK 17,
-not on this image.
+The release build checks that the image's `MODULES` include `jdk.charsets`,
+`jdk.unsupported` and `java.desktop` (§10.3); the per-driver container tests
+run on a full JDK 17, not on this image.
 
 Target output size: around 50MB per platform.
 

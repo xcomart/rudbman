@@ -7,7 +7,6 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -128,7 +127,7 @@ public abstract class Vendor {
      * @return the comment, without anything the driver writes for every
      *         routine; {@code remarks} unchanged by default
      */
-    String routineRemarks(String remarks) {
+    public String routineRemarks(String remarks) {
         return remarks;
     }
 
@@ -155,13 +154,19 @@ public abstract class Vendor {
      * Lists the sequences in a way of the product's own, for a product whose
      * sequences no catalog query of {@link #sequenceQueries} answers.
      *
-     * @param conn the live connection
-     * @param id   the quoting rules
-     * @param req  the request: {@code catalog}, {@code schema}, {@code name}
-     * @return the sequences, or {@code null} to run {@link #sequenceQueries};
-     *         {@code null} by default
+     * @param conn    the live connection
+     * @param id      the quoting rules
+     * @param catalog the requested catalog, or {@code null} for any
+     * @param schema  the requested schema, or {@code null} for any
+     * @param name    the requested sequence, or {@code null} for all
+     * @return the sequences, each a row keyed by the column labels a
+     *         {@code sequences} query answers with ({@code SEQUENCE_CATALOG},
+     *         {@code SEQUENCE_SCHEMA}, {@code SEQUENCE_NAME}, {@code DATA_TYPE},
+     *         {@code START_VALUE}, ...), or {@code null} to run
+     *         {@link #sequenceQueries}; {@code null} by default
      */
-    JsonArray sequences(Connection conn, Ident id, JsonObject req) {
+    public List<Map<String, String>> sequences(Connection conn, Ident id, String catalog,
+                                               String schema, String name) {
         return null;
     }
 
@@ -181,12 +186,16 @@ public abstract class Vendor {
      * Lists the triggers in a way of the product's own, for a product with no
      * trigger catalog {@link #triggerQuery} could read.
      *
-     * @param conn the live connection
-     * @param name the trigger's name, or {@code null} for all
-     * @return the triggers, or {@code null} to run {@link #triggerQuery};
-     *         {@code null} by default
+     * @param conn    the live connection
+     * @param catalog the requested catalog, or {@code null} for any
+     * @param schema  the requested schema, or {@code null} for any
+     * @param name    the requested trigger, or {@code null} for all
+     * @return the triggers, each the nine columns of {@link #triggerQuery}'s
+     *         rows, or {@code null} to run {@link #triggerQuery}; {@code null}
+     *         by default
      */
-    JsonArray triggers(Connection conn, String name) {
+    public List<String[]> triggers(Connection conn, String catalog, String schema,
+                                   String name) {
         return null;
     }
 
@@ -215,7 +224,7 @@ public abstract class Vendor {
      *
      * @param r the nine columns
      */
-    void triggerRow(String[] r) {
+    public void triggerRow(String[] r) {
     }
 
     // --------------------------------------------------------------- comments
@@ -241,24 +250,36 @@ public abstract class Vendor {
     }
 
     /**
+     * Reads the table comments the driver leaves out.
+     *
      * @param conn the live connection
-     * @param req  the request, for the filters to scope the query with
-     * @return table comments, keyed by owner and table name; none by default
+     * @param req  the request's filters, each left out where it is not given:
+     *             {@code catalog}, {@code schema} or {@code schema_pattern},
+     *             {@code table} or {@code table_pattern}, a pattern being a
+     *             {@code LIKE} pattern
+     * @return the comments, each row its owner - the catalog where
+     *         {@link #catalogIsSchema} holds, the schema otherwise - its table
+     *         and its comment; none by default
      * @throws SQLException if the query fails
      */
-    Map<String, String> tableComments(Connection conn, JsonObject req) throws SQLException {
-        return Collections.emptyMap();
+    public List<String[]> tableComments(Connection conn, Map<String, String> req)
+            throws SQLException {
+        return List.of();
     }
 
     /**
+     * Reads the column comments the driver leaves out.
+     *
      * @param conn the live connection
-     * @param req  the request, for the filters to scope the query with
-     * @return column comments, keyed by owner, table name and column name;
-     *         none by default
+     * @param req  the request's filters, as {@link #tableComments} takes them,
+     *             and {@code column} or {@code column_pattern}
+     * @return the comments, each row its owner, its table, its column and its
+     *         comment; none by default
      * @throws SQLException if the query fails
      */
-    Map<String, String> columnComments(Connection conn, JsonObject req) throws SQLException {
-        return Collections.emptyMap();
+    public List<String[]> columnComments(Connection conn, Map<String, String> req)
+            throws SQLException {
+        return List.of();
     }
 
     // ----------------------------------------------------------------- upsert

@@ -9,6 +9,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -134,47 +135,66 @@ public final class Triggers {
         String schema = blank(Json.str(req, "schema"));
         String name = blank(Json.str(req, "name"));
         Vendor vendor = dialect.vendor();
-        JsonArray own = vendor.triggers(conn, name);
+        List<String[]> own = vendor.triggers(conn, catalog, schema, name);
         if (own != null) {
-            return own;
+            return merged(own);
         }
 
         StringBuilder sql = new StringBuilder();
         List<String> args = new ArrayList<>();
         vendor.triggerQuery(sql, args, id, catalog, schema, name);
         return Attempt.on(conn, "triggers", c -> {
-            Map<String, JsonObject> merged = new LinkedHashMap<>();
+            List<String[]> rows = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement(sql.toString())) {
                 for (int i = 0; i < args.size(); i++) {
                     ps.setString(i + 1, args.get(i));
                 }
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        String[] r = new String[9];
+                        String[] r = new String[COLUMNS];
                         for (int i = 0; i < r.length; i++) {
                             r[i] = rs.getString(i + 1);
                         }
                         vendor.triggerRow(r);
-                        String key = r[0] + '\0' + r[1] + '\0' + r[2] + '\0' + r[3];
-                        JsonObject o = merged.get(key);
-                        if (o == null) {
-                            merged.put(key, item(r[0], r[1], r[2], r[3], r[4], r[5], r[6],
-                                    r[7] == null ? null : "Y".equals(r[7]), r[8]));
-                        } else if (r[5] != null) {
-                            String events = Json.str(o, "events");
-                            if (events == null || !(" OR " + events + " OR ").contains(
-                                    " OR " + r[5] + " OR ")) {
-                                o.addProperty("events", events == null ? r[5]
-                                        : events + " OR " + r[5]);
-                            }
-                        }
+                        rows.add(r);
                     }
                 }
             }
-            JsonArray arr = new JsonArray();
-            merged.values().forEach(arr::add);
-            return arr;
+            return merged(rows);
         }, new JsonArray());
+    }
+
+    /** The columns of a trigger row: see {@link Vendor#triggerQuery}. */
+    private static final int COLUMNS = 9;
+
+    /**
+     * The triggers of the rows of a catalog: one per catalog, schema, name and
+     * table, its events joined with {@code OR} where the catalog lists one row
+     * per event.
+     */
+    private static JsonArray merged(List<String[]> rows) {
+        Map<String, JsonObject> merged = new LinkedHashMap<>();
+        for (String[] row : rows) {
+            if (row == null) {
+                continue;
+            }
+            String[] r = Arrays.copyOf(row, COLUMNS);
+            String key = r[0] + '\0' + r[1] + '\0' + r[2] + '\0' + r[3];
+            JsonObject o = merged.get(key);
+            if (o == null) {
+                merged.put(key, item(r[0], r[1], r[2], r[3], r[4], r[5], r[6],
+                        r[7] == null ? null : "Y".equals(r[7]), r[8]));
+            } else if (r[5] != null) {
+                String events = Json.str(o, "events");
+                if (events == null || !(" OR " + events + " OR ").contains(
+                        " OR " + r[5] + " OR ")) {
+                    o.addProperty("events", events == null ? r[5] : events + " OR " + r[5]);
+                }
+            }
+        }
+        JsonArray arr = new JsonArray();
+        merged.values().forEach(arr::add);
+        return arr;
     }
 
     /** Splits Oracle's {@code TRIGGER_TYPE} into timing and level, in place. */
@@ -195,9 +215,9 @@ public final class Triggers {
     }
 
     /** SQLite: timing and event read off the statement, row-level always. */
-    static JsonArray sqlite(Connection conn, String name) {
+    static List<String[]> sqlite(Connection conn, String name) {
         return Attempt.on(conn, "sqlite_master triggers", c -> {
-            JsonArray arr = new JsonArray();
+            List<String[]> arr = new ArrayList<>();
             String sql = SQLITE_SQL + (name != null ? " AND name = ?" : "") + " ORDER BY name";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 if (name != null) {
@@ -214,13 +234,13 @@ public final class Triggers {
                                     : m.group(1).toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
                             event = m.group(2).toUpperCase(Locale.ROOT);
                         }
-                        arr.add(item(null, null, rs.getString(1), rs.getString(2), timing, event,
-                                "ROW", null, null));
+                        arr.add(new String[]{null, null, rs.getString(1), rs.getString(2),
+                            timing, event, "ROW", null, null});
                     }
                 }
             }
             return arr;
-        }, new JsonArray());
+        }, new ArrayList<>());
     }
 
     private static JsonObject item(String catalog, String schema, String name, String table,

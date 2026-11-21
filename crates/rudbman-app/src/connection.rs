@@ -57,6 +57,7 @@ use rudbman_jdbc::{
 };
 
 use crate::i18n::ts;
+use crate::maven;
 
 /// A profile's secrets, read from the keychain and held no longer than the
 /// connection attempt they belong to.
@@ -139,6 +140,9 @@ pub enum ConnectError {
     /// Anything else that came back from the JNI layer: a protocol mismatch, a
     /// worker that died, a JAR that is not a JAR.
     Bridge(String),
+    /// The Groovy runtime a dialect profile's script runs on could not be
+    /// downloaded (`docs/dialect-profiles.md`, §5.3).
+    ScriptRuntime(String),
 }
 
 impl ConnectError {
@@ -213,6 +217,10 @@ impl ConnectError {
                 message
             }
             ConnectError::Bridge(message) => message.clone(),
+            ConnectError::ScriptRuntime(message) => format!(
+                "the Groovy runtime this driver's dialect profile runs its script on \
+                 could not be downloaded: {message}"
+            ),
         }
     }
 }
@@ -505,7 +513,78 @@ pub fn build_spec(
             }
         }
     }
+    // A profile whose script the user has allowed runs it on the Groovy
+    // runtime, which `connect_once` fetches the first time one does (§5.3).
+    spec.groovy = groovy_for(&spec, groovy_runtime().map(|(_, path)| path));
     spec
+}
+
+/// The Groovy runtime's JAR, for a spec one of whose profiles runs a script;
+/// nothing for one that runs none, which never needs the runtime.
+fn groovy_for(
+    spec: &rudbman_jdbc::ConnectionSpec,
+    runtime: Option<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let scripted = spec
+        .profile
+        .iter()
+        .chain(&spec.detect_profiles)
+        .any(rudbman_core::dialects::runs_script);
+    match runtime {
+        Some(path) if scripted => vec![path],
+        _ => Vec::new(),
+    }
+}
+
+/// The Groovy runtime dialect profile scripts run on, and where the
+/// downloader keeps it: its JAR in the drivers directory.
+fn groovy_runtime() -> Option<(maven::Coordinate, std::path::PathBuf)> {
+    let coordinate = maven::Coordinate::parse(rudbman_core::dialects::GROOVY_RUNTIME)?;
+    let path = rudbman_core::drivers_dir()
+        .ok()?
+        .join(coordinate.file_name());
+    Some((coordinate, path))
+}
+
+/// Downloads the Groovy runtime a session's profile script needs, the first
+/// time a session needs it: from Maven Central, checked against its `.sha1`,
+/// into the drivers directory — the way a driver's JAR is downloaded.
+///
+/// **Blocks** for as long as the download takes; [`connect_once`] is on a
+/// background thread.
+fn fetch_groovy_runtime(spec: &rudbman_jdbc::ConnectionSpec) -> Result<(), ConnectError> {
+    let Some(jar) = spec.groovy.first() else {
+        return Ok(());
+    };
+    if jar.is_file() {
+        return Ok(());
+    }
+    let (Some((coordinate, _)), Some(directory)) = (groovy_runtime(), jar.parent()) else {
+        return Err(ConnectError::ScriptRuntime(format!(
+            "no place to keep it: {}",
+            jar.display()
+        )));
+    };
+    log::info!(
+        "downloading {} for a dialect profile's script",
+        coordinate.file_name()
+    );
+    maven::download(&coordinate, directory, &maven::Cancel::new(), |_| {})
+        .map(|_| ())
+        .map_err(|error| {
+            ConnectError::ScriptRuntime(match error {
+                maven::DownloadError::NotFound(url) => {
+                    format!("Maven Central has nothing at {url}")
+                }
+                maven::DownloadError::Network(message) | maven::DownloadError::Io(message) => {
+                    message
+                }
+                maven::DownloadError::Checksum { expected, actual } => {
+                    format!("the download is corrupted: expected SHA-1 {expected}, got {actual}")
+                }
+                maven::DownloadError::Canceled => "the download was canceled".to_string(),
+            })
+        })
 }
 
 /// Puts the login timeout of the settings on `spec`, the way the product's
@@ -584,7 +663,9 @@ pub fn connect(
 /// rejected up front rather than pattern-matched against network wording.
 fn is_no_route(error: &ConnectError) -> bool {
     match error {
-        ConnectError::NoDriverJar(_) | ConnectError::JvmStart(_) => false,
+        ConnectError::NoDriverJar(_)
+        | ConnectError::JvmStart(_)
+        | ConnectError::ScriptRuntime(_) => false,
         _ => error.message().to_lowercase().contains("no route to host"),
     }
 }
@@ -641,6 +722,7 @@ fn connect_once(
     let jvm = start_jvm(settings)?;
     let mut spec = build_spec(profile, driver, credentials, &url);
     apply_login_timeout(&mut spec, &driver.dialect, settings.login_timeout_s);
+    fetch_groovy_runtime(&spec)?;
     let session = Session::open(jvm, &spec)?;
     let info = session.info().map_err(ConnectError::from)?;
 
@@ -1273,6 +1355,53 @@ mod tests {
         // request to send the empty string.
         driver.column_comments_sql = "   ".into();
         assert_eq!(spec_for(&driver).column_comments_sql, None);
+    }
+
+    /// Only a session whose profile runs a script is sent the Groovy
+    /// runtime, which is what makes it download only then.
+    #[test]
+    fn the_groovy_runtime_goes_only_with_a_script() {
+        let runtime = std::path::PathBuf::from("/drivers/groovy-5.0.8.jar");
+        let scripted = serde_json::json!({
+            "id": "tidb", "base": "mysql", "bridge": {},
+            "script": { "path": "/dialects/tidb.groovy", "text": "" },
+        });
+        let plain = serde_json::json!({ "id": "tidb", "base": "mysql", "bridge": {} });
+
+        let mut spec = rudbman_jdbc::ConnectionSpec::new("jdbc:x", "x.Driver");
+        assert!(
+            groovy_for(&spec, Some(runtime.clone())).is_empty(),
+            "no profile"
+        );
+        spec.profile = Some(plain.clone());
+        assert!(
+            groovy_for(&spec, Some(runtime.clone())).is_empty(),
+            "no script"
+        );
+        spec.profile = Some(scripted.clone());
+        assert_eq!(
+            groovy_for(&spec, Some(runtime.clone())),
+            std::slice::from_ref(&runtime)
+        );
+
+        let mut detected = rudbman_jdbc::ConnectionSpec::new("jdbc:x", "x.Driver");
+        detected.detect_profiles = vec![plain, scripted];
+        assert_eq!(groovy_for(&detected, Some(runtime.clone())), [runtime]);
+
+        // Nothing to fetch for a spec without it.
+        assert!(fetch_groovy_runtime(&spec_without_groovy()).is_ok());
+    }
+
+    fn spec_without_groovy() -> rudbman_jdbc::ConnectionSpec {
+        rudbman_jdbc::ConnectionSpec::new("jdbc:x", "x.Driver")
+    }
+
+    #[test]
+    fn the_groovy_runtime_is_a_coordinate_the_downloader_takes() {
+        let coordinate = maven::Coordinate::parse(rudbman_core::dialects::GROOVY_RUNTIME)
+            .expect("group:artifact:version");
+        assert_eq!(coordinate.group, "org.apache.groovy");
+        assert!(coordinate.file_name().starts_with("groovy-"));
     }
 
     #[test]

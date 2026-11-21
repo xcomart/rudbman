@@ -84,6 +84,12 @@ pub struct ConnectionSpec {
     /// the server's matches.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub detect_profiles: Vec<serde_json::Value>,
+    /// The JARs of the Groovy runtime a profile's script runs on, sent when
+    /// [`Self::profile`] or one of [`Self::detect_profiles`] carries a
+    /// `script` (`docs/dialect-profiles.md`, §5.3). The bridge loads them
+    /// on a class loader of their own.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groovy: Vec<PathBuf>,
 }
 
 impl ConnectionSpec {
@@ -104,6 +110,7 @@ impl ConnectionSpec {
             column_comments_sql: None,
             profile: None,
             detect_profiles: Vec::new(),
+            groovy: Vec::new(),
         }
     }
 
@@ -163,6 +170,7 @@ impl fmt::Debug for ConnectionSpec {
                 &self.profile.as_ref().map(|profile| &profile["id"]),
             )
             .field("detect_profiles", &self.detect_profiles.len())
+            .field("groovy", &self.groovy)
             .finish()
     }
 }

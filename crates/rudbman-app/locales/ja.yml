@@ -370,6 +370,20 @@ driver:
   dialect_export_failed: "方言をエクスポートできませんでした: %{error}"
   dialect_folder_failed: "プロファイルのフォルダーを開けませんでした: %{error}"
   dialect_failed_row: "プロファイルを読み込めません"
+  dialect_script_on: "スクリプト %{file} は許可されており、このドライバーのセッションで実行されます。"
+  dialect_script_off: "スクリプト %{file} はオフです。新しいファイルか、許可した後に変更されています。セッションはスクリプトなしでプロファイルの残りを使います。"
+  dialect_script_allow: "スクリプトを許可…"
+  dialect_script_disallow: "オフにする"
+  dialect_script_trust_title: "%{name} のスクリプトを許可しますか？"
+  dialect_script_trust_file: "スクリプト: %{file}"
+  dialect_script_trust_path: "パス: %{path}"
+  dialect_script_trust_warning: "スクリプトは rudbman の権限で実行されます。ファイルの読み書き、ネットワークへの接続、開いているすべての接続とそのパスワードの参照ができます。入手元を信頼できる場合にだけ許可してください。"
+  dialect_script_trust_version: "許可されるのはこの版のファイルです。ファイルが変わると、rudbman はもう一度確認します。"
+  dialect_script_trust_refuse: "オフのままにする"
+  dialect_script_trust_confirm: "許可して実行"
+  dialect_script_allowed: "スクリプト %{file} を許可しました。これから開くセッションで実行されます。"
+  dialect_script_turned_off: "スクリプト %{file} をオフにしました。これから開くセッションはスクリプトなしで動きます。"
+  dialect_script_failed: "許可したスクリプトの一覧を保存できませんでした: %{error}"
   maven: Maven 座標
   jars: JAR ファイル
   add_jar: JAR を追加…

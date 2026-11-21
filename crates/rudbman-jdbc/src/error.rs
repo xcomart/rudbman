@@ -100,6 +100,9 @@ pub enum BridgeErrorKind {
     Protocol,
     /// A blocking call was interrupted.
     Interrupted,
+    /// A dialect profile's Groovy script did not compile, or a hook of it
+    /// threw; the message names the profile, the file and the line.
+    Script,
     /// A bug in the bridge.
     Internal,
     /// A `kind` this version does not know, which means the JAR is newer than
@@ -117,6 +120,7 @@ impl fmt::Display for BridgeErrorKind {
             BridgeErrorKind::Io => "io",
             BridgeErrorKind::Protocol => "protocol",
             BridgeErrorKind::Interrupted => "interrupted",
+            BridgeErrorKind::Script => "script",
             BridgeErrorKind::Internal => "internal",
             BridgeErrorKind::Unknown => "unknown",
         };

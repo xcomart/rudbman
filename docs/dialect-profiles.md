@@ -1,11 +1,11 @@
 # User dialect profiles — design
 
-**Status: phases 1 to 3 implemented; the rest settled before the code.**
+**Status: phases 1 to 4 implemented; the rest settled before the code.**
 Profiles resolve and export in `rudbman-sql`, read and write as YAML in
 `rudbman-core`, load from `<config>/dialects` at start-up, are picked and
 exported in the driver manager, and the bridge answers a session from its
-profile's `bridge` half; scripts are read but not yet run. This document
-fixes the file
+profile's `bridge` half and from the hooks of its Groovy script, once the
+user has allowed the script. This document fixes the file
 format, the resolution rules, the scripting surface, the trust model and how
 the application ships profiles of its own, so that the phases at the end can
 land one at a time without reopening them.
@@ -306,13 +306,16 @@ loads offers one.
 
 Only in the bridge, which already runs in a JVM. Each method a script defines
 with the name of a hook below replaces that hook for the profile's sessions;
-every other hook is the profile's data or the base's. The script gets `base`,
-the base's own `Vendor`, so that it can add to an answer rather than rewrite it:
+every other hook is the profile's data or the base's. The script gets `base`:
+the profile without its script — its data keys, and its base's answers for
+the rest — so that a hook can add to an answer rather than rewrite it. A hook
+with a data key of its own (`hexLiteral` and `hex_literal`, say) hears the
+key's answer from `base`.
 
 ```groovy
 // tidb.groovy
 String literal(ResultSet rs, int i, int type) {
-    if (type == java.sql.Types.OTHER && rs.getMetaData().getColumnTypeName(i) == 'VECTOR') {
+    if (type == Types.OTHER && rs.getMetaData().getColumnTypeName(i) == 'VECTOR') {
         def v = rs.getString(i)
         return v == null ? 'NULL' : "VEC_FROM_TEXT(${Ident.literal(v)})"
     }
@@ -320,20 +323,69 @@ String literal(ResultSet rs, int i, int type) {
 }
 ```
 
+A script is a file of methods. Its top-level statements are not run, and a
+file that defines only a class is refused: the hooks are the script's own
+methods, and a method of any other name is a helper of the script's. The
+script's object is made once per session, so a field (`@Field`) lives as long
+as the session does.
+
+A profile's script is the one its `bridge.script` names or, where it names
+none, the nearest base profile's — a key like any other of §4.3. The name is
+relative to the profiles' folder and stays inside it: an absolute path, or one
+that climbs out with `..`, fails the load (§6). So does a script the profile
+names that cannot be read.
+
 ### 5.2 The API, version 1
 
 The hooks a script may define are a published API: their names and
 signatures do not change within an `api` version. Version 1 takes only hooks
 whose types are JDBC's, Java's, or the bridge's public `Ident`,
-`Vendor.Sequence`, `Vendor.Table` and `Vendor.RowFence`:
+`Vendor.Sequence`, `Vendor.Table` and `Vendor.RowFence`. Each hook is the
+public method of its name in `meta/Vendor.java`, whose parameters and return
+type are the hook's; `ProfileScript.API_1` lists them.
 
-| Area | Hooks |
+| Area | Hook |
 | --- | --- |
-| Literals | `literal`, `stringLiteral`, `hexLiteral` |
-| Catalog reads | `routineRemarks`, `sequences`, `triggers`, `triggerRow`, `tableComments`, `columnComments` |
-| Backup plan | `extensionMembers`, `materializedViews`, `tablesNotWritten`, `indexViews`, `packages`, `backupPreamble`, `ownedSequences` |
-| Backup objects | `sequenceValue`, `resumeSequence`, `sqlMode`, `overloadTexts`, `routineDrops` |
-| Backup rows | `textColumns`, `textColumn`, `rowFence`, `counters` |
+| Literals | `String literal(ResultSet rs, int i, int type)` — `null` leaves the column to the general rules |
+| | `String stringLiteral(String s, boolean national, int type, ResultSet rs, int i)` |
+| | `String hexLiteral(String hex)` |
+| Catalog reads | `String routineRemarks(String remarks)` |
+| | `List<Map<String, String>> sequences(Connection conn, Ident id, String catalog, String schema, String name)` — rows keyed by the labels of §4.3's `sequences` queries; `null` runs the queries |
+| | `List<String[]> triggers(Connection conn, String catalog, String schema, String name)` — rows of §4.3's nine `triggers` columns; `null` runs the query |
+| | `void triggerRow(String[] r)` — rewrites a row of the query, in place |
+| | `List<String[]> tableComments(Connection conn, Map<String, String> req)` — rows of owner, table and comment |
+| | `List<String[]> columnComments(Connection conn, Map<String, String> req)` — rows of owner, table, column and comment |
+| Backup plan | `Set<String> extensionMembers(Connection conn, String schema)`, and `materializedViews`, `tablesNotWritten` and `indexViews` the same |
+| | `List<String> packages(Connection conn, String schema)` |
+| | `List<String[]> backupPreamble(Connection conn, Ident id, String catalog, String schema)` — each object's create and drop |
+| | `List<String> ownedSequences(Connection conn, Ident id, String schema, Set<String> names)` |
+| Backup objects | `String sequenceValue(Connection conn, Ident id, String catalog, String schema, String name, String listed)` |
+| | `String resumeSequence(Connection conn, String schema, String name, String ddl)` |
+| | `String sqlMode(Connection conn, String catalog, String name, String kind)` |
+| | `List<String> overloadTexts(Connection conn, String schema, String name)` |
+| | `List<String> routineDrops(Connection conn, Ident id, String schema, String name, boolean procedure)` |
+| Backup rows | `Set<String> textColumns(Connection conn, String schema, String table)` |
+| | `String textColumn(String quoted)` |
+| | `RowFence rowFence(Connection conn, Ident id, String schema, String table, String qualified, List<String> identities)` |
+| | `List<String> counters(DatabaseMetaData dbm, Ident id, List<Sequence> sequences, List<Table> tables, boolean data)` |
+
+The comment hooks' `req` holds the request's filters, each left out where the
+request does not give it: `catalog`, `schema` or `schema_pattern`, `table` or
+`table_pattern`, and for columns `column` or `column_pattern` — a pattern
+being a `LIKE` pattern. The owner is the catalog where `catalog_is_schema`
+holds and the schema otherwise. The four catalog reads took the bridge's JSON
+types until they were published; they now take and answer these shapes in the
+built-ins too, so that the `base` a script calls takes what the script was
+given and answers what the script answers.
+
+A script's method declares its parameters as the hook does, or wider (`def`,
+`Object`, a boxed type or a supertype), and takes as many as the hook. One
+that does not, or that answers nothing (`void`) for a hook that answers
+something, fails the session's open with the hook's signature. An answer is
+taken as its hook's type — a `GString` as a `String`, any collection or array
+as the list or set the hook answers, element by element — and one of another
+type fails the request. A `RowFence`'s statements are asked for later, and
+fail their request the same way.
 
 The hooks that take the bridge's internal types — `catalogExtras` and
 `confirmGenerated` (`Ddl.Col`), `nativeSplit` and `resumeIdentity`
@@ -342,24 +394,45 @@ version 1. A profile reaches them through its base, or through the data keys
 of §4.3. Publishing them means giving those types a stable public shape
 first.
 
-Every hook in the table becomes `public` in `Vendor` and gains a contract
-test (§8) before it is published.
+Every hook of the table is `public` in `Vendor` and has its contract test
+(§9).
 
 ### 5.3 Groovy itself
 
-- **Delivery.** The Groovy runtime (`org.apache.groovy:groovy`, pinned) is not
-  bundled. The first session of a profile with a script downloads it the way a
-  JDBC driver is downloaded (`maven.rs`, checked against Central's `.sha1`),
-  into the drivers directory. A profile without a script never needs it.
-- **Loading.** The bridge compiles a script once per content hash with a
-  `GroovyClassLoader` whose parent is the bridge's own loader, so the script
-  sees `Vendor`, `Ident` and JDBC and nothing of a driver's loader. `java.sql.*`,
-  `Ident` and `Vendor`'s public records are imported into every script. The
-  compiled class is cached for the life of the process.
-- **Errors.** A script that does not compile fails the session's open with
-  the file, the line and Groovy's message. A hook that throws fails the request
-  it was serving with the same detail; it is never swallowed into the base's
-  answer, which would make a broken script look like a working one.
+- **Delivery.** The Groovy runtime is not bundled.
+  `rudbman_core::dialects::GROOVY_RUNTIME` pins it,
+  `org.apache.groovy:groovy:5.0.8`; `bridge/build.gradle` tests the bridge on
+  the same version, and a test of `rudbman-core` holds the two together. The
+  app's `build_spec` sends the runtime's path as `OPEN_SESSION`'s `groovy`
+  when the session's profile, or one it may detect, runs a script, and
+  `connect_once` downloads it into the drivers directory the first time, the
+  way a JDBC driver is downloaded (`maven.rs`, checked against Central's
+  `.sha1`). A session whose profile runs no script never needs it.
+- **The Java runtime.** Groovy's meta-classes read every class through
+  `java.beans`, so the bundled runtime carries `java.desktop`
+  (`architecture.md` §10.2). On a runtime without it, a script fails its
+  session's open saying so.
+- **Loading.** The runtime's JARs are loaded once per process on a class
+  loader of their own, whose parent is the bridge's (`meta/GroovyRuntime.java`,
+  as `Loaders.java` does for drivers): a script sees `Vendor`, `Ident`, JDBC
+  and Groovy, and nothing of a driver's loader. The bridge itself is compiled
+  without Groovy and reaches it by reflection. Each script is compiled on a
+  `GroovyClassLoader` of its own, once per runtime, file and content hash, and
+  its class is cached for the life of the process (`meta/ProfileScript.java`);
+  the class is named after the file as a class can be named (`Profile_tidb`).
+  `java.sql.*`, `Ident`, `Vendor` and its `Sequence`, `Table` and `RowFence`
+  are imported into every script.
+- **Errors.** Both are a `ScriptFailure`, reported under the envelope kind
+  `script`. A script that does not compile, or defines a hook of the wrong
+  shape, fails the session's open with the file, the line and Groovy's
+  message: `dialect profile tidb: /…/tidb.groovy:3:14: …`. A hook that throws
+  fails the request it was serving with the same detail, the line being the
+  nearest frame of the script's: `dialect profile tidb: /…/tidb.groovy:12:
+  hexLiteral threw java.lang.IllegalStateException: …`. It is never swallowed
+  into the base's answer, which would make a broken script look like a working
+  one: `Attempt`, which takes a failed optional query for "no answer", and the
+  backup, which skips an object the server will not give, both pass a
+  script's failure on.
 
 ## 6. Trust
 
@@ -367,15 +440,27 @@ A script is code with the application's rights, in the JVM that holds every
 open session and its credentials. So:
 
 1. Profiles and scripts are read only from the application's own
-   configuration directory, never from a project, a URL or an imported file.
-2. The application records the SHA-256 of every script the user has allowed
-   (`<config>/dialects/allowed.json`). A script that is new or has changed is
-   not run until the user allows it: the dialog names the profile, the file and
-   its path, and says that it runs with rudbman's rights. Refused, the profile
-   loads without its script — its data keys still apply — and says so wherever
-   it is listed.
-3. The dialect picker and the connection's details show which profiles are
-   active and which have a script.
+   configuration directory, never from a project, a URL or an imported file;
+   a script's name stays inside the profiles' folder (§5.1).
+2. `<config>/dialects/allowed.json` records each script the user has allowed,
+   by its name in the folder, with the SHA-256 of the version allowed:
+
+   ```json
+   { "scripts": { "tidb.groovy": "3f2a…" } }
+   ```
+
+   A script whose hash is not the one recorded — new, or changed since — is not
+   run: its sessions open with the profile's data keys and no script, and the
+   driver manager says so under the dialect picker, with **Allow script…**
+   beside it. That asks first: the question names the profile, the file and its
+   path, and says that the script runs with rudbman's rights. What is allowed
+   is the version the question was about, read when it was asked, so a file
+   changed while it showed is still not run. **Keep it off**, or `Escape`,
+   leaves it off. An allowed script has **Turn off** beside it, which takes it
+   off the list. An allow list that cannot be read allows nothing, and is
+   reported as a problem of the folder.
+3. The driver manager's dialect field says whether the chosen profile's script
+   runs. The connection's details do not say it yet.
 
 ## 7. Loading and errors
 
@@ -438,16 +523,16 @@ open session and its credentials. So:
   on its row. **Export…** writes the chosen dialect as a profile (the
   profiles' folder suggested), and **Open folder** opens that folder. Every
   string is in all eight locales.
-- Still to come: the trust dialog (phase 4), and sessions opened with the
-  resolved `bridge` half of the profile and the path of the Groovy runtime
-  when it has a script (§5.3, phase 3).
+- Sessions open with the resolved `bridge` half of the profile (phase 3),
+  and with its script and the path of the Groovy runtime where the script is
+  allowed (phase 4, below).
 
 ### Bridge (phase 3, implemented)
 
 - `OPEN_SESSION` takes an optional `profile`: `{ id, base, bridge }`, the
   base being the built-in the chain of bases ends in and `bridge` the half
   merged along it (`rudbman_core::dialects::Report::session_profile`, sent by
-  the app's `build_spec`). The script's text and path join it in phase 4.
+  the app's `build_spec`). Phase 4 adds the script's text and path.
 - Where the design first said `Vendor.of(dbm)`, the bridge keeps every
   caller's `Dialect.of(dbm).vendor()`: `Dialect` became a class of constants
   rather than an enum, and `Dialect.attach` ties a profile's dialect to the
@@ -455,11 +540,37 @@ open session and its credentials. So:
   product name. Nothing but the open and the close changed.
 - `ProfileVendor` extends `Vendor` itself rather than any product's subclass:
   it holds the base's `Vendor` and the profile's data, and answers each
-  method from the data or the base. The script comes in phase 4.
+  method from the data or the base, and since phase 4 each hook from the
+  script first.
 - `detect_profiles` lets product-name detection find a profile for a
   connection opened without one — a driver whose dialect is generic SQL, or
   names a profile that did not load; the app sends the loaded profiles that
   have a `bridge.detect`. rudbgen's sample database is phase 5.
+
+### Bridge and rudbman-app (phase 4, implemented)
+
+- `OPEN_SESSION`'s `profile` carries `script: { path, text }` where the
+  profile runs an allowed script, and the request carries `groovy`, the
+  runtime's JARs. `Report::session_profile` puts the script in — the text
+  read and hashed when the profiles loaded, so what runs is what was allowed —
+  and `build_spec` the runtime's path, which `connect_once` downloads the
+  first time (§5.3).
+- `Profiles` compiles the script (`ProfileScript`, cached per process) and
+  binds it to a `ProfileVendor` of the profile's data, which is the script's
+  `base`; the session's vendor is a `ProfileVendor` of the same data with the
+  script's hooks over it. Of the profiles a session may detect, only the one
+  it takes is compiled.
+- The four catalog reads of API 1 that took the bridge's JSON types —
+  `sequences`, `triggers`, `tableComments` and `columnComments` — take and
+  answer Java's now, the built-ins included (§5.2), and every hook of API 1 is
+  public in `Vendor`.
+- `rudbman_core::dialects` reads every loaded profile's script as
+  `Entry::hooks` — its name, path, hash and whether it is allowed — keeps
+  `allowed.json` (`allow_in`, `disallow_in`), and allows a shipped script as
+  `sync_shipped` writes it (§12).
+- The driver manager says under the dialect picker whether the chosen
+  profile's script runs, and asks before it allows one (§6). Every string is
+  in all eight locales.
 
 ### rudbgen and rudbkit
 
@@ -485,12 +596,33 @@ open session and its credentials. So:
   that each key answers from the profile, and, on an in-memory H2, that the
   query keys are run; `profile_answers` in `rudbman-jdbc`'s container suite
   opens MySQL and MariaDB sessions with a profile and by detection.
-- **Contract tests** (bridge): for each published hook, a test that a script
-  defining it is called with the documented arguments, that its answer is
-  used, and that one which throws fails the request with the script's line.
-- **Container suites**: a profile that re-describes MariaDB on `base: mysql`
-  — its `DROP CONSTRAINT` and sequences as data and script — runs the shared
-  suites as `on_every_product!` runs them for the built-in.
+- **Contract tests** (bridge, phase 4): `ProfileVendorTest` writes, for every
+  hook of `ProfileScript.API_1`, a script that defines it, calls the hook
+  with its documented arguments, and checks that the script was called with
+  them and that its answer, as the hook's type, is the session's; and one
+  whose hook throws, which fails with the script's file and line. A new hook
+  without a case there fails the test. Beside them: the script before the
+  data and its `base` the data, the imports, a hook of the wrong shape or an
+  answer of the wrong type, a script that does not compile, the compile
+  cache, a runtime that is not there, and a hook's failure that `Attempt`
+  does not swallow. `ProfileScriptSessionTest` opens sessions on H2 through
+  `OPEN_SESSION` with a script, and `DESCRIBE` answers from its hooks or
+  fails with its line.
+- **Trust** (`rudbman-core`, the app): a script runs only once allowed and
+  as allowed, a changed one asks again, a version that changed while it was
+  asked about allows nothing, a shipped script is allowed as written and one
+  turned off stays off across an update; the driver manager allows a script
+  only through its question.
+- **Container suites**: `tests/profiles/mariadb-on-mysql.groovy` and the
+  profile around it re-describe MariaDB on `base: mysql` — its
+  `DROP CONSTRAINT` and blocks as the `sql` half's data, the text of a
+  sequence as the `bridge` half's, its sequences, their resumption and the
+  backup's counters as hooks. `on_every_product!` runs every shared suite
+  through it against the MariaDB server (`mariadb_profile`), as it runs them
+  for the built-in; two tests check that it lists and writes a sequence and
+  drops a constraint of every kind as the built-in does, and the bridge's
+  `backupRoundTrip` that its backup restores and is the built-in's, line for
+  line.
 
 ## 10. Phases
 
@@ -502,7 +634,7 @@ open session and its credentials. So:
 3. **Bridge profiles** — `OPEN_SESSION`'s `profile`, the session's dialect
    (`Dialect.attach`), the `bridge` half's data keys. Done.
 4. **Groovy hooks** — API version 1, the runtime download, the allow list and
-   its dialog, compile cache and errors, contract tests.
+   its dialog, compile cache and errors, contract tests. Done.
 5. **rudbgen and rudbkit** — the shared format and loader, rudbgen's `bridge`
    half.
 
@@ -520,8 +652,11 @@ container suites from phase 3 on.
   at it, does the same thing without changing what every other definition of
   that product gets.
 - **Script hooks for internal types.** §5.2 leaves out the DDL-reconstruction
-  hooks. Whether to publish them depends on how often a profile needs them,
-  which phase 4 will show.
+  hooks. Whether to publish them depends on how often a profile needs them.
+  Phase 4's one case needed none: MariaDB described on `mysql` takes MySQL's
+  `confirmGenerated`, writes its sequences' text from data, and passes the
+  shared suites and the backup round trip. The question stays open for a
+  product whose catalog the base cannot read.
 
 ## 12. Products the application ships as profiles
 
@@ -552,6 +687,9 @@ code (§1).
   5. A shipped file the user has changed is left as the user has it; the
      newer shipped version is written beside it as `<id>.yml.new` (or
      `.groovy.new`) and the driver manager says so.
-- **Trust.** A script the application wrote itself is allowed by its hash as
-  it is written; one the user then edits is the user's script, and asks (§6).
+- **Trust.** A script the application writes is allowed by its hash as it is
+  written: one written where there was none, and the newer version of one the
+  user had allowed as it was. A script the user has turned off stays off
+  across an update, and one the user edits is the user's script, and asks
+  (§6).
 

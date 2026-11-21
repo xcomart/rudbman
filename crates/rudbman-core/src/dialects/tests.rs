@@ -35,6 +35,7 @@ fn a_directory_that_is_not_there_holds_no_profiles() {
 fn profiles_load_with_what_they_bring() {
     let dir = tempfile::tempdir().expect("tempdir");
     write(dir.path(), "tidb.yml", TIDB);
+    write(dir.path(), "tidb.groovy", SCRIPT);
     write(dir.path(), "notes.txt", "not a profile");
     let report = load_from(dir.path());
     assert_eq!(report.entries.len(), 1, "only `*.yml` is a profile");
@@ -334,4 +335,217 @@ fn a_session_profile_merges_its_chain_of_bases() {
         .map(|profile| profile["id"].as_str().unwrap_or_default().to_string())
         .collect();
     assert_eq!(detected, ["child"], "only a profile that detects");
+}
+
+// ------------------------------------------------------------------ trust
+
+/// A script for [`TIDB`] to name.
+const SCRIPT: &str = "String hexLiteral(String hex) { \"0x${hex}\" }\n";
+
+fn hooks(report: &Report, id: &str) -> Script {
+    let entry = report.entry_for(id).expect(id);
+    assert!(entry.dialect().is_some(), "{:?}", entry.state);
+    entry.hooks.clone().expect("a script")
+}
+
+fn runs(report: &Report, id: &str) -> bool {
+    runs_script(&report.session_profile(id).expect("loaded"))
+}
+
+#[test]
+fn a_script_runs_only_once_it_is_allowed_and_as_it_was_allowed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(dir.path(), "tidb.yml", TIDB);
+    write(dir.path(), "tidb.groovy", SCRIPT);
+    let report = load_from(dir.path());
+    let script = hooks(&report, "tidb");
+    assert_eq!(script.name, "tidb.groovy");
+    assert_eq!(script.path, dir.path().join("tidb.groovy"));
+    assert_eq!(script.sha256, hash(SCRIPT.as_bytes()));
+    assert!(!script.allowed, "a new script is not allowed");
+    let session = report.session_profile("tidb").expect("loaded");
+    assert!(
+        !runs_script(&session),
+        "refused, the profile loads without it"
+    );
+    assert_eq!(
+        session["bridge"]["script"], "tidb.groovy",
+        "its data still applies"
+    );
+
+    allow_in(dir.path(), &script).expect("allow");
+    let report = load_from(dir.path());
+    assert!(hooks(&report, "tidb").allowed);
+    let session = report.session_profile("tidb").expect("loaded");
+    assert!(runs_script(&session));
+    assert_eq!(session["script"]["text"], SCRIPT);
+    assert_eq!(
+        session["script"]["path"],
+        dir.path().join("tidb.groovy").display().to_string()
+    );
+
+    write(dir.path(), "tidb.groovy", "// changed\n");
+    let report = load_from(dir.path());
+    assert!(!hooks(&report, "tidb").allowed, "changed, it asks again");
+    assert!(!runs(&report, "tidb"));
+
+    write(dir.path(), "tidb.groovy", SCRIPT);
+    assert!(
+        runs(&load_from(dir.path()), "tidb"),
+        "the version allowed runs again"
+    );
+    disallow_in(dir.path(), "tidb.groovy").expect("disallow");
+    assert!(!runs(&load_from(dir.path()), "tidb"), "turned off");
+}
+
+#[test]
+fn allowing_a_version_that_has_since_changed_allows_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(dir.path(), "tidb.yml", TIDB);
+    write(dir.path(), "tidb.groovy", SCRIPT);
+    let asked = hooks(&load_from(dir.path()), "tidb");
+    // Edited while the question was showing.
+    write(dir.path(), "tidb.groovy", "// edited meanwhile\n");
+    allow_in(dir.path(), &asked).expect("allow");
+    assert!(!runs(&load_from(dir.path()), "tidb"));
+}
+
+#[test]
+fn a_script_that_cannot_be_read_fails_its_profile() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(dir.path(), "tidb.yml", TIDB);
+    let report = load_from(dir.path());
+    let entry = report.entry_for("tidb").expect("tidb");
+    let failure = entry.failure().expect("failed");
+    assert!(
+        failure.starts_with("bridge.script: tidb.groovy: "),
+        "{failure}"
+    );
+    assert!(report.loaded().is_empty(), "its drivers get generic SQL");
+    assert!(report.session_profile("tidb").is_none());
+}
+
+#[test]
+fn a_script_outside_the_profiles_folder_fails_its_profile() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(
+        dir.path(),
+        "escape.yml",
+        "api: 1\nname: Escape\nbase: mysql\nbridge:\n  script: ../outside.groovy\n",
+    );
+    let report = load_from(dir.path());
+    let failure = report.entries[0].failure().expect("failed").to_string();
+    assert!(failure.contains("bridge.script"), "{failure}");
+}
+
+#[test]
+fn a_profile_runs_the_script_of_its_base_profile() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(dir.path(), "tidb.yml", TIDB);
+    write(dir.path(), "tidb.groovy", SCRIPT);
+    write(
+        dir.path(),
+        "tidb-cloud.yml",
+        "api: 1\nname: TiDB Cloud\nbase: tidb\n",
+    );
+    let report = load_from(dir.path());
+    assert_eq!(hooks(&report, "tidb-cloud").name, "tidb.groovy");
+    allow_in(dir.path(), &hooks(&report, "tidb")).expect("allow");
+    let report = load_from(dir.path());
+    assert!(runs(&report, "tidb") && runs(&report, "tidb-cloud"));
+}
+
+#[test]
+fn an_allow_list_that_cannot_be_read_allows_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(dir.path(), "tidb.yml", TIDB);
+    write(dir.path(), "tidb.groovy", SCRIPT);
+    write(dir.path(), ALLOWED_FILE_NAME, "{ not json");
+    let report = load_from(dir.path());
+    assert!(!runs(&report, "tidb"));
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|p| p.contains(ALLOWED_FILE_NAME)),
+        "{:?}",
+        report.problems
+    );
+}
+
+const SCRIPT_V1: Shipped = Shipped {
+    name: "tidb.groovy",
+    contents: b"// version 1",
+};
+const SCRIPT_V2: Shipped = Shipped {
+    name: "tidb.groovy",
+    contents: b"// version 2",
+};
+const SCRIPT_V3: Shipped = Shipped {
+    name: "tidb.groovy",
+    contents: b"// version 3",
+};
+
+fn allowed_hash(dir: &Path, name: &str) -> Option<String> {
+    read_allowed(dir)
+        .expect("allowed.json")
+        .scripts
+        .get(name)
+        .cloned()
+}
+
+#[test]
+fn a_shipped_script_is_allowed_as_the_application_writes_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    sync_shipped(dir.path(), &[V1, SCRIPT_V1]).expect("sync");
+    assert_eq!(
+        allowed_hash(dir.path(), "tidb.groovy"),
+        Some(hash(SCRIPT_V1.contents))
+    );
+    assert_eq!(
+        allowed_hash(dir.path(), "tidb.yml"),
+        None,
+        "a profile is no script"
+    );
+
+    // A newer version replaces one the user left alone, and stays allowed.
+    sync_shipped(dir.path(), &[V1, SCRIPT_V2]).expect("sync");
+    assert_eq!(
+        allowed_hash(dir.path(), "tidb.groovy"),
+        Some(hash(SCRIPT_V2.contents))
+    );
+
+    // Edited, it is the user's: the update waits beside it, and the edit
+    // needs allowing.
+    write(dir.path(), "tidb.groovy", "// the user's");
+    sync_shipped(dir.path(), &[V1, SCRIPT_V3]).expect("sync");
+    assert_eq!(
+        read(dir.path(), "tidb.groovy").as_deref(),
+        Some("// the user's")
+    );
+    assert_eq!(
+        allowed_hash(dir.path(), "tidb.groovy"),
+        Some(hash(SCRIPT_V2.contents)),
+        "what was allowed is not what is there"
+    );
+}
+
+#[test]
+fn a_shipped_script_the_user_turned_off_stays_off_across_an_update() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    sync_shipped(dir.path(), &[SCRIPT_V1]).expect("sync");
+    disallow_in(dir.path(), "tidb.groovy").expect("disallow");
+    let synced = sync_shipped(dir.path(), &[SCRIPT_V2]).expect("sync");
+    assert_eq!(synced.replaced, ["tidb.groovy"]);
+    assert_eq!(allowed_hash(dir.path(), "tidb.groovy"), None);
+}
+
+#[test]
+fn the_groovy_runtime_is_the_one_the_bridge_is_tested_on() {
+    let gradle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bridge/build.gradle");
+    let gradle = fs::read_to_string(&gradle).expect("bridge/build.gradle");
+    assert!(
+        gradle.contains(&format!("groovyRuntime '{GROOVY_RUNTIME}'")),
+        "bridge/build.gradle tests on another Groovy than {GROOVY_RUNTIME}"
+    );
 }

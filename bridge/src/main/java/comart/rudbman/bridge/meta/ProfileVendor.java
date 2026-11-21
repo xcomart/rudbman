@@ -13,7 +13,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -37,12 +36,18 @@ import java.util.Set;
  * profile loads, so the data here is taken as well formed; a value of the
  * wrong shape still fails the session's open rather than a later request
  * (see {@link #ProfileVendor}).
+ *
+ * <p>A profile with a script ({@code bridge.script}, §5) answers each hook of
+ * {@link ProfileScript#API_1} from the script's method of that name first,
+ * where the script defines one: script, then data, then base. The script's
+ * {@code base} is this profile without its script.
  */
 final class ProfileVendor extends Vendor {
 
     private final String id;
     private final Vendor base;
     private final JsonObject data;
+    private final ProfileScript.Hooks hooks;
     private final JsonObject comments;
     private final JsonObject texts;
     private final List<String> detect;
@@ -54,8 +59,21 @@ final class ProfileVendor extends Vendor {
      * @throws BridgeException if a value is not of its key's shape
      */
     ProfileVendor(String id, Vendor base, JsonObject data) {
+        this(id, base, data, ProfileScript.Hooks.NONE);
+    }
+
+    /**
+     * @param id    the profile's id
+     * @param base  the built-in vendor its chain of bases ends in
+     * @param data  its merged {@code bridge} half
+     * @param hooks its script's hooks, bound to a {@code ProfileVendor} of the
+     *              same data without them
+     * @throws BridgeException if a value is not of its key's shape
+     */
+    ProfileVendor(String id, Vendor base, JsonObject data, ProfileScript.Hooks hooks) {
         this.id = id;
         this.base = base;
+        this.hooks = hooks;
         this.data = data == null ? new JsonObject() : data;
         this.comments = object(this.data, "comments");
         this.texts = object(this.data, "texts");
@@ -199,7 +217,10 @@ final class ProfileVendor extends Vendor {
     }
 
     @Override
-    String routineRemarks(String remarks) {
+    public String routineRemarks(String remarks) {
+        if (hooks.defines("routineRemarks")) {
+            return hooks.call("routineRemarks", remarks);
+        }
         return base.routineRemarks(remarks);
     }
 
@@ -216,9 +237,13 @@ final class ProfileVendor extends Vendor {
     // -------------------------------------------------------------- sequences
 
     @Override
-    JsonArray sequences(Connection conn, Ident id, JsonObject req) {
+    public List<Map<String, String>> sequences(Connection conn, Ident id, String catalog,
+                                               String schema, String name) {
+        if (hooks.defines("sequences")) {
+            return hooks.call("sequences", conn, id, catalog, schema, name);
+        }
         // The profile's queries replace the base's own way of listing them.
-        return data.has("sequences") ? null : base.sequences(conn, id, req);
+        return data.has("sequences") ? null : base.sequences(conn, id, catalog, schema, name);
     }
 
     @Override
@@ -230,12 +255,16 @@ final class ProfileVendor extends Vendor {
     // --------------------------------------------------------------- triggers
 
     @Override
-    JsonArray triggers(Connection conn, String name) {
+    public List<String[]> triggers(Connection conn, String catalog, String schema,
+                                   String name) {
+        if (hooks.defines("triggers")) {
+            return hooks.call("triggers", conn, catalog, schema, name);
+        }
         if (!data.has("triggers")) {
-            return base.triggers(conn, name);
+            return base.triggers(conn, catalog, schema, name);
         }
         // `null`: the product keeps no trigger catalog to read.
-        return query(data, "triggers") == null ? new JsonArray() : null;
+        return query(data, "triggers") == null ? List.of() : null;
     }
 
     @Override
@@ -259,7 +288,11 @@ final class ProfileVendor extends Vendor {
     }
 
     @Override
-    void triggerRow(String[] r) {
+    public void triggerRow(String[] r) {
+        if (hooks.defines("triggerRow")) {
+            hooks.call("triggerRow", (Object) r);
+            return;
+        }
         // The base's rewriting is of the base's own query.
         if (!data.has("triggers")) {
             base.triggerRow(r);
@@ -301,29 +334,37 @@ final class ProfileVendor extends Vendor {
     }
 
     @Override
-    Map<String, String> tableComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> tableComments(Connection conn, Map<String, String> req)
+            throws SQLException {
+        if (hooks.defines("tableComments")) {
+            return hooks.call("tableComments", conn, req);
+        }
         if (!comments.has("tables")) {
             return base.tableComments(conn, req);
         }
-        return comments(conn, query(comments, "tables"), req, 2, false);
+        return comments(conn, query(comments, "tables"), req, 3, false);
     }
 
     @Override
-    Map<String, String> columnComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> columnComments(Connection conn, Map<String, String> req)
+            throws SQLException {
+        if (hooks.defines("columnComments")) {
+            return hooks.call("columnComments", conn, req);
+        }
         if (!comments.has("columns")) {
             return base.columnComments(conn, req);
         }
-        return comments(conn, query(comments, "columns"), req, 3, true);
+        return comments(conn, query(comments, "columns"), req, 4, true);
     }
 
     /**
      * Runs a comment query: its owner, table and, for columns, column, then
      * the comment, the way {@link Comments#read} reads the built-ins'.
      */
-    private Map<String, String> comments(Connection conn, JsonObject q, JsonObject req,
-                                         int keys, boolean columns) throws SQLException {
+    private List<String[]> comments(Connection conn, JsonObject q, Map<String, String> req,
+                                    int width, boolean columns) throws SQLException {
         if (q == null) {
-            return Collections.emptyMap();
+            return List.of();
         }
         JsonObject filters = object(q, "filters");
         String escape = "none".equals(text(comments, "escape")) ? Comments.NO_ESCAPE
@@ -331,7 +372,7 @@ final class ProfileVendor extends Vendor {
         StringBuilder sql = new StringBuilder(text(q, "sql"));
         List<String> args = new ArrayList<>();
         Set<String> used = new HashSet<>();
-        String catalog = Json.str(req, "catalog");
+        String catalog = req.get("catalog");
         String catalogColumn = text(filters, "catalog");
         if (catalogColumn != null && catalog != null && !catalog.isEmpty()) {
             sql.append(" AND ").append(catalogColumn).append(" = ?");
@@ -346,7 +387,7 @@ final class ProfileVendor extends Vendor {
             pattern(sql, args, used, text(filters, "column"),
                     Comments.Filter.of(req, "column", "column_pattern"), escape);
         }
-        return Comments.read(conn, sql.toString(), args, keys);
+        return Comments.rows(conn, sql.toString(), args, width);
     }
 
     private static void pattern(StringBuilder sql, List<String> args, Set<String> used,
@@ -637,6 +678,9 @@ final class ProfileVendor extends Vendor {
 
     @Override
     public String literal(ResultSet rs, int i, int type) throws SQLException {
+        if (hooks.defines("literal")) {
+            return hooks.call("literal", rs, i, type);
+        }
         return base.literal(rs, i, type);
     }
 
@@ -663,6 +707,9 @@ final class ProfileVendor extends Vendor {
     @Override
     public String stringLiteral(String s, boolean national, int type, ResultSet rs, int i)
             throws SQLException {
+        if (hooks.defines("stringLiteral")) {
+            return hooks.call("stringLiteral", s, national, type, rs, i);
+        }
         String rule = nationalStrings();
         if (rule == null) {
             return base.stringLiteral(s, national, type, rs, i);
@@ -673,6 +720,9 @@ final class ProfileVendor extends Vendor {
 
     @Override
     public String hexLiteral(String hex) {
+        if (hooks.defines("hexLiteral")) {
+            return hooks.call("hexLiteral", hex);
+        }
         String template = text(data, "hex_literal");
         if (template == null) {
             return base.hexLiteral(hex);
@@ -736,33 +786,51 @@ final class ProfileVendor extends Vendor {
 
     @Override
     public Set<String> extensionMembers(Connection conn, String schema) {
+        if (hooks.defines("extensionMembers")) {
+            return hooks.call("extensionMembers", conn, schema);
+        }
         return base.extensionMembers(conn, schema);
     }
 
     @Override
     public Set<String> materializedViews(Connection conn, String schema) {
+        if (hooks.defines("materializedViews")) {
+            return hooks.call("materializedViews", conn, schema);
+        }
         return base.materializedViews(conn, schema);
     }
 
     @Override
     public Set<String> tablesNotWritten(Connection conn, String schema) {
+        if (hooks.defines("tablesNotWritten")) {
+            return hooks.call("tablesNotWritten", conn, schema);
+        }
         return base.tablesNotWritten(conn, schema);
     }
 
     @Override
     public List<String[]> backupPreamble(Connection conn, Ident id, String catalog,
                                          String schema) {
+        if (hooks.defines("backupPreamble")) {
+            return hooks.call("backupPreamble", conn, id, catalog, schema);
+        }
         return base.backupPreamble(conn, id, catalog, schema);
     }
 
     @Override
     public List<String> ownedSequences(Connection conn, Ident id, String schema,
                                        Set<String> names) {
+        if (hooks.defines("ownedSequences")) {
+            return hooks.call("ownedSequences", conn, id, schema, names);
+        }
         return base.ownedSequences(conn, id, schema, names);
     }
 
     @Override
     public Set<String> indexViews(Connection conn, String schema) {
+        if (hooks.defines("indexViews")) {
+            return hooks.call("indexViews", conn, schema);
+        }
         return base.indexViews(conn, schema);
     }
 
@@ -773,6 +841,9 @@ final class ProfileVendor extends Vendor {
 
     @Override
     public List<String> packages(Connection conn, String schema) {
+        if (hooks.defines("packages")) {
+            return hooks.call("packages", conn, schema);
+        }
         return base.packages(conn, schema);
     }
 
@@ -843,49 +914,76 @@ final class ProfileVendor extends Vendor {
     @Override
     public String sequenceValue(Connection conn, Ident id, String catalog, String schema,
                                 String name, String listed) {
+        if (hooks.defines("sequenceValue")) {
+            return hooks.call("sequenceValue", conn, id, catalog, schema, name, listed);
+        }
         return base.sequenceValue(conn, id, catalog, schema, name, listed);
     }
 
     @Override
     public String resumeSequence(Connection conn, String schema, String name, String ddl) {
+        if (hooks.defines("resumeSequence")) {
+            return hooks.call("resumeSequence", conn, schema, name, ddl);
+        }
         return base.resumeSequence(conn, schema, name, ddl);
     }
 
     @Override
     public String sqlMode(Connection conn, String catalog, String name, String kind) {
+        if (hooks.defines("sqlMode")) {
+            return hooks.call("sqlMode", conn, catalog, name, kind);
+        }
         return base.sqlMode(conn, catalog, name, kind);
     }
 
     @Override
     public List<String> overloadTexts(Connection conn, String schema, String name) {
+        if (hooks.defines("overloadTexts")) {
+            return hooks.call("overloadTexts", conn, schema, name);
+        }
         return base.overloadTexts(conn, schema, name);
     }
 
     @Override
     public List<String> routineDrops(Connection conn, Ident id, String schema, String name,
                                      boolean procedure) {
+        if (hooks.defines("routineDrops")) {
+            return hooks.call("routineDrops", conn, id, schema, name, procedure);
+        }
         return base.routineDrops(conn, id, schema, name, procedure);
     }
 
     @Override
     public List<String> counters(DatabaseMetaData dbm, Ident id, List<Sequence> sequences,
                                  List<Table> tables, boolean data) throws SQLException {
+        if (hooks.defines("counters")) {
+            return hooks.call("counters", dbm, id, sequences, tables, data);
+        }
         return base.counters(dbm, id, sequences, tables, data);
     }
 
     @Override
     public Set<String> textColumns(Connection conn, String schema, String table) {
+        if (hooks.defines("textColumns")) {
+            return hooks.call("textColumns", conn, schema, table);
+        }
         return base.textColumns(conn, schema, table);
     }
 
     @Override
     public String textColumn(String quoted) {
+        if (hooks.defines("textColumn")) {
+            return hooks.call("textColumn", quoted);
+        }
         return base.textColumn(quoted);
     }
 
     @Override
     public RowFence rowFence(Connection conn, Ident id, String schema, String table,
                              String qualified, List<String> identities) throws SQLException {
+        if (hooks.defines("rowFence")) {
+            return hooks.call("rowFence", conn, id, schema, table, qualified, identities);
+        }
         if (!data.has("identity_insert")) {
             return base.rowFence(conn, id, schema, table, qualified, identities);
         }

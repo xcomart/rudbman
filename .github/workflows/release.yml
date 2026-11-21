@@ -305,7 +305,10 @@ jobs:
       # for a missing module fails at connect time, not at build time, which is
       # why the smoke step below checks the result. jdk.unsupported covers
       # drivers using sun.misc.Unsafe and jdk.charsets covers the extended
-      # charsets the template engine's EUC-KR width maths needs.
+      # charsets the template engine's EUC-KR width maths needs. java.desktop
+      # is for the Groovy runtime a dialect profile's script runs on, whose
+      # meta-classes read every class through java.beans
+      # (docs/dialect-profiles.md, 5.3).
       #
       # `--compress=2` is JDK 17's spelling of maximum compression; the
       # `--compress=zip-N` form only exists from JDK 21 on.
@@ -322,7 +325,7 @@ jobs:
         run: |
           jlink --module-path "$JAVA_HOME/jmods" \
             --add-modules \
-              java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,java.security.jgss,java.security.sasl,java.management,java.logging,jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
+              java.base,java.sql,java.sql.rowset,java.naming,java.transaction.xa,java.security.jgss,java.security.sasl,java.management,java.logging,java.desktop,jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported,jdk.net \
             --strip-debug --strip-native-commands --no-header-files --no-man-pages --compress=2 \
             --output runtime
 
@@ -546,7 +549,7 @@ jobs:
           release="$runtime/release"
           test -f "$release" || { echo "no jlink release file at $release"; exit 1; }
           modules=$(sed -n 's/^MODULES="\(.*\)"$/\1/p' "$release" | tr ' ' '\n')
-          for module in jdk.charsets jdk.unsupported; do
+          for module in jdk.charsets jdk.unsupported java.desktop; do
             if ! printf '%s\n' "$modules" | grep -qx "$module"; then
               echo "the bundled runtime is missing $module"
               printf '%s\n' "$modules"

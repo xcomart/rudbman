@@ -10,6 +10,7 @@ import comart.rudbman.bridge.meta.Dialect;
 import comart.rudbman.bridge.meta.Ident;
 import comart.rudbman.bridge.meta.PgSchema;
 import comart.rudbman.bridge.meta.Routines;
+import comart.rudbman.bridge.meta.ScriptFailure;
 import comart.rudbman.bridge.meta.Sequences;
 import comart.rudbman.bridge.meta.Triggers;
 import comart.rudbman.bridge.meta.Vendor;
@@ -816,6 +817,11 @@ public final class BackupJob extends Jobs.Job {
                 }
             }
             return true;
+        } catch (ScriptFailure e) {
+            // A profile's hook that throws fails the backup, as it fails any
+            // request: skipping the object would pass a broken script off as
+            // an object the server could not give.
+            throw e;
         } catch (RuntimeException | SQLException e) {
             LOG.log(Level.FINE, "skipped " + o.kind + " " + o.display(), e);
             addError(new BridgeException("sql",

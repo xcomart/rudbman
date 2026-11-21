@@ -370,6 +370,20 @@ driver:
   dialect_export_failed: "Le dialecte n’a pas pu être exporté : %{error}"
   dialect_folder_failed: "Le dossier des profils n’a pas pu être ouvert : %{error}"
   dialect_failed_row: "profil non chargé"
+  dialect_script_on: "Son script %{file} est autorisé et s’exécute dans les sessions de ce pilote."
+  dialect_script_off: "Son script %{file} est désactivé : il est nouveau, ou a changé depuis qu’il a été autorisé. Les sessions utilisent le reste du profil sans lui."
+  dialect_script_allow: "Autoriser le script…"
+  dialect_script_disallow: "Désactiver"
+  dialect_script_trust_title: "Autoriser le script de %{name} ?"
+  dialect_script_trust_file: "Script : %{file}"
+  dialect_script_trust_path: "Chemin : %{path}"
+  dialect_script_trust_warning: "Un script s’exécute avec les droits de rudbman : il peut lire et modifier vos fichiers, accéder au réseau et voir chaque connexion ouverte et son mot de passe. Ne l’autorisez que si vous faites confiance à sa provenance."
+  dialect_script_trust_version: "C’est cette version du fichier qui est autorisée ; si elle change, rudbman redemande."
+  dialect_script_trust_refuse: "Le laisser désactivé"
+  dialect_script_trust_confirm: "Autoriser et exécuter"
+  dialect_script_allowed: "Le script %{file} est autorisé ; les sessions ouvertes désormais l’exécutent."
+  dialect_script_turned_off: "Le script %{file} est désactivé ; les sessions ouvertes désormais s’en passent."
+  dialect_script_failed: "La liste des scripts autorisés n’a pas pu être enregistrée : %{error}"
   maven: Coordonnée Maven
   jars: Fichiers JAR
   add_jar: Ajouter un JAR…

@@ -25,6 +25,10 @@ import java.util.logging.Logger;
  *
  * <p>A driver that cannot make a savepoint is not a reason to refuse the query;
  * the attempt then simply runs unfenced, which is exactly where it stood before.
+ *
+ * <p>What a profile's script throws is not swallowed: a {@link ScriptFailure}
+ * is rolled back to the fence like any failure and then passed on, so that a
+ * broken hook fails its request rather than reading as "no answer".
  */
 final class Attempt {
 
@@ -92,6 +96,9 @@ final class Attempt {
             T out = work.run(conn);
             release(conn, sp);
             return out;
+        } catch (ScriptFailure e) {
+            rollback(conn, sp);
+            throw e;
         } catch (SQLException | RuntimeException e) {
             LOG.log(Level.FINE, "optional metadata query failed: " + what, e);
             rollback(conn, sp);

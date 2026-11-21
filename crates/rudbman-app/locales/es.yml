@@ -370,6 +370,20 @@ driver:
   dialect_export_failed: "No se pudo exportar el dialecto: %{error}"
   dialect_folder_failed: "No se pudo abrir la carpeta de perfiles: %{error}"
   dialect_failed_row: "el perfil no se cargó"
+  dialect_script_on: "Su script %{file} está permitido y se ejecuta en las sesiones de este controlador."
+  dialect_script_off: "Su script %{file} está desactivado: es nuevo o ha cambiado desde que se permitió. Las sesiones usan el resto del perfil sin él."
+  dialect_script_allow: "Permitir script…"
+  dialect_script_disallow: "Desactivar"
+  dialect_script_trust_title: "¿Permitir el script de %{name}?"
+  dialect_script_trust_file: "Script: %{file}"
+  dialect_script_trust_path: "Ruta: %{path}"
+  dialect_script_trust_warning: "Un script se ejecuta con los permisos de rudbman: puede leer y modificar sus archivos, acceder a la red y ver cada conexión abierta y su contraseña. Permítalo solo si confía en su procedencia."
+  dialect_script_trust_version: "Lo que se permite es esta versión del archivo; si cambia, rudbman vuelve a preguntar."
+  dialect_script_trust_refuse: "Dejarlo desactivado"
+  dialect_script_trust_confirm: "Permitir y ejecutar"
+  dialect_script_allowed: "El script %{file} está permitido; las sesiones que se abran a partir de ahora lo ejecutan."
+  dialect_script_turned_off: "El script %{file} está desactivado; las sesiones que se abran a partir de ahora no lo ejecutan."
+  dialect_script_failed: "No se pudo guardar la lista de scripts permitidos: %{error}"
   maven: Coordenada Maven
   jars: Archivos JAR
   add_jar: Añadir un JAR…

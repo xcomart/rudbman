@@ -98,7 +98,7 @@ Error JSON, every member always present:
 
 ```json
 {
-  "kind": "sql | driver | io | protocol | interrupted | internal",
+  "kind": "sql | driver | io | protocol | interrupted | script | internal",
   "sql_state": "42S02",
   "vendor_code": 942,
   "message": "…",
@@ -117,6 +117,9 @@ Error JSON, every member always present:
   and *"this driver does not accept this URL"* — the `null` return from
   `Driver.connect`, which the JDBC spec defines as "I do not understand this
   URL" and which is not an exception.
+- `kind: "script"` is a dialect profile's Groovy script: one that does not
+  compile fails `OPEN_SESSION`, and a hook that throws fails the request it
+  was serving, the message naming the profile, the file and the line.
 
 All responses use `serializeNulls`: a member the driver had nothing to say about
 is JSON `null`, never absent. Rust `Option<T>` fields therefore need no
@@ -178,6 +181,35 @@ then asks the profile first and the base for what it leaves out
 for a session whose driver names no profile: the first whose `bridge.detect`
 words the server's product name holds is the session's. A base the bridge
 does not know, or a value of the wrong shape, fails the open as `protocol`.
+
+A profile whose Groovy script the user has allowed carries it as `script`,
+and the request then carries `groovy`, the JARs of the Groovy runtime the
+script runs on (`docs/dialect-profiles.md`, §5):
+
+```json
+{
+  "profile": {
+    "id": "tidb",
+    "base": "mysql",
+    "bridge": { "script": "tidb.groovy" },
+    "script": {
+      "path": "/home/u/.config/rudbman/dialects/tidb.groovy",
+      "text": "String hexLiteral(String hex) { base.hexLiteral(hex).toLowerCase() }"
+    }
+  },
+  "groovy": ["/home/u/.config/rudbman/drivers/groovy-5.0.8.jar"]
+}
+```
+
+`text` is what the application read and the user allowed; `path` is for
+messages. The bridge loads `groovy` once per process on a class loader of its
+own (`meta/GroovyRuntime.java`), compiles the script once per content hash
+(`meta/ProfileScript.java`), and answers each hook the script defines from it
+before the profile's data and the base. A profile in `detect_profiles` may
+carry a script too; only the one the session takes is compiled. A script that
+does not compile, or defines a hook of the wrong shape, fails the open as
+`script`, with the file, the line and Groovy's message; a hook that throws
+fails the request it was serving the same way.
 
 ### `EXECUTE`
 

@@ -104,6 +104,12 @@ mod tab {
     pub const EXPORT_DIALECT: isize = 441;
     /// "Open folder", beside it.
     pub const DIALECT_FOLDER: isize = 442;
+    /// "Allow script…" or "Turn off", under the dialect.
+    pub const SCRIPT: isize = 443;
+    /// "Keep it off", in the question before a script is allowed.
+    pub const TRUST_REFUSE: isize = 444;
+    /// "Allow and run it", beside it.
+    pub const TRUST_ALLOW: isize = 445;
     /// Maven coordinate.
     pub const MAVEN: isize = 450;
     /// The download button beside the coordinate.
@@ -250,6 +256,16 @@ enum Choice {
     Unknown,
 }
 
+/// A profile's script waiting on the user's answer before it is allowed
+/// (`docs/dialect-profiles.md`, §6).
+struct Trust {
+    /// The profile's name, as the question names it.
+    profile: String,
+    /// The script, as it was read when the question was asked: what is
+    /// allowed is that version of the file.
+    script: dialects::Script,
+}
+
 /// A download in flight.
 struct Download {
     /// What is being fetched, for the message.
@@ -276,6 +292,8 @@ pub struct DriverManager {
     status_is_error: bool,
     /// Whether the delete confirmation is showing.
     confirming: bool,
+    /// The script whose question is showing, before it is allowed.
+    trusting: Option<Trust>,
     /// Focus of the manager's root.
     focus_handle: FocusHandle,
     /// Scroll of the driver list.
@@ -302,6 +320,9 @@ pub struct DriverManager {
     /// What loading the dialect profiles came to, read again each time the
     /// manager or the dialect list opens.
     profiles: Arc<Report>,
+    /// The directory the profiles are read from in place of the
+    /// application's own, for a test; `None` is the application's.
+    profiles_dir: Option<PathBuf>,
     /// Maven coordinate, `group:artifact:version`.
     maven_input: Entity<TextInput>,
     /// Query answering table comments the driver leaves blank.
@@ -347,6 +368,7 @@ impl DriverManager {
             status_is_error: status.is_some(),
             status,
             confirming: false,
+            trusting: None,
             focus_handle: cx.focus_handle(),
             label_width: px(rugpui::modal::FORM_LABEL_WIDTH),
             list_scroll: ScrollHandle::new(),
@@ -366,6 +388,7 @@ impl DriverManager {
             // Read again here rather than taken from start-up, so that a
             // profile edited since needs no restart (§7 of the design).
             profiles: dialects::reload(),
+            profiles_dir: None,
             maven_input: field(cx, "org.postgresql:postgresql:42.7.4".into(), tab::MAVEN),
             table_comments_input: field(
                 cx,
@@ -482,6 +505,7 @@ impl DriverManager {
     fn select(&mut self, id: String, cx: &mut Context<Self>) {
         self.collect(cx);
         self.confirming = false;
+        self.trusting = None;
         self.status = None;
         // A chooser listing another driver's classes would be answered into
         // this one's class field.
@@ -741,6 +765,11 @@ impl DriverManager {
         }
         if self.confirming {
             self.confirming = false;
+            cx.notify();
+            return;
+        }
+        // Backing out of the script's question keeps the script off.
+        if self.trusting.take().is_some() {
             cx.notify();
             return;
         }
@@ -1421,6 +1450,7 @@ impl DriverManager {
             self.dialect = value;
         }
         self.dialect_open = false;
+        self.trusting = None;
         self.collect(cx);
         cx.notify();
     }
@@ -1429,7 +1459,7 @@ impl DriverManager {
     /// a file edited with the manager open shows without closing it.
     fn toggle_dialects(&mut self, open: bool, cx: &mut Context<Self>) {
         if open {
-            self.profiles = dialects::reload();
+            self.reload_profiles();
         }
         self.dialect_open = open;
         cx.notify();
@@ -1469,7 +1499,7 @@ impl DriverManager {
             manager
                 .update(cx, |manager, cx| match written {
                     Ok(()) => {
-                        manager.profiles = dialects::reload();
+                        manager.reload_profiles();
                         let path = path.display().to_string();
                         manager.report(ts!("driver.dialect_exported", path = path), false, cx);
                     }
@@ -1485,6 +1515,231 @@ impl DriverManager {
                 .ok();
         })
         .detach();
+    }
+
+    /// Reads the profiles again: the application's, registering what loaded
+    /// (`dialects::reload`), or the directory a test put in their place.
+    fn reload_profiles(&mut self) {
+        self.profiles = match &self.profiles_dir {
+            None => dialects::reload(),
+            Some(dir) => Arc::new(dialects::load_from(dir)),
+        };
+    }
+
+    /// The directory the allow list is kept in: the profiles'.
+    fn allow_list_dir(&self) -> anyhow::Result<PathBuf> {
+        match &self.profiles_dir {
+            Some(dir) => Ok(dir.clone()),
+            None => dialects_dir(),
+        }
+    }
+
+    /// The profile the definition's dialect is, where it is one that loaded
+    /// with a script.
+    fn chosen_script(&self) -> Option<(&dialects::Entry, &dialects::Script)> {
+        let Choice::Profile(at) = self.choice_of(&self.dialect) else {
+            return None;
+        };
+        let entry = &self.profiles.entries[at];
+        entry.dialect()?;
+        Some((entry, entry.hooks.as_ref()?))
+    }
+
+    /// Asks before the chosen profile's script is allowed: what it is, where
+    /// it is, and that it runs with rudbman's rights (§6).
+    fn ask_trust(&mut self, cx: &mut Context<Self>) {
+        // Read again, so that the question is about the file as it is now.
+        self.reload_profiles();
+        self.trusting = self.chosen_script().map(|(entry, script)| Trust {
+            profile: entry.label().to_string(),
+            script: script.clone(),
+        });
+        cx.notify();
+    }
+
+    /// Allows the script the question was about, in the version it showed.
+    fn allow_script(&mut self, cx: &mut Context<Self>) {
+        let Some(trust) = self.trusting.take() else {
+            return;
+        };
+        let file = trust.script.name.clone();
+        match self
+            .allow_list_dir()
+            .and_then(|dir| dialects::allow_in(&dir, &trust.script))
+        {
+            Ok(()) => {
+                self.reload_profiles();
+                self.report(ts!("driver.dialect_script_allowed", file = file), false, cx);
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                self.report(ts!("driver.dialect_script_failed", error = error), true, cx);
+            }
+        }
+    }
+
+    /// Takes the chosen profile's script off the allow list.
+    fn turn_script_off(&mut self, cx: &mut Context<Self>) {
+        let Some(name) = self.chosen_script().map(|(_, script)| script.name.clone()) else {
+            return;
+        };
+        match self
+            .allow_list_dir()
+            .and_then(|dir| dialects::disallow_in(&dir, &name))
+        {
+            Ok(()) => {
+                self.reload_profiles();
+                self.report(
+                    ts!("driver.dialect_script_turned_off", file = name),
+                    false,
+                    cx,
+                );
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                self.report(ts!("driver.dialect_script_failed", error = error), true, cx);
+            }
+        }
+    }
+
+    /// The line under the picker that says whether the chosen profile's
+    /// script runs, with the button that changes it.
+    fn render_script(
+        &self,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let (_, script) = self.chosen_script()?;
+        let this = cx.entity();
+        let file = script.name.clone();
+        let (text, button) = if script.allowed {
+            (
+                ts!("driver.dialect_script_on", file = file),
+                Button::new("driver-script-off", ts!("driver.dialect_script_disallow"))
+                    .variant(ButtonVariant::Secondary)
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |manager, cx| manager.turn_script_off(cx));
+                    }),
+            )
+        } else {
+            (
+                ts!("driver.dialect_script_off", file = file),
+                Button::new("driver-script-allow", ts!("driver.dialect_script_allow"))
+                    .variant(ButtonVariant::Secondary)
+                    .disabled(self.trusting.is_some())
+                    .on_click(move |_, _window, cx| {
+                        this.update(cx, |manager, cx| manager.ask_trust(cx));
+                    }),
+            )
+        };
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(rugpui::TextSize::Xs.size(cx))
+                        .text_color(chrome.text_muted)
+                        .child(text),
+                )
+                .child(button.tab_index(tab::SCRIPT)),
+        )
+    }
+
+    /// The question asked before a script is allowed: the profile, the file
+    /// and its path, and that it runs with rudbman's rights.
+    fn render_trust(
+        &self,
+        chrome: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let trust = self.trusting.as_ref()?;
+        let this = cx.entity();
+        let refuse = this.clone();
+        let line = |text: SharedString, color| {
+            div()
+                .text_size(rugpui::TextSize::Sm.size(cx))
+                .text_color(color)
+                .child(text)
+        };
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .p(px(10.))
+                .border_1()
+                .border_color(chrome.border)
+                .rounded(px(6.))
+                .child(
+                    div()
+                        .text_size(rugpui::TextSize::Sm.size(cx))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(chrome.text)
+                        .child(ts!(
+                            "driver.dialect_script_trust_title",
+                            name = trust.profile.clone()
+                        )),
+                )
+                .child(line(
+                    ts!(
+                        "driver.dialect_script_trust_file",
+                        file = trust.script.name.clone()
+                    ),
+                    chrome.text,
+                ))
+                .child(line(
+                    ts!(
+                        "driver.dialect_script_trust_path",
+                        path = trust.script.path.display().to_string()
+                    ),
+                    chrome.text,
+                ))
+                .child(line(
+                    ts!("driver.dialect_script_trust_warning"),
+                    chrome.danger,
+                ))
+                .child(line(
+                    ts!("driver.dialect_script_trust_version"),
+                    chrome.text_muted,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            Button::new(
+                                "driver-trust-refuse",
+                                ts!("driver.dialect_script_trust_refuse"),
+                            )
+                            .variant(ButtonVariant::Secondary)
+                            .tab_index(tab::TRUST_REFUSE)
+                            .on_click(move |_, _window, cx| {
+                                refuse.update(cx, |manager, cx| {
+                                    manager.trusting = None;
+                                    cx.notify();
+                                });
+                            }),
+                        )
+                        .child(
+                            Button::new(
+                                "driver-trust-allow",
+                                ts!("driver.dialect_script_trust_confirm"),
+                            )
+                            .variant(ButtonVariant::Danger)
+                            .tab_index(tab::TRUST_ALLOW)
+                            .on_click(move |_, _window, cx| {
+                                this.update(cx, |manager, cx| manager.allow_script(cx));
+                            }),
+                        ),
+                ),
+        )
     }
 
     /// Opens the profiles' folder in the system's file manager, making it
@@ -1600,6 +1855,8 @@ impl DriverManager {
             let error = self.profiles.problems.join("; ");
             notes.push((ts!("driver.dialect_profiles_problem", error = error), true));
         }
+        let script = self.render_script(chrome, cx);
+        let trust = self.render_trust(chrome, cx);
         let notes = notes.into_iter().map(|(text, danger)| {
             div()
                 .text_size(rugpui::TextSize::Xs.size(cx))
@@ -1626,6 +1883,8 @@ impl DriverManager {
                     .child(folder),
             )
             .children(notes)
+            .children(script)
+            .children(trust)
     }
 
     /// One custom comment query: the box that switches it on, the statement,
@@ -2145,6 +2404,48 @@ mod tests {
         });
     }
 
+    /// A profile's script is off until the user answers its question, and
+    /// what is allowed is the version the question was about.
+    #[gpui::test]
+    fn a_script_is_allowed_only_through_its_question(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("tidb.yml"),
+            "api: 1\nname: TiDB\nbase: mysql\nbridge:\n  script: tidb.groovy\n",
+        )
+        .expect("write");
+        std::fs::write(dir.path().join("tidb.groovy"), "// hooks\n").expect("write");
+        let manager = manager_over(Vec::new(), cx);
+        cx.update(|cx| {
+            manager.update(cx, |manager, cx| {
+                manager.profiles_dir = Some(dir.path().to_path_buf());
+                manager.reload_profiles();
+                manager.pick_dialect(Some("tidb".to_string()), cx);
+                let allowed = |manager: &DriverManager| {
+                    manager.chosen_script().map(|(_, script)| script.allowed)
+                };
+                assert_eq!(allowed(manager), Some(false), "a new script is off");
+
+                manager.ask_trust(cx);
+                let trust = manager.trusting.as_ref().expect("the question");
+                assert_eq!(trust.profile, "TiDB");
+                assert_eq!(trust.script.path, dir.path().join("tidb.groovy"));
+                manager.escape(cx);
+                assert!(manager.trusting.is_none(), "Escape keeps it off");
+                assert_eq!(allowed(manager), Some(false));
+
+                manager.ask_trust(cx);
+                manager.allow_script(cx);
+                assert_eq!(allowed(manager), Some(true));
+                assert!(dir.path().join("allowed.json").is_file());
+                assert!(!manager.status_is_error, "{:?}", manager.status);
+
+                manager.turn_script_off(cx);
+                assert_eq!(allowed(manager), Some(false), "turned off");
+            });
+        });
+    }
+
     /// A throwaway file under the temp directory, removed with the test.
     struct TempFile(PathBuf);
 
@@ -2500,6 +2801,20 @@ mod tests {
             ts!("driver.dialect_export_failed", error = "e"),
             ts!("driver.dialect_folder_failed", error = "e"),
             ts!("driver.dialect_failed_row"),
+            ts!("driver.dialect_script_on", file = "tidb.groovy"),
+            ts!("driver.dialect_script_off", file = "tidb.groovy"),
+            ts!("driver.dialect_script_allow"),
+            ts!("driver.dialect_script_disallow"),
+            ts!("driver.dialect_script_trust_title", name = "TiDB"),
+            ts!("driver.dialect_script_trust_file", file = "tidb.groovy"),
+            ts!("driver.dialect_script_trust_path", path = "p"),
+            ts!("driver.dialect_script_trust_warning"),
+            ts!("driver.dialect_script_trust_version"),
+            ts!("driver.dialect_script_trust_refuse"),
+            ts!("driver.dialect_script_trust_confirm"),
+            ts!("driver.dialect_script_allowed", file = "tidb.groovy"),
+            ts!("driver.dialect_script_turned_off", file = "tidb.groovy"),
+            ts!("driver.dialect_script_failed", error = "e"),
         ] {
             assert!(!label.is_empty(), "empty label");
             assert!(

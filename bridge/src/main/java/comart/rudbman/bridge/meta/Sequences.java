@@ -169,13 +169,21 @@ public final class Sequences {
      */
     public static JsonArray of(Connection conn, DatabaseMetaData dbm, JsonObject req) {
         Vendor vendor = Dialect.of(dbm).vendor();
-        JsonArray own = vendor.sequences(conn, Ident.of(dbm), req);
-        if (own != null) {
-            return own;
-        }
         String catalog = Json.str(req, "catalog");
         String schema = Json.str(req, "schema");
         String name = Json.str(req, "name");
+        List<Map<String, String>> own = vendor.sequences(conn, Ident.of(dbm), given(catalog),
+                given(schema), given(name));
+        if (own != null) {
+            // The product's own answer is already scoped to the request.
+            JsonArray arr = new JsonArray();
+            for (Map<String, String> r : own) {
+                if (r != null) {
+                    arr.add(row(byLabel(r)));
+                }
+            }
+            return arr;
+        }
         // The first query the server answers is the one used; a later one is
         // the older catalog a server without the first still has.
         for (String sql : vendor.sequenceQueries(Ident.of(dbm), catalog)) {
@@ -233,14 +241,10 @@ public final class Sequences {
      * read - a privilege granted on the schema listing but not on the sequence -
      * is still listed, with its options null.
      */
-    static JsonArray mariadb(Connection conn, Ident id, JsonObject req) {
-        String database = Json.str(req, "catalog");
-        if (database == null || database.isEmpty()) {
-            database = Json.str(req, "schema");
-        }
-        String db = database == null || database.isEmpty() ? null : database;
-        String name = Json.str(req, "name");
-        String one = name == null || name.isEmpty() ? null : name;
+    static List<Map<String, String>> mariadb(Connection conn, Ident id, String catalog,
+                                              String schema, String name) {
+        String db = catalog != null ? catalog : schema;
+        String one = name;
 
         List<String[]> found = Attempt.<List<String[]>>on(conn, MARIADB_SQL, c -> {
             String sql = MARIADB_SQL + (db != null ? " AND TABLE_SCHEMA = ?" : "")
@@ -279,7 +283,7 @@ public final class Sequences {
                 }, new HashMap<>());
 
         boolean details = one != null || found.size() <= MARIADB_DETAIL_LIMIT;
-        JsonArray arr = new JsonArray();
+        List<Map<String, String>> out = new ArrayList<>();
         for (String[] f : found) {
             String qualified = id.qualify(f[0], f[1]);
             Map<String, String> r = !details ? new HashMap<>()
@@ -289,24 +293,27 @@ public final class Sequences {
                                     : new HashMap<>();
                         }
                     }, new HashMap<>());
-            JsonObject o = new JsonObject();
-            o.addProperty("catalog", f[0]);
-            o.addProperty("schema", (String) null);
-            o.addProperty("name", f[1]);
-            o.addProperty("data_type", types.getOrDefault(f[0] + '.' + f[1], "bigint"));
-            o.addProperty("start_value", r.get("START_VALUE"));
-            o.addProperty("min_value", r.get("MINIMUM_VALUE"));
-            o.addProperty("max_value", r.get("MAXIMUM_VALUE"));
-            o.addProperty("increment", r.get("INCREMENT"));
-            o.addProperty("cycle", yesNo(r.get("CYCLE_OPTION")));
-            o.addProperty("cache", r.get("CACHE_SIZE"));
-            // next_not_cached_value is where the next cache block starts, not
-            // the value last handed out, and nothing else says what that was.
-            o.addProperty("current_value", (String) null);
-            o.addProperty("remarks", f[2] == null || f[2].isEmpty() ? null : f[2]);
-            arr.add(o);
+            // Labelled as the catalog queries' columns are, for row() to read.
+            // The schema is null: the database is the catalog. No current
+            // value either: next_not_cached_value is where the next cache
+            // block starts, not the value last handed out, and nothing else
+            // says what that was.
+            Map<String, String> o = new HashMap<>();
+            o.put("SEQUENCE_CATALOG", f[0]);
+            o.put("SEQUENCE_NAME", f[1]);
+            o.put("DATA_TYPE", types.getOrDefault(f[0] + '.' + f[1], "bigint"));
+            o.put("START_VALUE", r.get("START_VALUE"));
+            o.put("MINIMUM_VALUE", r.get("MINIMUM_VALUE"));
+            o.put("MAXIMUM_VALUE", r.get("MAXIMUM_VALUE"));
+            o.put("INCREMENT", r.get("INCREMENT"));
+            o.put("CYCLE_OPTION", r.get("CYCLE_OPTION"));
+            o.put("CACHE_SIZE", r.get("CACHE_SIZE"));
+            if (f[2] != null && !f[2].isEmpty()) {
+                o.put("REMARKS", f[2]);
+            }
+            out.add(o);
         }
-        return arr;
+        return out;
     }
 
     /**
@@ -331,7 +338,11 @@ public final class Sequences {
     };
 
     private static JsonObject row(RsView v) throws SQLException {
-        Map<String, String> r = v.strs(LABELS);
+        return row(v.strs(LABELS));
+    }
+
+    /** @return the sequence a row of {@link #LABELS} describes */
+    private static JsonObject row(Map<String, String> r) {
         JsonObject o = new JsonObject();
         o.addProperty("catalog", first(r, "SEQUENCE_CATALOG"));
         o.addProperty("schema", first(r, "SEQUENCE_SCHEMA", "SEQUENCE_OWNER", "DB_NAME"));
@@ -376,6 +387,22 @@ public final class Sequences {
             return Boolean.FALSE;
         }
         return null;
+    }
+
+    /** @return {@code value}, or {@code null} for an empty one */
+    private static String given(String value) {
+        return value == null || value.isEmpty() ? null : value;
+    }
+
+    /** @return {@code row} with its labels upper-cased, as a catalog query's are read */
+    private static Map<String, String> byLabel(Map<String, String> row) {
+        Map<String, String> out = new HashMap<>();
+        for (Map.Entry<String, String> e : row.entrySet()) {
+            if (e.getKey() != null) {
+                out.put(e.getKey().toUpperCase(Locale.ROOT), e.getValue());
+            }
+        }
+        return out;
     }
 
     private static boolean matches(JsonObject o, String key, String want) {

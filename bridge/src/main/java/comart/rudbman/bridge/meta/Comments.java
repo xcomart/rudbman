@@ -14,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -223,7 +224,7 @@ final class Comments {
             return;
         }
         Attempt.on(conn, "table comments", c -> {
-            Map<String, String> found = vendor.tableComments(c, req);
+            Map<String, String> found = index(vendor.tableComments(c, filters(req)), 2);
             for (JsonObject o : missing(items)) {
                 fill(o, found.get(key(owner(vendor, o), Json.str(o, "name"))));
             }
@@ -258,7 +259,7 @@ final class Comments {
             return;
         }
         Attempt.on(conn, "column comments", c -> {
-            Map<String, String> found = vendor.columnComments(c, req);
+            Map<String, String> found = index(vendor.columnComments(c, filters(req)), 3);
             for (JsonObject o : missing(items)) {
                 fill(o, found.get(key(owner(vendor, o),
                         Json.str(o, "table"), Json.str(o, "name"))));
@@ -304,8 +305,8 @@ final class Comments {
     }
 
     /** Appends the MySQL database predicate the two queries open with. */
-    static void mysqlDatabase(StringBuilder sql, List<String> args, JsonObject req) {
-        String catalog = Json.str(req, "catalog");
+    static void mysqlDatabase(StringBuilder sql, List<String> args, Map<String, String> req) {
+        String catalog = req.get("catalog");
         if (catalog == null || catalog.isEmpty()) {
             // No catalog filter means "whatever this session is connected to",
             // which is the same thing the driver's own metadata call resolved.
@@ -323,28 +324,85 @@ final class Comments {
      *         user's session - so a cross-database request is answered without
      *         enrichment rather than with the wrong database's comments.
      */
-    static boolean elsewhere(Connection conn, JsonObject req) throws SQLException {
-        String catalog = Json.str(req, "catalog");
+    static boolean elsewhere(Connection conn, Map<String, String> req) throws SQLException {
+        String catalog = req.get("catalog");
         return catalog != null && !catalog.isEmpty() && !catalog.equals(conn.getCatalog());
+    }
+
+    /** The request members a comment query is scoped by. */
+    private static final String[] FILTERS = {
+        "catalog", "schema", "schema_pattern", "table", "table_pattern", "column", "column_pattern",
+    };
+
+    /**
+     * @param req the request body
+     * @return the filters a vendor's comment query takes from it, each left
+     *         out where the request does not give it
+     */
+    static Map<String, String> filters(JsonObject req) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String key : FILTERS) {
+            String value = Json.str(req, key);
+            if (value != null) {
+                out.put(key, value);
+            }
+        }
+        return out;
     }
 
     /**
      * Runs one comment query.
      *
-     * @param keys how many leading columns make up the lookup key; the comment is
-     *             the column after them
-     * @return the non-blank comments, keyed by those columns
+     * @param width how many leading columns to read: the key's, then the
+     *              comment
+     * @return the rows, each that many columns
      */
-    static Map<String, String> read(Connection conn, String sql, List<String> args, int keys)
+    static List<String[]> rows(Connection conn, String sql, List<String> args, int width)
             throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (int i = 0; i < args.size(); i++) {
                 ps.setString(i + 1, args.get(i));
             }
             try (ResultSet rs = ps.executeQuery()) {
-                return collect(rs, keys);
+                List<String[]> out = new ArrayList<>();
+                while (rs.next()) {
+                    // Left to right, the house rule from RsView; see collect.
+                    String[] row = new String[width];
+                    for (int i = 0; i < width; i++) {
+                        row[i] = rs.getString(i + 1);
+                    }
+                    out.add(row);
+                }
+                return out;
             }
         }
+    }
+
+    /**
+     * Keys a vendor's comment rows the way {@link #collect} keys a custom
+     * query's.
+     *
+     * @param rows the rows, each its key's columns and then the comment; a
+     *             short row has nothing past its end
+     * @param keys how many leading columns make up the key
+     * @return the non-blank comments, keyed by those columns
+     */
+    static Map<String, String> index(List<String[]> rows, int keys) {
+        Map<String, String> out = new HashMap<>();
+        if (rows == null) {
+            return out;
+        }
+        for (String[] row : rows) {
+            if (row == null || row.length <= keys || blank(row[keys])) {
+                continue;
+            }
+            StringBuilder k = new StringBuilder();
+            for (int i = 0; i < keys; i++) {
+                append(k, row[i]);
+            }
+            out.put(k.toString(), row[keys]);
+        }
+        return out;
     }
 
     /**
@@ -540,12 +598,12 @@ final class Comments {
             this.pattern = pattern;
         }
 
-        static Filter of(JsonObject req, String exactKey, String patternKey) {
-            String exact = Json.str(req, exactKey);
+        static Filter of(Map<String, String> req, String exactKey, String patternKey) {
+            String exact = req.get(exactKey);
             if (exact != null && !exact.isEmpty()) {
                 return new Filter(exact, false);
             }
-            return new Filter(Json.str(req, patternKey), true);
+            return new Filter(req.get(patternKey), true);
         }
 
         boolean absent() {

@@ -7,6 +7,7 @@ may change them; the rules are §12 of
 [`docs/dialect-profiles.md`](../docs/dialect-profiles.md), and the format is
 §4.
 
-A database product supported from now on is added here rather than as a
-built-in in code. The tests of `rudbman-core`'s `dialects` module load every
+A script shipped here is allowed to run as it is written (§12): the user is
+asked only about a script they have changed. A database product supported
+from now on is added here rather than as a built-in in code. The tests of `rudbman-core`'s `dialects` module load every
 profile here, so one that does not load fails the build's tests.

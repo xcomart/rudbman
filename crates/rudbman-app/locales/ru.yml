@@ -370,6 +370,20 @@ driver:
   dialect_export_failed: "Не удалось экспортировать диалект: %{error}"
   dialect_folder_failed: "Не удалось открыть папку профилей: %{error}"
   dialect_failed_row: "профиль не загружен"
+  dialect_script_on: "Его скрипт %{file} разрешён и выполняется в сеансах этого драйвера."
+  dialect_script_off: "Его скрипт %{file} выключен: он новый или изменился с тех пор, как его разрешили. Сеансы используют остальную часть профиля без него."
+  dialect_script_allow: "Разрешить скрипт…"
+  dialect_script_disallow: "Выключить"
+  dialect_script_trust_title: "Разрешить скрипт профиля %{name}?"
+  dialect_script_trust_file: "Скрипт: %{file}"
+  dialect_script_trust_path: "Путь: %{path}"
+  dialect_script_trust_warning: "Скрипт выполняется с правами rudbman: он может читать и изменять ваши файлы, обращаться к сети и видеть каждое открытое подключение и его пароль. Разрешайте его, только если доверяете источнику."
+  dialect_script_trust_version: "Разрешается именно эта версия файла; если он изменится, rudbman спросит снова."
+  dialect_script_trust_refuse: "Оставить выключенным"
+  dialect_script_trust_confirm: "Разрешить и выполнять"
+  dialect_script_allowed: "Скрипт %{file} разрешён; сеансы, открытые с этого момента, выполняют его."
+  dialect_script_turned_off: "Скрипт %{file} выключен; сеансы, открытые с этого момента, работают без него."
+  dialect_script_failed: "Не удалось сохранить список разрешённых скриптов: %{error}"
   maven: Координата Maven
   jars: Файлы JAR
   add_jar: Добавить JAR…

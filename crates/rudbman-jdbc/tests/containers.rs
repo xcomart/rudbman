@@ -101,7 +101,7 @@
 //! reverse order of creation, so a child goes before the parent it references.
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use rudbman_jdbc::{
@@ -345,6 +345,8 @@ const WIDER_INT: &str = "bigint";
 /// below goes through [`Server::describe`] so that difference is written once.
 struct Server {
     product: Product,
+    /// The SQL it is written: its product's, or a profile's.
+    dialect: &'static Dialect,
     session: Session,
     catalog: Option<String>,
     schema: Option<String>,
@@ -386,6 +388,11 @@ impl Drop for Server {
 impl Server {
     /// Opens the product's server, or answers `None` and says how to get one.
     fn open(product: Product) -> Option<Server> {
+        Server::open_as(product, None)
+    }
+
+    /// [`Server::open`], its SQL and its session a profile's where there is one.
+    fn open_as(product: Product, profile: Option<Profiled>) -> Option<Server> {
         let Ok(url) = std::env::var(product.url_var()) else {
             println!(
                 "skipped: no {product:?} server. Start one with \
@@ -395,7 +402,10 @@ impl Server {
             );
             return None;
         };
-        let session = connect(product, &url);
+        let dialect = profile
+            .as_ref()
+            .map_or_else(|| product.dialect(), |profiled| profiled.dialect);
+        let session = connect_as(product, &url, profile.map(|profiled| profiled.session));
 
         // Asked of the server rather than parsed out of the URL: the URL may
         // leave the database to the driver's default, and a catalog request
@@ -436,6 +446,7 @@ impl Server {
         };
         Some(Server {
             product,
+            dialect,
             session,
             catalog,
             schema,
@@ -445,7 +456,7 @@ impl Server {
     }
 
     fn dialect(&self) -> &'static Dialect {
-        self.product.dialect()
+        self.dialect
     }
 
     /// Runs a statement that returns no rows.
@@ -724,13 +735,85 @@ impl Server {
 
 /// Opens one connection to `product` at `url`.
 fn connect(product: Product, url: &str) -> Session {
+    connect_as(product, url, None)
+}
+
+/// Opens one connection to `product` at `url`, answered by `profile` where
+/// there is one, the Groovy runtime with it when it has a script.
+fn connect_as(product: Product, url: &str, profile: Option<serde_json::Value>) -> Session {
     let (user, password) = product.credentials();
-    let spec = ConnectionSpec::new(url.to_string(), product.driver_class())
+    let mut spec = ConnectionSpec::new(url.to_string(), product.driver_class())
         .with_credentials(user, password)
         .with_jars([product.jar()]);
+    if let Some(profile) = profile {
+        if profile.get("script").is_some() {
+            spec.groovy = vec![groovy_jar()];
+        }
+        spec.profile = Some(profile);
+    }
     Session::open(jvm(), &spec).unwrap_or_else(|error| {
         panic!("{} is set but does not connect: {error}", product.url_var())
     })
+}
+
+/// The Groovy runtime a profile's script runs on, from the Gradle cache the
+/// bridge's own tests fill (`cd bridge && ./gradlew drivers`), or
+/// `RUDBMAN_TEST_GROOVY_JAR`.
+fn groovy_jar() -> PathBuf {
+    driver_jar("RUDBMAN_TEST_GROOVY_JAR", "org.apache.groovy", "groovy")
+}
+
+/// A product described by a dialect profile: the SQL its half writes, and
+/// what a session opened with it hands the bridge.
+struct Profiled {
+    /// The `sql` half, resolved and registered.
+    dialect: &'static Dialect,
+    /// `OPEN_SESSION`'s `profile`: the `bridge` half and its script.
+    session: serde_json::Value,
+}
+
+/// MariaDB described as a dialect profile on `mysql`, as a product supported
+/// from now on would be (`docs/dialect-profiles.md`, §9 and §12). The SQL is
+/// MySQL's with MariaDB's `DROP CONSTRAINT` for a check and its
+/// `BEGIN NOT ATOMIC`; the bridge's is MySQL's with the text of a sequence
+/// as data, and the sequences, their resumption and the backup's counters as
+/// the hooks of `tests/profiles/mariadb-on-mysql.groovy`. The shared suites
+/// run through it against the MariaDB server as they run through the
+/// built-in.
+fn mariadb_on_mysql() -> Profiled {
+    static DIALECT: std::sync::OnceLock<&'static Dialect> = std::sync::OnceLock::new();
+    let dialect = DIALECT.get_or_init(|| {
+        use rudbman_sql::dialect::profile::{self, BlockBegin, BlockRoutines, ProfileSpec};
+        let mut spec = ProfileSpec {
+            name: "MariaDB".to_string(),
+            base: "mysql".to_string(),
+            ..ProfileSpec::default()
+        };
+        spec.alter.check_drop = Some("CONSTRAINT".to_string());
+        spec.blocks.begin = Some(BlockBegin::NotAtomic);
+        spec.blocks.routines = Some(BlockRoutines::PlSql);
+        let (_, resolved) = profile::resolve(vec![("mariadb-on-mysql".to_string(), spec)])
+            .pop()
+            .expect("one profile in, one out");
+        let dialect = resolved.unwrap_or_else(|error| panic!("the profile resolves: {error}"));
+        profile::install(vec![dialect]);
+        Box::leak(Box::new(dialect))
+    });
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/profiles/mariadb-on-mysql.groovy");
+    Profiled {
+        dialect,
+        session: serde_json::json!({
+            "id": "mariadb-on-mysql",
+            "base": "mysql",
+            "bridge": {
+                "texts": { "sequence": { "sql": "SHOW CREATE SEQUENCE {qualified}", "column": 2 } },
+            },
+            "script": {
+                "path": path.display().to_string(),
+                "text": include_str!("profiles/mariadb-on-mysql.groovy"),
+            },
+        }),
+    }
 }
 
 /// A column as the catalog reports it, which is the only reading these tests
@@ -839,6 +922,12 @@ macro_rules! server {
             None => return,
         }
     };
+    ($product:expr, $profile:expr) => {
+        match Server::open_as($product, Some($profile)) {
+            Some(server) => server,
+            None => return,
+        }
+    };
 }
 
 /// One test per product for a suite that runs against each of them, named
@@ -847,7 +936,9 @@ macro_rules! server {
 ///
 /// The list here is the one list of products a shared suite runs on: a
 /// product added to [`Product`] is added here, and every shared suite then
-/// runs against it.
+/// runs against it. So is a product a shipped dialect profile describes: its
+/// row names the server and the profile its session answers with —
+/// `mariadb_profile` is MariaDB through [`mariadb_on_mysql`].
 macro_rules! on_every_product {
     ($name:ident => $suite:ident) => {
         on_products!($name => $suite:
@@ -856,14 +947,17 @@ macro_rules! on_every_product {
             mariadb MariaDb,
             mssql MsSql,
             oracle Oracle,
-            db2 Db2,
+            db2 Db2;
+            mariadb_profile MariaDb mariadb_on_mysql,
         );
     };
 }
 
-/// [`on_every_product`] for a suite only some products run: the ones listed.
+/// [`on_every_product`] for a suite only some products run: the ones listed,
+/// and after a `;` the ones through a profile.
 macro_rules! on_products {
-    ($name:ident => $suite:ident: $($test:ident $product:ident),+ $(,)?) => {
+    ($name:ident => $suite:ident: $($test:ident $product:ident),+
+        $(; $($profiled:ident $on:ident $profile:ident),+)? $(,)?) => {
         mod $name {
             use super::*;
             $(
@@ -873,6 +967,13 @@ macro_rules! on_products {
                     $suite(&server);
                 }
             )+
+            $($(
+                #[test]
+                fn $profiled() {
+                    let server = server!(Product::$on, $profile());
+                    $suite(&server);
+                }
+            )+)?
         }
     };
 }
@@ -2074,6 +2175,15 @@ on_products!(drops_a_constraint_of_every_kind => drop_every_constraint:
 #[test]
 fn mariadb_drops_a_constraint_of_every_kind() {
     let server = server!(Product::MariaDb);
+    drop_every_constraint(&server);
+}
+
+/// The same, through MariaDB's profile on `mysql`: its `DROP CONSTRAINT` is
+/// the profile's `alter.check_drop`.
+#[test]
+fn mariadb_through_a_profile_drops_a_constraint_of_every_kind() {
+    let server = server!(Product::MariaDb, mariadb_on_mysql());
+    assert_eq!(server.dialect().product(), "MariaDB");
     drop_every_constraint(&server);
 }
 
@@ -3538,6 +3648,65 @@ fn mariadb_lists_its_sequences_under_the_database() {
     let one = describe(Some(&sequence));
     assert_eq!(one.len(), 1, "{one:?}");
     assert_eq!(string(&one[0], "name"), sequence);
+}
+
+/// MariaDB through its profile on `mysql` answers a sequence exactly as the
+/// built-in does — listed, read by name, and written with its own `CREATE` —
+/// where MySQL, the profile's base, has no sequences at all: the script's
+/// `sequences` and the profile's `texts.sequence` stand for MariaDB's own
+/// vendor (`docs/dialect-profiles.md`, §9).
+#[test]
+fn mariadb_through_a_profile_answers_its_sequences_as_the_built_in_does() {
+    let server = server!(Product::MariaDb);
+    let profiled = server!(Product::MariaDb, mariadb_on_mysql());
+    let sequence = server.fresh("pseq");
+    server.exec(&format!(
+        "create sequence {sequence} start with 100 increment by 5 minvalue 10 \
+         maxvalue 100000 cycle cache 20 comment 'order numbers'"
+    ));
+    let _sequence = DropOnExit {
+        server: &server,
+        drop: format!("drop sequence if exists {sequence}"),
+    };
+    let describe = |session: &Session, name: Option<&str>| {
+        let mut request = DescribeRequest::new("sequences");
+        request.catalog = server.catalog.clone();
+        request.name = name.map(str::to_string);
+        session
+            .describe(&request)
+            .unwrap_or_else(|error| panic!("describe sequences: {error}"))
+            .items
+    };
+    // Of a whole listing, only this test's sequence: the other tests make
+    // and drop theirs meanwhile.
+    let ours = |items: Vec<serde_json::Map<String, serde_json::Value>>| {
+        items
+            .into_iter()
+            .filter(|item| string(item, "name") == sequence)
+            .collect::<Vec<_>>()
+    };
+    for name in [None, Some(sequence.as_str())] {
+        let built_in = ours(describe(&server.session, name));
+        assert_eq!(built_in.len(), 1, "{built_in:?}");
+        assert_eq!(
+            ours(describe(&profiled.session, name)),
+            built_in,
+            "by {name:?}"
+        );
+    }
+    let ddl = |session: &Session| {
+        session
+            .describe_object_ddl(
+                server.catalog.as_deref(),
+                None,
+                &sequence,
+                ObjectKind::Sequence,
+                DdlSource::Auto,
+            )
+            .unwrap_or_else(|error| panic!("ddl of {sequence}: {error}"))
+            .ddl
+    };
+    assert_eq!(ddl(&profiled.session), ddl(&server.session));
 }
 
 // --- every kind of object ----------------------------------------------------

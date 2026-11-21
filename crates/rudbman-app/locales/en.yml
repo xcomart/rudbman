@@ -543,6 +543,27 @@ driver:
   dialect_export_failed: "The dialect could not be exported: %{error}"
   dialect_folder_failed: "The profiles folder could not be opened: %{error}"
   dialect_failed_row: "profile did not load"
+  # A profile may name a Groovy script (bridge.script) whose methods replace
+  # what the bridge does for its product. A script runs with rudbman's own
+  # rights, so it runs only once the user has allowed that version of the
+  # file: one that is new, or has changed since, is off until then, and the
+  # rest of the profile still applies. %{file} is the script's file name.
+  dialect_script_on: "Its script %{file} is allowed and runs in this driver's sessions."
+  dialect_script_off: "Its script %{file} is off: it is new, or has changed since it was allowed. Sessions use the rest of the profile without it."
+  dialect_script_allow: "Allow script…"
+  dialect_script_disallow: "Turn off"
+  # The question asked before a script is allowed. %{name} is the profile's
+  # name, %{path} the script's full path.
+  dialect_script_trust_title: "Allow the script of %{name}?"
+  dialect_script_trust_file: "Script: %{file}"
+  dialect_script_trust_path: "Path: %{path}"
+  dialect_script_trust_warning: "A script runs with rudbman's rights: it can read and change your files, reach the network, and see every open connection and its password. Allow it only if you trust where it came from."
+  dialect_script_trust_version: "What is allowed is this version of the file; if it changes, rudbman asks again."
+  dialect_script_trust_refuse: "Keep it off"
+  dialect_script_trust_confirm: "Allow and run it"
+  dialect_script_allowed: "The script %{file} is allowed; sessions opened from now on run it."
+  dialect_script_turned_off: "The script %{file} is off; sessions opened from now on run without it."
+  dialect_script_failed: "The list of allowed scripts could not be saved: %{error}"
   maven: Maven coordinate
   jars: JAR files
   add_jar: Add a JAR…

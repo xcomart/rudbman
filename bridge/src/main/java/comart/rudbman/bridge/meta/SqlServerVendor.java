@@ -75,9 +75,10 @@ final class SqlServerVendor extends Vendor {
     }
 
     @Override
-    Map<String, String> tableComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> tableComments(Connection conn, Map<String, String> req)
+            throws SQLException {
         if (Comments.elsewhere(conn, req)) {
-            return Collections.emptyMap();
+            return List.of();
         }
         Comments.Filter schema = Comments.Filter.of(req, "schema", "schema_pattern");
         Comments.Filter table = Comments.Filter.of(req, "table", "table_pattern");
@@ -85,13 +86,14 @@ final class SqlServerVendor extends Vendor {
         List<String> args = new ArrayList<>();
         schema.append(sql, args, "s.name", Comments.ANSI_ESCAPE);
         table.append(sql, args, "o.name", Comments.ANSI_ESCAPE);
-        return Comments.read(conn, sql.toString(), args, 2);
+        return Comments.rows(conn, sql.toString(), args, 3);
     }
 
     @Override
-    Map<String, String> columnComments(Connection conn, JsonObject req) throws SQLException {
+    public List<String[]> columnComments(Connection conn, Map<String, String> req)
+            throws SQLException {
         if (Comments.elsewhere(conn, req)) {
-            return Collections.emptyMap();
+            return List.of();
         }
         Comments.Filter schema = Comments.Filter.of(req, "schema", "schema_pattern");
         Comments.Filter table = Comments.Filter.of(req, "table", "table_pattern");
@@ -101,7 +103,7 @@ final class SqlServerVendor extends Vendor {
         schema.append(sql, args, "s.name", Comments.ANSI_ESCAPE);
         table.append(sql, args, "o.name", Comments.ANSI_ESCAPE);
         column.append(sql, args, "c.name", Comments.ANSI_ESCAPE);
-        return Comments.read(conn, sql.toString(), args, 3);
+        return Comments.rows(conn, sql.toString(), args, 4);
     }
 
     @Override
