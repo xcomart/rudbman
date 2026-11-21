@@ -51,7 +51,7 @@ public final class ColumnWriters {
             case ColumnKind.STR:
             default:
                 boolean decimal = sqlType == Types.DECIMAL || sqlType == Types.NUMERIC;
-                return new StrWriter(capacity, decimal);
+                return new StrWriter(capacity, decimal, sqlType);
         }
     }
 
@@ -205,10 +205,12 @@ public final class ColumnWriters {
      */
     static final class StrWriter extends VarWriter {
         private final boolean decimal;
+        private final int sqlType;
 
-        StrWriter(int capacity, boolean decimal) {
+        StrWriter(int capacity, boolean decimal, int sqlType) {
             super(capacity, Math.max(64, capacity * 16));
             this.decimal = decimal;
+            this.sqlType = sqlType;
         }
 
         @Override
@@ -218,7 +220,7 @@ public final class ColumnWriters {
                 BigDecimal bd = rs.getBigDecimal(column);
                 s = bd == null ? null : bd.toPlainString();
             } else {
-                s = text(rs, column);
+                s = text(rs, column, sqlType);
             }
             if (s == null || rs.wasNull()) {
                 append(null);
@@ -228,9 +230,10 @@ public final class ColumnWriters {
             return true;
         }
 
-        private static String text(ResultSet rs, int column) throws SQLException {
+        private static String text(ResultSet rs, int column, int sqlType) throws SQLException {
             try {
-                return rs.getString(column);
+                // The driver's text, mended where it is wrong; see DriverText.
+                return DriverText.of(rs, column, sqlType);
             } catch (SQLException e) {
                 // Some drivers refuse getString on structured or vendor types
                 // (arrays, geometry, intervals). The grid still has to show

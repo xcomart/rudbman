@@ -609,7 +609,11 @@ Points a decoder has to get right:
   through `BigDecimal.toPlainString()`, never through a double and never through
   exponent notation;
 - the driver's own text is the only authority on which time zone was applied, so
-  time-zone handling stays on this side of the boundary;
+  time-zone handling stays on this side of the boundary. The one exception is
+  a fraction of a second a driver writes wrong: MariaDB Connector/J drops its
+  leading zeros below six digits (`.064` as `.64000`), and
+  `codec/DriverText.java` rewrites that fraction from `getTimestamp`, for the
+  grid, a script's literals and an extract's text alike;
 - sorting is the server's job via `ORDER BY`.
 
 `BIT` is split by precision because MySQL reports `BIT(n>1)` as `Types.BIT` while

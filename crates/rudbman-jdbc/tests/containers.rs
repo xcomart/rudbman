@@ -3650,6 +3650,59 @@ fn mariadb_lists_its_sequences_under_the_database() {
     assert_eq!(string(&one[0], "name"), sequence);
 }
 
+/// A fraction of a second reaches the grid as the server holds it.
+///
+/// MariaDB Connector/J drops the leading zeros of a fraction below six digits
+/// of precision — a `DATETIME(3)` holding `.064` reads as `….64000` — and the
+/// grid's text was the driver's: an edit saved it back as `.640`, and a
+/// backup restored that. The bridge mends it from the value
+/// (`codec/DriverText.java`); a fraction the driver writes right stays as the
+/// driver writes it.
+#[test]
+fn mariadb_reads_a_fraction_of_a_second_as_the_server_holds_it() {
+    let server = server!(Product::MariaDb);
+    let table = server.table("frac");
+    server.exec(&format!(
+        "create table {table} (id int primary key, t3 datetime(3), ts3 timestamp(3) null, \
+         d5 datetime(5), d6 datetime(6))"
+    ));
+    server.exec(&format!(
+        "insert into {table} values \
+         (1, '2026-11-21 02:21:39.064', '2026-11-21 02:21:39.006', \
+             '2026-11-21 02:21:39.00006', '2026-11-21 02:21:39.000064'), \
+         (2, '2026-11-21 02:21:39.123', '2026-11-21 02:21:39.5', \
+             '2026-11-21 02:21:39.12345', '2026-11-21 02:21:39.123456')"
+    ));
+    let batch = fetch(
+        &server.session,
+        &format!("select t3, ts3, d5, d6 from {table} order by id"),
+    );
+    let row = |at: usize| {
+        (0..4)
+            .map(|column| text(&batch, at, column).unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        row(0),
+        [
+            "2026-11-21 02:21:39.064000",
+            "2026-11-21 02:21:39.006000",
+            "2026-11-21 02:21:39.000060",
+            "2026-11-21 02:21:39.000064",
+        ]
+    );
+    assert_eq!(
+        row(1),
+        [
+            "2026-11-21 02:21:39.123000",
+            "2026-11-21 02:21:39.500000",
+            "2026-11-21 02:21:39.123450",
+            "2026-11-21 02:21:39.123456",
+        ],
+        "what the driver writes right"
+    );
+}
+
 /// MariaDB through its profile on `mysql` answers a sequence exactly as the
 /// built-in does — listed, read by name, and written with its own `CREATE` —
 /// where MySQL, the profile's base, has no sequences at all: the script's

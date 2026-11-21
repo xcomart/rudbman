@@ -1,5 +1,6 @@
 package comart.rudbman.bridge.job;
 
+import comart.rudbman.bridge.codec.DriverText;
 import comart.rudbman.bridge.meta.Dialect;
 import comart.rudbman.bridge.meta.Ident;
 
@@ -98,7 +99,10 @@ final class Literals {
                 return booleanLiteral(b, dialect);
             }
             default: {
-                String s = rs.getString(i);
+                // The driver's text, mended where it is wrong: MariaDB's
+                // Connector/J writes a DATETIME(3)'s .064 as .64000, which a
+                // backup would restore as another time. See DriverText.
+                String s = DriverText.of(rs, i, type);
                 if (s == null || rs.wasNull()) {
                     return "NULL";
                 }
@@ -170,7 +174,7 @@ final class Literals {
                 return b == null || rs.wasNull() ? null : hex(b);
             }
             default: {
-                String s = rs.getString(i);
+                String s = DriverText.of(rs, i, type);
                 return s == null || rs.wasNull() ? null : s;
             }
         }

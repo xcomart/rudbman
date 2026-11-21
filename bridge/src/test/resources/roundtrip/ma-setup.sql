@@ -22,6 +22,8 @@ insert into bk.parent (code, note, amount, status, tags, latin) values ('p1', 's
 --;;
 delete from bk.parent where code in ('p4', 'p5')
 --;;
+update bk.parent set created = case code when 'p1' then '2026-11-21 02:21:39.064' when 'p2' then '2026-11-21 02:21:39.006' else '2026-11-21 02:21:39.6' end
+--;;
 insert into bk.child (parent_id, qty) values (1, 10), (2, 20), (1, 300), (3, null)
 --;;
 insert into bk.`Order` values (1, 1, 'one'), (1, 2, 'two'), (2, 1, null)
