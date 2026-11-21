@@ -359,7 +359,8 @@ final class OracleVendor extends Vendor {
      * and end a statement at its first empty line.
      */
     @Override
-    public List<String> backupPrologue(Ident id, String catalog, boolean routines) {
+    public List<String> backupPrologue(Ident id, String catalog, String schema,
+                                       boolean routines) {
         return List.of("SET DEFINE OFF", "SET SQLBLANKLINES ON");
     }
 
@@ -369,7 +370,8 @@ final class OracleVendor extends Vendor {
      * here they are as valid as in the source.
      */
     @Override
-    public List<String> backupEpilogue(String schema, boolean routines, boolean code) {
+    public List<String> backupEpilogue(Ident id, String catalog, String schema,
+                                       boolean routines, boolean code) {
         if (!code) {
             return List.of();
         }

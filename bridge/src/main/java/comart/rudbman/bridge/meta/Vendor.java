@@ -29,13 +29,14 @@ import java.util.Set;
  * differs. Long product-specific SQL and readers stay beside the code that
  * runs them, package-private, and the product's override is what picks them.
  *
- * <p>Adding a product:
+ * <p>A product supported from now on is a dialect profile rather than a
+ * subclass: {@link ProfileVendor} answers from its {@code bridge} half over a
+ * built-in's vendor ({@code docs/dialect-profiles.md}). Changing a built-in:
  * <ol>
- *   <li>Write a subclass, starting from the closest existing product, and
- *       override what differs. {@link #names} is the one method every product
- *       answers.</li>
- *   <li>Give it a {@link Dialect} constant and a place in that enum's
- *       detection order.</li>
+ *   <li>Its subclass is where it differs from the portable path. {@link #names}
+ *       is the one method every product answers.</li>
+ *   <li>A new built-in would also need a {@link Dialect} constant, a place in
+ *       its detection order and an id in {@link Dialect#byId}.</li>
  *   <li>Run the container suites against a server of that product.</li>
  * </ol>
  *
@@ -784,23 +785,29 @@ public abstract class Vendor {
     }
 
     /**
+     * @param id       the quoting rules
      * @param catalog  the backup's catalog, may be {@code null}
+     * @param schema   the backup's schema, may be {@code null}
      * @param routines whether the script creates routines
      * @return what a backup script starts with, after
      *         {@link #scriptPrologue}; nothing by default
      */
-    public List<String> backupPrologue(Ident id, String catalog, boolean routines) {
+    public List<String> backupPrologue(Ident id, String catalog, String schema,
+                                       boolean routines) {
         return List.of();
     }
 
     /**
+     * @param id       the quoting rules
+     * @param catalog  the backup's catalog, may be {@code null}
      * @param schema   the backup's schema, may be {@code null}
      * @param routines whether the script creates routines
      * @param code     whether it creates views, routines or triggers
      * @return what a backup script ends with, after {@link #scriptEpilogue};
      *         nothing by default
      */
-    public List<String> backupEpilogue(String schema, boolean routines, boolean code) {
+    public List<String> backupEpilogue(Ident id, String catalog, String schema,
+                                       boolean routines, boolean code) {
         return List.of();
     }
 

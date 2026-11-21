@@ -684,7 +684,7 @@ public final class BackupJob extends Jobs.Job {
         Vendor vendor = dialect.vendor();
         boolean routines = ddlInclude && !plan.routines.isEmpty();
         List<String> prologue = new ArrayList<>(runLocked(() -> Ddl.scriptPrologue(dbm)));
-        prologue.addAll(vendor.backupPrologue(id, scopeCatalog, routines));
+        prologue.addAll(vendor.backupPrologue(id, scopeCatalog, scopeSchema, routines));
         lines(out, prologue);
 
         List<String> alters = new ArrayList<>();
@@ -743,7 +743,7 @@ public final class BackupJob extends Jobs.Job {
         }
 
         List<String> epilogue = new ArrayList<>(afterwards);
-        epilogue.addAll(vendor.backupEpilogue(scopeSchema, routines,
+        epilogue.addAll(vendor.backupEpilogue(id, scopeCatalog, scopeSchema, routines,
                 ddlInclude && (!plan.views.isEmpty() || !plan.routines.isEmpty()
                         || !plan.triggers.isEmpty())));
         lines(out, epilogue);

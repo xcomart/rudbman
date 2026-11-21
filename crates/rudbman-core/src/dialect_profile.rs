@@ -7,9 +7,10 @@
 //! an error with its line, since a typo silently ignored is a setting silently
 //! lost.
 //!
-//! The `bridge` half is read and kept as it stands, for the bridge to take
-//! when it learns profiles; nothing here applies it. The `driver` section is
-//! the driver definition a profile brings to the driver manager (§12).
+//! The `bridge` half is [`bridge::BridgeSpec`]: checked here like the `sql`
+//! half, and sent to the bridge as JSON when a session opens with the
+//! profile. The `driver` section is the driver definition a profile brings to
+//! the driver manager (§12).
 
 use std::fmt;
 
@@ -23,6 +24,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::DriverDef;
 
+pub mod bridge;
+
+use bridge::BridgeSpec;
+
 /// The version of the format this build reads and writes.
 pub const API: u32 = 1;
 
@@ -31,8 +36,8 @@ pub const API: u32 = 1;
 pub struct ProfileFile {
     /// What the profile says rudbman-sql should do.
     pub spec: ProfileSpec,
-    /// The `bridge` half, untouched.
-    pub bridge: Option<serde_norway::Value>,
+    /// The `bridge` half.
+    pub bridge: Option<BridgeSpec>,
     /// The driver definition the profile brings, if it brings one.
     pub driver: Option<ProfileDriver>,
 }
@@ -40,7 +45,7 @@ pub struct ProfileFile {
 impl ProfileFile {
     /// The script `bridge.script` names, as the file spells it.
     pub fn script(&self) -> Option<&str> {
-        self.bridge.as_ref()?.get("script")?.as_str()
+        self.bridge.as_ref()?.script.as_deref()
     }
 }
 
@@ -148,6 +153,14 @@ pub fn parse(id: &str, text: &str) -> Result<ProfileFile, ParseError> {
             ),
         });
     }
+    if let Some(Err((key, message))) = file.bridge.as_ref().map(BridgeSpec::check) {
+        return Err(ParseError {
+            id: id.to_string(),
+            line: None,
+            column: None,
+            message: format!("{key}: {message}"),
+        });
+    }
     let bridge = file.bridge.clone();
     let driver = file.driver.clone();
     Ok(ProfileFile {
@@ -187,7 +200,7 @@ struct YamlProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sql: Option<YamlSql>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    bridge: Option<serde_norway::Value>,
+    bridge: Option<BridgeSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     driver: Option<ProfileDriver>,
 }
@@ -719,6 +732,119 @@ driver:
         assert_eq!(tidb.page_clause(10, 20), Some("LIMIT 20, 10".to_string()));
         assert!(tidb.is_keyword("auto_random"));
         assert!(tidb.is_keyword("straight_join"));
+    }
+
+    /// Every key of the `bridge` half, as §4.3 of the design writes them.
+    const BRIDGE: &str = "\
+api: 1
+name: Everything
+base: mysql
+bridge:
+  detect: [tidb]
+  catalog_is_schema: true
+  result_catalogs_resolve: true
+  sees_only_its_catalog: false
+  numbers_procedures: false
+  sequences: []
+  triggers:
+    sql: \"SELECT TRIGGER_SCHEMA, NULL, TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION, 'ROW', 'Y', NULL FROM information_schema.TRIGGERS WHERE 1 = 1\"
+    filters: { catalog: TRIGGER_SCHEMA, schema: TRIGGER_SCHEMA, name: TRIGGER_NAME }
+    order_by: \"1, 3\"
+  comments:
+    hides_comments: true
+    marks_views_in_remarks: true
+    escape: none
+    tables: { sql: \"SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES WHERE 1 = 1\", filters: { catalog: TABLE_SCHEMA, table: TABLE_NAME } }
+    columns: null
+  texts:
+    table: { sql: \"SHOW CREATE TABLE {qualified}\", column: 2 }
+    view: { sql: \"SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?\", binds: [catalog, name] }
+    routine: null
+    trigger: null
+    sequence: null
+  qualifies_by_catalog: true
+  defers_keys: false
+  comments_inline: true
+  comments_on: false
+  computed_has_no_type: false
+  serial_columns: false
+  identity_clause: AUTO_INCREMENT
+  not_null_first: true
+  indexes_foreign_keys: true
+  creates_without_catalog: false
+  types_sequences: true
+  cache_of_one_is_no_cache: false
+  script_prologue: [\"SET FOREIGN_KEY_CHECKS = 0;\"]
+  script_epilogue: [\"SET FOREIGN_KEY_CHECKS = 1;\"]
+  data_prologue: []
+  data_epilogue: []
+  bits_are_numbers: true
+  booleans_are_numbers: true
+  national_strings: never
+  hex_literal: \"X'{hex}'\"
+  script_client: mysql
+  drops_if_exists: true
+  drop_table_cascade: \"\"
+  drop_foreign_key: null
+  multi_row_values: true
+  upsert: { merge: { from_dual: true } }
+  backup_prologue: [\"USE {catalog};\", { sql: \"SET x = 1;\", when: routines }]
+  backup_epilogue: [{ sql: \"CALL recompile({schema});\", when: code }]
+  identity_insert:
+    before: \"SET IDENTITY_INSERT {table} ON;\"
+    after: \"SET IDENTITY_INSERT {table} OFF;\"
+  overrides_system_value: false
+  script: tidb.groovy
+";
+
+    /// The whole `bridge` half reads, and goes to the bridge as the JSON its
+    /// `ProfileVendor` reads: a `null` sent as one, a key left out not sent.
+    #[test]
+    fn every_bridge_key_reads_and_writes_as_the_bridge_reads_it() {
+        let file = parse("everything", BRIDGE).unwrap_or_else(|error| panic!("{error}"));
+        let bridge = file.bridge.expect("the bridge half");
+        let json = serde_json::to_value(&bridge).expect("serializes");
+        assert_eq!(json["texts"]["table"]["column"], 2);
+        assert!(json["texts"]["routine"].is_null());
+        assert!(json["drop_foreign_key"].is_null());
+        assert_eq!(json["upsert"]["merge"]["from_dual"], true);
+        assert_eq!(json["upsert"]["merge"]["terminated"], false);
+        assert_eq!(json["national_strings"], "never");
+        assert_eq!(json["backup_prologue"][0], "USE {catalog};");
+        assert_eq!(json["backup_prologue"][1]["when"], "routines");
+        assert_eq!(json["comments"]["escape"], "none");
+        assert!(json["comments"]["columns"].is_null());
+        assert_eq!(json["triggers"]["filters"]["name"], "TRIGGER_NAME");
+
+        let bare = parse(
+            "bare",
+            "api: 1\nname: B\nbase: mysql\nbridge:\n  upsert: none\n",
+        )
+        .expect("reads");
+        let json = serde_json::to_value(bare.bridge.expect("bridge")).expect("serializes");
+        assert_eq!(
+            json,
+            serde_json::json!({ "upsert": "none" }),
+            "nothing else is sent"
+        );
+    }
+
+    /// A key of the `bridge` half that is not one is an error with its line,
+    /// and so is a template hole its key does not take.
+    #[test]
+    fn a_bridge_mistake_says_where() {
+        let text = "api: 1\nname: X\nbase: mysql\nbridge:\n  hex_literall: x\n";
+        let error = parse("typo", text).expect_err("refused");
+        assert_eq!(error.line, Some(5), "{error}");
+
+        let text = "api: 1\nname: X\nbase: mysql\nbridge:\n  hex_literal: \"X'{hx}'\"\n";
+        let error = parse("hole", text).expect_err("refused");
+        assert!(error.message.starts_with("bridge.hex_literal:"), "{error}");
+
+        let text = "api: 1\nname: X\nbase: mysql\nbridge:\n  backup_prologue:\n    \
+                    - { sql: x, when: code }\n";
+        let error = parse("when", text).expect_err("refused");
+        assert!(error.message.contains("backup_epilogue"), "{error}");
     }
 
     /// A key the format does not have is an error with its line.

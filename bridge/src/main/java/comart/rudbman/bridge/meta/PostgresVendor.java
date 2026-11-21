@@ -167,12 +167,14 @@ final class PostgresVendor extends Vendor {
 
     /** A routine's body is checked when it runs, not when the script makes it. */
     @Override
-    public List<String> backupPrologue(Ident id, String catalog, boolean routines) {
+    public List<String> backupPrologue(Ident id, String catalog, String schema,
+                                       boolean routines) {
         return routines ? List.of("SET check_function_bodies = false;") : List.of();
     }
 
     @Override
-    public List<String> backupEpilogue(String schema, boolean routines, boolean code) {
+    public List<String> backupEpilogue(Ident id, String catalog, String schema,
+                                       boolean routines, boolean code) {
         return routines ? List.of("RESET check_function_bodies;") : List.of();
     }
 

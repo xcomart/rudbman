@@ -3765,3 +3765,138 @@ fn every_kind(server: &Server) {
         assert_eq!(exported.len(), 1, "{product:?}: {exported:?}");
     }
 }
+
+// --- dialect profiles ------------------------------------------------------
+
+on_products!(a_session_answers_from_its_dialect_profile => profile_answers:
+    mysql MySql,
+    mariadb MariaDb,
+);
+
+/// A session opened with a dialect profile answers from the profile's
+/// `bridge` half, and as the profile's base where the half says nothing
+/// (`docs/dialect-profiles.md`, §4.3) — and a session opened with none finds
+/// the profile whose `detect` names the server's product.
+///
+/// The MySQL family only: its trigger catalog is the one a hand-written query
+/// reads the same way on both servers, and a profile needs a server of its
+/// base to be tested against.
+fn profile_answers(server: &Server) {
+    let product = server.product;
+    let catalog = server
+        .catalog
+        .clone()
+        .expect("the MySQL family has a database");
+    let table = server.table("profiled");
+    let trigger = server.name(&format!("{table}_tr"));
+    server.exec(&format!(
+        "CREATE TABLE {table} (id INT PRIMARY KEY, note VARCHAR(20))"
+    ));
+    let trigger_create = format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT ON {table} FOR EACH ROW SET NEW.note = 'x'"
+    );
+    let has_trigger = match server.session.execute(&StatementSpec::new(trigger_create)) {
+        Ok(_) => true,
+        Err(error) if product == Product::MySql && error.to_string().contains("SUPER") => {
+            println!("skipped the trigger half: MySQL wants SUPER for it here: {error}");
+            false
+        }
+        Err(error) => panic!("{product:?}: {error}"),
+    };
+
+    let base = match product {
+        Product::MySql => "mysql",
+        _ => "mariadb",
+    };
+    let bridge = serde_json::json!({
+        "triggers": {
+            "sql": "SELECT TRIGGER_SCHEMA, NULL, TRIGGER_NAME, EVENT_OBJECT_TABLE, \
+                    ACTION_TIMING, EVENT_MANIPULATION, 'ROW', 'Y', 'from the profile' \
+                    FROM information_schema.TRIGGERS WHERE 1 = 1",
+            "filters": {
+                "catalog": "TRIGGER_SCHEMA",
+                "schema": "TRIGGER_SCHEMA",
+                "name": "TRIGGER_NAME",
+            },
+            "order_by": "1, 3",
+        },
+        // No text of its own: a table's DDL is rebuilt from the metadata.
+        "texts": { "table": null },
+    });
+    let url = std::env::var(product.url_var()).expect("the server is up");
+    let (user, password) = product.credentials();
+    let open = |profile: Option<serde_json::Value>, detect: Vec<serde_json::Value>| {
+        let mut spec = ConnectionSpec::new(url.clone(), product.driver_class())
+            .with_credentials(user.clone(), password.clone())
+            .with_jars([product.jar()]);
+        spec.profile = profile;
+        spec.detect_profiles = detect;
+        Session::open(jvm(), &spec).unwrap_or_else(|error| panic!("{product:?}: {error}"))
+    };
+    let remarks_of = |session: &Session| {
+        let request = DescribeRequest::new("triggers")
+            .with_catalog(&catalog)
+            .with_name(&trigger);
+        session
+            .describe(&request)
+            .unwrap_or_else(|error| panic!("{product:?}: {error}"))
+            .items
+            .iter()
+            .map(remarks)
+            .collect::<Vec<_>>()
+    };
+    let native_ddl =
+        |session: &Session| session.describe_ddl(Some(&catalog), None, &table, DdlSource::Native);
+
+    let profiled = open(
+        Some(serde_json::json!({ "id": "marked", "base": base, "bridge": bridge })),
+        Vec::new(),
+    );
+    if has_trigger {
+        assert_eq!(
+            remarks_of(&profiled),
+            [Some("from the profile".to_string())],
+            "{product:?}: the profile's trigger query"
+        );
+        assert_eq!(
+            remarks_of(&server.session),
+            [None],
+            "{product:?}: and only the profiled session's"
+        );
+    }
+    assert!(
+        native_ddl(&profiled).is_err(),
+        "{product:?}: `texts.table: null` leaves no text of the server's own"
+    );
+    assert!(
+        native_ddl(&server.session).is_ok_and(|ddl| ddl.is_native()),
+        "{product:?}: which the base has"
+    );
+    let rebuilt = profiled
+        .describe_ddl(Some(&catalog), None, &table, DdlSource::Auto)
+        .unwrap_or_else(|error| panic!("{product:?}: {error}"));
+    assert!(rebuilt.is_reconstructed(), "{product:?}: {}", rebuilt.ddl);
+    assert!(
+        rebuilt.ddl.contains("PRIMARY KEY"),
+        "{product:?}: the base's reconstruction: {}",
+        rebuilt.ddl
+    );
+    profiled.close().expect("closes");
+
+    // Opened with no profile of its own, a session takes the first whose
+    // words its product name holds.
+    let detected = open(
+        None,
+        vec![
+            serde_json::json!({ "id": "elsewhere", "base": "generic",
+                                "bridge": { "detect": ["no such product"] } }),
+            serde_json::json!({ "id": "found", "base": base,
+                                "bridge": { "detect": [base], "texts": { "table": null } } }),
+        ],
+    );
+    assert!(
+        native_ddl(&detected).is_err(),
+        "{product:?}: the detected profile answers"
+    );
+    detected.close().expect("closes");
+}

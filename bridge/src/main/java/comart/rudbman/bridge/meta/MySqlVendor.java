@@ -241,7 +241,8 @@ class MySqlVendor extends Vendor {
      * qualified by it: the two have to land in the same place.
      */
     @Override
-    public List<String> backupPrologue(Ident id, String catalog, boolean routines) {
+    public List<String> backupPrologue(Ident id, String catalog, String schema,
+                                       boolean routines) {
         return catalog != null && !catalog.isEmpty() ? List.of("USE " + id.q(catalog) + ";")
                 : List.of();
     }

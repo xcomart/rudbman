@@ -491,6 +491,20 @@ pub fn build_spec(
     // statement that holds something — see `DriverDef::table_comments_query`.
     spec.table_comments_sql = driver.table_comments_query().map(str::to_owned);
     spec.column_comments_sql = driver.column_comments_query().map(str::to_owned);
+    // The dialect profile the driver names, for the bridge to answer with; a
+    // driver on generic SQL, or on a profile that did not load, lets the
+    // bridge find one by the server's product name instead.
+    let profiles = rudbman_core::dialects::current();
+    match profiles.session_profile(&driver.dialect) {
+        Some(profile) => spec.profile = Some(profile),
+        None => {
+            if rudbman_sql::Dialect::find(&driver.dialect)
+                .is_none_or(|dialect| dialect == rudbman_sql::Dialect::GENERIC)
+            {
+                spec.detect_profiles = profiles.detect_profiles();
+            }
+        }
+    }
     spec
 }
 

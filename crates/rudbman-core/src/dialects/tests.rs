@@ -278,3 +278,60 @@ fn an_export_loads_as_a_profile() {
         report.entries[0].state
     );
 }
+
+/// A session opened with a profile hands the bridge its `bridge` half merged
+/// along its chain of bases, and the built-in the chain ends in.
+#[test]
+fn a_session_profile_merges_its_chain_of_bases() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(
+        dir.path(),
+        "parent.yml",
+        "api: 1\nname: Parent\nbase: PostgreSQL\nbridge:\n  hex_literal: \"0x{hex}\"\n  \
+         comments: { hides_comments: true, escape: none }\n",
+    );
+    write(
+        dir.path(),
+        "child.yml",
+        "api: 1\nname: Child\nbase: parent\nbridge:\n  detect: [child]\n  \
+         comments: { hides_comments: false }\n",
+    );
+    write(
+        dir.path(),
+        "plain.yml",
+        "api: 1\nname: Plain\nbase: generic\n",
+    );
+    let report = load_from(dir.path());
+
+    let child = report.session_profile("child").expect("loaded");
+    assert_eq!(child["id"], "child");
+    assert_eq!(child["base"], "postgres", "the built-in, by its own name");
+    assert_eq!(child["bridge"]["hex_literal"], "0x{hex}", "the parent's");
+    assert_eq!(
+        child["bridge"]["comments"]["hides_comments"], false,
+        "its own"
+    );
+    assert_eq!(
+        child["bridge"]["comments"]["escape"], "none",
+        "merged by key"
+    );
+
+    let plain = report.session_profile("plain").expect("loaded");
+    assert_eq!(
+        plain["bridge"],
+        serde_json::json!({}),
+        "no bridge half: its base's"
+    );
+    assert_eq!(
+        report.session_profile("mysql"),
+        None,
+        "a built-in is no profile"
+    );
+
+    let detected: Vec<String> = report
+        .detect_profiles()
+        .iter()
+        .map(|profile| profile["id"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(detected, ["child"], "only a profile that detects");
+}

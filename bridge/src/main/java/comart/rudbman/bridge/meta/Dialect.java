@@ -1,7 +1,11 @@
 package comart.rudbman.bridge.meta;
 
+import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.util.Collections;
 import java.util.Locale;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * The database product behind a session, to the resolution the bridge actually
@@ -18,27 +22,38 @@ import java.util.Locale;
  * substring. Product names are marketing text and do drift between versions, so
  * an unrecognized name is not an error: it maps to {@link #OTHER}, which means
  * "portable paths only". Every caller must stay useful under {@link #OTHER}.
+ *
+ * <p>A session opened with a dialect profile ({@code docs/dialect-profiles.md})
+ * answers with the profile's dialect instead: {@link #attach} ties it to the
+ * session's connection, and {@link #of} finds it there before it looks at the
+ * product name. That is why this is a class of constants rather than an
+ * enum - a profile is a dialect too, one per session that names it.
  */
-public enum Dialect {
+public final class Dialect {
 
     /** H2, product name {@code "H2"}. */
-    H2(new H2Vendor()),
+    public static final Dialect H2 = new Dialect("H2", new H2Vendor());
     /** PostgreSQL and wire-compatible forks that keep the product name. */
-    POSTGRESQL(new PostgresVendor()),
+    public static final Dialect POSTGRESQL = new Dialect("POSTGRESQL", new PostgresVendor());
     /** MySQL. */
-    MYSQL(new MySqlVendor()),
+    public static final Dialect MYSQL = new Dialect("MYSQL", new MySqlVendor());
     /** MariaDB. Reported separately from MySQL because only MariaDB has sequences. */
-    MARIADB(new MariaDbVendor()),
+    public static final Dialect MARIADB = new Dialect("MARIADB", new MariaDbVendor());
     /** Oracle Database. */
-    ORACLE(new OracleVendor()),
+    public static final Dialect ORACLE = new Dialect("ORACLE", new OracleVendor());
     /** Microsoft SQL Server. */
-    SQLSERVER(new SqlServerVendor()),
+    public static final Dialect SQLSERVER = new Dialect("SQLSERVER", new SqlServerVendor());
     /** SQLite. */
-    SQLITE(new SqliteVendor()),
+    public static final Dialect SQLITE = new Dialect("SQLITE", new SqliteVendor());
     /** IBM Db2. */
-    DB2(new Db2Vendor()),
+    public static final Dialect DB2 = new Dialect("DB2", new Db2Vendor());
     /** Anything unrecognized. Only portable, standard-JDBC paths may be used. */
-    OTHER(new PortableVendor());
+    public static final Dialect OTHER = new Dialect("OTHER", new PortableVendor());
+
+    /** The products the bridge knows, in declaration order. */
+    private static final Dialect[] BUILT_IN = {
+        H2, POSTGRESQL, MYSQL, MARIADB, ORACLE, SQLSERVER, SQLITE, DB2, OTHER,
+    };
 
     /**
      * The order products are tried in. MariaDB must be tested before MySQL:
@@ -50,10 +65,46 @@ public enum Dialect {
         MARIADB, MYSQL, POSTGRESQL, ORACLE, SQLSERVER, SQLITE, H2, DB2,
     };
 
+    /**
+     * The profile dialect of each connection opened with one. Weak, so that a
+     * connection the bridge lost track of does not keep its profile alive;
+     * {@link #detach} is what a closing session calls.
+     */
+    private static final Map<Connection, Dialect> ATTACHED =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    private final String name;
     private final Vendor vendor;
 
-    Dialect(Vendor vendor) {
+    private Dialect(String name, Vendor vendor) {
+        this.name = name;
         this.vendor = vendor;
+    }
+
+    /**
+     * A dialect answered by a profile's vendor.
+     *
+     * @param name   the profile's id, for messages
+     * @param vendor its vendor
+     * @return the dialect, to {@link #attach} to a session's connection
+     */
+    static Dialect profile(String name, Vendor vendor) {
+        return new Dialect(name, vendor);
+    }
+
+    /** @return the built-in products, {@link #OTHER} last */
+    public static Dialect[] values() {
+        return BUILT_IN.clone();
+    }
+
+    /** @return the constant's name, or a profile's id */
+    public String name() {
+        return name;
+    }
+
+    @Override
+    public String toString() {
+        return name;
     }
 
     /** @return everything the bridge does differently for this product */
@@ -68,16 +119,27 @@ public enum Dialect {
      * the portable paths rather than a failed request.
      *
      * @param dbm the connection metadata
-     * @return the matching dialect, or {@link #OTHER}
+     * @return the profile dialect attached to the connection, else the
+     *         matching product, else {@link #OTHER}
      */
     public static Dialect of(DatabaseMetaData dbm) {
-        String name;
+        if (!ATTACHED.isEmpty()) {
+            try {
+                Dialect own = ATTACHED.get(dbm.getConnection());
+                if (own != null) {
+                    return own;
+                }
+            } catch (Exception | AbstractMethodError e) {
+                // No connection to ask after: the product name still answers.
+            }
+        }
+        String productName;
         try {
-            name = dbm.getDatabaseProductName();
+            productName = dbm.getDatabaseProductName();
         } catch (Exception | AbstractMethodError e) {
             return OTHER;
         }
-        return byProductName(name);
+        return byProductName(productName);
     }
 
     /**
@@ -98,5 +160,78 @@ public enum Dialect {
             }
         }
         return OTHER;
+    }
+
+    /**
+     * The built-in product a profile's base names, by the ids
+     * {@code rudbman-sql} gives its dialects.
+     *
+     * @param id a built-in dialect id
+     * @return the product, or {@code null} for an id that names none
+     */
+    public static Dialect byId(String id) {
+        if (id == null) {
+            return null;
+        }
+        switch (id.toLowerCase(Locale.ROOT)) {
+            case "generic":
+                return OTHER;
+            case "h2":
+                return H2;
+            case "postgres":
+                return POSTGRESQL;
+            case "mysql":
+                return MYSQL;
+            case "mariadb":
+                return MARIADB;
+            case "oracle":
+                return ORACLE;
+            case "mssql":
+                return SQLSERVER;
+            case "sqlite":
+                return SQLITE;
+            case "db2":
+                return DB2;
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * Makes {@code dialect} the one {@link #of} answers for {@code conn}.
+     *
+     * <p>The connection the driver hands back from its own metadata is
+     * registered too, where it is another object: {@link #of} asks after that
+     * one.
+     *
+     * @param conn    a session's connection
+     * @param dialect the profile's dialect
+     */
+    public static void attach(Connection conn, Dialect dialect) {
+        ATTACHED.put(conn, dialect);
+        try {
+            Connection reported = conn.getMetaData().getConnection();
+            if (reported != null && reported != conn) {
+                ATTACHED.put(reported, dialect);
+            }
+        } catch (Exception | AbstractMethodError e) {
+            // The connection itself is registered, which is what a driver that
+            // cannot answer this hands back anyway.
+        }
+    }
+
+    /**
+     * Forgets the profile dialect of a closing session's connection.
+     *
+     * @param conn the connection
+     */
+    public static void detach(Connection conn) {
+        synchronized (ATTACHED) {
+            Dialect own = ATTACHED.remove(conn);
+            if (own != null) {
+                // The driver's own handle on the connection, if it was another.
+                ATTACHED.values().removeIf(d -> d == own);
+            }
+        }
     }
 }

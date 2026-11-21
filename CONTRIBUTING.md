@@ -174,8 +174,9 @@ addition, touches every step below.
    `Client` in `script.rs`.
 3. **Bridge** — write `bridge/src/main/java/comart/rudbman/bridge/meta/<Product>Vendor.java`,
    a subclass of `Vendor` that overrides what differs from the portable path,
-   and give it a `Dialect` constant and a place in `Dialect`'s detection
-   order, more specific product names first. A connection property the driver
+   and give it a `Dialect` constant, a place in `Dialect`'s detection order
+   (more specific product names first) and an id in `Dialect.byId`, the one a
+   profile's base names it by. A connection property the driver
    needs before the product is known goes in `Session.java`, by driver class.
 4. **Built-in driver** — add a `BuiltinDriver` at the end of
    `BUILTIN_DRIVERS` in `crates/rudbman-core/src/profile.rs`: its id, its

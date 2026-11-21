@@ -2,6 +2,8 @@ package comart.rudbman.bridge;
 
 import com.google.gson.JsonObject;
 import comart.rudbman.bridge.job.Jobs;
+import comart.rudbman.bridge.meta.Dialect;
+import comart.rudbman.bridge.meta.Profiles;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -84,7 +86,9 @@ public final class Session implements AutoCloseable {
      * (required), {@code jars[]}, {@code username}, {@code password},
      * {@code props{}}, {@code read_only}, {@code auto_commit},
      * {@code login_timeout_s}, {@code keep_alive{enabled, interval_s, query}},
-     * {@code table_comments_sql} and {@code column_comments_sql}.
+     * {@code table_comments_sql}, {@code column_comments_sql}, {@code profile}
+     * and {@code detect_profiles} - the dialect profile the session answers
+     * with, see {@link Profiles}.
      *
      * <p>The last two belong to the driver definition rather than to the
      * connection: they are the queries this product answers comments with, for
@@ -156,6 +160,10 @@ public final class Session implements AutoCloseable {
                         "driver '" + driverClass + "' does not accept the connection URL: " + url);
             }
 
+            // Before anything asks the connection what it is: from here on
+            // `Dialect.of` answers with the profile.
+            Profiles.attach(conn, req);
+
             if (Json.bool(req, "read_only", false)) {
                 conn.setReadOnly(true);
             }
@@ -190,6 +198,7 @@ public final class Session implements AutoCloseable {
             return s;
         } catch (Throwable t) {
             if (conn != null) {
+                Dialect.detach(conn);
                 try {
                     conn.close();
                 } catch (SQLException ignored) {
@@ -421,6 +430,7 @@ public final class Session implements AutoCloseable {
                 connLock.unlock();
             }
         } finally {
+            Dialect.detach(conn);
             lease.release();
         }
     }

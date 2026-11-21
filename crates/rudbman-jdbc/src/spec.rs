@@ -73,6 +73,17 @@ pub struct ConnectionSpec {
     /// columns positionally — table name, column name, comment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub column_comments_sql: Option<String>,
+    /// The dialect profile the connection's driver names, for the bridge to
+    /// answer with (`docs/dialect-profiles.md`, §4.3): its `id`, the built-in
+    /// `base` its chain of bases ends in, and its `bridge` half merged along
+    /// that chain. Built by `rudbman_core::dialects`; nothing here reads it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<serde_json::Value>,
+    /// For a connection with no profile of its own: the profiles that name
+    /// products by their product name, of which the bridge takes the first
+    /// the server's matches.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub detect_profiles: Vec<serde_json::Value>,
 }
 
 impl ConnectionSpec {
@@ -91,6 +102,8 @@ impl ConnectionSpec {
             keep_alive: None,
             table_comments_sql: None,
             column_comments_sql: None,
+            profile: None,
+            detect_profiles: Vec::new(),
         }
     }
 
@@ -143,6 +156,13 @@ impl fmt::Debug for ConnectionSpec {
             .field("keep_alive", &self.keep_alive)
             .field("table_comments_sql", &self.table_comments_sql)
             .field("column_comments_sql", &self.column_comments_sql)
+            // A profile holds statements, not secrets; its id is what a log
+            // line needs.
+            .field(
+                "profile",
+                &self.profile.as_ref().map(|profile| &profile["id"]),
+            )
+            .field("detect_profiles", &self.detect_profiles.len())
             .finish()
     }
 }

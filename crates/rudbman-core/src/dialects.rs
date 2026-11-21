@@ -59,6 +59,12 @@ pub struct Entry {
     /// Newer shipped versions of its files, written beside the user's own
     /// (`<file>.new`).
     pub pending: Vec<PathBuf>,
+    /// Its own `bridge` half, as JSON, before its base's is merged under it.
+    bridge: serde_json::Value,
+    /// What a session opened with the profile hands the bridge, once it has
+    /// loaded: its id, the built-in its chain of bases ends in, and its
+    /// `bridge` half merged along that chain. See the bridge's `Profiles`.
+    pub session: Option<serde_json::Value>,
 }
 
 impl Entry {
@@ -143,6 +149,67 @@ impl Report {
     pub fn loaded(&self) -> Vec<Dialect> {
         self.entries.iter().filter_map(Entry::dialect).collect()
     }
+
+    /// What a session whose driver names `dialect` opens with, when that is
+    /// a profile that loaded.
+    pub fn session_profile(&self, dialect: &str) -> Option<serde_json::Value> {
+        self.entry_for(dialect)?.session.clone()
+    }
+
+    /// The loaded profiles that name products by their product name
+    /// (`bridge.detect`), for a session whose driver names no profile.
+    pub fn detect_profiles(&self) -> Vec<serde_json::Value> {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.session.clone())
+            .filter(|session| {
+                session["bridge"]["detect"]
+                    .as_array()
+                    .is_some_and(|words| !words.is_empty())
+            })
+            .collect()
+    }
+
+    /// Fills in [`Entry::session`] of every loaded profile.
+    fn merge_sessions(&mut self) {
+        for at in 0..self.entries.len() {
+            if self.entries[at].dialect().is_none() {
+                continue;
+            }
+            // Down the chain of bases, which `resolve` found free of cycles
+            // and ending in a built-in, collecting each profile's half.
+            let mut halves = vec![self.entries[at].bridge.clone()];
+            let mut base = self.entries[at].base.clone().unwrap_or_default();
+            let mut steps = 0;
+            let builtin = loop {
+                if let Some(found) = Dialect::find(&base)
+                    && Dialect::ALL.contains(&found)
+                {
+                    break Some(found);
+                }
+                let Some(next) = self.find(&base).filter(|_| steps < self.entries.len()) else {
+                    break None;
+                };
+                steps += 1;
+                halves.push(self.entries[next].bridge.clone());
+                base = self.entries[next].base.clone().unwrap_or_default();
+            };
+            let Some(builtin) = builtin else {
+                continue;
+            };
+            let bridge = halves
+                .iter()
+                .rev()
+                .fold(serde_json::json!({}), |under, over| {
+                    dialect_profile::bridge::merged(&under, over)
+                });
+            self.entries[at].session = Some(serde_json::json!({
+                "id": self.entries[at].id,
+                "base": builtin.name(),
+                "bridge": bridge,
+            }));
+        }
+    }
 }
 
 /// Reads every profile in `dir` and resolves them together.
@@ -176,6 +243,8 @@ pub fn load_from(dir: &Path) -> Report {
             driver: None,
             script: None,
             pending: Vec::new(),
+            bridge: serde_json::json!({}),
+            session: None,
         };
         match fs::read(&path) {
             Err(error) => entry.state = State::Failed(error.to_string()),
@@ -187,6 +256,10 @@ pub fn load_from(dir: &Path) -> Report {
                         entry.name = Some(file.spec.name.clone());
                         entry.base = Some(file.spec.base.clone());
                         entry.script = file.script().map(str::to_string);
+                        if let Some(bridge) = &file.bridge {
+                            entry.bridge = serde_json::to_value(bridge)
+                                .unwrap_or_else(|_| serde_json::json!({}));
+                        }
                         entry.driver = file
                             .driver
                             .as_ref()
@@ -230,6 +303,7 @@ pub fn load_from(dir: &Path) -> Report {
             }
         };
     }
+    report.merge_sessions();
     report
 }
 

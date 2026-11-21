@@ -1,10 +1,11 @@
 # User dialect profiles — design
 
-**Status: phases 1 and 2 implemented; the rest settled before the code.**
+**Status: phases 1 to 3 implemented; the rest settled before the code.**
 Profiles resolve and export in `rudbman-sql`, read and write as YAML in
-`rudbman-core`, load from `<config>/dialects` at start-up, and are picked and
-exported in the driver manager; the bridge does not read them yet. This
-document fixes the file
+`rudbman-core`, load from `<config>/dialects` at start-up, are picked and
+exported in the driver manager, and the bridge answers a session from its
+profile's `bridge` half; scripts are read but not yet run. This document
+fixes the file
 format, the resolution rules, the scripting surface, the trust model and how
 the application ships profiles of its own, so that the phases at the end can
 land one at a time without reopening them.
@@ -169,7 +170,11 @@ not a profile.
 
 ### 4.3 `bridge`: what the JDBC bridge answers
 
-Each key corresponds to a method of the bridge's `meta/Vendor.java`.
+Each key corresponds to a method of the bridge's `meta/Vendor.java`, and
+`meta/ProfileVendor.java` answers it: from the key where the profile gives
+it, from the base where it does not. Along a chain of profile bases a key
+replaces the base profile's, except in `comments` and `texts`, whose own keys
+replace one by one. `null` where a key allows it is "this product has none".
 
 ```yaml
 bridge:
@@ -190,11 +195,12 @@ bridge:
   comments:
     hides_comments: true
     marks_views_in_remarks: true
-    tables: { sql: "...", filters: { schema: TABLE_SCHEMA, table: TABLE_NAME }, keys: 2 }
-    columns: { sql: "...", filters: { ... }, keys: 3 }
+    escape: none                # ansi (ESCAPE '\') | none, after a pattern's LIKE
+    tables: { sql: "...", filters: { catalog: TABLE_SCHEMA, table: TABLE_NAME } }
+    columns: { sql: "...", filters: { ..., column: COLUMN_NAME } }
   texts:                        # the server's own text of an object, or null
     table: { sql: "SHOW CREATE TABLE {qualified}", column: 2 }
-    view: { sql: "...", binds: [schema, name], column: 1 }
+    view: { sql: "...", binds: [catalog, name], column: 1 }
     routine: null
     trigger: null
     sequence: null
@@ -240,6 +246,37 @@ bridge:
 
   script: tidb.groovy           # optional, §5
 ```
+
+What the queries return, and when they run:
+
+- `sequences` columns are read by label, as the built-ins' are:
+  `SEQUENCE_CATALOG`, `SEQUENCE_SCHEMA`, `SEQUENCE_NAME`, `DATA_TYPE`,
+  `START_VALUE`, `MINIMUM_VALUE`, `MAXIMUM_VALUE`, `INCREMENT`,
+  `CYCLE_OPTION`, `CACHE`, `CURRENT_VALUE`. Given, they replace the base's own
+  way of listing sequences; `[]` lists none.
+- `triggers` returns nine columns by position: catalog, schema, name, table,
+  timing, event, level, enabled (`Y`/`N`), comment. Its `sql` ends where
+  `AND <column> = ?` may follow; each filter with a value in the request adds
+  one, and a column two filters name is compared once, with the first that
+  has a value — the MySQL family's database is both catalog and schema.
+- `comments.tables` returns owner, table, comment; `comments.columns` owner,
+  table, column, comment — the owner being the catalog where
+  `catalog_is_schema` holds and the schema otherwise. `schema`, `table` and
+  `column` filters compare by `LIKE` where the request has a pattern.
+- `texts.*` binds the object's `catalog`, `schema` or `name` in the order of
+  `binds`, and reads `column` (from 1) of the first row. `{qualified}` is the
+  object's name as a statement writes it. A query that fails or answers no row
+  is no text, and the bridge rebuilds the object as it does for any product
+  without one. `texts.table`, given, also stands for the base's own way of
+  reading a table whole.
+- `national_strings`, given, replaces the base's spelling of a character
+  literal with the standard quoting, prefixed `N` as it says — MySQL's
+  backslash escapes included, on a profile based on `mysql`.
+- Templates: `hex_literal` takes `{hex}`; `drop_foreign_key` `{table}` and
+  `{key}`; `backup_prologue` and `backup_epilogue` `{catalog}` and
+  `{schema}`, quoted, a line naming one the backup has not being left out;
+  `identity_insert` `{table}`. A `when: code` line is the epilogue's only:
+  the prologue is written before it is known.
 
 What a key cannot say — a literal computed from a JDBC type, a counter
 derived from the source's catalog, a catalog row rewritten in place — is a
@@ -367,7 +404,8 @@ open session and its credentials. So:
   profile and asks its base otherwise.
 - How a profile is *spelled* is `rudbman_core::dialect_profile`: `parse` and
   `to_yaml` over `serde_norway`, every key checked and an unknown one reported
-  with its line. The `bridge` half is read and kept, not yet applied.
+  with its line. The `bridge` half is `dialect_profile::bridge::BridgeSpec`
+  since phase 3, checked the same way and its template holes too.
 - The registry has a runtime half. `Dialect::ALL` stays the built-ins;
   `profile::install` registers resolved profiles, leaked to `'static`, and
   `Dialect::from_id` searches built-ins first, then them.
@@ -404,20 +442,24 @@ open session and its credentials. So:
   resolved `bridge` half of the profile and the path of the Groovy runtime
   when it has a script (§5.3, phase 3).
 
-### Bridge
+### Bridge (phase 3, implemented)
 
-- `OPEN_SESSION` takes an optional `profile`: the merged `bridge` object, the
-  base's built-in id, and the script's text and path.
-- Today every caller asks `Dialect.of(dbm).vendor()`, which is one `Vendor` per
-  product. That becomes `Vendor.of(dbm)`, which answers the session's
-  `ProfileVendor` when its connection was opened with a profile (a weak map
-  from `Connection` to `Vendor`) and the detected product's otherwise.
+- `OPEN_SESSION` takes an optional `profile`: `{ id, base, bridge }`, the
+  base being the built-in the chain of bases ends in and `bridge` the half
+  merged along it (`rudbman_core::dialects::Report::session_profile`, sent by
+  the app's `build_spec`). The script's text and path join it in phase 4.
+- Where the design first said `Vendor.of(dbm)`, the bridge keeps every
+  caller's `Dialect.of(dbm).vendor()`: `Dialect` became a class of constants
+  rather than an enum, and `Dialect.attach` ties a profile's dialect to the
+  session's connection (a weak map), which `Dialect.of` asks before the
+  product name. Nothing but the open and the close changed.
 - `ProfileVendor` extends `Vendor` itself rather than any product's subclass:
-  it holds the base's `Vendor`, the profile's data and the compiled script, and
-  answers each hook in the §2 order, delegating to the base for the rest.
-- `bridge.detect` lets product-name detection find a profile for a connection
-  opened without one — rudbgen's sample database, a driver whose definition
-  says `generic`.
+  it holds the base's `Vendor` and the profile's data, and answers each
+  method from the data or the base. The script comes in phase 4.
+- `detect_profiles` lets product-name detection find a profile for a
+  connection opened without one — a driver whose dialect is generic SQL, or
+  names a profile that did not load; the app sends the loaded profiles that
+  have a `bridge.detect`. rudbgen's sample database is phase 5.
 
 ### rudbgen and rudbkit
 
@@ -438,6 +480,11 @@ open session and its credentials. So:
 - **Merge rules**: field-wise records, additive word lists, replaced
   templates, `null` versus absent, chains of `base`, and every load error of
   §7 with its file and line.
+- **Data keys** (bridge, phase 3): `ProfileVendorTest` checks that an empty
+  profile answers every connection-free method as each built-in base does,
+  that each key answers from the profile, and, on an in-memory H2, that the
+  query keys are run; `profile_answers` in `rudbman-jdbc`'s container suite
+  opens MySQL and MariaDB sessions with a profile and by detection.
 - **Contract tests** (bridge): for each published hook, a test that a script
   defining it is called with the documented arguments, that its answer is
   used, and that one which throws fails the request with the script's line.
@@ -452,8 +499,8 @@ open session and its credentials. So:
 2. **Loading, shipped profiles and the driver manager** — the directory, the
    start-up sync of the profiles the application ships (§12) and of their
    driver definitions, the picker, states and errors, export, eight locales.
-3. **Bridge profiles** — `OPEN_SESSION`'s `profile`, `Vendor.of`, the `bridge`
-   half's data keys.
+3. **Bridge profiles** — `OPEN_SESSION`'s `profile`, the session's dialect
+   (`Dialect.attach`), the `bridge` half's data keys. Done.
 4. **Groovy hooks** — API version 1, the runtime download, the allow list and
    its dialog, compile cache and errors, contract tests.
 5. **rudbgen and rudbkit** — the shared format and loader, rudbgen's `bridge`

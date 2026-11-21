@@ -156,6 +156,29 @@ should set the real property in `props`.
 queries that `DESCRIBE tables` / `columns` use to fill in missing comments;
 blank means unset.
 
+`profile` and `detect_profiles` are optional too: the dialect profile the
+session answers with (`docs/dialect-profiles.md`, §4.3).
+
+```json
+{
+  "profile": {
+    "id": "tidb",
+    "base": "mysql",
+    "bridge": { "hex_literal": "X'{hex}'", "texts": { "table": null } }
+  }
+}
+```
+
+`base` is the built-in dialect the profile's chain of bases ends in, by
+`rudbman-sql`'s ids (`generic`, `h2`, `postgres`, `mysql`, `mariadb`,
+`oracle`, `mssql`, `sqlite`, `db2`), and `bridge` is the profile's `bridge`
+half merged along that chain. The session's every catalog read, DDL and job
+then asks the profile first and the base for what it leaves out
+(`meta/ProfileVendor.java`). `detect_profiles` is a list of the same objects
+for a session whose driver names no profile: the first whose `bridge.detect`
+words the server's product name holds is the session's. A base the bridge
+does not know, or a value of the wrong shape, fails the open as `protocol`.
+
 ### `EXECUTE`
 
 ```json
