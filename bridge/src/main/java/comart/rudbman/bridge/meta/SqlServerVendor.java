@@ -29,8 +29,8 @@ final class SqlServerVendor extends Vendor {
     }
 
     @Override
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
         return DdlText.sqlServerDefinition(conn,
                 id.qualify(catalog, schema, RoutineDdl.unnumbered(name)));
     }

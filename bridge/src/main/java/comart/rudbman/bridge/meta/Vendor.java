@@ -143,8 +143,8 @@ public abstract class Vendor {
      * @return the text, or {@code null} where the server has none to give;
      *         {@code null} by default
      */
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
         return null;
     }
 

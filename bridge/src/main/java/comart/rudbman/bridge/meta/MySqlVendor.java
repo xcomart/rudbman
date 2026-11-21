@@ -35,8 +35,8 @@ class MySqlVendor extends Vendor {
      * and as the other one after.
      */
     @Override
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
         String qualified = id.qualify(catalog, schema, name);
         String first = function ? "FUNCTION" : "PROCEDURE";
         String other = function ? "PROCEDURE" : "FUNCTION";

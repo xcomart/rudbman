@@ -56,8 +56,8 @@ final class ProfileScript {
             // literals
             "literal", "stringLiteral", "hexLiteral",
             // catalog reads
-            "routineRemarks", "sequences", "triggers", "triggerRow", "tableComments",
-            "columnComments",
+            "routineRemarks", "routineText", "sequences", "triggers", "triggerRow",
+            "tableComments", "columnComments",
             // backup plan
             "extensionMembers", "materializedViews", "tablesNotWritten", "indexViews", "packages",
             "backupPreamble", "ownedSequences",

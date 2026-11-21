@@ -18,8 +18,8 @@ final class H2Vendor extends Vendor {
     }
 
     @Override
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
         return DdlText.h2Script(conn, id, schema, "ALIAS", name);
     }
 

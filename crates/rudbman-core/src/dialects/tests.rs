@@ -549,3 +549,142 @@ fn the_groovy_runtime_is_the_one_the_bridge_is_tested_on() {
         "bridge/build.gradle tests on another Groovy than {GROOVY_RUNTIME}"
     );
 }
+
+// ------------------------------------------------------- shipped products
+
+/// The shipped profiles of the repository's `dialects/`, as the
+/// application loads them: synced into a folder of their own, then read.
+fn shipped_report() -> (tempfile::TempDir, Report) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    sync_shipped(dir.path(), SHIPPED).expect("sync");
+    let report = load_from(dir.path());
+    (dir, report)
+}
+
+fn shipped_dialect(report: &Report, id: &str) -> Dialect {
+    report
+        .entry_for(id)
+        .and_then(Entry::dialect)
+        .unwrap_or_else(|| panic!("{id} loads"))
+}
+
+#[test]
+fn firebird_alters_with_its_own_spellings() {
+    use rudbman_sql::{ColumnChange, ColumnDef, TableAlter, plan_alter};
+    let (_dir, report) = shipped_report();
+    let firebird = shipped_dialect(&report, "firebird");
+    let mut alter = TableAlter::new(["ORDERS"]);
+    alter.adds.push(
+        ColumnDef::new("NOTE", "varchar(20)")
+            .with_default("'x'")
+            .with_not_null(true),
+    );
+    alter.changes.push(ColumnChange {
+        from: ColumnDef::new("QTY", "integer"),
+        to: ColumnDef::new("QTY", "bigint"),
+    });
+    alter.changes.push(ColumnChange {
+        from: ColumnDef::new("OLD", "integer"),
+        to: ColumnDef::new("NEW", "integer"),
+    });
+    alter.drops.push("GONE".to_string());
+    assert_eq!(
+        plan_alter(&alter, &firebird).expect("plans"),
+        [
+            "ALTER TABLE ORDERS ADD NOTE varchar(20) DEFAULT 'x' NOT NULL",
+            "ALTER TABLE ORDERS ALTER COLUMN QTY TYPE bigint",
+            "ALTER TABLE ORDERS ALTER COLUMN OLD TO NEW",
+            "ALTER TABLE ORDERS DROP GONE",
+        ]
+    );
+
+    let mut rename = TableAlter::new(["ORDERS"]);
+    rename.rename_to = Some("ORDER_LINES".to_string());
+    let error = plan_alter(&rename, &firebird).expect_err("Firebird renames no table");
+    assert!(
+        error
+            .to_string()
+            .starts_with("Firebird cannot rename a table: Firebird has no statement"),
+        "{error}"
+    );
+}
+
+#[test]
+fn cockroachdb_drops_a_unique_constraint_as_its_index() {
+    use rudbman_sql::{ConstraintDrop, ConstraintKind, TableAlter, plan_alter};
+    let (_dir, report) = shipped_report();
+    let cockroach = shipped_dialect(&report, "cockroachdb");
+    let mut alter = TableAlter::new(["app", "orders"]);
+    for (kind, name) in [
+        (ConstraintKind::Unique, "orders_code_uq"),
+        (ConstraintKind::Check, "orders_ck"),
+    ] {
+        alter.drop_constraints.push(ConstraintDrop {
+            kind,
+            name: name.to_string(),
+        });
+    }
+    assert_eq!(
+        plan_alter(&alter, &cockroach).expect("plans"),
+        [
+            "DROP INDEX app.orders@orders_code_uq CASCADE",
+            "ALTER TABLE app.orders DROP CONSTRAINT orders_ck",
+        ]
+    );
+}
+
+#[test]
+fn a_firebird_routine_runs_as_one_statement() {
+    let (_dir, report) = shipped_report();
+    let firebird = shipped_dialect(&report, "firebird");
+    let script = "create procedure p (who varchar(20)) returns (msg varchar(100)) as\n\
+                  declare x int = 0;\n\
+                  begin\n  msg = 'hi ' || who;\n  suspend;\nend;\n\
+                  select * from p('a');\n";
+    let statements = rudbman_sql::split_script(script, &firebird).expect("splits");
+    assert_eq!(statements.len(), 2, "{statements:#?}");
+    // Whole, its own `end;` kept as a PL/SQL unit keeps it: Firebird takes
+    // the body over JDBC with or without it.
+    assert!(
+        statements[0].sql.starts_with("create procedure p"),
+        "{:?}",
+        statements[0].sql
+    );
+    assert!(
+        statements[0].sql.trim_end().ends_with("end;"),
+        "{:?}",
+        statements[0].sql
+    );
+    assert_eq!(statements[1].sql.trim(), "select * from p('a')");
+}
+
+#[test]
+fn the_shipped_products_bring_their_drivers_and_firebird_its_script() {
+    let (_dir, report) = shipped_report();
+    let classes: Vec<(String, String)> = report
+        .drivers()
+        .into_iter()
+        .map(|driver| (driver.id, driver.class))
+        .collect();
+    for (id, class) in [
+        ("cockroachdb", "org.postgresql.Driver"),
+        ("firebird", "org.firebirdsql.jdbc.FBDriver"),
+        ("tidb", "com.mysql.cj.jdbc.Driver"),
+    ] {
+        assert!(
+            classes.contains(&(id.to_string(), class.to_string())),
+            "{id}: {classes:?}"
+        );
+    }
+    for id in ["firebird", "tidb"] {
+        let script = report
+            .entry_for(id)
+            .and_then(|e| e.hooks.clone())
+            .expect("a script");
+        assert!(
+            script.allowed,
+            "{id}: a shipped script is allowed as written"
+        );
+        assert!(runs_script(&report.session_profile(id).expect("loaded")));
+    }
+}

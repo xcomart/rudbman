@@ -36,8 +36,8 @@ final class PostgresVendor extends Vendor {
     }
 
     @Override
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
         return Attempt.<String>on(conn, "pg_get_functiondef",
                 c -> RoutineDdl.postgres(c, schema, name), null);
     }

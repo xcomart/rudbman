@@ -48,8 +48,8 @@ final class OracleVendor extends Vendor {
 
     /** The source as listed first and, failing that, as the other kind. */
     @Override
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
         String text = DdlText.oracleSource(conn, schema, name,
                 function ? "FUNCTION" : "PROCEDURE");
         return text != null ? text : DdlText.oracleSource(conn, schema, name,

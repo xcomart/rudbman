@@ -238,6 +238,9 @@ pub struct ExplainSpec {
 #[allow(missing_docs)]
 pub struct AlterSpec {
     pub add: Option<String>,
+    pub drop: Option<String>,
+    pub retype: Option<String>,
+    pub unique_drop: Option<String>,
     pub default_first: Option<bool>,
     pub named_reference_columns: Option<bool>,
     pub column_rename: Option<ColumnRenameSpec>,
@@ -256,6 +259,7 @@ pub enum ColumnRenameSpec {
     AlterRenameTo,
     Change,
     SpRename,
+    AlterTo,
 }
 
 /// How a column's attributes are changed.
@@ -285,6 +289,7 @@ pub enum TableRenameSpec {
     RenameTo,
     RenameTable,
     SpRename,
+    None,
 }
 
 /// [`DropSpelling`], every field optional.
@@ -343,10 +348,11 @@ enum Hole {
     FirstColumn,
     Catalog,
     Schema,
+    Constraint,
 }
 
 impl Hole {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Limit,
         Self::Offset,
         Self::Sql,
@@ -354,6 +360,7 @@ impl Hole {
         Self::FirstColumn,
         Self::Catalog,
         Self::Schema,
+        Self::Constraint,
     ];
 
     fn name(self) -> &'static str {
@@ -365,6 +372,7 @@ impl Hole {
             Self::FirstColumn => "first_column",
             Self::Catalog => "catalog",
             Self::Schema => "schema",
+            Self::Constraint => "constraint",
         }
     }
 }
@@ -775,6 +783,21 @@ fn alter_over(id: &str, spec: &AlterSpec, base: &AlterStyle) -> Result<AlterStyl
     if let Some(add) = &spec.add {
         out.add = leak(add);
     }
+    if let Some(drop) = &spec.drop {
+        out.drop = leak(drop);
+    }
+    if let Some(retype) = &spec.retype {
+        out.retype = leak(retype);
+    }
+    if let Some(text) = &spec.unique_drop {
+        template(
+            id,
+            "alter.unique_drop",
+            text,
+            &[Hole::Table, Hole::Constraint],
+        )?;
+        out.unique_drop = Some(leak(text));
+    }
     if let Some(value) = spec.default_first {
         out.default_first = value;
     }
@@ -787,6 +810,7 @@ fn alter_over(id: &str, spec: &AlterSpec, base: &AlterStyle) -> Result<AlterStyl
             ColumnRenameSpec::AlterRenameTo => ColumnRename::AlterRenameTo,
             ColumnRenameSpec::Change => ColumnRename::Change,
             ColumnRenameSpec::SpRename => ColumnRename::SpRename,
+            ColumnRenameSpec::AlterTo => ColumnRename::AlterTo,
         };
     }
     if let Some(value) = spec.attrs {
@@ -841,6 +865,7 @@ fn alter_over(id: &str, spec: &AlterSpec, base: &AlterStyle) -> Result<AlterStyl
             TableRenameSpec::RenameTo => TableRename::RenameTo,
             TableRenameSpec::RenameTable => TableRename::RenameTable,
             TableRenameSpec::SpRename => TableRename::SpRename,
+            TableRenameSpec::None => TableRename::None,
         };
     }
     if let Some(value) = spec.reorg {
@@ -1325,6 +1350,9 @@ impl ProfileSpec {
                 let alter = vendor.alter_style();
                 AlterSpec {
                     add: Some(alter.add.to_string()),
+                    drop: Some(alter.drop.to_string()),
+                    retype: Some(alter.retype.to_string()),
+                    unique_drop: alter.unique_drop.map(str::to_string),
                     default_first: Some(alter.default_first),
                     named_reference_columns: Some(alter.named_reference_columns),
                     column_rename: Some(match alter.column_rename {
@@ -1332,6 +1360,7 @@ impl ProfileSpec {
                         ColumnRename::AlterRenameTo => ColumnRenameSpec::AlterRenameTo,
                         ColumnRename::Change => ColumnRenameSpec::Change,
                         ColumnRename::SpRename => ColumnRenameSpec::SpRename,
+                        ColumnRename::AlterTo => ColumnRenameSpec::AlterTo,
                     }),
                     attrs: Some(match alter.attrs {
                         AttrStyle::Clauses => AttrSpec::Clauses,
@@ -1353,6 +1382,7 @@ impl ProfileSpec {
                         TableRename::RenameTo => TableRenameSpec::RenameTo,
                         TableRename::RenameTable => TableRenameSpec::RenameTable,
                         TableRename::SpRename => TableRenameSpec::SpRename,
+                        TableRename::None => TableRenameSpec::None,
                     }),
                     reorg: Some(alter.reorg),
                 }

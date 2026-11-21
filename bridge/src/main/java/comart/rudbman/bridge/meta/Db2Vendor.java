@@ -25,8 +25,8 @@ final class Db2Vendor extends Vendor {
     }
 
     @Override
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
         return Attempt.<String>on(conn, "SYSCAT.ROUTINES",
                 c -> RoutineDdl.db2(c, schema, name), null);
     }

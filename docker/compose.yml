@@ -1,8 +1,9 @@
-# The six servers the opt-in container tests run against.
+# The servers the opt-in container tests run against.
 #
 # `crates/rudbman-jdbc/tests/containers.rs` sends the SQL `rudbman-sql`'s `ddl`
 # module writes to a real PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, and
-# Db2, and reads the catalog back. Nothing in the workspace needs these to be up:
+# Db2, and to TiDB, CockroachDB and Firebird through the profiles shipped in
+# `dialects/`, and reads the catalog back. Nothing in the workspace needs these to be up:
 # with the environment variables below unset every one of those tests passes
 # by doing nothing, which is what keeps `cargo test --workspace` green on a
 # machine with no Docker.
@@ -19,6 +20,9 @@
 #     export RUDBMAN_TEST_MSSQL_URL='jdbc:sqlserver://127.0.0.1:51433;encrypt=false'
 #     export RUDBMAN_TEST_ORACLE_URL='jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1'
 #     export RUDBMAN_TEST_DB2_URL='jdbc:db2://127.0.0.1:55000/RUDBMAN'
+#     export RUDBMAN_TEST_TIDB_URL='jdbc:mysql://127.0.0.1:54000/test?useSSL=false'
+#     export RUDBMAN_TEST_COCKROACH_URL='jdbc:postgresql://127.0.0.1:56257/defaultdb?sslmode=disable'
+#     export RUDBMAN_TEST_FIREBIRD_URL='jdbc:firebird://127.0.0.1:53050//var/lib/firebird/data/rudbman.fdb?encoding=UTF8'
 #     cargo test -p rudbman-jdbc --test containers
 #     (cd bridge && ./gradlew backupRoundTrip)
 #
@@ -29,8 +33,9 @@
 # The user and the password default to `rudbman`/`rudbman`, matching this
 # file, for every service except SQL Server; RUDBMAN_TEST_PG_USER,
 # RUDBMAN_TEST_PG_PASSWORD, RUDBMAN_TEST_MYSQL_USER,
-# RUDBMAN_TEST_MYSQL_PASSWORD, and their MARIADB/ORACLE/DB2 counterparts override
-# them. SQL Server has no `rudbman` login of its own: the `sa` password
+# RUDBMAN_TEST_MYSQL_PASSWORD, and their MARIADB/ORACLE/DB2/TIDB/COCKROACH/
+# FIREBIRD counterparts override them. TiDB and CockroachDB are `root` with no
+# password, as their images come. SQL Server has no `rudbman` login of its own: the `sa` password
 # complexity requirement rules out `rudbman`, so its account is
 # `sa` / `Rudbman!Passw0rd`, and its image does not create a `rudbman`
 # database — a test that needs one creates it, or connects to `master`.
@@ -169,3 +174,55 @@ services:
       timeout: 30s
       start_period: 300s
       retries: 60
+
+  # The three products rudbman supports through a shipped dialect profile
+  # (`dialects/`) rather than a built-in, run by the same suites
+  # (docs/dialect-profiles.md, §12).
+  #
+  # TiDB, on MySQL's wire protocol. The image runs a whole cluster in one
+  # process on its own embedded storage, with `root` and no password, and a
+  # `test` database. It carries no client, so there is no health check: the
+  # SQL port answering is the server being up.
+  tidb:
+    image: pingcap/tidb:v8.5.8
+    container_name: rudbman-test-tidb
+    ports:
+      - "127.0.0.1:54000:4000"
+
+  # CockroachDB, on PostgreSQL's wire protocol: one node, without TLS, `root`
+  # with no password, and a `defaultdb` database.
+  cockroach:
+    image: cockroachdb/cockroach:v25.4.21
+    container_name: rudbman-test-cockroach
+    command: start-single-node --insecure
+    ports:
+      - "127.0.0.1:56257:26257"
+    healthcheck:
+      test: ["CMD", "/cockroach/cockroach", "sql", "--insecure", "-e", "select 1"]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+
+  # Firebird, the one of the three with no wire-compatible built-in: its
+  # profile stands on `generic`. The image creates the database and its
+  # `rudbman` user on the first start.
+  firebird:
+    image: firebirdsql/firebird:5.0.4
+    container_name: rudbman-test-firebird
+    environment:
+      FIREBIRD_ROOT_PASSWORD: rudbman
+      FIREBIRD_USER: rudbman
+      FIREBIRD_PASSWORD: rudbman
+      FIREBIRD_DATABASE: rudbman.fdb
+      FIREBIRD_DATABASE_DEFAULT_CHARSET: UTF8
+    ports:
+      - "127.0.0.1:53050:3050"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "echo 'select 1 from rdb$$database;' | /opt/firebird/bin/isql -q -u rudbman -p rudbman localhost:/var/lib/firebird/data/rudbman.fdb",
+        ]
+      interval: 3s
+      timeout: 10s
+      retries: 40

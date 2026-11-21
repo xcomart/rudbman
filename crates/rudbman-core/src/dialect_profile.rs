@@ -352,6 +352,12 @@ struct YamlAlter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     add: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    drop: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retype: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unique_drop: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     default_first: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     named_reference_columns: Option<bool>,
@@ -382,6 +388,8 @@ struct YamlReasons {
     constraint_drop: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reference_without_columns: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    table_rename: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -458,6 +466,7 @@ spelled!(YColumnRename <=> ColumnRenameSpec {
     AlterRenameTo = "alter_rename_to",
     Change = "change",
     SpRename = "sp_rename",
+    AlterTo = "alter_to",
 });
 spelled!(YAttrs <=> AttrSpec {
     Clauses = "clauses",
@@ -475,6 +484,7 @@ spelled!(YTableRename <=> TableRenameSpec {
     RenameTo = "rename_to",
     RenameTable = "rename_table",
     SpRename = "sp_rename",
+    None = "none",
 });
 spelled!(YSchemaDrop <=> SchemaDrop {
     None = "none",
@@ -540,6 +550,9 @@ impl YamlProfile {
             empty_insert: sql.empty_insert,
             alter: AlterSpec {
                 add: alter.add,
+                drop: alter.drop,
+                retype: alter.retype,
+                unique_drop: alter.unique_drop,
                 default_first: alter.default_first,
                 named_reference_columns: alter.named_reference_columns,
                 column_rename: alter.column_rename.map(Into::into),
@@ -558,6 +571,7 @@ impl YamlProfile {
                     Unsupported::ReferenceWithoutColumns,
                     reasons.reference_without_columns,
                 ),
+                (Unsupported::TableRename, reasons.table_rename),
             ]
             .into_iter()
             .filter_map(|(what, reason)| reason.map(|reason| (what, reason)))
@@ -588,6 +602,7 @@ impl YamlProfile {
             default: reason(Unsupported::Default),
             constraint_drop: reason(Unsupported::ConstraintDrop),
             reference_without_columns: reason(Unsupported::ReferenceWithoutColumns),
+            table_rename: reason(Unsupported::TableRename),
         };
         let words = YamlWords {
             keywords: spec.keywords.clone(),
@@ -601,6 +616,9 @@ impl YamlProfile {
         let a = &spec.alter;
         let alter = YamlAlter {
             add: a.add.clone(),
+            drop: a.drop.clone(),
+            retype: a.retype.clone(),
+            unique_drop: a.unique_drop.clone(),
             default_first: a.default_first,
             named_reference_columns: a.named_reference_columns,
             column_rename: a.column_rename.map(Into::into),

@@ -225,8 +225,11 @@ final class ProfileVendor extends Vendor {
     }
 
     @Override
-    String routineText(Connection conn, Ident id, String catalog, String schema, String name,
-                       boolean function) {
+    public String routineText(Connection conn, Ident id, String catalog, String schema,
+                              String name, boolean function) {
+        if (hooks.defines("routineText")) {
+            return hooks.call("routineText", conn, id, catalog, schema, name, function);
+        }
         if (!texts.has("routine")) {
             return base.routineText(conn, id, catalog, schema, name, function);
         }

@@ -141,16 +141,20 @@ sql:
   empty_insert: "INSERT INTO {table} () VALUES ()"   # or null; holes: table, first_column
   alter:                        # AlterStyle, merged field by field
     add: ADD COLUMN
+    drop: DROP COLUMN           # the words before the name of a column dropped
+    retype: SET DATA TYPE       # clauses only: the words before a column's new type
     default_first: false
     named_reference_columns: true
-    column_rename: change       # rename_column | alter_rename_to | change | sp_rename
+    column_rename: change       # rename_column | alter_rename_to | alter_to | change | sp_rename
     attrs: restate              # clauses | restate | modify_changed | type_with_null | rebuild
     constraints: per_kind       # named | per_kind | rebuild
     check_drop: CHECK           # per_kind only: the word a check constraint's DROP takes
-    table_rename: rename_to     # rename_to | rename_table | sp_rename
+    unique_drop: null           # or a template; holes: table, constraint
+    table_rename: rename_to     # rename_to | rename_table | sp_rename | none
     reorg: false
   unsupported_reasons:          # Unsupported -> the sentence a refused edit gives
     reference_without_columns: "..."
+    table_rename: "..."         # for table_rename: none
   drops:                        # DropSpelling, merged field by field
     schema: database            # none | schema | schema_restrict | user | database
     database: true
@@ -162,6 +166,14 @@ sql:
   enter_scope: "USE {catalog}"  # or null; holes: catalog, schema (quoted)
   connect_timeout_property: connectTimeout     # or null
 ```
+
+`column_rename: alter_to` writes `ALTER TABLE t ALTER COLUMN old TO new`
+(Firebird). `table_rename: none` is a product with no statement for it: the
+rename is refused as `Unsupported::TableRename`, with the sentence of
+`unsupported_reasons.table_rename`. `unique_drop` is the whole statement
+that drops a unique constraint where `DROP CONSTRAINT` does not
+(CockroachDB's `DROP INDEX {table}@{constraint} CASCADE`); `null` drops it
+as `constraints` says.
 
 The enumerated values (`blocks`, `routine_layout`, `client`, the `alter` and
 `drops` spellings) select behaviour that is code in rudbman-sql.
@@ -350,6 +362,7 @@ type are the hook's; `ProfileScript.API_1` lists them.
 | | `String stringLiteral(String s, boolean national, int type, ResultSet rs, int i)` |
 | | `String hexLiteral(String hex)` |
 | Catalog reads | `String routineRemarks(String remarks)` |
+| | `String routineText(Connection conn, Ident id, String catalog, String schema, String name, boolean function)` — a routine's `CREATE`; without the hook, `texts.routine` or the base's |
 | | `List<Map<String, String>> sequences(Connection conn, Ident id, String catalog, String schema, String name)` — rows keyed by the labels of §4.3's `sequences` queries; `null` runs the queries |
 | | `List<String[]> triggers(Connection conn, String catalog, String schema, String name)` — rows of §4.3's nine `triggers` columns; `null` runs the query |
 | | `void triggerRow(String[] r)` — rewrites a row of the query, in place |
@@ -572,6 +585,15 @@ open session and its credentials. So:
   profile's script runs, and asks before it allows one (§6). Every string is
   in all eight locales.
 
+### The first shipped products (implemented)
+
+- `dialects/` holds TiDB, CockroachDB and Firebird (§12.1). The format grew
+  what they needed: `alter.drop`, `alter.retype`, `alter.unique_drop`,
+  `column_rename: alter_to`, `table_rename: none` with
+  `unsupported_reasons.table_rename`, and the `constraint` hole.
+- API 1 has `routineText`, and the built-ins' `routineText` is public in
+  `Vendor`.
+
 ### rudbgen and rudbkit
 
 - The profile format, its parsing and its validation move to `rudbkit-core`
@@ -623,6 +645,14 @@ open session and its credentials. So:
   drops a constraint of every kind as the built-in does, and the bridge's
   `backupRoundTrip` that its backup restores and is the built-in's, line for
   line.
+- **Shipped products** (§12.1): the container suites load `dialects/` as
+  the application does and run every shared suite against TiDB, CockroachDB
+  and Firebird; `edits_pages_explains_and_backs_up_rows` sends the grid's
+  planned edits, a page, a plan and a backup that is run back and gives the
+  rows, the view and the sequence again; each has its comment test.
+  `rudbman-core`'s tests check the Firebird and CockroachDB `ALTER`
+  spellings, a Firebird routine kept whole by the splitter, and the drivers
+  and scripts the three bring.
 
 ## 10. Phases
 
@@ -670,6 +700,9 @@ code (§1).
   binary, the way the locales are. There are none yet; `rudbman-core`'s tests
   load every one there is. A shipped profile is tested like a built-in:
   the round trip, and the container suites against a server of its product.
+  The first are `tidb` (on `mysql`), `cockroachdb` (on `postgres`) and
+  `firebird` (on `generic`, with `firebird.groovy`); §12.1 says what each
+  rests on and what its product does not do.
 - **A driver definition.** A shipped profile may carry a `driver` section —
   its class, Maven coordinate, URL template, port and icon — so that a product
   reaches the driver manager without a built-in of its own in `profile.rs`.
@@ -693,3 +726,26 @@ code (§1).
   across an update, and one the user edits is the user's script, and asks
   (§6).
 
+### 12.1 The shipped products
+
+| Profile | Base | Driver | What the profile carries |
+| --- | --- | --- | --- |
+| `tidb` | `mysql` | MySQL Connector/J | its words; `triggers: null`; sequences from `information_schema.SEQUENCES` and their text from `SHOW CREATE SEQUENCE`; `tidb.groovy`: a sequence's value from `SHOW TABLE ... NEXT_ROW_ID`, set back with `SETVAL` |
+| `cockroachdb` | `postgres` | PostgreSQL JDBC | its words; `alter.unique_drop`; the text of a sequence from `SHOW CREATE SEQUENCE` and of a trigger from `crdb_internal.create_trigger_statements` |
+| `firebird` | `generic` | Jaybird (`?encoding=UTF8`) | the whole `sql` half; the catalog from the `RDB$` tables; `firebird.groovy`: a trigger's type code read as its timing and events, a sequence's value and `RESTART`, and a routine's header rebuilt from `RDB$FIELDS` |
+
+What the products themselves do not do, which their profiles report rather
+than paper over:
+
+- **TiDB** has no triggers and no stored routines. It ignores `CHECK`
+  unless `tidb_enable_check_constraint` is on, and does not drop a
+  clustered primary key. A sequence resumes past the values its nodes have
+  cached, not at the next one.
+- **CockroachDB** does not drop a primary key on its own; a table's key is
+  changed with `ALTER PRIMARY KEY`.
+- **Firebird** has no catalogs or schemas, no statement that renames a table,
+  and no `IF EXISTS`. Its DDL takes turns between sessions: two sessions
+  changing the catalog at once fail with an update conflict.
+
+The container suites run every shared suite against each of the three
+(§9).

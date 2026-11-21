@@ -616,16 +616,19 @@ pub enum Unsupported {
     /// names neither the omission nor the fix, which is exactly the case this
     /// enum exists to catch first.
     ReferenceWithoutColumns,
+    /// Renaming the table, which Firebird has no statement for.
+    TableRename,
 }
 
 impl Unsupported {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::ColumnType,
         Self::Nullability,
         Self::Default,
         Self::ConstraintDrop,
         Self::ReferenceWithoutColumns,
+        Self::TableRename,
     ];
 }
 
@@ -758,6 +761,7 @@ impl fmt::Display for DdlError {
                     Unsupported::ReferenceWithoutColumns => {
                         "write a foreign key that does not name the columns it references"
                     }
+                    Unsupported::TableRename => "rename a table",
                 };
                 let vendor = dialect.vendor();
                 let reason = vendor
@@ -791,6 +795,9 @@ pub(crate) enum ColumnRename {
     /// `EXEC sp_rename '<table>.<column>', '<new name>', 'COLUMN'`: SQL
     /// Server, which has no `ALTER` form at all.
     SpRename,
+    /// `ALTER TABLE t ALTER COLUMN a TO b`: Firebird, which takes neither
+    /// `RENAME COLUMN` nor H2's `RENAME TO`.
+    AlterTo,
 }
 
 /// How a column's type, nullability and default are changed.
@@ -843,6 +850,9 @@ pub(crate) enum TableRename {
     RenameTable,
     /// `EXEC sp_rename '<table>', '<new name>'`: SQL Server.
     SpRename,
+    /// Not at all: Firebird, which has no way to rename a table. A rename is
+    /// [`Unsupported::TableRename`].
+    None,
 }
 
 /// The per-dialect spellings of one `ALTER TABLE`, and the two disagreements a
@@ -861,6 +871,19 @@ pub(crate) struct AlterStyle {
     /// The keyword that adds a column: `ADD COLUMN`, or the bare `ADD` that
     /// Oracle and SQL Server require.
     pub(crate) add: &'static str,
+    /// The keyword that drops a column: `DROP COLUMN`, or the bare `DROP`
+    /// Firebird requires.
+    pub(crate) drop: &'static str,
+    /// What `ALTER COLUMN c` takes ahead of a new type in the
+    /// [`AttrStyle::Clauses`] style: the standard's `SET DATA TYPE`, or the
+    /// bare `TYPE` of Firebird, which takes no other.
+    pub(crate) retype: &'static str,
+    /// The statement a unique constraint is dropped by, for a product that
+    /// drops one as the index it is rather than as a constraint: CockroachDB's
+    /// `DROP INDEX {table}@{constraint} CASCADE`. `{table}` is the table as
+    /// the rest of the batch names it, `{constraint}` the constraint, quoted.
+    /// `None` is [`Self::constraints`]' spelling.
+    pub(crate) unique_drop: Option<&'static str>,
     /// `DEFAULT` precedes `NOT NULL` inside a column definition.
     ///
     /// Oracle, whose grammar puts the default in the datatype clause, ahead of
@@ -904,6 +927,9 @@ impl AlterStyle {
     /// Standard SQL, and what each product's row starts from.
     pub(crate) const STANDARD: Self = Self {
         add: "ADD COLUMN",
+        drop: "DROP COLUMN",
+        retype: "SET DATA TYPE",
+        unique_drop: None,
         default_first: false,
         named_reference_columns: false,
         column_rename: ColumnRename::RenameColumn,
@@ -970,7 +996,8 @@ pub fn plan_alter(alter: &TableAlter, dialect: &Dialect) -> Result<Vec<String>, 
     for name in &alter.drops {
         let name = named(name)?;
         batch.push(format!(
-            "ALTER TABLE {table} DROP COLUMN {}",
+            "ALTER TABLE {table} {} {}",
+            style.drop,
             dialect.quote_ident(name)
         ));
     }
@@ -987,7 +1014,7 @@ pub fn plan_alter(alter: &TableAlter, dialect: &Dialect) -> Result<Vec<String>, 
         if new_name.is_empty() {
             return Err(DdlError::NoNewName);
         }
-        batch.push(rename_table(&table, new_name, style, dialect));
+        batch.push(rename_table(&table, new_name, style, dialect)?);
     }
     Ok(batch)
 }
@@ -1244,7 +1271,8 @@ fn change_attributes(
         AttrStyle::Clauses => {
             if retyped {
                 batch.push(format!(
-                    "ALTER TABLE {table} ALTER COLUMN {column} SET DATA TYPE {}",
+                    "ALTER TABLE {table} ALTER COLUMN {column} {} {}",
+                    style.retype,
                     type_sql()?
                 ));
             }
@@ -1356,6 +1384,7 @@ fn rename_column(
             quote_literal(&format!("{table}.{old}")),
             quote_literal(&change.to.name)
         ),
+        ColumnRename::AlterTo => format!("ALTER TABLE {table} ALTER COLUMN {old} TO {new}"),
     })
 }
 
@@ -1370,9 +1399,14 @@ fn needs_reorg(alter: &TableAlter) -> bool {
 }
 
 /// The table rename, which is an `ALTER TABLE` everywhere but Db2 and SQL
-/// Server.
-fn rename_table(table: &str, new_name: &str, style: &AlterStyle, dialect: &Dialect) -> String {
-    match style.table_rename {
+/// Server, and nothing at all on Firebird.
+fn rename_table(
+    table: &str,
+    new_name: &str,
+    style: &AlterStyle,
+    dialect: &Dialect,
+) -> Result<String, DdlError> {
+    Ok(match style.table_rename {
         TableRename::RenameTo => format!(
             "ALTER TABLE {table} RENAME TO {}",
             dialect.quote_ident(new_name)
@@ -1386,7 +1420,14 @@ fn rename_table(table: &str, new_name: &str, style: &AlterStyle, dialect: &Diale
             quote_literal(table),
             quote_literal(new_name)
         ),
-    }
+        TableRename::None => {
+            return Err(DdlError::Unsupported {
+                dialect: *dialect,
+                what: Unsupported::TableRename,
+                column: None,
+            });
+        }
+    })
 }
 
 /// One constraint drop: `DROP CONSTRAINT n` everywhere but the MySQL family,
@@ -1398,6 +1439,9 @@ fn drop_constraint(
     dialect: &Dialect,
 ) -> Result<String, DdlError> {
     let name = dialect.quote_ident(&constraint.name);
+    if let (ConstraintKind::Unique, Some(template)) = (constraint.kind, style.unique_drop) {
+        return Ok(fill(template, &[("table", table), ("constraint", &name)]));
+    }
     Ok(match style.constraints {
         DropStyle::Named => format!("ALTER TABLE {table} DROP CONSTRAINT {name}"),
         DropStyle::PerKind { check } => match constraint.kind {
@@ -1420,6 +1464,34 @@ fn drop_constraint(
             });
         }
     })
+}
+
+/// A profile's template with its holes filled: each `{hole}` of `holes` by
+/// its value, and `{{` and `}}` as the braces they stand for. The profile's
+/// load has checked that it names no other hole.
+fn fill(template: &str, holes: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(at) = rest.find(['{', '}']) {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if tail.starts_with("{{") || tail.starts_with("}}") {
+            out.push_str(&tail[..1]);
+            rest = &tail[2..];
+            continue;
+        }
+        if let Some(close) = tail.find('}').filter(|_| tail.starts_with('{'))
+            && let Some((_, value)) = holes.iter().find(|(hole, _)| *hole == &tail[1..close])
+        {
+            out.push_str(value);
+            rest = &tail[close + 1..];
+            continue;
+        }
+        out.push_str(&tail[..1]);
+        rest = &tail[1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `name`, or [`DdlError::NoColumnName`] if it is empty.

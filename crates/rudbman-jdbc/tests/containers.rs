@@ -1,5 +1,6 @@
 //! Opt-in end-to-end tests against real PostgreSQL, MySQL, MariaDB, SQL Server,
-//! Oracle and Db2 servers.
+//! Oracle and Db2 servers, and TiDB, CockroachDB and Firebird through the
+//! profiles the application ships in `dialects/`.
 //!
 //! `tests/h2.rs` proves that Rust reads what Java wrote, and its editing
 //! section proves that the `UPDATE`s `rudbman-sql` plans and the parameters
@@ -48,8 +49,19 @@
 //! export RUDBMAN_TEST_MSSQL_URL='jdbc:sqlserver://127.0.0.1:51433;encrypt=false'
 //! export RUDBMAN_TEST_ORACLE_URL='jdbc:oracle:thin:@//127.0.0.1:51521/FREEPDB1'
 //! export RUDBMAN_TEST_DB2_URL='jdbc:db2://127.0.0.1:55000/RUDBMAN'
+//! export RUDBMAN_TEST_TIDB_URL='jdbc:mysql://127.0.0.1:54000/test?useSSL=false'
+//! export RUDBMAN_TEST_COCKROACH_URL='jdbc:postgresql://127.0.0.1:56257/defaultdb?sslmode=disable'
+//! export RUDBMAN_TEST_FIREBIRD_URL='jdbc:firebird://127.0.0.1:53050//var/lib/firebird/data/rudbman.fdb?encoding=UTF8'
 //! cargo test -p rudbman-jdbc --test containers
 //! ```
+//!
+//! TiDB, CockroachDB and Firebird have no built-in: their rows load the
+//! shipped profiles the way the application does (`sync_shipped` into a
+//! folder of the test's own) and open their sessions with them. TiDB and
+//! CockroachDB log in as `root` with no password, and their
+//! `RUDBMAN_TEST_TIDB_USER`-style variables override that. TiDB takes MySQL's
+//! driver JAR and CockroachDB PostgreSQL's; `RUDBMAN_TEST_FIREBIRD_JAR`
+//! overrides the search for Jaybird.
 //!
 //! The user and password default to `rudbman`/`rudbman`, which is what
 //! `docker/compose.yml` sets up for five of the six; `RUDBMAN_TEST_PG_USER`,
@@ -207,6 +219,15 @@ enum Product {
     /// whose `ALTER` leaves work behind: see
     /// [`db2_reorganizes_after_a_change_that_leaves_the_table_pending`].
     Db2,
+    /// TiDB, on MySQL's wire protocol, through the shipped profile
+    /// `dialects/tidb.yml` on `mysql`.
+    TiDb,
+    /// CockroachDB, on PostgreSQL's wire protocol, through the shipped
+    /// profile `dialects/cockroachdb.yml` on `postgres`.
+    Cockroach,
+    /// Firebird, through the shipped profile `dialects/firebird.yml` on
+    /// `generic` and its script.
+    Firebird,
 }
 
 impl Product {
@@ -220,6 +241,9 @@ impl Product {
             Product::MsSql => "RUDBMAN_TEST_MSSQL_URL",
             Product::Oracle => "RUDBMAN_TEST_ORACLE_URL",
             Product::Db2 => "RUDBMAN_TEST_DB2_URL",
+            Product::TiDb => "RUDBMAN_TEST_TIDB_URL",
+            Product::Cockroach => "RUDBMAN_TEST_COCKROACH_URL",
+            Product::Firebird => "RUDBMAN_TEST_FIREBIRD_URL",
         }
     }
 
@@ -231,6 +255,9 @@ impl Product {
             Product::MsSql => "com.microsoft.sqlserver.jdbc.SQLServerDriver",
             Product::Oracle => "oracle.jdbc.OracleDriver",
             Product::Db2 => "com.ibm.db2.jcc.DB2Driver",
+            Product::TiDb => "com.mysql.cj.jdbc.Driver",
+            Product::Cockroach => "org.postgresql.Driver",
+            Product::Firebird => "org.firebirdsql.jdbc.FBDriver",
         }
     }
 
@@ -256,6 +283,13 @@ impl Product {
                 "ojdbc11",
             ),
             Product::Db2 => driver_jar("RUDBMAN_TEST_DB2_JAR", "com.ibm.db2", "jcc"),
+            Product::TiDb => Product::MySql.jar(),
+            Product::Cockroach => Product::Postgres.jar(),
+            Product::Firebird => driver_jar(
+                "RUDBMAN_TEST_FIREBIRD_JAR",
+                "org.firebirdsql.jdbc",
+                "jaybird",
+            ),
         }
     }
 
@@ -272,13 +306,40 @@ impl Product {
             Product::MsSql => &Dialect::MSSQL,
             Product::Oracle => &Dialect::ORACLE,
             Product::Db2 => &Dialect::DB2,
+            Product::TiDb | Product::Cockroach | Product::Firebird => {
+                self.shipped().expect("a shipped profile").dialect
+            }
         }
+    }
+
+    /// The id of the shipped dialect profile a product is supported through.
+    fn profile_id(self) -> Option<&'static str> {
+        match self {
+            Product::TiDb => Some("tidb"),
+            Product::Cockroach => Some("cockroachdb"),
+            Product::Firebird => Some("firebird"),
+            _ => None,
+        }
+    }
+
+    /// The shipped profile a product is supported through, as a session
+    /// opens with it.
+    fn shipped(self) -> Option<Profiled> {
+        let id = self.profile_id()?;
+        let registry = registry();
+        Some(Profiled {
+            dialect: registry.dialects[id],
+            session: registry
+                .report
+                .session_profile(id)
+                .unwrap_or_else(|| panic!("the shipped profile {id} has no session")),
+        })
     }
 
     /// Whether this product folds an unquoted identifier to upper case, and so
     /// wants its table names shouted — see the module documentation.
     fn folds_upper(self) -> bool {
-        matches!(self, Product::Oracle | Product::Db2)
+        matches!(self, Product::Oracle | Product::Db2 | Product::Firebird)
     }
 
     /// `(user, password)`, from the environment or the compose file's defaults.
@@ -290,12 +351,23 @@ impl Product {
             Product::MsSql => ("RUDBMAN_TEST_MSSQL_USER", "RUDBMAN_TEST_MSSQL_PASSWORD"),
             Product::Oracle => ("RUDBMAN_TEST_ORACLE_USER", "RUDBMAN_TEST_ORACLE_PASSWORD"),
             Product::Db2 => ("RUDBMAN_TEST_DB2_USER", "RUDBMAN_TEST_DB2_PASSWORD"),
+            Product::TiDb => ("RUDBMAN_TEST_TIDB_USER", "RUDBMAN_TEST_TIDB_PASSWORD"),
+            Product::Cockroach => (
+                "RUDBMAN_TEST_COCKROACH_USER",
+                "RUDBMAN_TEST_COCKROACH_PASSWORD",
+            ),
+            Product::Firebird => (
+                "RUDBMAN_TEST_FIREBIRD_USER",
+                "RUDBMAN_TEST_FIREBIRD_PASSWORD",
+            ),
         };
         // SQL Server's `sa` password has a complexity rule `rudbman` fails, so
         // that one image gets a login of its own; `docker/compose.yml` says the
         // same thing in its header.
+        // TiDB's and CockroachDB's images come with `root` and no password.
         let (user, password) = match self {
             Product::MsSql => ("sa", "Rudbman!Passw0rd"),
+            Product::TiDb | Product::Cockroach => ("root", ""),
             _ => ("rudbman", "rudbman"),
         };
         (
@@ -321,10 +393,13 @@ impl Product {
     /// a synonym.
     fn widened(self) -> (&'static str, &'static str) {
         match self {
-            Product::Postgres => ("bigint", "int8"),
-            Product::MySql | Product::MariaDb | Product::MsSql | Product::Db2 => {
-                ("bigint", "bigint")
-            }
+            Product::Postgres | Product::Cockroach => ("bigint", "int8"),
+            Product::MySql
+            | Product::MariaDb
+            | Product::MsSql
+            | Product::Db2
+            | Product::TiDb
+            | Product::Firebird => ("bigint", "bigint"),
             Product::Oracle => ("varchar(30)", "varchar2"),
         }
     }
@@ -344,6 +419,9 @@ const WIDER_INT: &str = "bigint";
 /// Oracle has no catalog and calls the owning user the schema. Every describe
 /// below goes through [`Server::describe`] so that difference is written once.
 struct Server {
+    /// Held for the server's life where its product takes one DDL session at a
+    /// time; see [`Server::open_as`].
+    _serial: Option<std::sync::MutexGuard<'static, ()>>,
     product: Product,
     /// The SQL it is written: its product's, or a profile's.
     dialect: &'static Dialect,
@@ -377,10 +455,16 @@ impl Drop for Server {
                 .session
                 .execute(&StatementSpec::new(format!("DROP VIEW {if_exists}{view}")));
         }
+        // Firebird 5 takes no `IF EXISTS` at all.
+        let table_if_exists = if self.product == Product::Firebird {
+            ""
+        } else {
+            "IF EXISTS "
+        };
         for table in self.tables.borrow().iter().rev() {
-            let _ = self
-                .session
-                .execute(&StatementSpec::new(format!("DROP TABLE IF EXISTS {table}")));
+            let _ = self.session.execute(&StatementSpec::new(format!(
+                "DROP TABLE {table_if_exists}{table}"
+            )));
         }
     }
 }
@@ -388,11 +472,21 @@ impl Drop for Server {
 impl Server {
     /// Opens the product's server, or answers `None` and says how to get one.
     fn open(product: Product) -> Option<Server> {
-        Server::open_as(product, None)
+        Server::open_as(product, product.shipped())
     }
 
     /// [`Server::open`], its SQL and its session a profile's where there is one.
     fn open_as(product: Product, profile: Option<Profiled>) -> Option<Server> {
+        // Firebird answers a `CREATE` that runs beside another session's DDL
+        // with "update conflicts with concurrent update": its catalog takes
+        // one writer at a time. Its tests take turns.
+        static FIREBIRD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let serial = (product == Product::Firebird && std::env::var(product.url_var()).is_ok())
+            .then(|| {
+                FIREBIRD
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+            });
         let Ok(url) = std::env::var(product.url_var()) else {
             println!(
                 "skipped: no {product:?} server. Start one with \
@@ -411,10 +505,14 @@ impl Server {
         // leave the database to the driver's default, and a catalog request
         // has to name the one the session really landed in.
         let (catalog, schema) = match product {
-            Product::Postgres => (None, Some(scalar(&session, "select current_schema()"))),
-            Product::MySql | Product::MariaDb => {
+            Product::Postgres | Product::Cockroach => {
+                (None, Some(scalar(&session, "select current_schema()")))
+            }
+            Product::MySql | Product::MariaDb | Product::TiDb => {
                 (Some(scalar(&session, "select database()")), None)
             }
+            // A Firebird database has neither: every name is a table's own.
+            Product::Firebird => (None, None),
             // The one product here that has both, and the only URL that names
             // no database: `master` is where a session with nothing else asked
             // for lands, and `db_name()` is how it says so.
@@ -444,7 +542,18 @@ impl Server {
                 ),
             ),
         };
+        // TiDB parses a `CHECK` and drops it unless told to keep it, a
+        // server-wide switch an administrator sets.
+        if product == Product::TiDb {
+            scalar(&session, "select 1");
+            session
+                .execute(&StatementSpec::new(
+                    "set global tidb_enable_check_constraint = on".to_string(),
+                ))
+                .expect("TiDB keeps CHECK constraints");
+        }
         Some(Server {
+            _serial: serial,
             product,
             dialect,
             session,
@@ -722,6 +831,11 @@ impl Server {
             Product::Db2 => {
                 format!("select count(*) from syscat.checks where constname = '{name}'")
             }
+            // Nor has Firebird: a constraint is a row of RDB$RELATION_CONSTRAINTS.
+            Product::Firebird => format!(
+                "select count(*) from rdb$relation_constraints \
+                 where rdb$constraint_type = 'CHECK' and rdb$constraint_name = '{name}'"
+            ),
             _ => format!(
                 "select count(*) from information_schema.check_constraints \
                  where constraint_name = '{name}'"
@@ -733,9 +847,14 @@ impl Server {
     }
 }
 
-/// Opens one connection to `product` at `url`.
+/// Opens one connection to `product` at `url`: through its shipped profile
+/// where it has one.
 fn connect(product: Product, url: &str) -> Session {
-    connect_as(product, url, None)
+    connect_as(
+        product,
+        url,
+        product.shipped().map(|shipped| shipped.session),
+    )
 }
 
 /// Opens one connection to `product` at `url`, answered by `profile` where
@@ -763,6 +882,64 @@ fn groovy_jar() -> PathBuf {
     driver_jar("RUDBMAN_TEST_GROOVY_JAR", "org.apache.groovy", "groovy")
 }
 
+/// The dialect profiles the suites run products through, registered once
+/// for the process: every profile of the repository's `dialects/`, and
+/// [`mariadb_on_mysql`]'s `sql` half.
+struct Registry {
+    /// The shipped profiles, as the application reads them.
+    report: rudbman_core::dialects::Report,
+    /// Each shipped profile's dialect, by id.
+    dialects: std::collections::HashMap<String, &'static Dialect>,
+    /// MariaDB's SQL described on `mysql`.
+    mariadb_on_mysql: &'static Dialect,
+}
+
+/// The profiles, brought from the repository's `dialects/` into a folder of
+/// their own the way the application brings them into its configuration
+/// folder — its shipped scripts allowed as written (§12) — and loaded from
+/// there: a shipped profile is tested as the application reads it.
+fn registry() -> &'static Registry {
+    static REGISTRY: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        use rudbman_sql::dialect::profile::{self, BlockBegin, BlockRoutines, ProfileSpec};
+        let dir = tempfile::tempdir()
+            .expect("a folder for the profiles")
+            .keep();
+        rudbman_core::dialects::sync_shipped(&dir, rudbman_core::dialects::SHIPPED)
+            .expect("the shipped profiles are written");
+        let report = rudbman_core::dialects::load_from(&dir);
+        let mut dialects = std::collections::HashMap::new();
+        for entry in &report.entries {
+            let dialect = entry
+                .dialect()
+                .unwrap_or_else(|| panic!("{} does not load: {:?}", entry.id, entry.state));
+            dialects.insert(entry.id.clone(), &*Box::leak(Box::new(dialect)));
+        }
+
+        let mut spec = ProfileSpec {
+            name: "MariaDB".to_string(),
+            base: "mysql".to_string(),
+            ..ProfileSpec::default()
+        };
+        spec.alter.check_drop = Some("CONSTRAINT".to_string());
+        spec.blocks.begin = Some(BlockBegin::NotAtomic);
+        spec.blocks.routines = Some(BlockRoutines::PlSql);
+        let (_, resolved) = profile::resolve(vec![("mariadb-on-mysql".to_string(), spec)])
+            .pop()
+            .expect("one profile in, one out");
+        let mariadb = resolved.unwrap_or_else(|error| panic!("the profile resolves: {error}"));
+
+        let mut installed = report.loaded();
+        installed.push(mariadb);
+        profile::install(installed);
+        Registry {
+            report,
+            dialects,
+            mariadb_on_mysql: Box::leak(Box::new(mariadb)),
+        }
+    })
+}
+
 /// A product described by a dialect profile: the SQL its half writes, and
 /// what a session opened with it hands the bridge.
 struct Profiled {
@@ -781,24 +958,7 @@ struct Profiled {
 /// run through it against the MariaDB server as they run through the
 /// built-in.
 fn mariadb_on_mysql() -> Profiled {
-    static DIALECT: std::sync::OnceLock<&'static Dialect> = std::sync::OnceLock::new();
-    let dialect = DIALECT.get_or_init(|| {
-        use rudbman_sql::dialect::profile::{self, BlockBegin, BlockRoutines, ProfileSpec};
-        let mut spec = ProfileSpec {
-            name: "MariaDB".to_string(),
-            base: "mysql".to_string(),
-            ..ProfileSpec::default()
-        };
-        spec.alter.check_drop = Some("CONSTRAINT".to_string());
-        spec.blocks.begin = Some(BlockBegin::NotAtomic);
-        spec.blocks.routines = Some(BlockRoutines::PlSql);
-        let (_, resolved) = profile::resolve(vec![("mariadb-on-mysql".to_string(), spec)])
-            .pop()
-            .expect("one profile in, one out");
-        let dialect = resolved.unwrap_or_else(|error| panic!("the profile resolves: {error}"));
-        profile::install(vec![dialect]);
-        Box::leak(Box::new(dialect))
-    });
+    let dialect = registry().mariadb_on_mysql;
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/profiles/mariadb-on-mysql.groovy");
     Profiled {
         dialect,
@@ -947,7 +1107,10 @@ macro_rules! on_every_product {
             mariadb MariaDb,
             mssql MsSql,
             oracle Oracle,
-            db2 Db2;
+            db2 Db2,
+            tidb TiDb,
+            cockroach Cockroach,
+            firebird Firebird;
             mariadb_profile MariaDb mariadb_on_mysql,
         );
     };
@@ -1041,13 +1204,16 @@ fn create_with_constraints(server: &Server) {
             // PostgreSQL, SQL Server and Oracle resolve the omitted list to the
             // parent's own key, which is the form that stays correct when that
             // key is later re-ordered.
-            Product::Postgres | Product::MsSql | Product::Oracle | Product::Db2 => {
-                TableConstraint::foreign_key(["parent_id"], [parent.as_str()])
-            }
+            Product::Postgres
+            | Product::MsSql
+            | Product::Oracle
+            | Product::Db2
+            | Product::Cockroach
+            | Product::Firebird => TableConstraint::foreign_key(["parent_id"], [parent.as_str()]),
             // MySQL and MariaDB resolve nothing, so `plan_create` refuses the
             // shape for them. The columns are spelled out here so that the rest
             // of this test is about what it is about.
-            Product::MySql | Product::MariaDb => {
+            Product::MySql | Product::MariaDb | Product::TiDb => {
                 TableConstraint::foreign_key_to(["parent_id"], [parent.as_str()], ["id"])
             }
         }
@@ -1087,11 +1253,18 @@ fn create_with_constraints(server: &Server) {
         // of it is a name the user typed, which is why §7.10 has the structure
         // pane read a constraint's name out of the catalog before offering to
         // drop it.
-        Product::Postgres | Product::MsSql | Product::Oracle | Product::Db2 => {
+        Product::Postgres
+        | Product::MsSql
+        | Product::Oracle
+        | Product::Db2
+        | Product::Cockroach
+        | Product::Firebird => {
             assert_eq!(named.as_deref(), Some(parent_pk.as_str()));
             let invented = invented.expect("the server named the unnamed key");
             let looks_generated = match server.product {
-                Product::Postgres => invented == format!("{child}_pkey"),
+                Product::Postgres | Product::Cockroach => invented == format!("{child}_pkey"),
+                // `INTEG_<n>`, a counter of the database's own.
+                Product::Firebird => invented.starts_with("INTEG_"),
                 // `PK__rb_child__<16 hex digits>`, truncating the table name.
                 Product::MsSql => invented.starts_with("PK__"),
                 // `SQL<timestamp>`, the moment the key was created.
@@ -1109,7 +1282,7 @@ fn create_with_constraints(server: &Server) {
         // whatever the `CONSTRAINT <name>` prefix asked for. Which is exactly
         // why `ConstraintKind::PrimaryKey` drops it by no name at all there —
         // there is no name to drop it by.
-        Product::MySql | Product::MariaDb => {
+        Product::MySql | Product::MariaDb | Product::TiDb => {
             assert_eq!(named.as_deref(), Some("PRIMARY"));
             assert_eq!(invented.as_deref(), Some("PRIMARY"));
         }
@@ -1300,14 +1473,22 @@ fn add_drop_rename(server: &Server) {
     // the drop last, and the rename in between names the column the way the
     // catalog still holds it.
     let expected = match server.product {
-        Product::Postgres => vec![
+        Product::Postgres | Product::Cockroach => vec![
             format!("ALTER TABLE {t} ADD COLUMN added varchar(20) NOT NULL DEFAULT 'z'"),
             format!("ALTER TABLE {t} RENAME COLUMN old_name TO new_name"),
             format!("ALTER TABLE {t} DROP COLUMN gone"),
         ],
+        // Bare `ADD` and `DROP`, the default ahead of `NOT NULL`, and a
+        // rename that is `ALTER COLUMN a TO b`: Firebird takes no other
+        // spelling of any of the three. Quoted, because it folds up.
+        Product::Firebird => vec![
+            format!(r#"ALTER TABLE {t} ADD "added" varchar(20) DEFAULT 'z' NOT NULL"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "old_name" TO "new_name""#),
+            format!(r#"ALTER TABLE {t} DROP "gone""#),
+        ],
         // `CHANGE COLUMN old new <definition>`, the form that works before
         // MySQL 8.0 as well as after — which is why it restates the type.
-        Product::MySql | Product::MariaDb => vec![
+        Product::MySql | Product::MariaDb | Product::TiDb => vec![
             format!("ALTER TABLE {t} ADD COLUMN added varchar(20) NOT NULL DEFAULT 'z'"),
             format!("ALTER TABLE {t} CHANGE COLUMN old_name new_name integer"),
             format!("ALTER TABLE {t} DROP COLUMN gone"),
@@ -1362,6 +1543,9 @@ on_products!(changes_a_type_a_nullability_and_a_default => attribute_changes:
     mariadb MariaDb,
     oracle Oracle,
     db2 Db2,
+    tidb TiDb,
+    cockroach Cockroach,
+    firebird Firebird,
 );
 
 /// Every attribute change the generator can write, in one batch: nullability
@@ -1423,7 +1607,7 @@ fn attribute_changes(server: &Server) {
 
     let expected = match server.product {
         // The standard family: an independent clause per attribute.
-        Product::Postgres => vec![
+        Product::Postgres | Product::Cockroach => vec![
             format!("ALTER TABLE {t} ALTER COLUMN to_not_null SET NOT NULL"),
             format!("ALTER TABLE {t} ALTER COLUMN to_nullable DROP NOT NULL"),
             format!("ALTER TABLE {t} ALTER COLUMN gains_default SET DEFAULT 'd'"),
@@ -1433,7 +1617,7 @@ fn attribute_changes(server: &Server) {
         // MySQL restates — except for a default on its own, which `ALTER
         // COLUMN` changes as metadata where `MODIFY` would rewrite the table.
         // Both spellings are sent here, which is the point of listing them.
-        Product::MySql | Product::MariaDb => vec![
+        Product::MySql | Product::MariaDb | Product::TiDb => vec![
             format!("ALTER TABLE {t} MODIFY COLUMN to_not_null integer NOT NULL"),
             format!("ALTER TABLE {t} MODIFY COLUMN to_nullable integer"),
             format!("ALTER TABLE {t} ALTER COLUMN gains_default SET DEFAULT 'd'"),
@@ -1461,6 +1645,14 @@ fn attribute_changes(server: &Server) {
             format!(r#"ALTER TABLE {t} ALTER COLUMN "loses_default" DROP DEFAULT"#),
             format!(r#"ALTER TABLE {t} ALTER COLUMN "widens" SET DATA TYPE {wider}"#),
             format!("CALL SYSPROC.ADMIN_CMD('REORG TABLE {t}')"),
+        ],
+        // The standard clauses but the type's, which is a bare `TYPE`.
+        Product::Firebird => vec![
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "to_not_null" SET NOT NULL"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "to_nullable" DROP NOT NULL"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "gains_default" SET DEFAULT 'd'"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "loses_default" DROP DEFAULT"#),
+            format!(r#"ALTER TABLE {t} ALTER COLUMN "widens" TYPE {wider}"#),
         ],
         Product::MsSql => unreachable!("SQL Server cannot express half of this batch"),
     };
@@ -2150,6 +2342,9 @@ on_products!(drops_a_constraint_of_every_kind => drop_every_constraint:
     mssql MsSql,
     oracle Oracle,
     db2 Db2,
+    tidb TiDb,
+    cockroach Cockroach,
+    firebird Firebird,
 );
 
 /// The test that split the dialect in two, and the reason `DialectId::MariaDb`
@@ -2279,16 +2474,26 @@ fn drop_every_constraint(server: &Server) {
     let expected = match server.product {
         // One spelling, whatever the kind — the kind is carried only because
         // MySQL needs it.
-        Product::Postgres | Product::MsSql | Product::Oracle | Product::Db2 => vec![
+        Product::Postgres | Product::MsSql | Product::Oracle | Product::Db2 | Product::Firebird => {
+            vec![
+                format!("ALTER TABLE {child} DROP CONSTRAINT {fk}"),
+                format!("ALTER TABLE {child} DROP CONSTRAINT {pk}"),
+                format!("ALTER TABLE {child} DROP CONSTRAINT {uq}"),
+                format!("ALTER TABLE {child} DROP CONSTRAINT {ck}"),
+            ]
+        }
+        // A unique constraint is the index it is: CockroachDB drops it as
+        // one, and the profile's `alter.unique_drop` says how.
+        Product::Cockroach => vec![
             format!("ALTER TABLE {child} DROP CONSTRAINT {fk}"),
             format!("ALTER TABLE {child} DROP CONSTRAINT {pk}"),
-            format!("ALTER TABLE {child} DROP CONSTRAINT {uq}"),
+            format!("DROP INDEX {child}@{uq} CASCADE"),
             format!("ALTER TABLE {child} DROP CONSTRAINT {ck}"),
         ],
         // Four. Note that the primary key is dropped by no name at all, which
         // is just as well: the MySQL family called it `PRIMARY` rather than
         // what the `CREATE` asked for.
-        Product::MySql => vec![
+        Product::MySql | Product::TiDb => vec![
             format!("ALTER TABLE {child} DROP FOREIGN KEY {fk}"),
             format!("ALTER TABLE {child} DROP PRIMARY KEY"),
             format!("ALTER TABLE {child} DROP INDEX {uq}"),
@@ -2305,13 +2510,39 @@ fn drop_every_constraint(server: &Server) {
         ],
     };
     assert_eq!(batch, expected, "{:?}", server.product);
-    server.run(&batch);
+    // TiDB keeps a clustered primary key, and CockroachDB any primary key,
+    // for as long as the table lives: each refuses to drop one on its own
+    // and says why, and the other three still go.
+    let keeps_its_key = matches!(server.product, Product::TiDb | Product::Cockroach);
+    if keeps_its_key {
+        for (at, statement) in batch.iter().enumerate() {
+            let sent = server
+                .session
+                .execute(&StatementSpec::new(statement.clone()));
+            if at == 1 {
+                let error = sent.expect_err("the primary key stays");
+                assert!(
+                    error.to_string().to_lowercase().contains("primary key"),
+                    "{:?}: {error}",
+                    server.product
+                );
+            } else {
+                sent.unwrap_or_else(|error| panic!("{:?}: {statement}: {error}", server.product));
+            }
+        }
+    } else {
+        server.run(&batch);
+    }
 
-    assert!(
-        server.primary_key(&child).is_empty(),
-        "{:?}: the primary key is still there",
-        server.product
-    );
+    if keeps_its_key {
+        assert_eq!(server.primary_key(&child), ["id"], "{:?}", server.product);
+    } else {
+        assert!(
+            server.primary_key(&child).is_empty(),
+            "{:?}: the primary key is still there",
+            server.product
+        );
+    }
     assert!(
         server.references(&child).is_empty(),
         "{:?}: the foreign key is still there",
@@ -2356,6 +2587,26 @@ fn rename_table(server: &Server) {
 
     let mut alter = TableAlter::new([before.as_str()]);
     alter.rename_to = Some(after.clone());
+    // Firebird has no rename: the profile says so, and the editor is told
+    // why before anything is sent.
+    if server.product == Product::Firebird {
+        let error = plan_alter(&alter, server.dialect()).expect_err("Firebird cannot rename");
+        assert!(
+            matches!(
+                error,
+                rudbman_sql::DdlError::Unsupported {
+                    what: rudbman_sql::Unsupported::TableRename,
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("Firebird cannot rename a table"),
+            "{error}"
+        );
+        return;
+    }
     let batch = plan_alter(&alter, server.dialect()).expect("plans");
     let expected = match server.product {
         // Not `ALTER TABLE` at all: the old name is a string literal and the
@@ -2851,6 +3102,32 @@ fn postgres_comments_come_back_as_remarks() {
     assert_comments(&server, &t);
 }
 
+/// TiDB's, through MySQL's comment queries and the profile on `mysql`, the
+/// view placeholder included.
+#[test]
+fn tidb_comments_come_back_as_remarks() {
+    let server = server!(Product::TiDb);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+    assert_no_view_placeholder(&server, &t);
+}
+
+#[test]
+fn cockroach_comments_come_back_as_remarks() {
+    let server = server!(Product::Cockroach);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+}
+
+/// Firebird keeps a comment as RDB$DESCRIPTION, which Jaybird reports as
+/// `REMARKS`.
+#[test]
+fn firebird_comments_come_back_as_remarks() {
+    let server = server!(Product::Firebird);
+    let t = commented_table(&server);
+    assert_comments(&server, &t);
+}
+
 /// MySQL's, with the placeholder its `information_schema` puts on a view.
 ///
 /// `information_schema.TABLES.TABLE_COMMENT` is not a comment column: for a
@@ -2926,7 +3203,7 @@ fn db2_comments_come_back_as_remarks() {
 fn commented_table(server: &Server) -> String {
     let t = server.table("comment");
     match server.product {
-        Product::MySql | Product::MariaDb => {
+        Product::MySql | Product::MariaDb | Product::TiDb => {
             server.exec(&format!(
                 "create table {t} (\
                    id integer not null comment '{COLUMN_COMMENT}', \
@@ -2947,7 +3224,11 @@ fn commented_table(server: &Server) -> String {
                 // all take. The column has to be named the way it was stored,
                 // so it goes through `Server::col` — quoted where the product
                 // folds up, bare elsewhere.
-                Product::Postgres | Product::Oracle | Product::Db2 => {
+                Product::Postgres
+                | Product::Oracle
+                | Product::Db2
+                | Product::Cockroach
+                | Product::Firebird => {
                     server.exec(&format!("comment on table {t} is '{TABLE_COMMENT}'"));
                     server.exec(&format!(
                         "comment on column {t}.{} is '{COLUMN_COMMENT}'",
@@ -2980,7 +3261,9 @@ fn commented_table(server: &Server) -> String {
                          @level2type=N'COLUMN', @level2name=N'id'"
                     ));
                 }
-                Product::MySql | Product::MariaDb => unreachable!("handled above"),
+                Product::MySql | Product::MariaDb | Product::TiDb => {
+                    unreachable!("handled above")
+                }
             }
         }
     }
@@ -3173,8 +3456,22 @@ on_every_product!(lists_each_routine_once_and_quotes_its_ddl => routines);
 fn routines(server: &Server) {
     let function = server.fresh("fn");
     let procedure = server.fresh("proc");
+    // TiDB has no stored routines at all: the folders answer none.
+    if server.product == Product::TiDb {
+        for kind in ["procedures", "functions"] {
+            let mut request = DescribeRequest::new(kind);
+            request.catalog = server.catalog.clone();
+            let items = server
+                .session
+                .describe(&request)
+                .unwrap_or_else(|error| panic!("TiDb: describe {kind}: {error}"))
+                .items;
+            assert!(items.is_empty(), "TiDb lists {kind}: {items:?}");
+        }
+        return;
+    }
     let (create_function, create_procedure, drop_function, drop_procedure) = match server.product {
-        Product::Postgres => (
+        Product::Postgres | Product::Cockroach => (
             format!(
                 "create function {function}(a int, b int) returns int \
                  language sql as 'select a + b'"
@@ -3236,6 +3533,21 @@ fn routines(server: &Server) {
             format!("drop function {function}"),
             format!("drop procedure {procedure}"),
         ),
+        // PSQL: a declaration ahead of the body, and a selectable procedure
+        // that hands its output back with SUSPEND.
+        Product::Firebird => (
+            format!(
+                "create function {function}(a int, b int) returns int as \
+                 declare x int = 0; begin if (a > b) then x = a; return a + b + x; end"
+            ),
+            format!(
+                "create procedure {procedure}(who varchar(20)) returns (msg varchar(100)) as \
+                 begin msg = 'hi ' || who; suspend; end"
+            ),
+            format!("drop function {function}"),
+            format!("drop procedure {procedure}"),
+        ),
+        Product::TiDb => unreachable!("answered above"),
     };
 
     server.exec(&create_procedure);
@@ -3425,6 +3737,9 @@ fn routine_and_trigger_drops(server: &Server) {
                 "create trigger {trigger} before insert on {table} for each row set new.id = new.id"
             ),
         ),
+        Product::TiDb | Product::Cockroach | Product::Firebird => {
+            unreachable!("not a product of this suite")
+        }
         Product::MsSql => (
             "procedures",
             vec![format!(
@@ -3544,6 +3859,9 @@ fn routine_and_trigger_drops(server: &Server) {
             vec![format!("DROP PROCEDURE {catalog}.{routine}")]
         }
         Product::Oracle => vec![format!("DROP FUNCTION {schema}.{routine}")],
+        Product::TiDb | Product::Cockroach | Product::Firebird => {
+            unreachable!("not a product of this suite")
+        }
     };
     server.run(&drops);
     assert!(
@@ -3566,6 +3884,9 @@ fn routine_and_trigger_drops(server: &Server) {
             }
             Product::MySql | Product::MariaDb => format!("DROP TRIGGER {catalog}.{trigger}"),
             Product::Oracle | Product::Db2 => format!("DROP TRIGGER {schema}.{trigger}"),
+            Product::TiDb | Product::Cockroach | Product::Firebird => {
+                unreachable!("not a product of this suite")
+            }
         };
         server.run(std::slice::from_ref(&drop));
         assert!(
@@ -3849,9 +4170,15 @@ fn every_kind(server: &Server) {
     ));
 
     let has_sequences = product != Product::MySql;
+    // Firebird's sequences keep no cache to set.
+    let cache = if product == Product::Firebird {
+        ""
+    } else {
+        " cache 20"
+    };
     let _sequence = has_sequences.then(|| {
         server.exec(&format!(
-            "create sequence {sequence} start with 100 increment by 5 cache 20"
+            "create sequence {sequence} start with 100 increment by 5{cache}"
         ));
         DropOnExit {
             server,
@@ -3861,7 +4188,7 @@ fn every_kind(server: &Server) {
 
     let mut guards = Vec::new();
     let create_trigger = match product {
-        Product::Postgres => {
+        Product::Postgres | Product::Cockroach => {
             let function = server.fresh("objtrgfn");
             server.exec(&format!(
                 "create function {function}() returns trigger language plpgsql \
@@ -3891,18 +4218,25 @@ fn every_kind(server: &Server) {
             "create or replace trigger {trigger} no cascade before insert on {table} \
              referencing new as n for each row set n.{note} = upper(n.{note})"
         ),
+        Product::Firebird => format!(
+            "create trigger {trigger} for {table} before insert as \
+             begin new.{note} = upper(new.{note}); end"
+        ),
+        // TiDB has no triggers.
+        Product::TiDb => String::new(),
     };
-    let has_trigger = match server
-        .session
-        .execute(&StatementSpec::new(create_trigger.clone()))
-    {
-        Ok(_) => true,
-        Err(error) if product == Product::MySql && error.to_string().contains("SUPER") => {
-            println!("skipped the trigger half: MySQL wants SUPER for it here: {error}");
-            false
-        }
-        Err(error) => panic!("{product:?}: {create_trigger}: {error}"),
-    };
+    let has_trigger = !create_trigger.is_empty()
+        && match server
+            .session
+            .execute(&StatementSpec::new(create_trigger.clone()))
+        {
+            Ok(_) => true,
+            Err(error) if product == Product::MySql && error.to_string().contains("SUPER") => {
+                println!("skipped the trigger half: MySQL wants SUPER for it here: {error}");
+                false
+            }
+            Err(error) => panic!("{product:?}: {create_trigger}: {error}"),
+        };
 
     let describe = |kind: &str, name: Option<&str>, types: Option<&[&str]>| {
         let mut request = DescribeRequest::new(kind);
@@ -4176,4 +4510,261 @@ fn profile_answers(server: &Server) {
         "{product:?}: the detected profile answers"
     );
     detected.close().expect("closes");
+}
+
+// --- rows, pages, plans and backups -----------------------------------------
+
+on_products!(edits_pages_explains_and_backs_up_rows => rows_and_backup:
+    tidb TiDb,
+    cockroach Cockroach,
+    firebird Firebird,
+);
+
+/// A planned statement's bind value as the bridge takes it.
+fn bind(value: &rudbman_sql::DmlValue) -> rudbman_jdbc::Param {
+    use rudbman_jdbc::Param;
+    use rudbman_sql::DmlKind;
+    let Some(text) = value.text() else {
+        return Param::Null;
+    };
+    match value.kind() {
+        DmlKind::I64 => Param::I64(text.parse().expect("the planner was given an integer")),
+        DmlKind::Decimal => Param::Decimal(text.to_string()),
+        DmlKind::Bool => Param::Bool(text == "true"),
+        DmlKind::Date => Param::Date(text.to_string()),
+        DmlKind::Time => Param::Time(text.to_string()),
+        DmlKind::Timestamp => Param::Timestamp(text.to_string()),
+        DmlKind::Str | DmlKind::Bytes => Param::Str(text.to_string()),
+    }
+}
+
+/// The paths the grid and the backup take on a product a shipped profile
+/// describes: the grid's edits as `plan_edits` plans them, sent with their
+/// binds; a page read through the profile's page clause; a plan read through
+/// its `EXPLAIN`; and a backup of a table, a view and a sequence with their
+/// rows, which, run back with the script splitter, gives the rows and the
+/// sequence back as they were.
+///
+/// Each runs in a namespace of its own where the product has one — a
+/// database on TiDB, a schema on CockroachDB — so that the backup holds this
+/// test's objects and nothing a test beside it is making; Firebird's tests
+/// take turns.
+fn rows_and_backup(server: &Server) {
+    use rudbman_jdbc::{BackupDataOptions, BackupObjects, BackupSpec, DdlOptions};
+    use rudbman_sql::{DmlKind, DmlValue, RowUpdate};
+    let product = server.product;
+    let space = server.fresh("bk");
+    let _space = match product {
+        Product::TiDb => {
+            server.exec(&format!("create database {space}"));
+            Some(DropOnExit {
+                server,
+                drop: format!("drop database if exists {space}"),
+            })
+        }
+        Product::Cockroach => {
+            server.exec(&format!("create schema {space}"));
+            Some(DropOnExit {
+                server,
+                drop: format!("drop schema if exists {space} cascade"),
+            })
+        }
+        _ => None,
+    };
+    let path = |name: &str| -> Vec<String> {
+        match product {
+            Product::TiDb | Product::Cockroach => vec![space.clone(), name.to_string()],
+            _ => vec![name.to_string()],
+        }
+    };
+    let qualified = |name: &str| {
+        server
+            .dialect()
+            .qualify(path(name).iter().map(String::as_str))
+    };
+    let (table, view, sequence) = (
+        server.fresh("rows"),
+        server.fresh("rowsv"),
+        server.fresh("rowseq"),
+    );
+    let (t, v, s) = (qualified(&table), qualified(&view), qualified(&sequence));
+    let mut cleanup = Vec::new();
+    if product == Product::Firebird {
+        // No namespace to drop whole: each object, the view first.
+        for drop in [
+            format!("drop view {v}"),
+            format!("drop table {t}"),
+            format!("drop sequence {s}"),
+        ] {
+            cleanup.push(DropOnExit { server, drop });
+        }
+    }
+    let (id, note, qty) = (server.col("id"), server.col("note"), server.col("qty"));
+
+    let mut create = TableCreate::new(path(&table));
+    create
+        .columns
+        .push(ColumnDef::new("id", "integer").with_not_null(true));
+    create.columns.push(ColumnDef::new("note", "varchar(20)"));
+    create.columns.push(ColumnDef::new("qty", "integer"));
+    create
+        .constraints
+        .push(TableConstraint::primary_key(["id"]));
+    server.run(&plan_create(&create, server.dialect()).expect("plans"));
+    server.exec(&format!(
+        "create view {v} as select {id}, {note} from {t} where {qty} > 0"
+    ));
+    server.exec(&format!("create sequence {s} start with 10 increment by 1"));
+
+    // The grid's edits: five rows in, one changed, one gone.
+    let read = || {
+        let batch = fetch(
+            &server.session,
+            &format!("select {id}, {note}, {qty} from {t} order by {id}"),
+        );
+        (0..batch.rows())
+            .map(|row| {
+                (0..3)
+                    .map(|c| text(&batch, row, c).unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join("|")
+            })
+            .collect::<Vec<_>>()
+    };
+    let apply = |edits: &TableEdits| {
+        for statement in plan_edits(edits, server.dialect()).expect("the edits plan") {
+            server
+                .session
+                .execute(
+                    &StatementSpec::new(statement.sql.clone())
+                        .with_params(statement.values.iter().map(bind)),
+                )
+                .unwrap_or_else(|error| panic!("{product:?}: {}: {error}", statement.sql));
+        }
+    };
+    let mut edits = TableEdits::new(path(&table), ["id", "note", "qty"]).with_key([0]);
+    for n in 1..=5 {
+        edits.inserts.push(vec![
+            InsertCell::Set(DmlValue::new(DmlKind::I64, n.to_string())),
+            InsertCell::Set(DmlValue::new(DmlKind::Str, format!("n{n}"))),
+            InsertCell::Set(DmlValue::new(DmlKind::I64, (n * 10).to_string())),
+        ]);
+    }
+    apply(&edits);
+    let mut edits = TableEdits::new(path(&table), ["id", "note", "qty"]).with_key([0]);
+    edits.updates.push(RowUpdate {
+        key: vec![DmlValue::new(DmlKind::I64, "3")],
+        set: vec![(2, DmlValue::new(DmlKind::I64, "300"))],
+    });
+    edits.deletes.push(vec![DmlValue::new(DmlKind::I64, "2")]);
+    apply(&edits);
+    let rows = read();
+    assert_eq!(
+        rows,
+        ["1|n1|10", "3|n3|300", "4|n4|40", "5|n5|50"],
+        "{product:?}"
+    );
+
+    // A page, through the profile's clause.
+    let clause = server
+        .dialect()
+        .page_clause(2, 2)
+        .expect("the product pages");
+    let page = fetch(
+        &server.session,
+        &format!("select {id} from {t} order by {id} {clause}"),
+    );
+    assert_eq!(
+        (0..page.rows())
+            .map(|row| text(&page, row, 0).unwrap_or_default())
+            .collect::<Vec<_>>(),
+        ["4", "5"],
+        "{product:?}: {clause}"
+    );
+
+    // A plan, where the profile has a way to ask for one; Firebird has none.
+    match rudbman_sql::explain(*server.dialect(), &format!("select {id} from {t}")) {
+        Some(explain) => {
+            for sql in &explain.before {
+                server.exec(sql);
+            }
+            let plan = fetch(&server.session, &explain.plan);
+            assert!(plan.rows() > 0, "{product:?}: {}", explain.plan);
+            for sql in &explain.after {
+                server.exec(sql);
+            }
+        }
+        None => assert_eq!(product, Product::Firebird, "only Firebird has no EXPLAIN"),
+    }
+
+    // The sequence moved on from its start, to be resumed where it stands.
+    let next = match product {
+        Product::TiDb => format!("select nextval({s})"),
+        Product::Cockroach => format!("select nextval('{s}')"),
+        _ => format!("select next value for {s} from rdb$database"),
+    };
+    for _ in 0..3 {
+        scalar(&server.session, &next);
+    }
+
+    let dir = tempfile::tempdir().expect("a folder for the backup");
+    let file = dir.path().join("backup.sql");
+    let mut spec = BackupSpec::new(&file)
+        .with_ddl(DdlOptions::included().with_drop(true))
+        .with_objects(BackupObjects::all())
+        .with_data(BackupDataOptions::included());
+    spec = match product {
+        Product::TiDb => spec.with_catalog(space.clone()),
+        Product::Cockroach => spec.with_schema(space.clone()),
+        _ => spec,
+    };
+    let mut job = server
+        .session
+        .start_backup(&spec)
+        .expect("the backup starts");
+    let end = (0..2400)
+        .find_map(|_| {
+            let progress = job.poll().expect("the job answers a poll");
+            if progress.is_terminal() {
+                return Some(progress);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            None
+        })
+        .expect("the backup ends");
+    assert_eq!(end.state, JobState::Done, "{product:?}: {end:?}");
+    assert!(end.errors.is_empty(), "{product:?}: {:?}", end.errors);
+    let script = std::fs::read_to_string(&file).expect("the backup is UTF-8");
+    println!("{product:?} backup:\n{script}");
+
+    // Run back over the schema: its DROPs first, then everything again.
+    let statements = rudbman_sql::split_script(&script, server.dialect())
+        .unwrap_or_else(|error| panic!("{product:?}: the backup splits: {error:?}"));
+    for statement in &statements {
+        server
+            .session
+            .execute(&StatementSpec::new(statement.sql.clone()))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{product:?}: line {}: {}\n{error}",
+                    statement.line, statement.sql
+                )
+            });
+    }
+    assert_eq!(read(), rows, "{product:?}: the rows came back");
+    let view_rows = fetch(&server.session, &format!("select count(*) from {v}"));
+    assert_eq!(
+        text(&view_rows, 0, 0).as_deref(),
+        Some("4"),
+        "{product:?}: the view came back"
+    );
+    // Past the last value handed out: at the next one, or on TiDB at the next
+    // block no node has cached, which is where it resumes so that no cached
+    // value is handed out twice.
+    let resumed: i64 = scalar(&server.session, &next).parse().expect("a number");
+    if product == Product::TiDb {
+        assert!(resumed > 12, "TiDb: the sequence resumes at {resumed}");
+    } else {
+        assert_eq!(resumed, 13, "{product:?}: the sequence resumes");
+    }
 }

@@ -407,6 +407,8 @@ class ProfileVendorTest {
                 return new Object[]{"00FF"};
             case "routineRemarks":
                 return new Object[]{"Standalone procedure or function"};
+            case "routineText":
+                return new Object[]{h2, id, "db", "app", "f", true};
             case "sequences":
                 return new Object[]{h2, id, "db", "app", "s1"};
             case "triggers":
