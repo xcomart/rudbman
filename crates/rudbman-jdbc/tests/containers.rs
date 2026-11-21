@@ -3703,6 +3703,61 @@ fn mariadb_reads_a_fraction_of_a_second_as_the_server_holds_it() {
     );
 }
 
+/// The same over the binary protocol, where the driver writes a `TIME`'s
+/// fraction wrong too (`.005` as `….5000`) — a `TIME` beyond a day or below
+/// zero included — and a `DATETIME`'s as over the text protocol.
+#[test]
+fn mariadb_reads_a_time_over_the_binary_protocol_as_the_server_holds_it() {
+    let server = server!(Product::MariaDb);
+    let table = server.table("bfrac");
+    server.exec(&format!(
+        "create table {table} (id int primary key, t3 time(3), t5 time(5), d3 datetime(3))"
+    ));
+    server.exec(&format!(
+        "insert into {table} values \
+         (1, '10:00:00.005', '125:00:00.00006', '2026-11-21 02:21:39.064'), \
+         (2, '-838:59:59.005', '10:00:00.12345', '2026-11-21 02:21:39.123')"
+    ));
+    let url = std::env::var(Product::MariaDb.url_var()).expect("the server is up");
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let binary = connect(
+        Product::MariaDb,
+        &format!("{url}{separator}useServerPrepStmts=true"),
+    );
+    let batch = binary
+        .execute(
+            &StatementSpec::new(format!(
+                "select t3, t5, d3 from {table} where id > ? order by id"
+            ))
+            .with_params([rudbman_jdbc::Param::I64(0)]),
+        )
+        .unwrap_or_else(|error| panic!("{error}"))
+        .fetch(10)
+        .expect("the batch decodes");
+    let row = |at: usize| {
+        (0..3)
+            .map(|column| text(&batch, at, column).unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        row(0),
+        [
+            "10:00:00.005000",
+            "125:00:00.000060",
+            "2026-11-21 02:21:39.064000"
+        ]
+    );
+    assert_eq!(
+        row(1),
+        [
+            "-838:59:59.005000",
+            "10:00:00.123450",
+            "2026-11-21 02:21:39.123000"
+        ]
+    );
+    binary.close().expect("closes");
+}
+
 /// MariaDB through its profile on `mysql` answers a sequence exactly as the
 /// built-in does — listed, read by name, and written with its own `CREATE` —
 /// where MySQL, the profile's base, has no sequences at all: the script's

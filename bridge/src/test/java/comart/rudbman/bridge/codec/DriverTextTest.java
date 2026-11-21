@@ -36,6 +36,17 @@ class DriverTextTest {
     }
 
     @Test
+    void aTimesFractionIsMendedTheSameWay() {
+        // TIME(3) over the binary protocol, and beyond a day or below zero.
+        assertEquals("10:00:00.005000", DriverText.mended("10:00:00.5000", 5_000_000));
+        assertEquals("-838:59:59.005000", DriverText.mended("-838:59:59.5000", 5_000_000));
+        assertEquals("125:00:00.000060", DriverText.mended("125:00:00.00060", 60_000));
+        // The server's own text, over the text protocol, is right.
+        assertEquals("10:00:00.005", DriverText.mended("10:00:00.005", 5_000_000));
+        assertEquals("-00:00:01.500000", DriverText.mended("-00:00:01.500000", 500_000_000));
+    }
+
+    @Test
     void whatFollowsTheFractionStays() {
         assertEquals(DAY + "064000 +09:00", DriverText.mended(DAY + "64000 +09:00", 64_000_000));
     }

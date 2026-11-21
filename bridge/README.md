@@ -611,8 +611,9 @@ Points a decoder has to get right:
 - the driver's own text is the only authority on which time zone was applied, so
   time-zone handling stays on this side of the boundary. The one exception is
   a fraction of a second a driver writes wrong: MariaDB Connector/J drops its
-  leading zeros below six digits (`.064` as `.64000`), and
-  `codec/DriverText.java` rewrites that fraction from `getTimestamp`, for the
+  leading zeros below six digits (`.064` as `.64000`) in a `DATETIME` or
+  `TIMESTAMP`, and in a `TIME` over the binary protocol (upstream CONJ-1385),
+  and `codec/DriverText.java` rewrites that fraction from the value, for the
   grid, a script's literals and an extract's text alike;
 - sorting is the server's job via `ORDER BY`.
 
