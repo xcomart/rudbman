@@ -1,6 +1,6 @@
 //! Opt-in end-to-end tests against real PostgreSQL, MySQL, MariaDB, SQL Server,
 //! Oracle and Db2 servers, and TiDB, CockroachDB and Firebird through the
-//! profiles the application ships in `dialects/`.
+//! profiles the application ships, rudbkit's `dialects/`.
 //!
 //! `tests/h2.rs` proves that Rust reads what Java wrote, and its editing
 //! section proves that the `UPDATE`s `rudbman-sql` plans and the parameters
@@ -883,7 +883,7 @@ fn groovy_jar() -> PathBuf {
 }
 
 /// The dialect profiles the suites run products through, registered once
-/// for the process: every profile of the repository's `dialects/`, and
+/// for the process: every profile of rudbkit's `dialects/`, and
 /// [`mariadb_on_mysql`]'s `sql` half.
 struct Registry {
     /// The shipped profiles, as the application reads them.
@@ -894,7 +894,7 @@ struct Registry {
     mariadb_on_mysql: &'static Dialect,
 }
 
-/// The profiles, brought from the repository's `dialects/` into a folder of
+/// The profiles, brought from rudbkit's `dialects/` into a folder of
 /// their own the way the application brings them into its configuration
 /// folder — its shipped scripts allowed as written (§12) — and loaded from
 /// there: a shipped profile is tested as the application reads it.

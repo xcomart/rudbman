@@ -148,9 +148,10 @@ Read their setup requirements and select only the relevant tests with
 ## Adding a database product
 
 A product supported from now on ships as a profile — YAML, and Groovy where
-the bridge needs it — rather than as new code: a `<id>.yml` in
-[`dialects/`](dialects/), whose `driver` section brings its driver definition
-along; see [the profile design](docs/dialect-profiles.md), §4 for the format
+the bridge needs it — rather than as new code: a `<id>.yml` in rudbkit's
+[`dialects/`](https://github.com/xcomart/rudbkit/tree/dev/dialects), whose
+`driver` section brings its driver definition along, and which rudbgen ships
+too; see [the profile design](docs/dialect-profiles.md), §4 for the format
 and §12 for how it reaches users. The driver manager's **Export…** writes any
 dialect out as a profile to start from. The steps below are what changing one
 of the built-in products takes, and what a product took before profiles.

@@ -1,4 +1,7 @@
+use std::fs;
+
 use super::*;
+use rudbkit_core::dialects::{ALLOWED_FILE_NAME, BUILT_IN, hash};
 
 /// A profile on `mysql` bringing a driver of its own.
 const TIDB: &str = "\
@@ -17,10 +20,6 @@ driver:
 
 fn write(dir: &Path, name: &str, text: &str) {
     fs::write(dir.join(name), text).expect("write");
-}
-
-fn read(dir: &Path, name: &str) -> Option<String> {
-    fs::read_to_string(dir.join(name)).ok()
 }
 
 #[test]
@@ -121,119 +120,6 @@ fn a_pending_update_is_noticed_and_not_loaded() {
 }
 
 // --------------------------------------------------------------- shipping
-
-const V1: Shipped = Shipped {
-    name: "tidb.yml",
-    contents: b"version 1",
-};
-const V2: Shipped = Shipped {
-    name: "tidb.yml",
-    contents: b"version 2",
-};
-
-#[test]
-fn a_file_never_offered_is_written_and_recorded() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let dir = dir.path().join("dialects");
-    let synced = sync_shipped(&dir, &[V1]).expect("sync");
-    assert_eq!(synced.written, ["tidb.yml"]);
-    assert_eq!(read(&dir, "tidb.yml").as_deref(), Some("version 1"));
-    assert!(read(&dir, RECORD_FILE_NAME).is_some());
-
-    let again = sync_shipped(&dir, &[V1]).expect("sync");
-    assert_eq!(again, Synced::default(), "nothing more to do");
-}
-
-#[test]
-fn nothing_shipped_writes_nothing() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let dir = dir.path().join("dialects");
-    sync_shipped(&dir, &[]).expect("sync");
-    assert!(!dir.exists(), "no directory made for nothing");
-}
-
-#[test]
-fn a_deleted_file_stays_deleted() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    sync_shipped(dir.path(), &[V1]).expect("sync");
-    fs::remove_file(dir.path().join("tidb.yml")).expect("delete");
-    let synced = sync_shipped(dir.path(), &[V2]).expect("sync");
-    assert_eq!(synced, Synced::default());
-    assert_eq!(read(dir.path(), "tidb.yml"), None, "a newer version too");
-    assert_eq!(read(dir.path(), "tidb.yml.new"), None);
-}
-
-#[test]
-fn an_unchanged_file_takes_the_newer_version() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    sync_shipped(dir.path(), &[V1]).expect("sync");
-    let synced = sync_shipped(dir.path(), &[V2]).expect("sync");
-    assert_eq!(synced.replaced, ["tidb.yml"]);
-    assert_eq!(read(dir.path(), "tidb.yml").as_deref(), Some("version 2"));
-}
-
-#[test]
-fn a_changed_file_is_kept_and_the_newer_version_waits_beside_it() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    sync_shipped(dir.path(), &[V1]).expect("sync");
-    write(dir.path(), "tidb.yml", "mine");
-    let synced = sync_shipped(dir.path(), &[V2]).expect("sync");
-    assert_eq!(synced.beside, ["tidb.yml"]);
-    assert_eq!(read(dir.path(), "tidb.yml").as_deref(), Some("mine"));
-    assert_eq!(
-        read(dir.path(), "tidb.yml.new").as_deref(),
-        Some("version 2")
-    );
-
-    // Offered once: the next start leaves both as they are.
-    assert_eq!(
-        sync_shipped(dir.path(), &[V2]).expect("sync"),
-        Synced::default()
-    );
-    assert_eq!(
-        read(dir.path(), "tidb.yml.new").as_deref(),
-        Some("version 2")
-    );
-
-    // Taken: the `.new` has done its work.
-    write(dir.path(), "tidb.yml", "version 2");
-    sync_shipped(dir.path(), &[V2]).expect("sync");
-    assert_eq!(read(dir.path(), "tidb.yml.new"), None);
-
-    // And the file, now as offered, follows the next version again.
-    let v3 = Shipped {
-        name: "tidb.yml",
-        contents: b"version 3",
-    };
-    assert_eq!(
-        sync_shipped(dir.path(), &[v3]).expect("sync").replaced,
-        ["tidb.yml"]
-    );
-}
-
-#[test]
-fn a_users_own_file_of_the_same_name_is_not_overwritten() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    write(dir.path(), "tidb.yml", "mine from before");
-    let synced = sync_shipped(dir.path(), &[V1]).expect("sync");
-    assert_eq!(synced.beside, ["tidb.yml"]);
-    assert_eq!(
-        read(dir.path(), "tidb.yml").as_deref(),
-        Some("mine from before")
-    );
-    assert_eq!(
-        read(dir.path(), "tidb.yml.new").as_deref(),
-        Some("version 1")
-    );
-}
-
-#[test]
-fn an_unreadable_record_decides_nothing() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    write(dir.path(), RECORD_FILE_NAME, "{ not json");
-    assert!(sync_shipped(dir.path(), &[V1]).is_err());
-    assert_eq!(read(dir.path(), "tidb.yml"), None);
-}
 
 /// Every profile the application ships loads, among the others it ships, and
 /// every script it ships belongs to one.
@@ -473,73 +359,6 @@ fn an_allow_list_that_cannot_be_read_allows_nothing() {
     );
 }
 
-const SCRIPT_V1: Shipped = Shipped {
-    name: "tidb.groovy",
-    contents: b"// version 1",
-};
-const SCRIPT_V2: Shipped = Shipped {
-    name: "tidb.groovy",
-    contents: b"// version 2",
-};
-const SCRIPT_V3: Shipped = Shipped {
-    name: "tidb.groovy",
-    contents: b"// version 3",
-};
-
-fn allowed_hash(dir: &Path, name: &str) -> Option<String> {
-    read_allowed(dir)
-        .expect("allowed.json")
-        .scripts
-        .get(name)
-        .cloned()
-}
-
-#[test]
-fn a_shipped_script_is_allowed_as_the_application_writes_it() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    sync_shipped(dir.path(), &[V1, SCRIPT_V1]).expect("sync");
-    assert_eq!(
-        allowed_hash(dir.path(), "tidb.groovy"),
-        Some(hash(SCRIPT_V1.contents))
-    );
-    assert_eq!(
-        allowed_hash(dir.path(), "tidb.yml"),
-        None,
-        "a profile is no script"
-    );
-
-    // A newer version replaces one the user left alone, and stays allowed.
-    sync_shipped(dir.path(), &[V1, SCRIPT_V2]).expect("sync");
-    assert_eq!(
-        allowed_hash(dir.path(), "tidb.groovy"),
-        Some(hash(SCRIPT_V2.contents))
-    );
-
-    // Edited, it is the user's: the update waits beside it, and the edit
-    // needs allowing.
-    write(dir.path(), "tidb.groovy", "// the user's");
-    sync_shipped(dir.path(), &[V1, SCRIPT_V3]).expect("sync");
-    assert_eq!(
-        read(dir.path(), "tidb.groovy").as_deref(),
-        Some("// the user's")
-    );
-    assert_eq!(
-        allowed_hash(dir.path(), "tidb.groovy"),
-        Some(hash(SCRIPT_V2.contents)),
-        "what was allowed is not what is there"
-    );
-}
-
-#[test]
-fn a_shipped_script_the_user_turned_off_stays_off_across_an_update() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    sync_shipped(dir.path(), &[SCRIPT_V1]).expect("sync");
-    disallow_in(dir.path(), "tidb.groovy").expect("disallow");
-    let synced = sync_shipped(dir.path(), &[SCRIPT_V2]).expect("sync");
-    assert_eq!(synced.replaced, ["tidb.groovy"]);
-    assert_eq!(allowed_hash(dir.path(), "tidb.groovy"), None);
-}
-
 #[test]
 fn the_groovy_runtime_is_the_one_the_bridge_is_tested_on() {
     let gradle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bridge/build.gradle");
@@ -552,7 +371,7 @@ fn the_groovy_runtime_is_the_one_the_bridge_is_tested_on() {
 
 // ------------------------------------------------------- shipped products
 
-/// The shipped profiles of the repository's `dialects/`, as the
+/// The shipped profiles of rudbkit's `dialects/`, as the
 /// application loads them: synced into a folder of their own, then read.
 fn shipped_report() -> (tempfile::TempDir, Report) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -687,4 +506,19 @@ fn the_shipped_products_bring_their_drivers_and_firebird_its_script() {
         );
         assert!(runs_script(&report.session_profile(id).expect("loaded")));
     }
+}
+
+/// rudbkit's list of the built-ins a chain of bases ends in, which rudbgen
+/// reads by, is this build's: every built-in by its name and aliases.
+#[test]
+fn rudbkits_built_ins_are_these() {
+    let ours: Vec<(&str, Vec<&str>)> = Dialect::ALL
+        .iter()
+        .map(|dialect| (dialect.name(), dialect.aliases().to_vec()))
+        .collect();
+    let theirs: Vec<(&str, Vec<&str>)> = BUILT_IN
+        .iter()
+        .map(|(name, aliases)| (*name, aliases.to_vec()))
+        .collect();
+    assert_eq!(theirs, ours);
 }

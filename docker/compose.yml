@@ -3,7 +3,7 @@
 # `crates/rudbman-jdbc/tests/containers.rs` sends the SQL `rudbman-sql`'s `ddl`
 # module writes to a real PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, and
 # Db2, and to TiDB, CockroachDB and Firebird through the profiles shipped in
-# `dialects/`, and reads the catalog back. Nothing in the workspace needs these to be up:
+# rudbkit's `dialects/`, and reads the catalog back. Nothing in the workspace needs these to be up:
 # with the environment variables below unset every one of those tests passes
 # by doing nothing, which is what keeps `cargo test --workspace` green on a
 # machine with no Docker.
@@ -176,7 +176,7 @@ services:
       retries: 60
 
   # The three products rudbman supports through a shipped dialect profile
-  # (`dialects/`) rather than a built-in, run by the same suites
+  # (rudbkit's `dialects/`) rather than a built-in, run by the same suites
   # (docs/dialect-profiles.md, §12).
   #
   # TiDB, on MySQL's wire protocol. The image runs a whole cluster in one

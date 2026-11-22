@@ -7,37 +7,25 @@
 //! [`Dialect::from_id`] finds it; what every file came to is kept as a
 //! [`Report`] for the driver manager to show.
 
-use std::collections::BTreeMap;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result};
+use rudbkit_core::dialects::{
+    Allowed, Listing, listing, pending_beside, profile_files, read_allowed, read_text,
+};
 use rudbman_sql::Dialect;
 use rudbman_sql::dialect::profile::{self, ProfileSpec};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::DriverDef;
 use crate::dialect_profile;
-use crate::paths::{dialects_dir, strip_bom, write_atomic};
+use crate::paths::dialects_dir;
 
-/// A profile file's extension.
-const PROFILE_EXTENSION: &str = "yml";
-
-/// What a script beside a profile is, when the profile names none.
-const SCRIPT_EXTENSION: &str = "groovy";
-
-/// Appended to a shipped file's name for its newer version, written beside a
-/// file the user has changed.
-const PENDING_SUFFIX: &str = ".new";
-
-/// The record of the shipped files, in the profiles' directory.
-const RECORD_FILE_NAME: &str = "shipped.json";
-
-/// The scripts the user has allowed, in the profiles' directory (§6).
-const ALLOWED_FILE_NAME: &str = "allowed.json";
+/// The directory's files, the scripts the user has allowed and the shipped
+/// profiles are rudbkit's, which rudbgen reads the same way.
+pub use rudbkit_core::dialects::{
+    SHIPPED, Script, Shipped, Synced, allow_in, disallow_in, sync_shipped,
+};
 
 /// The Groovy runtime a profile's script runs on (§5.3), as Maven Central
 /// names it. It is not bundled: the application downloads it into the drivers
@@ -78,22 +66,6 @@ pub struct Entry {
     /// loaded: its id, the built-in its chain of bases ends in, and its
     /// `bridge` half merged along that chain. See the bridge's `Profiles`.
     pub session: Option<serde_json::Value>,
-}
-
-/// A profile's script (§5), as it stands in the profiles' directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Script {
-    /// Its name in the directory, as `bridge.script` gives it.
-    pub name: String,
-    /// The file.
-    pub path: PathBuf,
-    /// The SHA-256 of what the file holds, in lower-case hex: what
-    /// `allowed.json` records of an allowed script.
-    pub sha256: String,
-    /// Whether sessions run it: the user has allowed this version of it, or
-    /// the application wrote it as it is (§6, §12). Not allowed, the profile
-    /// loads without it.
-    pub allowed: bool,
 }
 
 impl Entry {
@@ -216,21 +188,13 @@ impl Report {
                 continue;
             };
             let path = dir.join(&name);
-            let text = fs::read(&path)
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| {
-                    let sha256 = hash(&bytes);
-                    String::from_utf8(strip_bom(&bytes).to_vec())
-                        .map(|text| (sha256, text))
-                        .map_err(|_| "the file is not UTF-8".to_string())
-                });
-            match text {
+            match read_text(&path) {
                 Err(error) => {
                     entry.state = State::Failed(format!("bridge.script: {name}: {error}"));
                     entry.session = None;
                 }
                 Ok((sha256, text)) => {
-                    let ok = allowed.scripts.get(&name) == Some(&sha256);
+                    let ok = allowed.allows(&name, &sha256);
                     if ok && let Some(session) = entry.session.as_mut() {
                         session["script"] = serde_json::json!({
                             "path": path.display().to_string(),
@@ -325,30 +289,26 @@ pub fn load_from(dir: &Path) -> Report {
             bridge: serde_json::json!({}),
             session: None,
         };
-        match fs::read(&path) {
-            Err(error) => entry.state = State::Failed(error.to_string()),
-            Ok(bytes) => match String::from_utf8(strip_bom(&bytes).to_vec()) {
-                Err(_) => entry.state = State::Failed("the file is not UTF-8".to_string()),
-                Ok(text) => match dialect_profile::parse(&id, &text) {
-                    Err(error) => entry.state = State::Failed(error.message),
-                    Ok(file) => {
-                        entry.name = Some(file.spec.name.clone());
-                        entry.base = Some(file.spec.base.clone());
-                        entry.script = file.script().map(str::to_string);
-                        if let Some(bridge) = &file.bridge {
-                            entry.bridge = serde_json::to_value(bridge)
-                                .unwrap_or_else(|_| serde_json::json!({}));
-                        }
-                        entry.driver = file
-                            .driver
-                            .as_ref()
-                            .map(|driver| driver.definition(&id, &file.spec.name));
-                        read.push((report.entries.len(), id.clone(), file.spec));
+        match read_text(&path) {
+            Err(error) => entry.state = State::Failed(error),
+            Ok((_, text)) => match dialect_profile::parse(&id, &text) {
+                Err(error) => entry.state = State::Failed(error.message),
+                Ok(file) => {
+                    entry.name = Some(file.spec.name.clone());
+                    entry.base = Some(file.spec.base.clone());
+                    entry.script = file.script().map(str::to_string);
+                    if let Some(bridge) = &file.bridge {
+                        entry.bridge =
+                            serde_json::to_value(bridge).unwrap_or_else(|_| serde_json::json!({}));
                     }
-                },
+                    entry.driver = file.driver.as_ref().map(|driver| {
+                        dialect_profile::driver_definition(driver, &id, &file.spec.name)
+                    });
+                    read.push((report.entries.len(), id.clone(), file.spec));
+                }
             },
         }
-        entry.pending = pending_beside(dir, &entry);
+        entry.pending = pending_beside(dir, &entry.path, &entry.id, entry.script.as_deref());
         report.entries.push(entry);
     }
 
@@ -404,121 +364,8 @@ pub fn runs_script(session: &serde_json::Value) -> bool {
         .is_some_and(|script| !script.is_null())
 }
 
-// ------------------------------------------------------------------- trust
-
-/// `allowed.json`: each script the user has allowed, by its name in the
-/// directory, with the SHA-256 of the version allowed (§6).
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct Allowed {
-    #[serde(default)]
-    scripts: BTreeMap<String, String>,
-}
-
-/// `dir`'s `allowed.json`; none allows nothing.
-fn read_allowed(dir: &Path) -> Result<Allowed> {
-    let path = dir.join(ALLOWED_FILE_NAME);
-    match read_optional(&path)? {
-        None => Ok(Allowed::default()),
-        Some(bytes) => serde_json::from_slice(strip_bom(&bytes))
-            .with_context(|| format!("failed to parse {}", path.display())),
-    }
-}
-
-fn write_allowed(dir: &Path, allowed: &Allowed) -> Result<()> {
-    let json = serde_json::to_vec_pretty(allowed).context("failed to serialize the allow list")?;
-    write_atomic(&dir.join(ALLOWED_FILE_NAME), &json)
-}
-
-/// Allows `script` as it was read — by the hash it had then, so that a file
-/// changed since is still not run — in the profiles' directory `dir`.
-///
-/// # Errors
-///
-/// Fails when `allowed.json` cannot be read or written.
-pub fn allow_in(dir: &Path, script: &Script) -> Result<()> {
-    let mut allowed = read_allowed(dir)?;
-    allowed
-        .scripts
-        .insert(script.name.clone(), script.sha256.clone());
-    write_allowed(dir, &allowed)
-}
-
-/// Takes the script `name` off the allow list of `dir`: sessions open
-/// without it until it is allowed again.
-///
-/// # Errors
-///
-/// Fails when `allowed.json` cannot be read or written.
-pub fn disallow_in(dir: &Path, name: &str) -> Result<()> {
-    let mut allowed = read_allowed(dir)?;
-    if allowed.scripts.remove(name).is_some() {
-        write_allowed(dir, &allowed)?;
-    }
-    Ok(())
-}
-/// The `*.yml` files of `dir` by id, in id order.
-fn profile_files(dir: &Path) -> io::Result<Vec<(String, PathBuf)>> {
-    let mut files = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some(PROFILE_EXTENSION) {
-            continue;
-        }
-        let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
-        if path.is_file() {
-            files.push((id.to_string(), path.clone()));
-        }
-    }
-    files.sort();
-    Ok(files)
-}
-
-/// The `.new` files beside `entry`'s profile and its script.
-fn pending_beside(dir: &Path, entry: &Entry) -> Vec<PathBuf> {
-    let script = entry
-        .script
-        .clone()
-        .unwrap_or_else(|| format!("{}.{SCRIPT_EXTENSION}", entry.id));
-    let mut pending = Vec::new();
-    for file in [entry.path.clone(), dir.join(script)] {
-        let candidate = pending_path(&file);
-        if candidate.is_file() && !pending.contains(&candidate) {
-            pending.push(candidate);
-        }
-    }
-    pending
-}
-
-/// `<file>.new`.
-fn pending_path(file: &Path) -> PathBuf {
-    let mut name = file.as_os_str().to_os_string();
-    name.push(PENDING_SUFFIX);
-    PathBuf::from(name)
-}
-
 /// What the last [`reload`] came to, and the directory as it stood then.
 static CURRENT: RwLock<Option<(Arc<Report>, Listing)>> = RwLock::new(None);
-
-/// Every file of the profiles' directory with its size and time: what tells a
-/// [`reload`] that nothing changed since the last.
-type Listing = Vec<(PathBuf, u64, Option<std::time::SystemTime>)>;
-
-/// The directory's [`Listing`], empty where it cannot be read.
-fn listing(dir: &Path) -> Listing {
-    let mut listing: Listing = fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let meta = entry.metadata().ok()?;
-            Some((entry.path(), meta.len(), meta.modified().ok()))
-        })
-        .collect();
-    listing.sort();
-    listing
-}
 
 /// What the last [`reload`] came to; an empty report before the first.
 pub fn current() -> Arc<Report> {
@@ -610,166 +457,6 @@ pub fn start_up() -> Arc<Report> {
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     reload()
-}
-
-// ----------------------------------------------------------- shipped files
-
-/// A file the application ships into `<config>/dialects`.
-#[derive(Debug, Clone, Copy)]
-pub struct Shipped {
-    /// Its name in the directory, `<id>.yml` or a script beside one.
-    pub name: &'static str,
-    /// What the application writes.
-    pub contents: &'static [u8],
-}
-
-/// The files of the repository's `dialects/` folder, compiled in by the build
-/// script.
-pub const SHIPPED: &[Shipped] = include!(concat!(env!("OUT_DIR"), "/shipped_dialects.rs"));
-
-/// `shipped.json`: for each shipped file, the hash of the version last
-/// offered to the directory.
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct Record {
-    #[serde(default)]
-    files: BTreeMap<String, String>,
-}
-
-/// What [`sync_shipped`] did.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Synced {
-    /// Files written where there was none.
-    pub written: Vec<String>,
-    /// Files the user had not changed, replaced by a newer version.
-    pub replaced: Vec<String>,
-    /// Files the user has changed, whose newer version was written beside
-    /// them as `<file>.new`.
-    pub beside: Vec<String>,
-}
-
-/// Brings `shipped` into `dir` by the rules of §12.
-///
-/// For each file, `shipped.json` holds the hash of the version last offered:
-///
-/// 1. A file never offered is written. If the directory already holds a file
-///    of that name — the user's own — it is left alone and the shipped one is
-///    written beside it.
-/// 2. A file offered and since deleted stays deleted.
-/// 3. A file as it was offered is replaced by a newer version.
-/// 4. A file the user has changed is left as it is, and the newer version is
-///    written beside it as `<file>.new`.
-///
-/// A `.new` is removed once the file beside it is the shipped version or the
-/// `.new` itself — the user has taken it.
-///
-/// A script the application writes is allowed by its hash as it is written
-/// (§12): one written where there was none, and the newer version of one the
-/// user had allowed as it was. A script the user has turned off stays off, and
-/// one the user has changed is the user's, which asks (§6).
-///
-/// # Errors
-///
-/// Fails when the directory cannot be read or written, or `shipped.json` or
-/// `allowed.json` cannot be read; nothing is decided from a record that
-/// could not be read.
-pub fn sync_shipped(dir: &Path, shipped: &[Shipped]) -> Result<Synced> {
-    let record_path = dir.join(RECORD_FILE_NAME);
-    let mut record: Record = match read_optional(&record_path)? {
-        None => Record::default(),
-        Some(bytes) => serde_json::from_slice(strip_bom(&bytes))
-            .with_context(|| format!("failed to parse {}", record_path.display()))?,
-    };
-    let mut allowed = read_allowed(dir)?;
-    let mut synced = Synced::default();
-    let mut changed = false;
-    let mut allow_changed = false;
-    for file in shipped {
-        let path = dir.join(file.name);
-        let ours = hash(file.contents);
-        let mut on_disk = read_optional(&path)?;
-        let theirs = on_disk.as_deref().map(hash);
-        let offered = record.files.get(file.name);
-        let name = file.name.to_string();
-        if offered == Some(&ours) {
-            // Nothing newer than what the directory was offered.
-        } else {
-            match (offered, theirs) {
-                (_, Some(theirs)) if theirs == ours => {}
-                (None, None) => {
-                    write_atomic(&path, file.contents)?;
-                    on_disk = Some(file.contents.to_vec());
-                    if is_script(file.name) {
-                        allowed.scripts.insert(name.clone(), ours.clone());
-                        allow_changed = true;
-                    }
-                    synced.written.push(name);
-                }
-                (Some(_), None) => {}
-                (Some(offered), Some(theirs)) if theirs == *offered => {
-                    write_atomic(&path, file.contents)?;
-                    on_disk = Some(file.contents.to_vec());
-                    if is_script(file.name) && allowed.scripts.get(&name) == Some(offered) {
-                        allowed.scripts.insert(name.clone(), ours.clone());
-                        allow_changed = true;
-                    }
-                    synced.replaced.push(name);
-                }
-                (_, Some(_)) => {
-                    write_atomic(&pending_path(&path), file.contents)?;
-                    synced.beside.push(name);
-                }
-            }
-            record.files.insert(file.name.to_string(), ours.clone());
-            changed = true;
-        }
-        if let Some(on_disk) = on_disk {
-            tidy_pending(&path, &on_disk, file.contents)?;
-        }
-    }
-    if allow_changed {
-        write_allowed(dir, &allowed)?;
-    }
-    if changed {
-        let json = serde_json::to_vec_pretty(&record).context("failed to serialize the record")?;
-        write_atomic(&record_path, &json)?;
-    }
-    Ok(synced)
-}
-
-/// Whether a shipped file is a script rather than a profile.
-fn is_script(name: &str) -> bool {
-    !name.ends_with(&format!(".{PROFILE_EXTENSION}"))
-}
-
-/// Removes `<path>.new` once `path` holds the shipped version or the `.new`
-/// itself.
-fn tidy_pending(path: &Path, on_disk: &[u8], shipped: &[u8]) -> Result<()> {
-    let pending = pending_path(path);
-    let Some(waiting) = read_optional(&pending)? else {
-        return Ok(());
-    };
-    if on_disk == shipped || on_disk == waiting.as_slice() {
-        fs::remove_file(&pending)
-            .with_context(|| format!("failed to remove {}", pending.display()))?;
-    }
-    Ok(())
-}
-
-/// The SHA-256 of `bytes`, in lower-case hex.
-fn hash(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-/// A file's contents, or `None` when there is no file.
-fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
-    match fs::read(path) {
-        Ok(data) => Ok(Some(data)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
-    }
 }
 
 /// `dialect` written as a profile file with every key filled in — the

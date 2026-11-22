@@ -57,9 +57,9 @@ repository = "https://github.com/xcomart/rudbman"
 
 [workspace.dependencies]
 # Shared database infrastructure; keep all three crates on the same revision.
-rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "ff20f3f2c95774d0604f3cea5dff366b6593856b" }
-rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "ff20f3f2c95774d0604f3cea5dff366b6593856b" }
-rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "ff20f3f2c95774d0604f3cea5dff366b6593856b" }
+rudbkit-core = { git = "https://github.com/xcomart/rudbkit", rev = "2ff0cbf03f81f6f629fdf81bd135fbf9e1331ab4" }
+rudbkit-ssh = { git = "https://github.com/xcomart/rudbkit", rev = "2ff0cbf03f81f6f629fdf81bd135fbf9e1331ab4" }
+rudbkit-jdbc = { git = "https://github.com/xcomart/rudbkit", rev = "2ff0cbf03f81f6f629fdf81bd135fbf9e1331ab4" }
 
 # --- shared utilities ---
 anyhow = "1"
@@ -74,11 +74,6 @@ serde_json = "1"
 # manifest gives: of the maintained `serde_yaml` forks it is the one whose
 # libyaml binding still receives releases.
 serde_norway = "0.9"
-# The record of the dialect profiles the application ships into the
-# configuration directory, and later the scripts the user has allowed, are
-# SHA-256 hashes (`docs/dialect-profiles.md`, §6 and §12). Already in the build
-# through the TLS and SSH stacks.
-sha2 = "0.11"
 uuid = { version = "1", features = ["v4", "serde"] }
 # The explorer filter's "matches the expression" condition. Already in the
 # tree through the editor's crates, so this adds a name, not a build.

@@ -372,6 +372,11 @@ impl Dialect {
         self.vendor.name()
     }
 
+    /// The other spellings [`Self::find`] reads as this dialect.
+    pub fn aliases(self) -> &'static [&'static str] {
+        self.vendor.aliases()
+    }
+
     /// The product's name as a person writes it (`SQL Server` where
     /// [`Self::name`] is `mssql`), for a picker or a message.
     pub fn product(self) -> &'static str {

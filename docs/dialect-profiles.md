@@ -502,8 +502,10 @@ open session and its credentials. So:
   profile and asks its base otherwise.
 - How a profile is *spelled* is `rudbman_core::dialect_profile`: `parse` and
   `to_yaml` over `serde_norway`, every key checked and an unknown one reported
-  with its line. The `bridge` half is `dialect_profile::bridge::BridgeSpec`
-  since phase 3, checked the same way and its template holes too.
+  with its line. The envelope, the `bridge` half (`BridgeSpec`, its template
+  holes checked too) and the `driver` section are rudbkit's
+  (`rudbkit_core::dialects`), which rudbgen reads them with; the `sql` half is
+  rudbman's own, the type `rudbkit_core::dialects::parse` is given.
 - The registry has a runtime half. `Dialect::ALL` stays the built-ins;
   `profile::install` registers resolved profiles, leaked to `'static`, and
   `Dialect::from_id` searches built-ins first, then them.
@@ -524,8 +526,10 @@ open session and its credentials. So:
   has not changed since the last keeps the last, so opening the list leaks
   nothing.
 - `start_up` first brings in the shipped files by §12's rules
-  (`sync_shipped`). The build script of `rudbman-core` compiles in the
-  repository's `dialects/` as `dialects::SHIPPED`.
+  (`sync_shipped`). The build script of `rudbkit-core` compiles in rudbkit's
+  `dialects/` as `dialects::SHIPPED`, so both applications ship the same
+  files; the directory's rules (`shipped.json`, `allowed.json`, the `.new`
+  files) are rudbkit's too.
 - A loaded profile's `driver` section is offered to `drivers.json` with the
   built-ins, recorded in the same `offered_builtins` list: once, and a
   definition deleted stays deleted.
@@ -587,24 +591,38 @@ open session and its credentials. So:
 
 ### The first shipped products (implemented)
 
-- `dialects/` holds TiDB, CockroachDB and Firebird (§12.1). The format grew
+- rudbkit's `dialects/` holds TiDB, CockroachDB and Firebird (§12.1). The format grew
   what they needed: `alter.drop`, `alter.retype`, `alter.unique_drop`,
   `column_rename: alter_to`, `table_rename: none` with
   `unsupported_reasons.table_rename`, and the `constraint` hole.
 - API 1 has `routineText`, and the built-ins' `routineText` is public in
   `Vendor`.
 
-### rudbgen and rudbkit
+### rudbgen and rudbkit (implemented)
 
-- The profile format, its parsing and its validation move to `rudbkit-core`
-  once rudbman's are settled, so both applications read the same file. A file
-  written for one works in the other.
-- rudbgen reads only the `bridge` half (its bridge answers comments), so a
-  profile there needs no `sql` half; one that has it is accepted and ignored.
-  A driver definition's own custom comment queries, which rudbgen already lets
+- `rudbkit_core::dialects` holds what both applications read the same way:
+  the envelope (`api`, `name`, `base`, `aliases`), the `bridge` half, the
+  `driver` section, the directory's files (`profile_files`, the `.new`
+  files), the allow list and the shipped profiles with `sync_shipped`. Its
+  `parse` takes the `sql` half's type: rudbman's checks every key, rudbgen
+  reads it as `serde::de::IgnoredAny`. A file written for one works in the
+  other. `BUILT_IN` lists the built-ins a chain of bases ends in, with their
+  aliases; a rudbman test holds it to `Dialect::ALL`.
+- rudbgen's `rudbgen_core::dialects` loads its `<config>/dialects` at
+  start-up, after the same sync: a profile loads once its chain of bases ends
+  in a built-in. Its `driver` section is offered to `drivers.json` as
+  rudbman offers it, and a session of a driver naming it, or of a generic
+  driver whose server the profile's `detect` names, sends the bridge
+  `profile` or `detect_profiles` as rudbman's does.
+- rudbgen's bridge reads `detect`, `catalog_is_schema` and `comments`
+  (`meta/ProfileVendor.java`) over the built-in the chain ends in, and
+  stands on that built-in for everything else. It runs no script: the driver
+  manager says so under the dialect, with where the profile was read from,
+  why it did not load or that a newer version waits beside it.
+- A driver definition's own custom comment queries, which rudbgen already lets
   a user write, win over the profile's: they are the more specific of the two.
 - Each application reads its own configuration directory. Sharing one is
-  §10's open question.
+  §11's open question.
 
 ## 9. Testing
 
@@ -645,14 +663,15 @@ open session and its credentials. So:
   drops a constraint of every kind as the built-in does, and the bridge's
   `backupRoundTrip` that its backup restores and is the built-in's, line for
   line.
-- **Shipped products** (§12.1): the container suites load `dialects/` as
-  the application does and run every shared suite against TiDB, CockroachDB
+- **Shipped products** (§12.1): the container suites load rudbkit's
+  `dialects/` as the application does and run every shared suite against TiDB, CockroachDB
   and Firebird; `edits_pages_explains_and_backs_up_rows` sends the grid's
   planned edits, a page, a plan and a backup that is run back and gives the
   rows, the view and the sequence again; each has its comment test.
   `rudbman-core`'s tests check the Firebird and CockroachDB `ALTER`
   spellings, a Firebird routine kept whole by the splitter, and the drivers
-  and scripts the three bring.
+  and scripts the three bring. rudbgen's container suite reads the catalog
+  and the comments of the three through the same profiles.
 
 ## 10. Phases
 
@@ -695,10 +714,10 @@ and `<Product>Vendor.java`: it is a profile, and a Groovy script where its
 bridge needs one, shipped with the application. The built-ins of today stay in
 code (§1).
 
-- **In the repository** the shipped profiles sit in `dialects/` at the root,
-  each `<id>.yml` with its `<id>.groovy` beside it, and are compiled into the
-  binary, the way the locales are. There are none yet; `rudbman-core`'s tests
-  load every one there is. A shipped profile is tested like a built-in:
+- **In the repository** the shipped profiles sit in rudbkit's `dialects/`,
+  each `<id>.yml` with its `<id>.groovy` beside it, and are compiled into
+  `rudbkit-core` and with it into both applications. rudbkit's tests read
+  every one there is, and `rudbman-core`'s load them. A shipped profile is tested like a built-in:
   the round trip, and the container suites against a server of its product.
   The first are `tidb` (on `mysql`), `cockroachdb` (on `postgres`) and
   `firebird` (on `generic`, with `firebird.groovy`); §12.1 says what each

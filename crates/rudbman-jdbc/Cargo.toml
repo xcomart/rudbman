@@ -35,8 +35,8 @@ rudbman-sql.workspace = true
 # live `Job` and what it is testing is a job that has been dropped.
 serde_json.workspace = true
 # The container suites run the products the application supports through a
-# shipped dialect profile, and read those profiles from the repository's
-# `dialects/` the way the application does: brought into a folder of their
+# shipped dialect profile, and read those profiles from rudbkit's `dialects/`
+# the way the application does: brought into a folder of their
 # own, then loaded. Acyclic too: `rudbman-core` does not depend on this crate.
 rudbman-core.workspace = true
 tempfile.workspace = true
