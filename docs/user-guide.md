@@ -226,7 +226,9 @@ beside it — asks **Keep editing**, **Discard** or **Save**.
 
 **Drivers…** turns the connection dialog into the driver manager. A driver
 definition is a name, the driver class, a URL template, a default port, a SQL
-dialect, a Maven coordinate and the JAR files.
+dialect, a Maven coordinate and the JAR files. Each driver is drawn with its
+product's logo, in the manager's list and in the connection dialog's
+**Driver** picker.
 
 Eight products are defined out of the box, each with the dialect rudbman uses
 for its highlighting, quoting, paging and DDL:
@@ -241,6 +243,15 @@ for its highlighting, quoting, paging and DDL:
 | Oracle Thin | `com.oracle.database.jdbc:ojdbc11:23.6.0.24.10` | `jdbc:oracle:thin:@//{host}:{port}/{service}` | 1521 |
 | Microsoft SQL Server | `com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11` | `jdbc:sqlserver://{host}:{port};databaseName={database}` | 1433 |
 | IBM Db2 | `com.ibm.db2:jcc:12.1.5.0` | `jdbc:db2://{host}:{port}/{database}` | 50000 |
+
+Three more come as [dialect profiles](#dialect-profiles), and join the list the
+first time rudbman starts with them:
+
+| Driver | Maven coordinate | URL template | Port |
+| --- | --- | --- | --- |
+| TiDB | `com.mysql:mysql-connector-j:9.1.0` | `jdbc:mysql://{host}:{port}/{database}` | 4000 |
+| CockroachDB | `org.postgresql:postgresql:42.7.4` | `jdbc:postgresql://{host}:{port}/{database}` | 26257 |
+| Firebird | `org.firebirdsql.jdbc:jaybird:6.0.7` | `jdbc:firebird://{host}:{port}/{database}?encoding=UTF8` | 3050 |
 
 None of them comes with its JAR. To give a driver one:
 
@@ -271,6 +282,88 @@ leaves without saving them.
 
 > **H2 embedded.** The H2 template reaches an H2 server. For a database file,
 > edit the profile's **URL** to `jdbc:h2:file:/path/to/db`.
+
+### Dialect profiles
+
+A dialect profile describes a database product rudbman has no built-in support
+for, on top of one it has: a YAML file, `<id>.yml`, in the `dialects` folder
+of the [configuration directory](#the-configuration-directory). It says how the
+product's SQL differs from its base — keywords, paging, `ALTER TABLE`
+spellings — how its catalog is read, and the driver definition it brings.
+rudbgen reads the same files.
+
+rudbman ships three: **TiDB** on MySQL, **CockroachDB** on PostgreSQL and
+**Firebird** on generic SQL. Some things their products cannot do: TiDB has no
+triggers or stored routines, CockroachDB will not drop a primary key on its
+own, and Firebird cannot rename a table. rudbman refuses the last with a
+sentence that says so, as it does for the
+[built-in products](#what-each-database-cannot-do); the server refuses the
+others.
+
+In the driver manager, the **Dialect** picker lists the built-in dialects, then
+every profile as "*name* — profile *file*". Under it a line says what the
+chosen profile stands on and where it was read from; one that did not load
+says why, and its drivers use generic SQL until it is fixed — the list marks
+such a driver *profile did not load*. **Open folder** opens the `dialects`
+folder, and **Export…** writes the chosen dialect out as a profile, to start a
+product like it from. The folder is read again whenever the driver manager
+opens.
+
+A new release may carry a newer version of a shipped profile. A file you have
+not changed is replaced by it; one you have changed is kept, and the newer
+version is written beside it as `<file>.new`, which the picker points out —
+take what you want of it, then delete it. A shipped file you delete stays
+deleted.
+
+#### Writing a profile
+
+Save a file like this as `acme.yml` in the `dialects` folder, and open the
+driver manager:
+
+```yaml
+api: 1
+name: Acme DB
+base: postgres                 # the dialect it stands on, or another profile
+sql:
+  page_clause: "LIMIT {limit} OFFSET {offset}"
+bridge:
+  detect: [acme]               # words of the server's product name
+driver:
+  class: com.acme.jdbc.Driver
+  maven: com.acme:acme-jdbc:1.2.3
+  url_template: "jdbc:acme://{host}:{port}/{database}"
+  default_port: 5555
+  icon: acme.svg               # an image beside the profile, or a logo's name
+```
+
+A key the format does not have, or a value of the wrong kind, keeps the
+profile from loading, and the line under the picker gives the file and the
+line. Everything a profile can say is in the
+[profile format](dialect-profiles.md#4-the-profile-format).
+
+#### Scripts
+
+What a profile cannot say as data, a Groovy script beside it can
+(`bridge.script`). A script runs with rudbman's rights — it can read your
+files and see every open connection — so it runs only once you allow it. The
+line under the picker says whether the chosen profile's script runs.
+**Allow script…** shows the script's path and asks; **Allow and run it** allows
+that version of the file, and **Keep it off** leaves it off. **Turn off** stops
+an allowed one. A script that changes asks again, and until it is allowed the
+profile's sessions use the rest of the profile without it. The scripts rudbman
+ships are allowed as shipped.
+
+The first session that runs a script downloads the Groovy runtime from Maven
+Central into the `drivers` folder.
+
+#### Logos
+
+`icon` names a logo rudbman ships — `mysql`, `postgresql`, `tidb`,
+`cockroachdb`, `firebird`, `db2` and the rest — or an image file: PNG, JPEG,
+WebP, GIF, BMP, ICO or SVG, by an absolute path or one relative to the
+`dialects` folder. A file is read again when it changes. One that cannot be
+read as an image gives way to the definition's own icon or the dialect's logo,
+and the driver manager says so.
 
 ### Connecting, and when it fails
 
@@ -1448,7 +1541,8 @@ typing and <kbd>Ctrl</kbd>+<kbd>V</kbd> work as in a data tab.
 | `settings.json` | The [settings](#settingsjson) |
 | `connections.json` | The connection profiles — never a password |
 | `drivers.json` | The driver definitions |
-| `drivers/` | Driver JARs downloaded from Maven Central |
+| `drivers/` | Driver JARs downloaded from Maven Central, and the Groovy runtime profile scripts run on |
+| `dialects/` | [Dialect profiles](#dialect-profiles), their scripts and images; `shipped.json` records what rudbman wrote there, and `allowed.json` the scripts you allowed |
 | `known_hosts` | The SSH bastions' host keys |
 | `themes/`, `editor-themes/` | Themes of your own |
 | `workspaces/<profile-id>.json` | Each profile's tabs, layout and SQL drafts |
