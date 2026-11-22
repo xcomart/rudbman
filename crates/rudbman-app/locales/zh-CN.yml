@@ -364,6 +364,7 @@ driver:
   dialect_profile_pending: "rudbman 附带的此配置文件的新版本以 %{files} 放在它旁边。请把需要的内容合并到配置文件中，然后删除它。"
   dialect_unknown_hint: "没有名为“%{name}”的方言或配置文件，因此此驱动使用通用 SQL。"
   dialect_profiles_problem: "未能读取全部方言配置文件：%{error}"
+  icon_unreadable: "无法将图标 %{path} 读取为图像，改为显示其他标记。"
   dialect_export: "导出…"
   dialect_folder: "打开文件夹"
   dialect_exported: "已将方言写入 %{path}。"

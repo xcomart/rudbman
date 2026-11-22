@@ -537,6 +537,9 @@ driver:
   dialect_profile_pending: "A newer version of this profile came with rudbman and waits beside it as %{files}. Take what you want of it into the profile, then delete it."
   dialect_unknown_hint: "No dialect or profile is called “%{name}”, so this driver uses generic SQL."
   dialect_profiles_problem: "The dialect profiles could not all be read: %{error}"
+  # A driver's icon names an image file that cannot be read; %{path} is the
+  # file, and the driver is drawn with its dialect's mark or the generic one.
+  icon_unreadable: "The icon %{path} could not be read as an image; another mark is shown in its place."
   dialect_export: "Export…"
   dialect_folder: "Open folder"
   dialect_exported: "The dialect was written to %{path}."

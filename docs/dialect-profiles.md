@@ -303,7 +303,7 @@ driver:
   maven: com.mysql:mysql-connector-j:9.1.0   # optional
   url_template: "jdbc:mysql://{host}:{port}/{database}"
   default_port: 4000            # optional; none for a file-backed database
-  icon: mysql                   # optional; an icon the application has
+  icon: tidb                    # optional; a mark the application ships, or an image file
 ```
 
 A driver definition of the profile's product, its id and `dialect` the
@@ -311,6 +311,18 @@ profile's id. It is offered to `drivers.json` once, the way a built-in
 definition released since the file was written is (§12): the user may change
 it or delete it, and a deleted one is not offered again. Only a profile that
 loads offers one.
+
+`icon` is drawn beside the driver in the connection dialog's picker and the
+driver manager's list. It names a mark both applications ship (`mysql`,
+`postgresql`, `tidb`, `cockroachdb`, `firebird`, `db2`, …) or, when it holds a
+`/` or a `\` or ends in `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.bmp`,
+`.ico` or `.svg`, an image file: absolute, or relative to the profiles'
+folder, so that `icon: acme.svg` is the file beside `acme.yml`
+(`rudbkit_core::dialects::icon_ref`). A driver on a profile wears the
+profile's icon, then its own, then its dialect's mark; a file that cannot be
+read as an image gives way to the next, and the driver manager says so. A file
+is read again once it changes, and every image is resampled to the pixels it
+covers rather than shrunk by the GPU.
 
 ## 5. Groovy hooks
 

@@ -364,6 +364,7 @@ driver:
   dialect_profile_pending: "Una versión más reciente de este perfil llegó con rudbman y espera a su lado como %{files}. Incorpore al perfil lo que necesite y luego elimínela."
   dialect_unknown_hint: "No hay ningún dialecto ni perfil llamado «%{name}», así que este controlador usa SQL genérico."
   dialect_profiles_problem: "No se pudieron leer todos los perfiles de dialecto: %{error}"
+  icon_unreadable: "No se pudo leer el icono %{path} como imagen; se muestra otro en su lugar."
   dialect_export: "Exportar…"
   dialect_folder: "Abrir carpeta"
   dialect_exported: "El dialecto se escribió en %{path}."

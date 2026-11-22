@@ -364,6 +364,7 @@ driver:
   dialect_profile_pending: "rudbman に同梱された新しい版のプロファイルが %{files} として隣にあります。必要な内容をプロファイルに取り込んでから削除してください。"
   dialect_unknown_hint: "「%{name}」という方言もプロファイルもないため、このドライバーは汎用 SQL を使います。"
   dialect_profiles_problem: "方言プロファイルをすべては読み込めませんでした: %{error}"
+  icon_unreadable: "アイコン %{path} を画像として読み込めなかったため、代わりに別のマークを表示しています。"
   dialect_export: "エクスポート…"
   dialect_folder: "フォルダーを開く"
   dialect_exported: "方言を %{path} に書き出しました。"

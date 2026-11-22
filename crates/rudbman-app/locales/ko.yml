@@ -364,6 +364,7 @@ driver:
   dialect_profile_pending: "rudbman과 함께 배포된 이 프로필의 새 버전이 %{files}(으)로 옆에 있습니다. 필요한 내용을 프로필에 옮긴 뒤 삭제하세요."
   dialect_unknown_hint: "“%{name}”(이)라는 방언이나 프로필이 없어 이 드라이버는 일반 SQL을 사용합니다."
   dialect_profiles_problem: "방언 프로필을 모두 읽지 못했습니다: %{error}"
+  icon_unreadable: "아이콘 %{path}을(를) 이미지로 읽지 못해 다른 마크를 대신 표시합니다."
   dialect_export: "내보내기…"
   dialect_folder: "폴더 열기"
   dialect_exported: "방언을 %{path}에 저장했습니다."

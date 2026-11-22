@@ -3,7 +3,10 @@
 The products' logos drawn beside each driver in the connection dialog's
 picker and the driver manager's list (`src/icons.rs`, `DRIVER_MARKS`). A
 driver definition names its mark by stem in its `icon`; one without a mark of
-its own gets its dialect's, and one with neither gets `generic.png`.
+its own gets its dialect's, and one with neither gets `generic.png`. An `icon`
+may instead name an image file of the user's — see
+`rudbkit_core::dialects::icon_ref` — which is read from disk and falls back
+the same way when it cannot be read.
 
 | File | Product | Source |
 | --- | --- | --- |

@@ -945,12 +945,9 @@ impl DriverManager {
                 // Resampled to the pixels it covers: drawn from its 64 px file by
                 // the GPU, it would come out stepped (see `rugpui::scaled_image`).
                 let mark_size = rugpui::scaled(DRIVER_MARK_SIZE, cx);
-                let mark = rugpui::scaled_image(
-                    &SharedString::new_static(icons::driver_icon(driver)),
-                    mark_size,
-                    window,
-                    cx,
-                );
+                let mark =
+                    rugpui::scaled_image(&icons::driver_icon(driver, cx), mark_size, window, cx)
+                        .unwrap_or_else(|| SharedString::new_static(icons::GENERIC_DRIVER).into());
                 div()
                     .id(("driver-row", index))
                     .flex()
@@ -1882,6 +1879,18 @@ impl DriverManager {
         if !self.profiles.problems.is_empty() {
             let error = self.profiles.problems.join("; ");
             notes.push((ts!("driver.dialect_profiles_problem", error = error), true));
+        }
+        // An icon file that is no image is drawn as another mark, which says
+        // nothing of why; this does.
+        let unreadable = self.current().cloned().and_then(|mut driver| {
+            driver.dialect = self.dialect.clone();
+            icons::unreadable_icon(&driver, cx)
+        });
+        if let Some(path) = unreadable {
+            notes.push((
+                ts!("driver.icon_unreadable", path = path.display().to_string()),
+                true,
+            ));
         }
         let script = self.render_script(chrome, cx);
         let trust = self.render_trust(chrome, cx);
@@ -2821,6 +2830,7 @@ mod tests {
                 error = "e"
             ),
             ts!("driver.dialect_profile_pending", files = "tidb.yml.new"),
+            ts!("driver.icon_unreadable", path = "p"),
             ts!("driver.dialect_unknown_hint", name = "x"),
             ts!("driver.dialect_profiles_problem", error = "e"),
             ts!("driver.dialect_export"),

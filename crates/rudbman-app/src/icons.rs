@@ -29,6 +29,11 @@
 //! and it is rugpui's rather than any one application's.
 
 pub use rugpui_shell::icons::icon;
+use std::path::{Path, PathBuf};
+
+use gpui::App;
+use rudbkit_core::dialects::{IconRef, icon_ref};
+use rugpui::ImagePath;
 use rugpui_shell::icons::{IconSet, WINDOW_CONTROL_ICONS};
 
 /// The button at the end of the tab strip that lists every open tab.
@@ -224,17 +229,19 @@ const DRIVER_MARKS: &[(&str, &[u8])] = &[
     ),
 ];
 
-/// The logo drawn for `driver`.
+/// The images `driver` may be drawn with, best first.
 ///
-/// A driver on a dialect profile wears the mark the profile's `driver`
+/// A driver on a dialect profile wears the icon the profile's `driver`
 /// section names, so that a definition offered by an older version of the
 /// profile follows the newer's; then the definition's own `icon`; then the
-/// mark of the built-in dialect it names; and failing all three,
-/// [`GENERIC_DRIVER`]. An `icon` of `generic` names no product, so it gives way
-/// to the dialect's: a Db2 definition from before Db2 had a mark gets it.
-pub fn driver_icon(driver: &rudbman_core::DriverDef) -> &'static str {
-    let profiles = rudbman_core::dialects::current();
-    let profile = profiles
+/// mark of the built-in dialect it names. An icon is the name of a mark this
+/// build ships or an image file ([`rudbkit_core::dialects::icon_ref`]), a
+/// relative one taken from `profiles`, the profiles' folder. A name this build
+/// has no mark for gives way to the next, and so does `generic`, which names
+/// no product: a Db2 definition from before Db2 had a mark gets it.
+fn driver_images(driver: &rudbman_core::DriverDef, profiles: &Path) -> Vec<ImagePath> {
+    let report = rudbman_core::dialects::current();
+    let profile = report
         .entry_for(&driver.dialect)
         .filter(|entry| entry.failure().is_none())
         .and_then(|entry| entry.driver.as_ref()?.icon.clone());
@@ -245,9 +252,34 @@ pub fn driver_icon(driver: &rudbman_core::DriverDef) -> &'static str {
     [profile.as_deref(), driver.icon.as_deref(), dialect]
         .into_iter()
         .flatten()
-        .filter(|stem| *stem != "generic")
-        .find_map(driver_mark)
-        .unwrap_or(GENERIC_DRIVER)
+        .filter_map(|icon| match icon_ref(icon, profiles) {
+            IconRef::File(path) => Some(ImagePath::from(path)),
+            IconRef::Mark("generic") => None,
+            IconRef::Mark(stem) => driver_mark(stem).map(ImagePath::from),
+        })
+        .collect()
+}
+
+/// The image `driver` is drawn with: the first of its images (see
+/// [`driver_images`]) that can be read, or [`GENERIC_DRIVER`].
+pub fn driver_icon(driver: &rudbman_core::DriverDef, cx: &mut App) -> ImagePath {
+    let profiles = rudbman_core::dialects_dir().unwrap_or_default();
+    driver_images(driver, &profiles)
+        .into_iter()
+        .find(|image| rugpui::image_loads(image, cx))
+        .unwrap_or_else(|| ImagePath::from(GENERIC_DRIVER))
+}
+
+/// An image file `driver`'s icon names that cannot be read as an image: what
+/// the driver manager says, since another mark is drawn in its place.
+pub fn unreadable_icon(driver: &rudbman_core::DriverDef, cx: &mut App) -> Option<PathBuf> {
+    let profiles = rudbman_core::dialects_dir().unwrap_or_default();
+    driver_images(driver, &profiles)
+        .into_iter()
+        .find_map(|image| match &image {
+            ImagePath::File(path) if !rugpui::image_loads(&image, cx) => Some(path.to_path_buf()),
+            _ => None,
+        })
 }
 
 /// The asset path of the mark whose stem is `stem`, if this build has it.
@@ -373,31 +405,77 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_driver_without_a_mark_of_its_own_takes_its_dialects_or_the_generic_one() {
-        let driver = |icon: Option<&str>, dialect: &str| rudbman_core::DriverDef {
+    fn driver(icon: Option<&str>, dialect: &str) -> rudbman_core::DriverDef {
+        rudbman_core::DriverDef {
             icon: icon.map(str::to_string),
             dialect: dialect.to_string(),
             ..rudbman_core::DriverDef::default()
-        };
+        }
+    }
+
+    #[test]
+    fn a_driver_without_a_mark_of_its_own_takes_its_dialects() {
+        let base = std::path::Path::new("/config/dialects");
+        let images = |icon, dialect| driver_images(&driver(icon, dialect), base);
+        let mark = |stem: &'static str| ImagePath::from(stem);
         assert_eq!(
-            driver_icon(&driver(Some("oracle"), "generic")),
-            "icons/drivers/oracle.png"
+            images(Some("oracle"), "generic"),
+            [mark("icons/drivers/oracle.png")]
         );
         assert_eq!(
-            driver_icon(&driver(None, "PostgreSQL")),
-            "icons/drivers/postgresql.png"
+            images(None, "PostgreSQL"),
+            [mark("icons/drivers/postgresql.png")]
         );
         assert_eq!(
-            driver_icon(&driver(Some("nothing"), "mssql")),
-            "icons/drivers/mssql.png"
+            images(Some("nothing"), "mssql"),
+            [mark("icons/drivers/mssql.png")]
         );
-        assert_eq!(driver_icon(&driver(None, "generic")), GENERIC_DRIVER);
-        assert_eq!(driver_icon(&driver(None, "nosuch")), GENERIC_DRIVER);
+        assert_eq!(images(None, "generic"), []);
+        assert_eq!(images(None, "nosuch"), []);
         assert_eq!(
-            driver_icon(&driver(Some("generic"), "db2")),
-            "icons/drivers/db2.png"
+            images(Some("generic"), "db2"),
+            [mark("icons/drivers/db2.png")]
         );
+        assert_eq!(
+            images(Some("acme.svg"), "mysql"),
+            [
+                ImagePath::from(base.join("acme.svg")),
+                mark("icons/drivers/mysql.png")
+            ],
+            "a file, from the profiles' folder, before the dialect's mark"
+        );
+    }
+
+    /// An icon file that is an image is drawn; one that is not gives way, and
+    /// is what the driver manager reports.
+    #[gpui::test]
+    fn an_icon_file_is_drawn_or_reported(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let good = dir.path().join("good.svg");
+        std::fs::write(
+            &good,
+            "<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'><rect width='8' height='8'/></svg>",
+        )
+        .expect("write");
+        let bad = dir.path().join("bad.png");
+        std::fs::write(&bad, "not an image").expect("write");
+        let good_icon = good.display().to_string();
+        let bad_icon = bad.display().to_string();
+        cx.update(|cx| {
+            let drawn = driver_icon(&driver(Some(&good_icon), "nosuch"), cx);
+            assert_eq!(drawn, ImagePath::from(good.clone()));
+            assert_eq!(
+                unreadable_icon(&driver(Some(&good_icon), "nosuch"), cx),
+                None
+            );
+
+            let fallback = driver_icon(&driver(Some(&bad_icon), "nosuch"), cx);
+            assert_eq!(fallback, ImagePath::from(GENERIC_DRIVER));
+            assert_eq!(
+                unreadable_icon(&driver(Some(&bad_icon), "nosuch"), cx),
+                Some(bad.clone())
+            );
+        });
     }
 
     #[test]

@@ -1916,7 +1916,9 @@ impl ConnectionDialog {
             .drivers
             .drivers()
             .iter()
-            .map(|driver| SelectOption::new(driver.name.clone()).image(icons::driver_icon(driver)))
+            .map(|driver| {
+                SelectOption::new(driver.name.clone()).image(icons::driver_icon(driver, cx))
+            })
             .collect();
         let selected = self
             .current_driver()
