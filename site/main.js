@@ -4,7 +4,56 @@
 (function () {
   "use strict";
 
-  // The latest release tag on the download button.
+  // Release assets the page links to directly: an element with
+  // data-asset="x86_64-unknown-linux-gnu.AppImage" gets the download URL of
+  // the latest release's file that ends with that suffix.
+  var latest = null;
+  function linkAssets(release) {
+    latest = release;
+    document.querySelectorAll("[data-asset]").forEach(function (el) {
+      var suffix = "-" + el.getAttribute("data-asset");
+      (release.assets || []).some(function (asset) {
+        if (asset.name.slice(-suffix.length) !== suffix) return false;
+        el.href = asset.browser_download_url;
+        return true;
+      });
+    });
+  }
+
+  // The visitor's platform and, where the browser says, CPU.
+  var platform = ((navigator.userAgentData && navigator.userAgentData.platform) ||
+    navigator.platform || navigator.userAgent || "").toLowerCase();
+  var os = /mac|iphone|ipad/.test(platform) ? "macos"
+    : /win/.test(platform) ? "windows"
+    : /linux|x11/.test(platform) ? "linux" : null;
+  var arm = /aarch64|arm64|armv8/.test((navigator.platform + " " + navigator.userAgent).toLowerCase());
+
+  // The hero button follows the platform: the winget or Homebrew command
+  // where the install panel shows one, the AppImage itself on Linux.
+  var hero = document.querySelector("[data-download]");
+  var label = hero && hero.querySelector("[data-label]");
+  function heroLinux() {
+    hero.setAttribute("data-asset", (arm ? "aarch64" : "x86_64") + "-unknown-linux-gnu.AppImage");
+    label.textContent = "Download AppImage";
+    if (latest) linkAssets(latest);
+  }
+  if (hero && label) {
+    var panel = os && document.getElementById("panel-" + os);
+    if (os === "linux") {
+      heroLinux();
+      // Chromium reports the CPU only on request; others keep the guess.
+      if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+        navigator.userAgentData.getHighEntropyValues(["architecture"]).then(function (v) {
+          if (v.architecture) { arm = v.architecture === "arm"; heroLinux(); }
+        }).catch(function () {});
+      }
+    } else if (panel && panel.querySelector(".term")) {
+      hero.href = "#install";
+      label.textContent = os === "windows" ? "Install with winget" : "Install with Homebrew";
+    }
+  }
+
+  // The latest release: its tag on the download button, its files on the links.
   var repo = document.documentElement.getAttribute("data-repo");
   if (repo && window.fetch) {
     fetch("https://api.github.com/repos/" + repo + "/releases/latest")
@@ -15,6 +64,7 @@
           el.textContent = release.tag_name;
           el.hidden = false;
         });
+        linkAssets(release);
       })
       .catch(function () {});
   }
@@ -39,11 +89,6 @@
       next.focus();
     });
   });
-  var platform = ((navigator.userAgentData && navigator.userAgentData.platform) ||
-    navigator.platform || navigator.userAgent || "").toLowerCase();
-  var os = /mac|iphone|ipad/.test(platform) ? "macos"
-    : /win/.test(platform) ? "windows"
-    : /linux|x11/.test(platform) ? "linux" : null;
   var mine = os && document.getElementById("tab-" + os);
   if (mine) select(mine);
 
