@@ -29,27 +29,33 @@
   var arm = /aarch64|arm64|armv8/.test((navigator.platform + " " + navigator.userAgent).toLowerCase());
 
   // The hero button follows the platform: the winget or Homebrew command
-  // where the install panel shows one, the AppImage itself on Linux.
+  // where the install panel shows one, otherwise the file itself, for the
+  // visitor's CPU: the Windows installer or the Linux AppImage.
   var hero = document.querySelector("[data-download]");
   var label = hero && hero.querySelector("[data-label]");
-  function heroLinux() {
-    hero.setAttribute("data-asset", (arm ? "aarch64" : "x86_64") + "-unknown-linux-gnu.AppImage");
-    label.textContent = "Download AppImage";
+  var files = {
+    windows: ["pc-windows-msvc-setup.exe", "Download installer"],
+    linux: ["unknown-linux-gnu.AppImage", "Download AppImage"]
+  };
+  function heroFile() {
+    var file = files[os];
+    hero.setAttribute("data-asset", (arm ? "aarch64-" : "x86_64-") + file[0]);
+    label.textContent = file[1];
     if (latest) linkAssets(latest);
   }
-  if (hero && label) {
-    var panel = os && document.getElementById("panel-" + os);
-    if (os === "linux") {
-      heroLinux();
+  if (hero && label && os) {
+    var panel = document.getElementById("panel-" + os);
+    if (panel && panel.querySelector(".term") && os !== "linux") {
+      hero.href = "#install";
+      label.textContent = os === "windows" ? "Install with winget" : "Install with Homebrew";
+    } else if (files[os]) {
+      heroFile();
       // Chromium reports the CPU only on request; others keep the guess.
       if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
         navigator.userAgentData.getHighEntropyValues(["architecture"]).then(function (v) {
-          if (v.architecture) { arm = v.architecture === "arm"; heroLinux(); }
+          if (v.architecture) { arm = v.architecture === "arm"; heroFile(); }
         }).catch(function () {});
       }
-    } else if (panel && panel.querySelector(".term")) {
-      hero.href = "#install";
-      label.textContent = os === "windows" ? "Install with winget" : "Install with Homebrew";
     }
   }
 
