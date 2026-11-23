@@ -391,7 +391,7 @@ impl DriverManager {
             dialect_open: false,
             // Read again here rather than taken from start-up, so that a
             // profile edited since needs no restart (§7 of the design).
-            profiles: dialects::reload(),
+            profiles: profiles_now(),
             profiles_dir: None,
             maven_input: field(cx, "org.postgresql:postgresql:42.7.4".into(), tab::MAVEN),
             table_comments_input: field(
@@ -1546,7 +1546,7 @@ impl DriverManager {
     /// (`dialects::reload`), or the directory a test put in their place.
     fn reload_profiles(&mut self) {
         self.profiles = match &self.profiles_dir {
-            None => dialects::reload(),
+            None => profiles_now(),
             Some(dir) => Arc::new(dialects::load_from(dir)),
         };
     }
@@ -2207,6 +2207,20 @@ impl DriverManager {
             ts!("driver.table_comments"),
             ts!("driver.column_comments"),
         ]
+    }
+}
+
+/// The dialect profiles of the configuration directory, read again.
+///
+/// A test reads none: `reload` reads the user's real `<config>/dialects` and
+/// registers what it finds for the rest of the test binary, which would hand
+/// every test after the first manager the profiles of whoever ran it. A test
+/// that wants profiles points `profiles_dir` at a folder of its own.
+fn profiles_now() -> Arc<Report> {
+    if cfg!(test) {
+        dialects::current()
+    } else {
+        dialects::reload()
     }
 }
 
