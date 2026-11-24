@@ -51,7 +51,7 @@ dependencies {
     // there. Version pinned to the one jdbgen already uses.
     implementation 'com.google.code.gson:gson:2.11.0'
 
-    testImplementation 'com.h2database:h2:2.3.232'
+    testImplementation 'com.h2database:h2:2.5.252'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
@@ -59,12 +59,12 @@ dependencies {
 
     // See the `drivers` configuration above: for `crates/rudbman-jdbc/tests`,
     // not for anything in `src`.
-    drivers 'org.postgresql:postgresql:42.7.4'
-    drivers 'com.mysql:mysql-connector-j:9.1.0'
-    drivers 'org.mariadb.jdbc:mariadb-java-client:3.5.1'
-    drivers 'com.oracle.database.jdbc:ojdbc11:23.6.0.24.10'
-    drivers 'com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11'
-    drivers 'org.xerial:sqlite-jdbc:3.47.1.0'
+    drivers 'org.postgresql:postgresql:42.7.15'
+    drivers 'com.mysql:mysql-connector-j:26.10.0'
+    drivers 'org.mariadb.jdbc:mariadb-java-client:4.0.0'
+    drivers 'com.oracle.database.jdbc:ojdbc11:23.26.4.0.0'
+    drivers 'com.microsoft.sqlserver:mssql-jdbc:13.6.2.jre11'
+    drivers 'org.xerial:sqlite-jdbc:3.54.1.0'
     drivers 'com.ibm.db2:jcc:12.1.5.0'
     // Firebird's, for the product its shipped dialect profile describes.
     drivers 'org.firebirdsql.jdbc:jaybird:6.0.7'

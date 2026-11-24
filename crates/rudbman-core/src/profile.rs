@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rudbkit_core::TunnelConfig;
-use rudbkit_core::products::{self, Product};
+use rudbkit_core::builtins::{self, App};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
@@ -628,101 +628,13 @@ impl Default for DriverDef {
 /// Dialect id for a database the SQL layer has no special knowledge of.
 const DIALECT_GENERIC: &str = "generic";
 
-/// One built-in driver definition: a product of [`rudbkit_core::products`],
-/// with what this application chooses for it.
-///
-/// A struct rather than a tuple so that the string columns cannot be
-/// transposed by accident.
-struct BuiltinDriver {
-    /// Value of [`DriverDef::id`].
-    id: &'static str,
-    /// The product: the class, Maven artifact, URL template, default port and
-    /// dialect it is defined with, and its name.
-    product: Product,
-    /// Value of [`DriverDef::name`] where it is not the product's own.
-    name: Option<&'static str>,
-    /// Value of [`DriverDef::icon`]; every built-in has one.
-    icon: &'static str,
-    /// The driver version [`DriverDef::maven`] names; every built-in is
-    /// downloadable.
-    version: &'static str,
-}
-
-/// Built-in driver definitions, in the order the picker shows them.
-///
-/// The versions pin a driver that was current when this list was written;
-/// they are a starting point for the downloader, not a requirement. Users edit
-/// `drivers.json` to move to another version or to add a driver that is not
-/// here.
-const BUILTIN_DRIVERS: &[BuiltinDriver] = &[
-    BuiltinDriver {
-        id: "h2",
-        // The server URL, under the product's short name: an embedded H2 file
-        // is opened by editing it into `jdbc:h2:file:/path/to/db`, which the
-        // connection editor allows.
-        product: products::H2_SERVER,
-        name: Some("H2"),
-        icon: "h2",
-        version: "2.3.232",
-    },
-    BuiltinDriver {
-        id: "postgresql",
-        product: products::POSTGRESQL,
-        name: None,
-        icon: "postgresql",
-        version: "42.7.4",
-    },
-    BuiltinDriver {
-        id: "mysql",
-        product: products::MYSQL,
-        name: None,
-        icon: "mysql",
-        version: "9.1.0",
-    },
-    BuiltinDriver {
-        id: "mariadb",
-        product: products::MARIADB,
-        name: None,
-        icon: "mariadb",
-        version: "3.5.1",
-    },
-    BuiltinDriver {
-        id: "sqlite",
-        product: products::SQLITE,
-        name: None,
-        icon: "sqlite",
-        version: "3.47.1.0",
-    },
-    BuiltinDriver {
-        id: "oracle-thin",
-        product: products::ORACLE_THIN,
-        name: None,
-        icon: "oracle",
-        version: "23.6.0.24.10",
-    },
-    BuiltinDriver {
-        id: "mssql",
-        product: products::MSSQL,
-        name: None,
-        icon: "mssql",
-        version: "12.8.1.jre11",
-    },
-    BuiltinDriver {
-        id: "db2",
-        product: products::DB2,
-        name: None,
-        icon: "db2",
-        version: "12.1.5.0",
-    },
-];
-
-/// The ids [`BUILTIN_DRIVERS`] held before `drivers.json` began recording
+/// The ids the built-ins held before `drivers.json` began recording
 /// which built-ins it had been offered — see [`DriverStore::offered_builtins`].
 ///
 /// Frozen: this is what a file written before then is read as having been
 /// offered, so a built-in added since appears in it once, and a built-in its
-/// user deleted from it stays deleted. A built-in added later belongs in the
-/// table above and never here.
+/// user deleted from it stays deleted. A built-in added later belongs in
+/// rudbkit's `drivers.yml` and never here.
 const FIRST_BUILTINS: &[&str] = &[
     "h2",
     "postgresql",
@@ -740,20 +652,20 @@ impl DriverDef {
     /// empty [`DriverDef::jars`]: the definition says what a driver *is*, the
     /// user still has to supply the JAR.
     pub fn builtins() -> Vec<Self> {
-        BUILTIN_DRIVERS
-            .iter()
+        builtins::builtins(App::Rudbman)
+            .into_iter()
             .map(|builtin| Self {
-                id: builtin.id.to_string(),
-                name: builtin.name.unwrap_or(builtin.product.name).to_string(),
-                icon: Some(builtin.icon.to_string()),
-                class: builtin.product.class.to_string(),
+                id: builtin.id,
+                name: builtin.name,
+                icon: Some(builtin.icon),
+                class: builtin.class,
                 jars: Vec::new(),
-                maven: Some(builtin.product.maven(builtin.version)),
-                url_template: builtin.product.url_template.to_string(),
-                default_port: builtin.product.default_port,
-                dialect: builtin.product.dialect.to_string(),
-                // The custom comment queries stay off: every product in this
-                // table has a driver that answers `REMARKS` or a vendor query
+                maven: Some(builtin.maven),
+                url_template: builtin.url_template,
+                default_port: builtin.default_port,
+                dialect: builtin.dialect,
+                // The custom comment queries stay off: every product in the
+                // list has a driver that answers `REMARKS` or a vendor query
                 // the bridge already knows, so a built-in that shipped one
                 // would be second-guessing the bridge.
                 ..Self::default()

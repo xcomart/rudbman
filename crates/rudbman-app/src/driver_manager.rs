@@ -393,7 +393,7 @@ impl DriverManager {
             // profile edited since needs no restart (§7 of the design).
             profiles: profiles_now(),
             profiles_dir: None,
-            maven_input: field(cx, "org.postgresql:postgresql:42.7.4".into(), tab::MAVEN),
+            maven_input: field(cx, "org.postgresql:postgresql:42.7.15".into(), tab::MAVEN),
             table_comments_input: field(
                 cx,
                 "SELECT table_name, comments FROM all_tab_comments WHERE owner = '${schema}'"
