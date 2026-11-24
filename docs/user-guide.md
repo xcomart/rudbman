@@ -235,13 +235,13 @@ for its highlighting, quoting, paging and DDL:
 
 | Driver | Maven coordinate | URL template | Port |
 | --- | --- | --- | --- |
-| H2 | `com.h2database:h2:2.3.232` | `jdbc:h2:tcp://{host}:{port}/{database}` | 9092 |
-| PostgreSQL | `org.postgresql:postgresql:42.7.4` | `jdbc:postgresql://{host}:{port}/{database}` | 5432 |
-| MySQL | `com.mysql:mysql-connector-j:9.1.0` | `jdbc:mysql://{host}:{port}/{database}` | 3306 |
-| MariaDB | `org.mariadb.jdbc:mariadb-java-client:3.5.1` | `jdbc:mariadb://{host}:{port}/{database}` | 3306 |
-| SQLite | `org.xerial:sqlite-jdbc:3.47.1.0` | `jdbc:sqlite:{file}` | — |
-| Oracle Thin | `com.oracle.database.jdbc:ojdbc11:23.6.0.24.10` | `jdbc:oracle:thin:@//{host}:{port}/{service}` | 1521 |
-| Microsoft SQL Server | `com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11` | `jdbc:sqlserver://{host}:{port};databaseName={database}` | 1433 |
+| H2 | `com.h2database:h2:2.5.252` | `jdbc:h2:tcp://{host}:{port}/{database}` | 9092 |
+| PostgreSQL | `org.postgresql:postgresql:42.7.15` | `jdbc:postgresql://{host}:{port}/{database}` | 5432 |
+| MySQL | `com.mysql:mysql-connector-j:26.10.0` | `jdbc:mysql://{host}:{port}/{database}` | 3306 |
+| MariaDB | `org.mariadb.jdbc:mariadb-java-client:4.0.0` | `jdbc:mariadb://{host}:{port}/{database}` | 3306 |
+| SQLite | `org.xerial:sqlite-jdbc:3.54.1.0` | `jdbc:sqlite:{file}` | — |
+| Oracle Thin | `com.oracle.database.jdbc:ojdbc11:23.26.4.0.0` | `jdbc:oracle:thin:@//{host}:{port}/{service}` | 1521 |
+| Microsoft SQL Server | `com.microsoft.sqlserver:mssql-jdbc:13.6.2.jre11` | `jdbc:sqlserver://{host}:{port};databaseName={database}` | 1433 |
 | IBM Db2 | `com.ibm.db2:jcc:12.1.5.0` | `jdbc:db2://{host}:{port}/{database}` | 50000 |
 
 Three more come as [dialect profiles](#dialect-profiles), and join the list the
@@ -249,8 +249,8 @@ first time rudbman starts with them:
 
 | Driver | Maven coordinate | URL template | Port |
 | --- | --- | --- | --- |
-| TiDB | `com.mysql:mysql-connector-j:9.1.0` | `jdbc:mysql://{host}:{port}/{database}` | 4000 |
-| CockroachDB | `org.postgresql:postgresql:42.7.4` | `jdbc:postgresql://{host}:{port}/{database}` | 26257 |
+| TiDB | `com.mysql:mysql-connector-j:26.10.0` | `jdbc:mysql://{host}:{port}/{database}` | 4000 |
+| CockroachDB | `org.postgresql:postgresql:42.7.15` | `jdbc:postgresql://{host}:{port}/{database}` | 26257 |
 | Firebird | `org.firebirdsql.jdbc:jaybird:6.0.7` | `jdbc:firebird://{host}:{port}/{database}?encoding=UTF8` | 3050 |
 
 None of them comes with its JAR. To give a driver one:

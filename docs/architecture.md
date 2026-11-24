@@ -1394,8 +1394,8 @@ gate with three clauses, and the machinery underneath is the data pane's own,
   hint is only ever allowed to *offer* editing, never to make a statement safe.
 - **What the drivers actually answer**, measured rather than assumed
   (`crates/rudbman-jdbc/tests/containers.rs` pins all of it, against all five
-  products the suite runs: pgjdbc 42.7.4, Connector/J 9.1.0, MariaDB
-  Connector/J 3.5.1, mssql-jdbc 12.8.1, and ojdbc11 23.6):
+  products the suite runs: pgjdbc 42.7.15, Connector/J 26.10.0, MariaDB
+  Connector/J 4.0.0, mssql-jdbc 13.6.2, and ojdbc11 23.26.4):
   * pgjdbc answers `""` for **both** schema and catalog on an ordinary column of
     an ordinary `public` table, so the gate can never lean on the schema, and
     only the MySQL family (MySQL and MariaDB) supplies a catalog at all.
@@ -1721,11 +1721,13 @@ released after the file was written: a built-in not on it is appended once on
 load and recorded, so Db2 reaches a configuration that predates it. A file
 without the list is read as having been offered the first seven.
 
-What belongs to each product — its driver class and Maven artifact, its URL
-template, port and dialect id, its name — comes from `rudbkit_core::products`,
-which rudbgen's built-ins draw on too. The id, the icon and the driver
-version a built-in pins are rudbman's own, so the two applications can
-download different releases of the same driver.
+The definitions themselves are data: rudbkit's `drivers.yml`, compiled in and
+read through `rudbkit_core::builtins`. Each product — its name, driver class,
+Maven coordinate, URL template, port, dialect id and icon — is written there
+once for rudbman and rudbgen both, with the keys a dialect profile's `driver`
+section uses, and each application's list says which products it offers, in
+its picker's order and under which id. Both download the same driver version,
+and a rudbkit test holds a shipped profile that uses the same driver to it.
 
 ---
 
